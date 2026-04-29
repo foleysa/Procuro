@@ -1,0 +1,27 @@
+Outcome Ledger + Agent Registry
+
+What & Why
+
+Inspired by Bairong's Results-as-a-Service (RaaS) launch (Dec 19, 2025) — instead of charging for software access, you charge only when an agent delivers a measurable business outcome. This task builds the foundation that any "outcome-billed agent army" requires:
+
+A first-class agent registry — every automated worker is a named entity with a job description, owning org, status, and a per-outcome rate.
+An append-only outcome ledger — every claimed outcome is recorded with attribution to the agent that produced it, an evidence pointer, an estimated dollar value, and a verification status.
+A verification gate — claims start as claimed, move to verified (human or rule-based approval), denied, or invoiced. Nothing is billed until verified.
+Without this layer, every "agent" we build later can only produce text. With it, every agent's worth is observable, auditable, and (eventually) invoiceable. This is the single most important block for the SCIS outcome-based pivot.
+
+The data already exists in the suggestive form — resolutions.estimated_savings_usd carries an outcome estimate today, but it's not attributed to an agent and there's no acceptance state. We treat the existing exception-resolver flow as the seed agent and backfill its historical resolutions into the ledger, proving the loop end-to-end before wrapping any new agent.
+
+Done looks like
+
+A "Procurement Agents" page in Command Center lists every registered agent with: role, status (active/paused), KPI definition (e.g. "verified savings, USD"), per-outcome rate, lifetime claims by status, and lifetime verified value.
+An "Outcome Ledger" page (per-org, RLS-scoped) shows every claim as a row: agent, claim type, value, evidence link, status, who verified, when. Filterable by agent, status, date range.
+Each claim has a one-click Verify and Deny action available to org admins; verify writes the verifier id + timestamp; deny writes a required reason. Both transitions are append-only (new event row, original claim row stays).
+The existing exception_resolver agent is registered as the seed agent. Every existing resolution with estimated_savings_usd > 0 is back-filled into the ledger as a claimed row attributed to it; users can verify or deny historical claims and the page totals update live.
+New API endpoints (multi-tenant, RLS-enforced):
+GET /api/agents — list registered agents for the org
+GET /api/outcome-claims — list claims, paginated, filter by agent / status / date
+POST /api/outcome-claims/:id/verify — verify (admin-only)
+POST /api/outcome-claims/:id/deny — deny with reason (admin-only)
+OpenAPI spec is updated; codegen produces typed client; command-center pages consume the typed client (no hand-rolled fetches).
+Cross-tenant isolation is enforced by RLS for both new tables; the isolation-endpoints harness covers the new GET routes.
+A focused smoke (smoke:outcome-ledger) exercises: register agent → write claim → list → verify → list shows verified → cross-tenant attempt rejected.

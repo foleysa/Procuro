@@ -3,13 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: |
+    Outcome Ledger + Agent Registry API.
+
+    Multi-tenant: every request is scoped to the active org via the
+    `x-org-id` header. The development server defaults to the seeded
+    SCIS org if the header is absent, but production callers must
+    supply it. All list endpoints return only rows owned by that org.
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: orgs
+    description: Organizations the active user belongs to
+  - name: agents
+    description: Procurement Agent Registry
+  - name: claims
+    description: Outcome Ledger
+  - name: ledger
+    description: Outcome Ledger summary endpoints
+
 paths:
   /healthz:
     get:
@@ -24,6 +39,303 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /orgs:
+    get:
+      operationId: listOrgs
+      tags: [orgs]
+      summary: List organizations available to the active user
+      responses:
+        "200":
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Org"
+
+  /agents:
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List registered agents in the active org
+      parameters:
+        - in: query
+          name: status
+          description: Optional status filter
+          required: false
+          schema:
+            $ref: "#/components/schemas/AgentStatus"
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agent"
+    post:
+      operationId: createAgent
+      tags: [agents]
+      summary: Register a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterAgentRequest"
+      responses:
+        "201":
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+
+  /agents/{agentId}:
+    parameters:
+      - in: path
+        name: agentId
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Get a single agent (with lifetime totals)
+      responses:
+        "200":
+          description: Agent detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDetail"
+    patch:
+      operationId: updateAgent
+      tags: [agents]
+      summary: Update agent metadata or status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentRequest"
+      responses:
+        "200":
+          description: Updated agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+
+  /outcome-claims:
+    get:
+      operationId: listOutcomeClaims
+      tags: [claims]
+      summary: List outcome claims in the active org
+      parameters:
+        - in: query
+          name: agentId
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: "#/components/schemas/ClaimStatus"
+        - in: query
+          name: from
+          description: ISO timestamp lower bound (claimedAt >=)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          description: ISO timestamp upper bound (claimedAt <=)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Paginated claim list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimListResponse"
+    post:
+      operationId: createOutcomeClaim
+      tags: [claims]
+      summary: Append a new outcome claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClaimBody"
+      responses:
+        "201":
+          description: Claim created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeClaim"
+
+  /outcome-claims/{claimId}:
+    parameters:
+      - in: path
+        name: claimId
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getOutcomeClaim
+      tags: [claims]
+      summary: Get a single claim with its event history
+      responses:
+        "200":
+          description: Claim detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeClaimDetail"
+
+  /outcome-claims/{claimId}/verify:
+    parameters:
+      - in: path
+        name: claimId
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: verifyOutcomeClaim
+      tags: [claims]
+      summary: Verify a claim (admin-only). Append-only state transition.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyClaimBody"
+      responses:
+        "200":
+          description: Updated claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeClaim"
+
+  /outcome-claims/{claimId}/deny:
+    parameters:
+      - in: path
+        name: claimId
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: denyOutcomeClaim
+      tags: [claims]
+      summary: Deny a claim with a required reason. Append-only state transition.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DenyClaimBody"
+      responses:
+        "200":
+          description: Updated claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeClaim"
+
+  /ledger/summary:
+    get:
+      operationId: getLedgerSummary
+      tags: [ledger]
+      summary: Org-wide ledger totals (claimed / verified / denied / invoiced)
+      responses:
+        "200":
+          description: Summary totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LedgerSummary"
+
+  /ledger/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [ledger]
+      summary: Most recent claim events across the org
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+      responses:
+        "200":
+          description: Recent activity feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEntry"
+
+  /ledger/value-by-agent:
+    get:
+      operationId: getValueByAgent
+      tags: [ledger]
+      summary: Verified value grouped by agent (for charts)
+      responses:
+        "200":
+          description: Per-agent verified totals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentValueRow"
+
+  /ledger/value-over-time:
+    get:
+      operationId: getValueOverTime
+      tags: [ledger]
+      summary: Verified value over time (daily buckets, last 30d)
+      responses:
+        "200":
+          description: Time series of verified value
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeBucket"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +343,368 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    Org:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+      required: [id, name, slug]
+
+    AgentStatus:
+      type: string
+      enum: [active, paused, retired]
+
+    ClaimStatus:
+      type: string
+      enum: [claimed, verified, denied, invoiced]
+
+    ClaimEventType:
+      type: string
+      enum: [claimed, verified, denied, invoiced]
+
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+        orgId:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          description: Job description / role summary
+        kpiDefinition:
+          type: string
+          description: How this agent's outcome is measured
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+        ratePerOutcomeUsd:
+          type: number
+          format: float
+          description: USD billed to the customer per verified outcome
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - orgId
+        - name
+        - role
+        - kpiDefinition
+        - status
+        - ratePerOutcomeUsd
+        - createdAt
+
+    AgentDetail:
+      allOf:
+        - $ref: "#/components/schemas/Agent"
+        - type: object
+          properties:
+            lifetimeClaimsByStatus:
+              type: object
+              properties:
+                claimed:
+                  type: integer
+                verified:
+                  type: integer
+                denied:
+                  type: integer
+                invoiced:
+                  type: integer
+              required: [claimed, verified, denied, invoiced]
+            lifetimeVerifiedValueUsd:
+              type: number
+              format: float
+            lifetimeBillableUsd:
+              type: number
+              format: float
+              description: ratePerOutcomeUsd * (verified + invoiced count)
+          required:
+            - lifetimeClaimsByStatus
+            - lifetimeVerifiedValueUsd
+            - lifetimeBillableUsd
+
+    RegisterAgentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        role:
+          type: string
+          minLength: 1
+        kpiDefinition:
+          type: string
+          minLength: 1
+        ratePerOutcomeUsd:
+          type: number
+          format: float
+          minimum: 0
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+      required: [name, role, kpiDefinition, ratePerOutcomeUsd]
+
+    UpdateAgentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        role:
+          type: string
+          minLength: 1
+        kpiDefinition:
+          type: string
+          minLength: 1
+        ratePerOutcomeUsd:
+          type: number
+          format: float
+          minimum: 0
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+
+    OutcomeClaim:
+      type: object
+      properties:
+        id:
+          type: string
+        orgId:
+          type: string
+        agentId:
+          type: string
+        agentName:
+          type: string
+        claimType:
+          type: string
+          description: Domain label (e.g. "exception_resolution", "contract_renegotiation")
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        evidenceUrl:
+          type: string
+          nullable: true
+        evidenceLabel:
+          type: string
+          nullable: true
+        estimatedValueUsd:
+          type: number
+          format: float
+        status:
+          $ref: "#/components/schemas/ClaimStatus"
+        verifiedBy:
+          type: string
+          nullable: true
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+        denialReason:
+          type: string
+          nullable: true
+        claimedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - orgId
+        - agentId
+        - agentName
+        - claimType
+        - title
+        - estimatedValueUsd
+        - status
+        - claimedAt
+
+    ClaimEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        claimId:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/ClaimEventType"
+        actor:
+          type: string
+          description: Who performed the transition (agent name or user id)
+        reason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, claimId, eventType, actor, createdAt]
+
+    OutcomeClaimDetail:
+      allOf:
+        - $ref: "#/components/schemas/OutcomeClaim"
+        - type: object
+          properties:
+            events:
+              type: array
+              items:
+                $ref: "#/components/schemas/ClaimEvent"
+          required: [events]
+
+    ClaimListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutcomeClaim"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required: [items, total, limit, offset]
+
+    CreateClaimBody:
+      type: object
+      properties:
+        agentId:
+          type: string
+        claimType:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        evidenceUrl:
+          type: string
+        evidenceLabel:
+          type: string
+        estimatedValueUsd:
+          type: number
+          format: float
+          minimum: 0
+      required: [agentId, claimType, title, estimatedValueUsd]
+
+    VerifyClaimBody:
+      type: object
+      properties:
+        note:
+          type: string
+
+    DenyClaimBody:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+      required: [reason]
+
+    LedgerSummary:
+      type: object
+      properties:
+        totalClaims:
+          type: integer
+        claimedCount:
+          type: integer
+        verifiedCount:
+          type: integer
+        deniedCount:
+          type: integer
+        invoicedCount:
+          type: integer
+        claimedValueUsd:
+          type: number
+          format: float
+        verifiedValueUsd:
+          type: number
+          format: float
+        deniedValueUsd:
+          type: number
+          format: float
+        invoicedValueUsd:
+          type: number
+          format: float
+        billableUsd:
+          type: number
+          format: float
+          description: Sum of ratePerOutcomeUsd across verified claims (what could be invoiced)
+      required:
+        - totalClaims
+        - claimedCount
+        - verifiedCount
+        - deniedCount
+        - invoicedCount
+        - claimedValueUsd
+        - verifiedValueUsd
+        - deniedValueUsd
+        - invoicedValueUsd
+        - billableUsd
+
+    ActivityEntry:
+      type: object
+      properties:
+        eventId:
+          type: string
+        claimId:
+          type: string
+        claimTitle:
+          type: string
+        agentId:
+          type: string
+        agentName:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/ClaimEventType"
+        actor:
+          type: string
+        valueUsd:
+          type: number
+          format: float
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - eventId
+        - claimId
+        - claimTitle
+        - agentId
+        - agentName
+        - eventType
+        - actor
+        - valueUsd
+        - createdAt
+
+    AgentValueRow:
+      type: object
+      properties:
+        agentId:
+          type: string
+        agentName:
+          type: string
+        verifiedValueUsd:
+          type: number
+          format: float
+        verifiedCount:
+          type: integer
+      required: [agentId, agentName, verifiedValueUsd, verifiedCount]
+
+    TimeBucket:
+      type: object
+      properties:
+        date:
+          type: string
+          description: YYYY-MM-DD
+        verifiedValueUsd:
+          type: number
+          format: float
+        verifiedCount:
+          type: integer
+      required: [date, verifiedValueUsd, verifiedCount]
