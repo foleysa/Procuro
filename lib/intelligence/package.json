@@ -1,0 +1,37 @@
+{
+  "name": "@workspace/intelligence",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts/index.ts",
+    "./bq": "./src/bq/index.ts",
+    "./gcs": "./src/gcs/index.ts",
+    "./entities": "./src/entities/index.ts",
+    "./tier": "./src/tier/index.ts",
+    "./config": "./src/config.ts"
+  },
+  "dependencies": {
+    "@workspace/db": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "@google-cloud/bigquery": "^7.9.0",
+    "@google-cloud/storage": "^7.13.0"
+  },
+  "peerDependenciesMeta": {
+    "@google-cloud/bigquery": {
+      "optional": true
+    },
+    "@google-cloud/storage": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@google-cloud/bigquery": "^7.9.4",
+    "@google-cloud/storage": "^7.19.0",
+    "@types/node": "catalog:"
+  }
+}

@@ -7,10 +7,15 @@
  * dependencies, and is replaced — not bolted onto — when wiring a live feed.
  */
 
+import { z } from "zod";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 
 interface MaterialRef {
   material: string;
@@ -76,8 +81,21 @@ function startOfUtcDay(d: Date): Date {
   );
 }
 
-export const publishedCommodityIndexCollector: IntelligenceCollector = {
-  id: "published-commodity-index",
+const commodityMetadataSchema = z
+  .object({
+    feed: z.string().min(1),
+    basis: z.string().optional(),
+  })
+  .passthrough();
+
+const commoditySignalSchema = buildSignalDraftSchema(commodityMetadataSchema);
+
+export const PUBLISHED_COMMODITY_INDEX_COLLECTOR_ID = "published-commodity-index";
+
+export const publishedCommodityIndexCollector: IntelligenceCollector<
+  typeof commoditySignalSchema
+> = {
+  id: PUBLISHED_COMMODITY_INDEX_COLLECTOR_ID,
   name: "Published Commodity Index",
   description:
     "Daily reference prices for tracked commodities (LME copper, Brent crude, HRC steel, PE resin) sourced from public exchange feeds.",
@@ -85,6 +103,19 @@ export const publishedCommodityIndexCollector: IntelligenceCollector = {
   sourceUrl: "https://www.lme.com/Metals/Non-ferrous/LME-Copper",
   defaultRateLimitRpm: 30,
   defaultScheduleCron: "0 */6 * * *",
+  postureClass: "public_api",
+  // Exchange-published reference prices: cite the exchange explicitly.
+  disclosureTier: "T1",
+  jurisdiction: "GLOBAL",
+  retentionDays: 365,
+  tenantOptInDefault: true,
+  signalSchema: commoditySignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(
+      PUBLISHED_COMMODITY_INDEX_COLLECTOR_ID,
+      draft,
+    );
+  },
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const now = new Date();
     const observedAt = startOfUtcDay(now);

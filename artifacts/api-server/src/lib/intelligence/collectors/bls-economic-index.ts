@@ -34,8 +34,13 @@ import {
   db,
   collectorAuditLogTable,
 } from "@workspace/db";
+import { z } from "zod";
 import { newId } from "../../ids";
 import { logger } from "../../logger";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
@@ -370,8 +375,28 @@ async function recordWarning(
   }
 }
 
-export const blsEconomicIndexCollector: IntelligenceCollector = {
-  id: "bls-economic-index",
+const blsMetadataSchema = z
+  .object({
+    seriesId: z.string().min(1),
+    label: z.string().optional(),
+    baseYear: z.union([z.string(), z.number()]).optional(),
+    periodicity: z.string().optional(),
+    period: z.string().optional(),
+    periodName: z.string().optional(),
+    year: z.union([z.string(), z.number()]).optional(),
+    tier: z.enum(["authenticated", "unauthenticated"]).optional(),
+    source: z.string().optional(),
+  })
+  .passthrough();
+
+const blsSignalSchema = buildSignalDraftSchema(blsMetadataSchema);
+
+export const BLS_ECONOMIC_INDEX_COLLECTOR_ID = "bls-economic-index";
+
+export const blsEconomicIndexCollector: IntelligenceCollector<
+  typeof blsSignalSchema
+> = {
+  id: BLS_ECONOMIC_INDEX_COLLECTOR_ID,
   name: "BLS PPI, CPI & ECI Index",
   description:
     "Bureau of Labor Statistics PPI commodity sub-series, CPI consumer sub-series, and ECI headline series. PPI gives material-category cost trends; CPI sub-indexes (food at home, energy, apparel, household furnishings, transportation services, medical care services, etc.) defend against supplier price-increase asks on consumer-facing categories; ECI is the standard reference for services rate-card negotiations.",
@@ -382,6 +407,17 @@ export const blsEconomicIndexCollector: IntelligenceCollector = {
   defaultRateLimitRpm: 10,
   // Daily polling lands monthly PPI / quarterly ECI releases within ~24h.
   defaultScheduleCron: "0 13 * * *",
+  postureClass: "public_api",
+  // BLS publishes the series openly and explicitly cites them; full
+  // attribution is appropriate.
+  disclosureTier: "T1",
+  jurisdiction: "US",
+  retentionDays: 365,
+  tenantOptInDefault: true,
+  signalSchema: blsSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(BLS_ECONOMIC_INDEX_COLLECTOR_ID, draft);
+  },
 
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const apiKey = process.env["BLS_API_KEY"];

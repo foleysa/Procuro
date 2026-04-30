@@ -17,11 +17,16 @@
  * log via `fetch_failed`.
  */
 
+import { z } from "zod";
 import { logger } from "../../logger";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 import { FRED_SERIES_CATALOG } from "../scope-taxonomy";
 
 /**
@@ -251,7 +256,24 @@ export async function fetchFredBackfillDrafts(opts?: {
   return { drafts, failedSeries };
 }
 
-export const fredEconomicIndexCollector: IntelligenceCollector = {
+/**
+ * Per-collector metadata schema. FRED drafts always carry the upstream
+ * series id and observation date so re-parsers and downstream analyzers
+ * can audit which sub-index a given signal came from.
+ */
+const fredMetadataSchema = z
+  .object({
+    seriesId: z.string().min(1),
+    label: z.string().optional(),
+    basis: z.string().optional(),
+  })
+  .passthrough();
+
+const fredSignalSchema = buildSignalDraftSchema(fredMetadataSchema);
+
+export const fredEconomicIndexCollector: IntelligenceCollector<
+  typeof fredSignalSchema
+> = {
   id: FRED_ECONOMIC_INDEX_COLLECTOR_ID,
   name: "FRED Economic Index (PPI)",
   description:
@@ -260,6 +282,20 @@ export const fredEconomicIndexCollector: IntelligenceCollector = {
   sourceUrl: "https://fred.stlouisfed.org/",
   defaultRateLimitRpm: 30,
   defaultScheduleCron: "0 6 * * *",
+  postureClass: "public_api",
+  // FRED is a US Federal Reserve published API; full attribution is
+  // permitted and analytically useful (lever explanations cite the
+  // exact series id).
+  disclosureTier: "T1",
+  jurisdiction: "US",
+  // Public-API default — keep the year of history GCS already has.
+  retentionDays: 365,
+  // Free public data; safe to enable for every tenant by default.
+  tenantOptInDefault: true,
+  signalSchema: fredSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(FRED_ECONOMIC_INDEX_COLLECTOR_ID, draft);
+  },
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const apiKey = process.env["FRED_API_KEY"];
     if (!apiKey) {

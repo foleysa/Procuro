@@ -14,6 +14,11 @@
  *   GET https://api.eia.gov/v2/seriesid/{seriesId}?api_key=...&length=1
  */
 
+import { z } from "zod";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
@@ -155,8 +160,21 @@ function coerceValue(v: EiaDataPoint["value"], seriesId: string): number {
   return n;
 }
 
-export const eiaEnergyCollector: IntelligenceCollector = {
-  id: "eia-energy",
+const eiaMetadataSchema = z
+  .object({
+    seriesId: z.string().min(1),
+    frequency: z.string().optional(),
+    period: z.string().optional(),
+    eiaRawUnit: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const eiaSignalSchema = buildSignalDraftSchema(eiaMetadataSchema);
+
+export const EIA_ENERGY_COLLECTOR_ID = "eia-energy";
+
+export const eiaEnergyCollector: IntelligenceCollector<typeof eiaSignalSchema> = {
+  id: EIA_ENERGY_COLLECTOR_ID,
   name: "EIA Energy Prices",
   description:
     "Latest US Energy Information Administration prices for WTI crude, Henry Hub natural gas, US average retail diesel and gasoline, and US average industrial electricity. Energy is a cross-category cost driver feeding Tier-2 lever analyzers.",
@@ -164,6 +182,15 @@ export const eiaEnergyCollector: IntelligenceCollector = {
   sourceUrl: "https://www.eia.gov/opendata/",
   defaultRateLimitRpm: 30,
   defaultScheduleCron: "0 6 * * *",
+  postureClass: "public_api",
+  disclosureTier: "T1",
+  jurisdiction: "US",
+  retentionDays: 365,
+  tenantOptInDefault: true,
+  signalSchema: eiaSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(EIA_ENERGY_COLLECTOR_ID, draft);
+  },
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const apiKey = process.env["EIA_API_KEY"];
     if (!apiKey || apiKey.trim() === "") {

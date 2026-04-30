@@ -12,3 +12,4 @@ export * from "./cycles";
 export * from "./marketSignals";
 export * from "./jobs";
 export * from "./jobKindSettings";
+export * from "./entityResolutionCache";

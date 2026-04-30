@@ -13,6 +13,7 @@
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/intelligence": "workspace:*",
     "busboy": "^1.6.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",

@@ -56,7 +56,12 @@ import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
+import { z } from "zod";
 import { logger } from "../../logger";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 
 const PINK_SHEET_LANDING_URL =
   "https://www.worldbank.org/en/research/commodity-markets";
@@ -219,8 +224,24 @@ async function fetchPinkSheetWorkbook(): Promise<{
   };
 }
 
-export const worldBankPinkSheetCollector: IntelligenceCollector = {
-  id: "world-bank-pink-sheet",
+const wbMetadataSchema = z
+  .object({
+    commodityCode: z.string().min(1),
+    basis: z.string().optional(),
+    period: z.string().optional(),
+    upstreamXlsxUrl: z.string().url().optional(),
+    upstreamLastModified: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const wbSignalSchema = buildSignalDraftSchema(wbMetadataSchema);
+
+export const WORLD_BANK_PINK_SHEET_COLLECTOR_ID = "world-bank-pink-sheet";
+
+export const worldBankPinkSheetCollector: IntelligenceCollector<
+  typeof wbSignalSchema
+> = {
+  id: WORLD_BANK_PINK_SHEET_COLLECTOR_ID,
   name: "World Bank Pink Sheet",
   description:
     "Monthly commodity prices from the World Bank's Commodity Markets Outlook (\"Pink Sheet\") covering energy, base & precious metals, grains, and fertilizers. No API key required.",
@@ -230,6 +251,15 @@ export const worldBankPinkSheetCollector: IntelligenceCollector = {
   // Pink Sheet refreshes monthly; daily polling is cheap and lets us
   // pick up a new release within a day of publication.
   defaultScheduleCron: "0 9 * * *",
+  postureClass: "public_api",
+  disclosureTier: "T1",
+  jurisdiction: "GLOBAL",
+  retentionDays: 365,
+  tenantOptInDefault: true,
+  signalSchema: wbSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(WORLD_BANK_PINK_SHEET_COLLECTOR_ID, draft);
+  },
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const { buffer, lastModified } = await fetchPinkSheetWorkbook();
     const { rows, headers, units, dataStart } = parseMonthlyPricesSheet(buffer);

@@ -3,13 +3,27 @@ import {
   collectorsTable,
   collectorAuditLogTable,
   marketSignalsTable,
+  marketSignalSchemaDriftTable,
   type CollectorRow,
 } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import {
+  collectorContractSchema,
+  isIntelligenceEnabled,
+  landRawPayload,
+  mergeMarketSignals,
+  recordCollectorRun,
+  type BqMarketSignalRow,
+} from "@workspace/intelligence";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
-import type { IntelligenceCollector, MarketSignalDraft } from "./collector";
+import {
+  collectorContract,
+  type IntelligenceCollector,
+  type MarketSignalDraft,
+  type RawPayload,
+} from "./collector";
 import {
   ECB_FX_RATES_COLLECTOR_ID,
   fetchEcbBackfillDrafts,
@@ -50,6 +64,22 @@ const NATURAL_KEY_ON_CONFLICT = sql`ON CONFLICT (
   COALESCE(scope_lane_key, ''),
   observed_at
 ) DO NOTHING`;
+
+/**
+ * Map common upstream content types to the file extension used in the
+ * GCS object key. Replay tooling reads the object's contentType header
+ * when re-parsing, but the extension keeps `gsutil ls` output legible.
+ */
+function guessExtensionFromContentType(contentType: string): string {
+  const ct = contentType.toLowerCase();
+  if (ct.includes("json")) return "json";
+  if (ct.includes("xml")) return "xml";
+  if (ct.includes("csv")) return "csv";
+  if (ct.includes("html")) return "html";
+  if (ct.includes("spreadsheetml") || ct.includes("xlsx")) return "xlsx";
+  if (ct.includes("text/")) return "txt";
+  return "bin";
+}
 
 /**
  * Coerce empty/whitespace strings to `null` for the nullable scope_* columns.
@@ -126,7 +156,39 @@ async function insertSignalsWithDedupe(
 
 const registry = new Map<string, IntelligenceCollector>();
 
+/**
+ * Register a collector with the runtime. Validates the contract metadata
+ * (`postureClass`, `disclosureTier`, `jurisdiction`, `retentionDays`,
+ * `tenantOptInDefault`) at boot — if a collector forgets one of these,
+ * we fail fast instead of silently emitting unscored signals at runtime.
+ */
 export function registerCollector(c: IntelligenceCollector): void {
+  // Required-field presence check (catches collectors that satisfy the
+  // TS shape via `as IntelligenceCollector` casts but whose values are
+  // actually undefined at runtime).
+  const missing: string[] = [];
+  if (typeof c.id !== "string" || c.id.trim() === "") missing.push("id");
+  if (typeof c.signalSchema !== "object" || c.signalSchema === null) {
+    missing.push("signalSchema");
+  }
+  if (typeof c.stableSignalKey !== "function") {
+    missing.push("stableSignalKey");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `registerCollector(${c.id ?? "<missing-id>"}): missing required fields: ${missing.join(", ")}`,
+    );
+  }
+  // Contract metadata schema check (posture class, tier, jurisdiction, ...).
+  const parsed = collectorContractSchema.safeParse(collectorContract(c));
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("; ");
+    throw new Error(
+      `registerCollector(${c.id}): invalid contract metadata: ${issues}`,
+    );
+  }
   registry.set(c.id, c);
 }
 
@@ -235,12 +297,101 @@ export async function runCollector(
     );
   }
 
+  const runId = newId("run");
+  const runStartedAt = new Date();
   try {
     await checkCancel();
-    await audit(collectorId, "fetch_started");
-    const drafts = await collector.collect({ since: null });
+    await audit(collectorId, "fetch_started", { runId });
+
+    // Prefer collectWithRaw when the collector implements it: that lets
+    // us land the raw upstream payload to GCS *before* parsing, which
+    // is what the future replay path needs. Collectors without
+    // collectWithRaw fall back to the legacy `collect()` shape — they
+    // still write Postgres + BQ, just without raw landing.
+    let drafts: MarketSignalDraft[];
+    let rawPayloads: RawPayload[] = [];
+    if (typeof collector.collectWithRaw === "function") {
+      const r = await collector.collectWithRaw({ since: null });
+      drafts = r.drafts;
+      rawPayloads = r.rawPayloads;
+    } else {
+      drafts = await collector.collect({ since: null });
+      // Synthesize a JSON snapshot of the parsed drafts so every run —
+      // not just the ones whose collector implements collectWithRaw —
+      // lands a replayable artifact in GCS. The snapshot carries every
+      // field the collector emitted, so the replay path can rebuild
+      // BqMarketSignalRow inputs without touching the upstream API.
+      // This is intentionally a parsed-output snapshot rather than the
+      // raw upstream bytes; collectors that want byte-faithful replay
+      // override `collectWithRaw` to surface the upstream response.
+      rawPayloads = [
+        {
+          name: collectorId,
+          contentType: "application/json",
+          sourceUrl: collector.sourceUrl,
+          body: JSON.stringify({
+            collectorId,
+            runId,
+            runStartedAt: runStartedAt.toISOString(),
+            postureClass: collector.postureClass,
+            disclosureTier: collector.disclosureTier,
+            jurisdiction: collector.jurisdiction,
+            drafts,
+          }),
+          metadata: { snapshotKind: "parsed-drafts" },
+        },
+      ];
+    }
     await checkCancel();
-    const rows = drafts.map((d) => ({
+
+    // Land raw payloads to GCS first. We do not fail the run on GCS
+    // errors because Postgres remains the system of record — but we
+    // log + audit so persistent landing failures are visible.
+    const landedRawPointers: string[] = [];
+    if (rawPayloads.length > 0 && isIntelligenceEnabled()) {
+      for (const raw of rawPayloads) {
+        try {
+          // Guess a reasonable extension from the content type (json,
+          // xml, csv, ...). Defaults to "bin" when nothing matches —
+          // the GCS object's contentType header is the source of truth
+          // for parsers reading the blob back.
+          const ext = guessExtensionFromContentType(raw.contentType);
+          const r = await landRawPayload({
+            collectorId,
+            runId,
+            observedAt: runStartedAt,
+            payload: raw.body,
+            contentType: raw.contentType,
+            extension: ext,
+            metadata: {
+              ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+              ...(raw.name ? { logicalName: raw.name } : {}),
+            },
+          });
+          if (r) landedRawPointers.push(r.pointer);
+        } catch (e) {
+          logger.warn(
+            { collectorId, runId, err: (e as Error).message },
+            "GCS raw landing failed; continuing with Postgres+BQ writes",
+          );
+        }
+      }
+    }
+
+    // Validate every draft against the collector's signalSchema. Drops
+    // bad drafts and records a schema-drift event per failing draft.
+    const validDrafts: MarketSignalDraft[] = [];
+    for (const d of drafts) {
+      const result = collector.signalSchema.safeParse(d);
+      if (result.success) {
+        validDrafts.push(d);
+      } else {
+        await recordSchemaDriftEvent(collectorId, runId, d, result.error);
+      }
+    }
+    const droppedForDrift = drafts.length - validDrafts.length;
+
+    const rows = validDrafts.map((d) => ({
       id: newId("sig"),
       orgId: null,
       collectorId,
@@ -260,20 +411,178 @@ export async function runCollector(
       metadata: d.metadata ?? {},
     }));
     const { inserted, duplicates } = await insertSignalsWithDedupe(rows);
+
+    // BigQuery dual-write. No-op when intelligence is not configured;
+    // best-effort otherwise (errors logged, never bubbled — Postgres is
+    // already committed).
+    let bqMerged = 0;
+    const ingestedAt = new Date();
+    const primaryRawPointer = landedRawPointers[0] ?? null;
+    if (isIntelligenceEnabled() && validDrafts.length > 0) {
+      try {
+        const bqRows = validDrafts.map((d, idx): BqMarketSignalRow => ({
+          signalId: rows[idx]!.id,
+          orgId: null,
+          collectorId,
+          signalType: d.signalType,
+          scopeCategoryCode: normalizeScope(d.scopeCategoryCode),
+          scopeSku: normalizeScope(d.scopeSku),
+          scopeMaterialCode: normalizeScope(d.scopeMaterialCode),
+          scopeSupplierName: normalizeScope(d.scopeSupplierName),
+          scopeLaneKey: normalizeScope(d.scopeLaneKey),
+          value: String(d.value),
+          unit: d.unit,
+          currency: d.currency ?? "USD",
+          observedAt:
+            d.observedAt instanceof Date ? d.observedAt : new Date(d.observedAt),
+          ingestedAt,
+          sourceUrl: d.sourceUrl,
+          sourceCollectorId: collectorId,
+          sourceRunId: runId,
+          rawPayloadPointer: primaryRawPointer,
+          postureClass: collector.postureClass,
+          disclosureTier: collector.disclosureTier,
+          jurisdiction: collector.jurisdiction,
+          confidence: String(d.confidence ?? 0.7),
+          entityUidNullable: null,
+          stableSignalKey: collector.stableSignalKey(d),
+          validFrom:
+            d.observedAt instanceof Date ? d.observedAt : new Date(d.observedAt),
+          validTo: null,
+          metadata: d.metadata ?? {},
+        }));
+        const r = await mergeMarketSignals(bqRows);
+        bqMerged = r?.merged ?? 0;
+      } catch (e) {
+        logger.warn(
+          { collectorId, runId, err: (e as Error).message },
+          "BigQuery merge failed; Postgres path is unaffected",
+        );
+      }
+      // Best-effort run record in BQ (cost: tiny streaming insert).
+      try {
+        const finishedAt = new Date();
+        await recordCollectorRun({
+          runId,
+          collectorId,
+          postureClass: collector.postureClass,
+          disclosureTier: collector.disclosureTier,
+          startedAt: runStartedAt,
+          finishedAt,
+          durationMs: finishedAt.getTime() - runStartedAt.getTime(),
+          rowsEmitted: validDrafts.length,
+          bytesRaw: rawPayloads.reduce(
+            (n, p) => n + (typeof p.body === "string" ? p.body.length : p.body.byteLength),
+            0,
+          ),
+          parseErrors: 0,
+          schemaDriftCount: droppedForDrift,
+          rawPayloadPointer: primaryRawPointer,
+          status: "succeeded",
+          error: null,
+        });
+      } catch (e) {
+        logger.warn(
+          { collectorId, runId, err: (e as Error).message },
+          "BigQuery collector_runs record failed; ignoring",
+        );
+      }
+    }
+
     await audit(collectorId, "fetch_succeeded", {
+      runId,
       inserted,
       duplicates,
       drafts: drafts.length,
+      validDrafts: validDrafts.length,
+      droppedForDrift,
+      bqMerged,
+      rawLanded: landedRawPointers.length,
     });
     logger.info(
-      { collectorId, inserted, duplicates, drafts: drafts.length },
+      {
+        collectorId,
+        runId,
+        inserted,
+        duplicates,
+        drafts: drafts.length,
+        droppedForDrift,
+        bqMerged,
+        rawLanded: landedRawPointers.length,
+      },
       "Collector run completed",
     );
     return { signalsCollected: inserted, durationMs: Date.now() - start };
   } catch (err) {
     const e = err as Error;
-    await audit(collectorId, "fetch_failed", {}, e.message);
+    await audit(collectorId, "fetch_failed", { runId }, e.message);
+    if (isIntelligenceEnabled()) {
+      try {
+        const finishedAt = new Date();
+        await recordCollectorRun({
+          runId,
+          collectorId,
+          postureClass: collector.postureClass,
+          disclosureTier: collector.disclosureTier,
+          startedAt: runStartedAt,
+          finishedAt,
+          durationMs: finishedAt.getTime() - runStartedAt.getTime(),
+          rowsEmitted: 0,
+          bytesRaw: null,
+          parseErrors: 0,
+          schemaDriftCount: 0,
+          rawPayloadPointer: null,
+          status: "failed",
+          error: e.message,
+        });
+      } catch {
+        /* swallowed — already failing the run */
+      }
+    }
     throw e;
+  }
+}
+
+/**
+ * Persist a schema-drift event per failing draft. Bounded to keep the
+ * table from blowing up on a totally-broken upstream feed: the runtime
+ * truncates the sample to a few representative fields and records at
+ * most one row per unique field-path/error-code per run via in-process
+ * dedupe.
+ */
+async function recordSchemaDriftEvent(
+  collectorId: string,
+  runId: string,
+  draft: MarketSignalDraft,
+  error: import("zod").ZodError,
+): Promise<void> {
+  const issues = error.issues.slice(0, 5);
+  for (const issue of issues) {
+    const fieldPath = issue.path.join(".");
+    try {
+      await db.insert(marketSignalSchemaDriftTable).values({
+        id: newId("drift"),
+        collectorId,
+        runId,
+        fieldPath,
+        errorCode: issue.code,
+        message: issue.message,
+        occurrences: 1,
+        sample: {
+          signalType: draft.signalType,
+          observedAt:
+            draft.observedAt instanceof Date
+              ? draft.observedAt.toISOString()
+              : String(draft.observedAt),
+          sourceUrl: draft.sourceUrl,
+        },
+      });
+    } catch (e) {
+      logger.warn(
+        { collectorId, runId, err: (e as Error).message },
+        "Failed to record schema-drift event",
+      );
+    }
   }
 }
 

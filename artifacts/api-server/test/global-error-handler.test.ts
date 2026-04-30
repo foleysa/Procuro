@@ -79,9 +79,14 @@ function buildApp(register: (r: Router) => void): Express {
   // no-op logger so the handler runs without standing up a full logger
   // (and without pino spamming stdout during the test run).
   app.use((req, _res, next) => {
-    (req as unknown as { log: { error: () => void } }).log = {
-      error: () => undefined,
-    };
+    // The handler only ever calls `req.log.error(...)`, but the real
+    // pino-http logger surface has many more members than that. Cast
+    // through `unknown` so the no-op stub satisfies the assignment
+    // without us having to mock every pino field.
+    (req as unknown as { log: { error: (...args: unknown[]) => void } }).log =
+      {
+        error: () => undefined,
+      };
     next();
   });
   const router = Router();

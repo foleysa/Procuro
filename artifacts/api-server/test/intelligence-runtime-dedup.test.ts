@@ -50,6 +50,10 @@ import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../src/lib/intelligence/collector";
+import {
+  defaultStableSignalKey,
+  looseSignalDraftSchema,
+} from "../src/lib/intelligence/contractHelpers";
 
 const TEST_COLLECTOR_ID = `test-dedup-${Date.now()}-${process.pid}`;
 
@@ -64,6 +68,15 @@ function makeCollector(
     sourceUrl: "https://example.test/dedup",
     defaultRateLimitRpm: 60,
     defaultScheduleCron: null,
+    postureClass: "public_api",
+    disclosureTier: "T1",
+    jurisdiction: "US",
+    retentionDays: 365,
+    tenantOptInDefault: true,
+    signalSchema: looseSignalDraftSchema,
+    stableSignalKey(d) {
+      return defaultStableSignalKey(TEST_COLLECTOR_ID, d);
+    },
     async collect() {
       // Return a fresh copy each call so tests can mutate the next batch
       // without leaking through object identity.

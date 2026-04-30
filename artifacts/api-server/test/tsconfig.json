@@ -13,6 +13,7 @@
   "include": ["./**/*.ts", "../src/**/*.ts"],
   "references": [
     { "path": "../../../lib/db" },
-    { "path": "../../../lib/api-zod" }
+    { "path": "../../../lib/api-zod" },
+    { "path": "../../../lib/intelligence" }
   ]
 }

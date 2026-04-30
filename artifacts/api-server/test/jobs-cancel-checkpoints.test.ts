@@ -47,6 +47,10 @@ import {
   CANCELLED_ERROR_MESSAGE,
 } from "../src/lib/jobs/queue";
 import type { IntelligenceCollector } from "../src/lib/intelligence/collector";
+import {
+  defaultStableSignalKey,
+  looseSignalDraftSchema,
+} from "../src/lib/intelligence/contractHelpers";
 import { newId } from "../src/lib/ids";
 
 async function pickOrgId(): Promise<string> {
@@ -194,6 +198,15 @@ test("runCollector stops before invoking the collector when cancelled", async ()
     sourceUrl: "https://example.invalid/cancel-test",
     defaultRateLimitRpm: 60,
     defaultScheduleCron: null,
+    postureClass: "public_api",
+    disclosureTier: "T1",
+    jurisdiction: "US",
+    retentionDays: 365,
+    tenantOptInDefault: true,
+    signalSchema: looseSignalDraftSchema,
+    stableSignalKey(d) {
+      return defaultStableSignalKey(collectorId, d);
+    },
     async collect() {
       collectInvoked = true;
       return [];

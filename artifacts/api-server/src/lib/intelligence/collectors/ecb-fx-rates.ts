@@ -26,6 +26,11 @@
  * backfill below uses to seed multi-year FX context.
  */
 
+import { z } from "zod";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
@@ -282,7 +287,24 @@ export async function fetchEcbBackfillDrafts(): Promise<MarketSignalDraft[]> {
   return buildEcbBackfillDrafts(feeds);
 }
 
-export const ecbFxRatesCollector: IntelligenceCollector = {
+/**
+ * ECB drafts always carry the base/quote currency labels so downstream
+ * consumers don't have to re-parse `unit` to learn which side is which.
+ */
+const ecbMetadataSchema = z
+  .object({
+    base: z.enum(["EUR", "USD"]),
+    quote: z.string().length(3),
+    feed: z.string().min(1),
+    publishedDate: z.string().min(8),
+    derived: z.boolean().optional(),
+    derivedFrom: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+const ecbSignalSchema = buildSignalDraftSchema(ecbMetadataSchema);
+
+export const ecbFxRatesCollector: IntelligenceCollector<typeof ecbSignalSchema> = {
   id: ECB_FX_RATES_COLLECTOR_ID,
   name: "ECB FX Reference Rates",
   description:
@@ -293,6 +315,16 @@ export const ecbFxRatesCollector: IntelligenceCollector = {
   // Hourly Mon-Fri. ECB publishes once per business day around 16:00 CET;
   // hourly polling is cheap (one tiny XML doc) and catches the refresh promptly.
   defaultScheduleCron: "0 * * * 1-5",
+  postureClass: "public_api",
+  // ECB reference rates are universally citable.
+  disclosureTier: "T1",
+  jurisdiction: "EU",
+  retentionDays: 365,
+  tenantOptInDefault: true,
+  signalSchema: ecbSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(ECB_FX_RATES_COLLECTOR_ID, draft);
+  },
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const xml = await fetchEcbFeed();
     const feed = parseEcbDailyFeed(xml);
