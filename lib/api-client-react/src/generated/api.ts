@@ -2085,6 +2085,11 @@ export const useBackfillFredEconomicIndex = <
 };
 
 /**
+ * Returns market signals scoped to the active tenant plus any
+platform-wide (orgId IS NULL) signals. Supports filtering by signal
+type and scope so callers can pull a focused time-series — e.g.
+`signalType=fx_rate&scopeMaterialCode=EUR/USD` for an FX trend chart.
+
  * @summary Recent market signals
  */
 export const getListMarketSignalsUrl = (params?: ListMarketSignalsParams) => {

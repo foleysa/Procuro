@@ -713,10 +713,47 @@ export type RunNextCycleParams = {
 export type ListMarketSignalsParams = {
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 5000
    */
   limit?: number;
+  /**
+ * Filter by signal type (e.g. `fx_rate`, `commodity_index`,
+`economic_index`).
+
+ */
+  signalType?: string;
+  /**
+ * Filter by scope material code. For FX rates this is the currency
+pair (e.g. `EUR/USD`, `USD/JPY`).
+
+ */
+  scopeMaterialCode?: string;
+  /**
+ * Lower bound (inclusive) on `observedAt`. ISO-8601 datetime.
+
+ */
+  observedAfter?: string;
+  /**
+ * Upper bound (inclusive) on `observedAt`. ISO-8601 datetime.
+
+ */
+  observedBefore?: string;
+  /**
+ * Sort direction on `observedAt`. Defaults to `desc` so callers
+that just want "latest 50" keep working unchanged. Use `asc`
+when fetching a chart-friendly time-series.
+
+ */
+  order?: ListMarketSignalsOrder;
 };
+
+export type ListMarketSignalsOrder =
+  (typeof ListMarketSignalsOrder)[keyof typeof ListMarketSignalsOrder];
+
+export const ListMarketSignalsOrder = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type ListJobsParams = {
   /**

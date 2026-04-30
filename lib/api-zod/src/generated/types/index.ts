@@ -60,6 +60,7 @@ export * from "./learnedPrior";
 export * from "./leverId";
 export * from "./listJobsParams";
 export * from "./listJobsStatus";
+export * from "./listMarketSignalsOrder";
 export * from "./listMarketSignalsParams";
 export * from "./listOpportunitiesParams";
 export * from "./listOpportunitiesStatus";

@@ -522,11 +522,48 @@ paths:
       operationId: listMarketSignals
       tags: [market-signals]
       summary: Recent market signals
+      description: |
+        Returns market signals scoped to the active tenant plus any
+        platform-wide (orgId IS NULL) signals. Supports filtering by signal
+        type and scope so callers can pull a focused time-series — e.g.
+        `signalType=fx_rate&scopeMaterialCode=EUR/USD` for an FX trend chart.
       parameters:
         - $ref: "#/components/parameters/OrgIdHeader"
         - in: query
           name: limit
-          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 50 }
+        - in: query
+          name: signalType
+          description: |
+            Filter by signal type (e.g. `fx_rate`, `commodity_index`,
+            `economic_index`).
+          schema: { type: string }
+        - in: query
+          name: scopeMaterialCode
+          description: |
+            Filter by scope material code. For FX rates this is the currency
+            pair (e.g. `EUR/USD`, `USD/JPY`).
+          schema: { type: string }
+        - in: query
+          name: observedAfter
+          description: |
+            Lower bound (inclusive) on `observedAt`. ISO-8601 datetime.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: observedBefore
+          description: |
+            Upper bound (inclusive) on `observedAt`. ISO-8601 datetime.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: order
+          description: |
+            Sort direction on `observedAt`. Defaults to `desc` so callers
+            that just want "latest 50" keep working unchanged. Use `asc`
+            when fetching a chart-friendly time-series.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         "200":
           description: Signals

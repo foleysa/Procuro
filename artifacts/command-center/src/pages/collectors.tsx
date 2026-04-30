@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
 import { Radar, Loader2, Play, History } from "lucide-react";
+import { FxTrendChart } from "@/components/fx-trend-chart";
 
 const ECB_FX_RATES_COLLECTOR_ID = "ecb-fx-rates";
 const FRED_ECONOMIC_INDEX_COLLECTOR_ID = "fred-economic-index";
@@ -202,6 +203,8 @@ export default function Collectors() {
           </div>
         </CardContent>
       </Card>
+
+      <FxTrendChart />
 
       <Card>
         <CardHeader><CardTitle>Recent market signals</CardTitle></CardHeader>

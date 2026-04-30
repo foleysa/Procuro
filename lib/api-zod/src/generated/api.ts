@@ -1085,10 +1085,17 @@ export const BackfillFredEconomicIndexResponse = zod.object({
 });
 
 /**
+ * Returns market signals scoped to the active tenant plus any
+platform-wide (orgId IS NULL) signals. Supports filtering by signal
+type and scope so callers can pull a focused time-series — e.g.
+`signalType=fx_rate&scopeMaterialCode=EUR/USD` for an FX trend chart.
+
  * @summary Recent market signals
  */
 export const listMarketSignalsQueryLimitDefault = 50;
-export const listMarketSignalsQueryLimitMax = 200;
+export const listMarketSignalsQueryLimitMax = 5000;
+
+export const listMarketSignalsQueryOrderDefault = `desc`;
 
 export const ListMarketSignalsQueryParams = zod.object({
   limit: zod.coerce
@@ -1096,6 +1103,32 @@ export const ListMarketSignalsQueryParams = zod.object({
     .min(1)
     .max(listMarketSignalsQueryLimitMax)
     .default(listMarketSignalsQueryLimitDefault),
+  signalType: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter by signal type (e.g. `fx_rate`, `commodity_index`,\n`economic_index`).\n",
+    ),
+  scopeMaterialCode: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter by scope material code. For FX rates this is the currency\npair (e.g. `EUR\/USD`, `USD\/JPY`).\n",
+    ),
+  observedAfter: zod
+    .date()
+    .optional()
+    .describe("Lower bound (inclusive) on `observedAt`. ISO-8601 datetime.\n"),
+  observedBefore: zod
+    .date()
+    .optional()
+    .describe("Upper bound (inclusive) on `observedAt`. ISO-8601 datetime.\n"),
+  order: zod
+    .enum(["asc", "desc"])
+    .default(listMarketSignalsQueryOrderDefault)
+    .describe(
+      'Sort direction on `observedAt`. Defaults to `desc` so callers\nthat just want \"latest 50\" keep working unchanged. Use `asc`\nwhen fetching a chart-friendly time-series.\n',
+    ),
 });
 
 export const ListMarketSignalsHeader = zod.object({
