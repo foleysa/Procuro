@@ -1,0 +1,117 @@
+RED TEAM:
+CRITICAL — stage-definition holes that will produce garbage data
+RT-1. signals_collected is ambiguous about deduplication.
+A signal "collected" in cycle N may already exist from cycle N-1 (BLS series re-fetched, ECB rate re-fetched but unchanged). Are these counted as new collections or unique observations? If a tenant has 30 BLS series fetched every 6h, that's 120 "signals collected" per day per tenant — almost all redundant. The rate of "signals collected → signals mapped" becomes meaningless because the numerator is dominated by re-fetches. Spec must define signals_collected as either (a) unique signal_id+observation_timestamp pairs new in this cycle, or (b) all rows touched. These produce wildly different conversion rates. Fix: explicit definition. Recommend (a) — only new observations count.
+RT-2. signals_mapped definition is circular.
+The spec says "subset where the signal matches a category, material, supplier, or currency the tenant actually has." Two problems:
+
+"Material" mapping is undefined and impossible per the prior red team — there's no material_code column. Including "material" in the spec resurrects the exact issue RT-3 in the prior round flagged. Drop "material" from the mapping criteria. Categories, suppliers, currencies only.
+Currency mapping requires supplier.billing_currency. Per the prior red team's RT-2 on #180, this field is sparse. The funnel will show every FX signal as "unmapped" for tenants where billing currency isn't populated, which makes FX appear as a signals→mapped bottleneck when the actual bottleneck is a missing supplier field. Fix: add a mapped_via field per signal in the drill-down (category | supplier | currency | unmapped) AND a mapping_data_health annotation that flags tenants with low billing_currency coverage so the operator can distinguish "no exposure" from "missing data."
+
+RT-3. signals_analyzed requires the lineage refactor and the spec calls it "lightweight."
+This is an executor trap. "Extend the lever analyze() contract" across ~28 levers is not lightweight — it's touching every lever, even the ones that return empty. Worse: levers that consult signals indirectly (e.g., a lever that reads an aggregate computed earlier in the cycle that itself was derived from signals) won't naturally know which raw signals fed their decision. The honest contract is either:
+
+(a) Each lever explicitly declares the signal IDs it consulted directly. Levers using derived/aggregated state declare nothing → understates signals_analyzed.
+(b) Track signal lineage through the aggregation pipeline so derived state carries provenance forward. This is real work, not lightweight.
+Fix: spec must (i) drop "lightweight," (ii) define which contract is in scope (recommend (a) for v1, with explicit acknowledgment that aggregate-consuming levers under-report), and (iii) add a stage-quality flag so operators know signals_analyzed is a lower bound.
+
+RT-4. drafts_produced vs opps_persisted — the filter chain isn't decomposed.
+The spec collapses "exclusion rules + materiality filters + prior filtering" into one stage gap. But these are three distinct mechanisms with three distinct learning implications:
+
+Exclusion rules dropping a draft → user previously rejected this kind, system learned correctly
+Materiality threshold dropping a draft → tenant has small exposure, expected behavior
+Prior confidence filter dropping a draft → the Learn loop is filtering it; this is THE stage where "is the existing Learn loop helping" gets answered
+Bundling them means the funnel can't tell you whether priors are over-filtering. That's exactly the question this whole substrate exists to answer. Fix: decompose drafts → opps_persisted into three sub-stages: drafts_post_exclusion, drafts_post_materiality, opps_persisted (post-prior). Three conversion rates, not one. This is the single highest-value edit to the spec.
+
+RT-5. priors_updated count is not a meaningful learning signal.
+Counting "priors_updated rows mutated" tells you the Learn loop ran, not that it learned anything useful. A prior mutated by 0.001 counts the same as a prior mutated by 0.4. Fix: capture magnitude and direction — prior_delta_distribution (mean, max, count of mutations exceeding a threshold). Otherwise this stage is theater.
+HIGH — counting and conversion-rate semantics
+RT-6. Conversion rates between asynchronous stages are nonsensical as instantaneous ratios.
+opps_persisted → opps_approved happens across cycles, not within one. An opp persisted in cycle N may be approved in cycle N+5. The spec says "count of approve decision events in this cycle's outcome window (i.e. since previous cycle)." That's a flow rate, not a conversion rate of THIS cycle's persisted opps. Dividing approves-this-window by opps-persisted-this-cycle produces a ratio that doesn't mean what it looks like — could exceed 100% if a backlog clears.
+Fix: the spec must distinguish two metric families:
+
+Within-cycle conversion rates (signals → mapped → analyzed → drafts → opps_persisted): legitimate ratios, computed on this cycle's data.
+Cohort conversion rates (opps_persisted → approved → executed → realized): tracked by following an opp persisted in cycle N forward over time, with windowed rates ("of opps persisted 30+ days ago, % approved").
+Mixing them in one funnel view is the kind of thing that looks right and silently misleads. This needs explicit treatment in the spec.
+
+RT-7. Cycle-over-cycle delta detection threshold (±25%) is arbitrary and will produce noise on small denominators.
+A stage processing 4 signals last cycle and 5 this cycle is a +25% conversion rate change but statistically meaningless. The auto-annotation will fire constantly for low-volume tenants and ignore real shifts at high-volume tenants where 5% absolute changes are signal. Fix: require BOTH a relative threshold AND an absolute denominator floor (e.g., flag only if relative change ≥25% AND at least N events in both windows, where N is hardcoded per stage). Otherwise the auto-annotation feed is noise on day one and operators stop trusting it.
+RT-8. Backfill claim is overstated.
+Spec says "best-effort — drill-downs may be partial where prior state isn't preserved." This understates the problem. Drop reasons for prior cycles likely weren't logged (they're being added now). Exclusion-rule drops, materiality drops, prior-filter drops — these were either logged at info level and rotated, or never persisted. Reconstructing drafts → opps_persisted decomposition from history is mostly impossible. Fix: spec must distinguish what backfill CAN reconstruct (counts at stages where the source data exists: signal counts, opp counts, decision counts) from what it CANNOT (drop reasons, signal lineage, filter decomposition). State this explicitly so the executor doesn't ship a backfill that silently fabricates drop reasons or builds in a way that papers over missing history.
+RT-9. Auto-annotations and operator annotations share a table but mean different things — schema couples them.
+Spec puts both in funnel_annotations with a source field. Fine for storage, but the read views need to render them differently — auto-annotations are diagnostic noise, operator annotations are intentional context. The spec doesn't say how the admin surface distinguishes them visually or whether operators can dismiss/acknowledge auto-annotations. Fix: add acknowledged_at and acknowledged_by fields for auto-annotations, and require the surface to separate the two streams visually. Otherwise the annotation timeline becomes unreadable after a month.
+MEDIUM — executor traps and missing scope
+RT-10. "Cross-tenant admin views" specifies aggregation but not aggregation method.
+What does an aggregated funnel across tenants look like? Sum of counts? Median conversion rate? Weighted average? Each produces a different view with different meanings. Without specification, the executor will pick something — and it'll be the wrong thing for at least some questions you'll want to ask. Fix: spec the aggregation explicitly. Recommend: median conversion rate per stage with p10/p90 bands across tenants, plus total volume counts. Surface the distribution shape, not just a midpoint.
+RT-11. Tenant isolation language is correct but the spec doesn't require an isolation test.
+"Tenant isolation is critical" is in the architectural notes but not in the test list. The test list says "tenant isolation on every read endpoint" generically. Fix: require an explicit cross-tenant leakage test — create two tenants, write snapshots in both, verify tenant A cannot read tenant B's snapshots via every read endpoint AND verify the cross-tenant admin view properly gates by role. Make it a named test, not a generic line item.
+RT-12. The spec doesn't define what "cycle" means precisely.
+Is cycle_id already a first-class concept with stable IDs? Or is each runAnalysisCycle invocation creating an implicit cycle that must now be named? If the latter, this is a schema/code change beyond what the spec describes. Fix: spec must state whether cycle_id exists today and where, or define how it's created in this task.
+RT-13. No definition of done for "the funnel works."
+The Done section lists shipped artifacts but not behavioral verification. How does the operator know the funnel is producing correct numbers, not just numbers? Fix: add a verification step: after deploy, run on a sample tenant for 3 cycles, manually verify counts at each stage against direct DB queries, document discrepancies. This is the difference between "code shipped" and "instrumentation trustworthy."
+RT-14. The spec doesn't say what happens to opps that change cycles.
+An opp persisted in cycle N, then re-evaluated in cycle N+1 (lever reruns and re-asserts the same opp), then approved in cycle N+2. Does the approval count against cycle N's persistence or cycle N+1's? The spec doesn't define cohort assignment for opps that touch multiple cycles. This silently corrupts the cohort conversion rates from RT-6. Fix: explicit rule — recommend "cohort-by-first-persistence" with a re-evaluation flag.
+RT-15. The 4-6 week v2-gating window has no measurement criteria.
+Out-of-scope says v2 is "gated on 4–6 weeks of admin-only data revealing which 1–2 stages consistently bottleneck." But there's no definition in the spec of what "consistently bottleneck" means or how it'll be measured. This isn't a flaw in #185 itself, but it means #185's success criteria are loose. Fix: add a closing line — "Success of this task is verified by a v2-readiness review at the 4-week mark using metrics defined in a separate review task." This makes the gating accountable, not aspirational.
+LOW — polish and language tightening
+RT-16. "Defensive — never throws into the cycle" can swallow real bugs.
+Wrapping the snapshot writer in try/catch means a snapshot writer that fails on every cycle for a structural reason (e.g., schema migration didn't run) will silently log errors no one reads. Fix: require the snapshot writer to also increment a metric and surface failures on the admin observability surface itself, so missing snapshots are visible. Failures that only log are failures that don't get fixed.
+RT-17. The 1000-entity cap on drill-down is arbitrary.
+For a tenant with 5000 signals collected, capping drill-down at 1000 means the operator can't audit 80% of them. Fix: either raise the cap and store it externally (e.g., write entity drill-downs to object storage with a pointer in the snapshot row) or make the cap per-stage configurable. 1000 is fine for priors_updated; small for signals_collected on large tenants.
+RT-18. "Functional UI only — no design polish" is good but vague.
+The executor will read this as "ship something ugly." Better framing: "Operator surface uses existing admin-page patterns; no new components, no novel visualizations beyond a stacked-bar funnel and a line chart for trend." Anchor to existing patterns rather than negating polish.
+WHAT'S MISSING ENTIRELY
+RT-19. No metric for the funnel's own performance impact.
+Snapshotting on every cycle adds cost — DB writes, JSON serialization of drill-downs, conversion-rate computation, delta-pass computation. Spec doesn't bound this. Fix: add a performance budget: snapshot capture must add <X% to cycle wall-clock time (recommend <5%). Require measurement on a representative tenant.
+RT-20. No data retention policy.
+funnel_snapshots will grow unbounded. At one snapshot per tenant per cycle, with 4 cycles/day, 100 tenants = 1.4M rows/year, each containing JSONB drill-downs of up to 1000 IDs × 9 stages. Fix: specify retention — recommend full snapshots retained 90 days, then aggregate-only (counts and rates without drill-down JSON) retained indefinitely.
+RT-21. The spec doesn't address what the operator does when they spot a bottleneck.
+This is intentionally out of scope — interventions are future tasks — but the spec should explicitly note that the admin surface should NOT include "recommended actions" or "fix this bottleneck" CTAs, even tempting ones. Otherwise the executor will add a "review opportunities to improve this stage" link and we're back to surface-creep. Fix: add to "Architectural notes": "The admin surface displays state. It does not recommend interventions. No CTAs from a bottleneck flag to any other surface."
+RT-22. No mention of what cycle's input window means precisely.
+For signals_collected, the spec says "rows with observed_at inside the cycle's input window." What defines the window? Cycle start time minus 6h? Time since last cycle? This affects signal counts directly. Fix: explicit definition. Recommend "from previous cycle's start time to this cycle's start time" — stable, no overlap, no gap.
+
+REBUILD: The spec has 22 issues spanning critical to low. Six are critical or high enough that the executor will produce broken or misleading instrumentation if the spec ships unchanged. The right move is targeted edits, not a rebuild — the architecture is sound.
+The minimum edit set to make this ship-ready:
+
+RT-1, RT-22: Define signals_collected precisely and specify the cycle input window.
+RT-2: Drop "material" from mapping criteria. Add mapped_via and mapping_data_health annotation.
+RT-3: Drop "lightweight." Define lineage contract scope (recommend (a)). Add stage-quality flag.
+RT-4 (highest-value edit): Decompose drafts → opps_persisted into three sub-stages: post-exclusion, post-materiality, post-prior.
+RT-5: Capture prior delta magnitude, not just count.
+RT-6: Distinguish within-cycle vs cohort conversion rates explicitly. This is structural.
+RT-7: Delta detection requires both relative threshold and absolute denominator floor.
+RT-8: State explicitly what backfill can and cannot reconstruct.
+RT-13: Add a behavioral verification step (manual count audit on sample tenant).
+RT-19: Add performance budget (<5% cycle overhead).
+RT-20: Specify retention policy (90 days full, aggregates indefinitely).
+RT-21: Explicit prohibition on recommended-action CTAs from bottleneck flags.
+
+The other issues (RT-9, 10, 11, 12, 14, 15, 16, 17, 18) are tighten-the-language edits the executor can resolve with the architectural notes section.
+SHIP:
+Verdict: don't ship the spec as written. Edit, then ship.
+The substrate framing is correct and survives this red team. The failure modes are at the spec level, not the architectural level — which means they're cheap to fix now and expensive to fix after the executor builds.
+The single highest-value edit is RT-4 (decompose drafts → opps_persisted into post-exclusion / post-materiality / post-prior). Without that decomposition, the funnel cannot answer the question this whole substrate exists to answer: is the existing Learn loop helping. One conflated stage there means 4-6 weeks of admin-only operation produces ambiguous data on the most important question.
+The second-highest is RT-6 (within-cycle vs cohort conversion rates). Mixing them silently produces ratios that look right and mislead. This is the kind of bug that doesn't get caught for months because everything renders.
+The third is RT-3 (the "lightweight" trap on signal lineage). The executor will treat that word as license to under-invest, and the result is signals_analyzed being the noisiest stage in the funnel.
+Edits to package back to the agent, in priority order:
+
+Decompose drafts → opps_persisted into three sub-stages.
+Distinguish within-cycle from cohort conversion rates as two metric families.
+Drop "lightweight" from signal lineage; define the contract; flag stage quality.
+Drop "material" from mapping; add mapped_via and data-health flag.
+Define signals_collected (unique new observations) and cycle input window precisely.
+Capture prior-delta magnitude, not just count of rows mutated.
+Delta detection requires absolute denominator floor alongside relative threshold.
+Backfill section: explicit "can reconstruct" / "cannot reconstruct" lists.
+Add behavioral verification step (manual audit on sample tenant for 3 cycles post-deploy).
+Performance budget (<5% cycle overhead) and retention policy (90 days full).
+Architectural note: admin surface displays state, recommends nothing.
+
+After these edits, the spec ships and the executor has the clarity to produce a substrate that actually answers the question it was built to answer. Without them, you get 4-6 weeks of confidently-rendered numbers that don't isolate cause.
+One more thing to flag back to the agent: the spec's biggest tell that it survived multiple red-team passes is what it doesn't say. "Lightweight." "Best-effort." "Defensive — never throws." These are all places where prior red teams compressed disagreements into euphemism. Future spec drafts should treat those words as smoke — every instance is a place where the writer didn't fully resolve a hard question and the executor will resolve it for them, not always correctly.
+
+Learning footer: No new correction-log rule fires from this red team. Existing rules applied:
+
+Structures, not surfaces — confirmed; the spec gets this right.
+Verify with diffs/tests/outputs, not "should work" — this is RT-13. The spec lists artifacts but no behavioral verification. Standing rule, applied to specs as well as deliverables.
+Words like "lightweight," "best-effort," "defensive" hide work — this is a pattern worth elevating. Three separate hits in one spec (RT-3, RT-8, RT-16). Candidate for a new correction-log rule if it appears once more in any future spec or deliverable. Logging as observation, not yet rule.

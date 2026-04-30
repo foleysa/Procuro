@@ -1,0 +1,88 @@
+ROUTE: Strategic decision on Replit/agent task scope — funnel as systems-of-systems substrate, v1 surface scope. Skills: cross-domain-trace (cascading impact lens), strategy-frameworks (foundational decision logic). No corrections triggered. Hat: Staff Engineer crossed with CPO — this is an architecture-vs-product-surface call, not a procurement deliverable.
+RESEARCH:
+What I have from the prior thread:
+
+The agent (different Claude instance) iterated through three red-teams and landed on the funnel framing: signals → mapped → analyzed → drafts → opps → approved → realized → priors. Each arrow is a measurable conversion rate. Each bottleneck is its own intervention.
+This subsumes the prior 10-item learning-engine list. Bottlenecks are revealed by the funnel itself rather than by Claude's opinion.
+#180 (Decision Brief) and #181 (Dashboard re-role) are correctly dead in this framing — both were surface furniture on a static engine.
+The agent asked two questions. Q1 is conceptual validation. Q2 is scope.
+
+What I know about you that's relevant:
+
+You built Marco as the platform precursor and explicitly retired it. The pattern there — building a surface before the engine matured — is the exact mistake the agent just talked itself out of.
+You've been corrected before on "build the engine, surface it later" sequencing. The PDI framework, Cross-Domain Trace, OODA — all of these survived because they were structural, not surface.
+You operate by the rule: structures, not clever prompts. The funnel is a structure. The Decision Brief was a clever prompt.
+
+What I'm assuming:
+
+"User-facing /fusion landing surface" means decision-makers (CPOs, VPs) seeing the meta-system, not operators.
+The agent's "v1" timeline matters — admin-only is days; user-facing is weeks because it requires UX, narrative copy, scoped charts, exposure mapping.
+
+THINK:
+The framing is right. Here's why, and here's the trap.
+Why it's right: The funnel does three things no other proposal did. It (1) makes "where is learning happening" answerable with a conversion rate at every stage, (2) prioritizes interventions by bottleneck rather than by Claude's opinion, and (3) collapses the surface/engine distinction — the surface IS the engine made visible. This is the systems-of-systems shape. Every prior proposal was a single loop or a single mechanism; this is the loop-of-loops.
+The trap: "User-facing /fusion landing surface in v1" is the same mistake as #180. Decision-makers don't want to see a funnel. They want to see "what should I do today and why." The funnel is the substrate that PRODUCES that answer — but it's not the answer itself. Showing a CPO a 7-stage conversion funnel is showing them your factory floor. They want the product off the line.
+There's also a measurement problem with v1-user-facing. You don't yet know which conversion rates are tight vs. loose, which drill-downs are useful vs. noise, which stage labels make sense to non-operators. Shipping that to decision-makers means committing to a UX before you know the data. You'll redesign it three times.
+The 10x version: admin observability v1, then let the funnel run for 4-6 weeks with operators-only watching it. The bottleneck reveals itself. The intervention against that bottleneck ships next. THEN — informed by what actually moved — the user-facing surface is built around the one or two bottleneck-stage views that consistently produce decisions, not as a faithful render of the whole funnel. The user-facing surface becomes a curated slice, not a transparent window.
+Failure modes if you go user-facing in v1:
+
+Empty-state hell. Most stages won't have enough volume to be statistically meaningful for 30+ days. Decision-makers see a half-populated funnel and lose trust.
+Premature commitment to stage definitions. If "drafts → opps" turns out to need decomposition (good drafts filtered by prior vs. weak drafts correctly killed), you've already shipped the wrong UX.
+The Decision Brief problem returns. You'll feel pressure to add narrative, "so what" sentences, recommended actions — and you're back at #180, just with a funnel sidebar.
+
+PLAN:
+
+Confirm: funnel-as-substrate is the right frame. (Yes — with one sharpening: it's not just measurement, it's the operating substrate. Every cycle's output is a funnel snapshot. Every intervention is targeted at a specific stage. This is what makes it systems-of-systems and not just a dashboard.)
+Recommend: v1 = backend + admin observability surface only.
+Specify what v1 must include for the learning the agent wants:
+
+Per-tenant, per-lever, per-cycle funnel persistence (not just live view — historical so trends are visible)
+Drill-down at every stage to the specific entities that did/didn't convert
+Conversion-rate change detection cycle-over-cycle (so a stage that suddenly tightens flags itself)
+Annotation hooks so operators can tag a cycle with context ("regime shift," "data backfill landed," "lever logic changed") — this is how the funnel teaches you which interventions worked
+
+
+Specify the v2 trigger explicitly: after 4-6 weeks of admin-only operation, identify the 1-2 stages that consistently appear as bottlenecks AND whose drill-downs produce decisions. Those become the user-facing slice. The rest stay admin.
+Kill the temptation to ship user-facing v1 with "just enough" UX. There's no "just enough" — either the funnel is the product surface (then it needs full UX investment) or it's the substrate (then operators-only is correct).
+
+BUILD DRAFT — not for shipping:
+Answer to Q1: Yes, funnel-as-substrate matches. One sharpening: frame it as the operating substrate, not just measurement. Every cycle persists a funnel snapshot. Every intervention targets a specific stage. Every prior update is the bottom of the funnel feeding the top of the next one. This is what makes it the systems-of-systems layer and not a dashboard with conversion rates on it.
+Answer to Q2: Backend + admin observability only in v1. Not user-facing /fusion.
+Three reasons:
+One — you don't yet know which stages are the bottlenecks. Shipping user-facing means committing to UX before the data tells you what's worth surfacing. You'll redesign it three times. Run it admin-only for 4-6 weeks, watch which conversion rates are tight, which drill-downs produce decisions, which stage labels operators actually use. THEN build the user-facing slice around what proved out.
+Two — decision-makers don't want a funnel. They want the answer the funnel produces. A CPO seeing a 7-stage conversion view is seeing your factory floor, not your product. The Decision Brief failure (#180) was surfacing engine state without engine maturity. The funnel-as-user-surface is the same failure with a better diagram. The right user-facing surface, eventually, is a curated slice of one or two bottleneck-stage views — not a transparent window into the whole funnel.
+Three — empty states will kill trust on day one. Most stages won't have statistically meaningful volume for 30+ days. A half-populated funnel shipped to decision-makers reads as "this product isn't working" even when the engine is working fine. Operators tolerate sparse data; decision-makers don't.
+What v1 must include for learning to actually compound:
+
+Per-tenant, per-lever, per-cycle funnel snapshots persisted historically (not just live)
+Drill-down at every stage to the entities that did/didn't convert
+Cycle-over-cycle delta detection on conversion rates (auto-flag stages that tighten or loosen)
+Operator annotation hooks (so cycles can be tagged with context — regime shift, data backfill, lever logic change — and the funnel learns which interventions moved which stage)
+
+Explicit v2 gating criteria: after 4-6 weeks of admin-only operation, the 1-2 stages whose bottleneck status is consistent AND whose drill-downs reliably produce action become the user-facing slice. Everything else stays admin. No "just enough UX" compromise — either a stage earns full product treatment or it stays operator-only.
+RED TEAM:
+Three challenges to my own answer:
+
+"Admin-only delays user value 4-6 weeks." True, but the alternative is shipping a Decision Brief #180 in different clothes. The user-facing surface built without the funnel teaching you what matters is the exact failure mode the agent just iterated out of. 4-6 weeks of operator-only is the cheapest data acquisition possible for the right v2 design. Skipping it is paying with rework.
+"What if no clear bottleneck emerges in 4-6 weeks?" Possible. If conversion rates are roughly uniform across stages, that itself is the answer: the system is balanced and the highest-leverage intervention is volume (more signals, more tenants, more cycles), not stage-specific tuning. The funnel still earns its keep by ruling out stage-specific interventions and forcing the volume conversation. Either outcome is informative.
+"The agent is asking the user to make a product decision the agent should make." Partial hit. The agent correctly bounded its own authority — admin-only vs. user-facing is a scope-of-investment call, not a technical call. But the agent could have made the recommendation more forcefully. My answer above is what the agent's own logic implies; it just stopped short of stating it. That's worth flagging back: the agent's red-team-of-red-team correctly identified that #180 was the trap; the v1 user-facing option is the same trap with a funnel skin. The agent should be told that directly so it doesn't re-propose it next round.
+
+Correction-log line: No new rule. This is the existing structures-not-surfaces rule applied to a Replit/agent context. The rule is already in the correction log; this is a clean application.
+REBUILD: No sections flagged for rebuild. Red team confirmed the answer; the third challenge becomes a closing line for the agent rather than a structural change.
+SHIP:
+Q1 — Yes, funnel-as-substrate matches. One sharpening: frame it as the operating substrate, not a measurement layer. Every cycle persists a funnel snapshot. Every intervention targets a specific stage. The bottom of the funnel feeds the top of the next cycle through prior updates. This is what makes it systems-of-systems and not a dashboard.
+Q2 — Backend + admin observability only in v1. Not user-facing.
+Three reasons:
+You don't yet know which stages are the bottlenecks. Shipping user-facing means committing to UX before the data tells you what's worth surfacing. Run it admin-only for 4-6 weeks, watch which conversion rates are tight, which drill-downs produce decisions, which stage labels operators actually use. Then build the user-facing slice around what proved out.
+Decision-makers don't want a funnel. They want the answer the funnel produces. Showing a CPO a 7-stage conversion view is showing them your factory floor, not your product. The Decision Brief failure (#180) was surfacing engine state without engine maturity. Funnel-as-user-surface is the same failure with a better diagram. The right user-facing surface, eventually, is a curated slice of one or two bottleneck-stage views — not a transparent window into the whole funnel.
+Empty states will kill trust on day one. Most stages won't have statistically meaningful volume for 30+ days. A half-populated funnel shipped to decision-makers reads as "this product isn't working" even when the engine is working fine. Operators tolerate sparse data; decision-makers don't.
+v1 must include, for learning to compound:
+
+Per-tenant, per-lever, per-cycle funnel snapshots persisted historically (not just live)
+Drill-down at every stage to entities that did/didn't convert
+Cycle-over-cycle delta detection on conversion rates (auto-flag stages that tighten or loosen)
+Operator annotation hooks (tag cycles with context — regime shift, backfill, lever logic change — so the funnel learns which interventions moved which stage)
+
+v2 gating, explicit: after 4-6 weeks, the 1-2 stages whose bottleneck status is consistent AND whose drill-downs reliably produce action become the user-facing slice. Everything else stays admin. No "just enough UX" compromise — a stage either earns full product treatment or stays operator-only.
+One thing to flag back to the agent: your own red-team-of-red-team correctly identified that #180 was the trap of surfacing engine state without engine maturity. The v1-user-facing option is that trap with a funnel skin. State the recommendation forcefully so it doesn't reappear next round. The funnel earns its way to user-facing by surviving 4-6 weeks of operator scrutiny first.
+Write up the foundational task. Admin observability v1. Build it.
