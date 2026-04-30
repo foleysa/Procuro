@@ -8,13 +8,57 @@ import {
   rejectionReasonCodes,
   type LeverId,
   type OpportunityStatus,
-  type RejectionReasonCode,
 } from "@workspace/db";
 import { and, eq, desc, sql, or, lt } from "drizzle-orm";
+import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
 
 const router: IRouter = Router();
+
+// Body schemas for the action endpoints. Defined at module scope so the
+// validation tests can import them directly and share the exact shape
+// the production routes ship with. The two routes call `.parse(...)`
+// and rely on the global error handler to map any thrown `ZodError`
+// to `400 { error, details }` (see `lib/global-error-handler.ts`),
+// matching the wire shape the collectors routes use after task #92.
+export const rejectOpportunityBodySchema = z.object({
+  reasonCode: z.enum(rejectionReasonCodes),
+  // Preserve the previous `asOptionalString` semantics: missing,
+  // null, or empty-string values all collapse to `null` so the DB
+  // column stores a single canonical "no note" form.
+  reasonText: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((v) => (typeof v === "string" && v.length > 0 ? v : null)),
+});
+
+export const realizeOpportunityBodySchema = z.object({
+  // Preserve the previous `asNumber` semantics exactly:
+  //   - JSON numbers must be finite (no NaN/Infinity).
+  //   - Numeric strings (e.g. `"123.45"`) are accepted, but the empty
+  //     string is rejected — naive `z.coerce.number()` would silently
+  //     turn `""` into `0` and record a phantom realized-savings value
+  //     on this state-changing endpoint, which the old hand-rolled
+  //     validator explicitly guarded against (`v.length > 0`).
+  realizedSavingsUsd: z.union([
+    z.number().finite(),
+    z
+      .string()
+      .min(1)
+      .transform((s, ctx) => {
+        const n = Number(s);
+        if (!Number.isFinite(n)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Expected a finite number",
+          });
+          return z.NEVER;
+        }
+        return n;
+      }),
+  ]),
+});
 
 // Single SQL pass: refresh cycle counters + actPayload after a status change.
 async function updateCycleAggregates(
@@ -244,21 +288,6 @@ async function loadOppOrThrow(orgId: string, id: string) {
   return row;
 }
 
-function asString(v: unknown): string {
-  if (typeof v === "string" && v.length > 0) return v;
-  throw new Error("Required string field missing");
-}
-function asOptionalString(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
-function asNumber(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.length > 0 && Number.isFinite(Number(v))) {
-    return Number(v);
-  }
-  throw new Error("Required numeric field missing");
-}
-
 router.post("/opportunities/:id/approve", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
@@ -296,19 +325,11 @@ router.post("/opportunities/:id/approve", tenantMiddleware, async (req, res) => 
 router.post("/opportunities/:id/reject", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  let reasonCode: RejectionReasonCode;
-  try {
-    const code = asString(body.reasonCode);
-    if (!(rejectionReasonCodes as readonly string[]).includes(code)) {
-      throw new Error(`Unknown reasonCode: ${code}`);
-    }
-    reasonCode = code as RejectionReasonCode;
-  } catch (e) {
-    res.status(400).json({ error: (e as Error).message });
-    return;
-  }
-  const reasonText = asOptionalString(body.reasonText);
+  // Throw on invalid input and let the global error handler shape the
+  // 400 response (`{ error, details }`). See global-error-handler.ts.
+  const { reasonCode, reasonText } = rejectOpportunityBodySchema.parse(
+    req.body,
+  );
 
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
@@ -384,14 +405,9 @@ router.post("/opportunities/:id/execute", tenantMiddleware, async (req, res) => 
 router.post("/opportunities/:id/realize", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  let realizedSavingsUsd: number;
-  try {
-    realizedSavingsUsd = asNumber(body.realizedSavingsUsd);
-  } catch (e) {
-    res.status(400).json({ error: (e as Error).message });
-    return;
-  }
+  // Throw on invalid input and let the global error handler shape the
+  // 400 response (`{ error, details }`). See global-error-handler.ts.
+  const { realizedSavingsUsd } = realizeOpportunityBodySchema.parse(req.body);
 
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
