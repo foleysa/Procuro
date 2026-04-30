@@ -4,22 +4,36 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 
 import { Layout } from "./components/layout";
+import Landing from "./pages/landing";
 import Dashboard from "./pages/dashboard";
-import Agents from "./pages/agents";
-import AgentDetail from "./pages/agent-detail";
-import Ledger from "./pages/ledger";
+import Opportunities from "./pages/opportunities";
+import OpportunityDetail from "./pages/opportunity-detail";
+import Approvals from "./pages/approvals";
+import Ooda from "./pages/ooda";
+import Results from "./pages/results";
+import Playbook from "./pages/playbook";
+import Collectors from "./pages/collectors";
 
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/agents" component={Agents} />
-        <Route path="/agents/:id" component={AgentDetail} />
-        <Route path="/ledger" component={Ledger} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      <Route path="/landing" component={Landing} />
+      <Route>
+        <Layout>
+          <Switch>
+            <Route path="/" component={Dashboard} />
+            <Route path="/opportunities" component={Opportunities} />
+            <Route path="/opportunities/:id" component={OpportunityDetail} />
+            <Route path="/approvals" component={Approvals} />
+            <Route path="/ooda" component={Ooda} />
+            <Route path="/results" component={Results} />
+            <Route path="/playbook" component={Playbook} />
+            <Route path="/collectors" component={Collectors} />
+            <Route component={NotFound} />
+          </Switch>
+        </Layout>
+      </Route>
+    </Switch>
   );
 }
 

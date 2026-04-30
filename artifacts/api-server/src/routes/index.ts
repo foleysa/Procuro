@@ -1,16 +1,30 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import orgsRouter from "./orgs";
-import agentsRouter from "./agents";
-import claimsRouter from "./claims";
-import ledgerRouter from "./ledger";
+import meRouter from "./me";
+import spendRouter from "./spend";
+import suppliersRouter from "./suppliers";
+import opportunitiesRouter from "./opportunities";
+import cyclesRouter from "./cycles";
+import collectorsRouter from "./collectors";
+import marketSignalsRouter from "./market-signals";
+import jobsRouter from "./jobs";
+import ingestRouter from "./ingest";
+import billingRouter from "./billing";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(orgsRouter);
-router.use(agentsRouter);
-router.use(claimsRouter);
-router.use(ledgerRouter);
+router.use(meRouter);
+router.use(spendRouter);
+router.use(suppliersRouter);
+router.use(opportunitiesRouter);
+router.use(cyclesRouter);
+router.use(collectorsRouter);
+router.use(marketSignalsRouter);
+router.use(jobsRouter);
+router.use(ingestRouter);
+router.use(billingRouter);
 
 export default router;

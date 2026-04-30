@@ -60,7 +60,8 @@ export function OrgSwitcher() {
                       localStorage.setItem("activeOrgId", currentValue);
                       setActiveOrgId(currentValue);
                       queryClient.clear();
-                      window.location.reload(); // Simple way to refetch everything safely
+                      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+                      window.location.href = `${base}/`;
                     }
                     setOpen(false);
                   }}

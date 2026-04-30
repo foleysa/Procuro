@@ -12,9 +12,16 @@ window.fetch = (input, init = {}) => {
   return originalFetch(input, { ...init, headers });
 };
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 15_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
-const BOOTSTRAP_VERSION = "v2-scis-default";
+const BOOTSTRAP_VERSION = "v3-procuro";
 
 function Bootstrap() {
   const [ready, setReady] = useState(false);
@@ -30,9 +37,8 @@ function Bootstrap() {
           const res = await fetch("/api/orgs");
           const orgs: { id: string; slug: string }[] = await res.json();
           if (orgs && orgs.length > 0) {
-            // Prefer the SCIS demo org if seeded; otherwise pick the first.
             const preferred =
-              orgs.find((o) => o.slug === "scis") ?? orgs[0];
+              orgs.find((o) => o.slug === "scis-procurement") ?? orgs[0]!;
             localStorage.setItem("activeOrgId", preferred.id);
             localStorage.setItem("bootstrapVersion", BOOTSTRAP_VERSION);
           }
@@ -49,7 +55,9 @@ function Bootstrap() {
     return (
       <div className="min-h-screen w-full flex flex-col items-center justify-center bg-background text-foreground">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-        <p className="mt-4 text-sm text-muted-foreground font-medium">Bootscribing System...</p>
+        <p className="mt-4 text-sm text-muted-foreground font-medium">
+          Bootstrapping Procuro...
+        </p>
       </div>
     );
   }

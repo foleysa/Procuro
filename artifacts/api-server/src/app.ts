@@ -26,8 +26,16 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Skip body parsers for the streaming CSV ingest path so it can read the raw req.
+const SKIP_BODY = "/api/ingest/csv-stream/";
+app.use((req, res, next) => {
+  if (req.path.startsWith(SKIP_BODY)) return next();
+  return express.json({ limit: "100mb" })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith(SKIP_BODY)) return next();
+  return express.urlencoded({ extended: true, limit: "100mb" })(req, res, next);
+});
 
 app.use("/api", router);
 

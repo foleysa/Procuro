@@ -4,12 +4,12 @@ info:
   title: Api
   version: 0.1.0
   description: |
-    Outcome Ledger + Agent Registry API.
+    Procurement RaaS API.
 
     Multi-tenant: every request is scoped to the active org via the
     `x-org-id` header. The development server defaults to the seeded
-    SCIS org if the header is absent, but production callers must
-    supply it. All list endpoints return only rows owned by that org.
+    SCIS Procurement org if the header is absent, but production callers
+    must supply it. All list endpoints return only rows owned by that org.
 servers:
   - url: /api
     description: Base API path
@@ -17,13 +17,23 @@ tags:
   - name: health
     description: Health operations
   - name: orgs
-    description: Organizations the active user belongs to
-  - name: agents
-    description: Procurement Agent Registry
-  - name: claims
-    description: Outcome Ledger
-  - name: ledger
-    description: Outcome Ledger summary endpoints
+    description: Tenants the active user belongs to
+  - name: spend
+    description: Aggregated spend overview
+  - name: suppliers
+    description: Supplier directory
+  - name: opportunities
+    description: Procurement opportunities (Tier-1+ levers)
+  - name: cycles
+    description: OODA analysis cycles
+  - name: collectors
+    description: External-intelligence collector registry
+  - name: market-signals
+    description: External market signals
+  - name: jobs
+    description: Async job runner
+  - name: ingest
+    description: Ingestion endpoints (CSV / mock-ERP)
 
 paths:
   /healthz:
@@ -31,7 +41,6 @@ paths:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -44,10 +53,10 @@ paths:
     get:
       operationId: listOrgs
       tags: [orgs]
-      summary: List organizations available to the active user
+      summary: List tenants available to the active user
       responses:
         "200":
-          description: List of organizations
+          description: Tenants
           content:
             application/json:
               schema:
@@ -55,656 +64,1172 @@ paths:
                 items:
                   $ref: "#/components/schemas/Org"
 
-  /agents:
+  /me:
     get:
-      operationId: listAgents
-      tags: [agents]
-      summary: List registered agents in the active org
+      operationId: getMe
+      tags: [orgs]
+      summary: Active tenant context
       parameters:
-        - in: query
-          name: status
-          description: Optional status filter
-          required: false
-          schema:
-            $ref: "#/components/schemas/AgentStatus"
+        - $ref: "#/components/parameters/OrgIdHeader"
       responses:
         "200":
-          description: List of agents
+          description: Current tenant + actor
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Agent"
+                $ref: "#/components/schemas/MeResponse"
+
+  /spend/overview:
+    get:
+      operationId: getSpendOverview
+      tags: [spend]
+      summary: Spend overview (last 12 months)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Aggregated spend
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendOverview"
+
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [suppliers]
+      summary: List suppliers
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Suppliers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierListResponse"
+
+  /opportunities:
+    get:
+      operationId: listOpportunities
+      tags: [opportunities]
+      summary: List opportunities, optionally filtered
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum:
+              [proposed, approved, rejected, executing, realized, expired]
+        - in: query
+          name: leverId
+          schema:
+            $ref: "#/components/schemas/LeverId"
+        - in: query
+          name: cycleId
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Opportunities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityListResponse"
+
+  /opportunities/{id}:
+    get:
+      operationId: getOpportunity
+      tags: [opportunities]
+      summary: Opportunity detail
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Opportunity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /opportunities/{id}/approve:
     post:
-      operationId: createAgent
-      tags: [agents]
-      summary: Register a new agent
+      operationId: approveOpportunity
+      tags: [opportunities]
+      summary: Approve a pending opportunity
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RegisterAgentRequest"
-      responses:
-        "201":
-          description: Agent created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Agent"
-
-  /agents/{agentId}:
-    parameters:
-      - in: path
-        name: agentId
-        required: true
-        schema:
-          type: string
-    get:
-      operationId: getAgent
-      tags: [agents]
-      summary: Get a single agent (with lifetime totals)
+              $ref: "#/components/schemas/ApproveOpportunityRequest"
       responses:
         "200":
-          description: Agent detail
+          description: Updated opportunity
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentDetail"
+                $ref: "#/components/schemas/Opportunity"
+
+  /opportunities/{id}/reject:
+    post:
+      operationId: rejectOpportunity
+      tags: [opportunities]
+      summary: Reject a pending opportunity (with structured reason)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectOpportunityRequest"
+      responses:
+        "200":
+          description: Updated opportunity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Opportunity"
+
+  /opportunities/{id}/execute:
+    post:
+      operationId: executeOpportunity
+      tags: [opportunities]
+      summary: Mark an approved opportunity as executing
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Updated opportunity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Opportunity"
+
+  /opportunities/{id}/realize:
+    post:
+      operationId: realizeOpportunity
+      tags: [opportunities]
+      summary: Record realized savings on an executing opportunity
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RealizeOpportunityRequest"
+      responses:
+        "200":
+          description: Updated opportunity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Opportunity"
+
+  /cycles:
+    get:
+      operationId: listCycles
+      tags: [cycles]
+      summary: List OODA analysis cycles (newest first)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Cycles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cycle"
+
+  /cycles/{id}:
+    get:
+      operationId: getCycle
+      tags: [cycles]
+      summary: Cycle detail incl. observe/orient/decide/act/learn payloads
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Cycle detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CycleDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /cycles/run:
+    post:
+      operationId: runNextCycle
+      tags: [cycles]
+      summary: Trigger the next OODA cycle
+      description: |
+        Runs synchronously by default for the demo dataset. For F500-scale
+        runs, pass `async=true` to enqueue the cycle on the background job
+        queue and poll `/jobs/{id}` for progress and result.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: async
+          required: false
+          schema: { type: boolean, default: false }
+          description: Enqueue as a background job and return a jobId.
+      responses:
+        "200":
+          description: Synchronous cycle result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunCycleResponse"
+        "202":
+          description: Job enqueued for async execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+
+  /priors:
+    get:
+      operationId: listLearnedPriors
+      tags: [cycles]
+      summary: Learned priors per lever for the active tenant
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Priors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LearnedPrior"
+
+  /collectors:
+    get:
+      operationId: listCollectors
+      tags: [collectors]
+      summary: List registered intelligence collectors
+      responses:
+        "200":
+          description: Collectors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Collector"
+    post:
+      operationId: registerCollector
+      tags: [collectors]
+      summary: Register a new collector (or upsert an existing one)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterCollectorRequest"
+      responses:
+        "201":
+          description: Collector registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorMutationResult"
+
+  /collectors/{id}:
     patch:
-      operationId: updateAgent
-      tags: [agents]
-      summary: Update agent metadata or status
+      operationId: patchCollector
+      tags: [collectors]
+      summary: Approve, disable, or rate-limit a collector
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateAgentRequest"
+              $ref: "#/components/schemas/PatchCollectorRequest"
       responses:
         "200":
-          description: Updated agent
+          description: Updated collector
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Agent"
+                $ref: "#/components/schemas/CollectorMutationResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
-  /outcome-claims:
-    get:
-      operationId: listOutcomeClaims
-      tags: [claims]
-      summary: List outcome claims in the active org
+  /collectors/{id}/kill:
+    post:
+      operationId: killCollector
+      tags: [collectors]
+      summary: Activate the kill switch for a collector
       parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Killed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorKillResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collectors/{id}/unkill:
+    post:
+      operationId: unkillCollector
+      tags: [collectors]
+      summary: Release the kill switch for a collector
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Unkilled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorKillResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collectors/{id}/audit:
+    get:
+      operationId: listCollectorAudit
+      tags: [collectors]
+      summary: Audit log for a collector (most-recent first, capped at 100)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollectorAuditEntry"
+
+  /collectors/{id}/run:
+    post:
+      operationId: runCollector
+      tags: [collectors]
+      summary: Run a collector once for the active tenant
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Collector run result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorRunResult"
+
+  /market-signals:
+    get:
+      operationId: listMarketSignals
+      tags: [market-signals]
+      summary: Recent market signals
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
         - in: query
-          name: agentId
-          required: false
-          schema:
-            type: string
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketSignal"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List background jobs for the active tenant
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
         - in: query
           name: status
-          required: false
-          schema:
-            $ref: "#/components/schemas/ClaimStatus"
+          schema: { type: string, enum: [pending, running, succeeded, failed] }
         - in: query
-          name: from
-          description: ISO timestamp lower bound (claimedAt >=)
-          required: false
-          schema:
-            type: string
-            format: date-time
-        - in: query
-          name: to
-          description: ISO timestamp upper bound (claimedAt <=)
-          required: false
-          schema:
-            type: string
-            format: date-time
-        - in: query
-          name: limit
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-            default: 50
-        - in: query
-          name: offset
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
+          name: kind
+          schema: { type: string }
       responses:
         "200":
-          description: Paginated claim list
+          description: Jobs
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClaimListResponse"
-    post:
-      operationId: createOutcomeClaim
-      tags: [claims]
-      summary: Append a new outcome claim
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateClaimBody"
-      responses:
-        "201":
-          description: Claim created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OutcomeClaim"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
 
-  /outcome-claims/{claimId}:
-    parameters:
-      - in: path
-        name: claimId
-        required: true
-        schema:
-          type: string
+  /jobs/{id}:
     get:
-      operationId: getOutcomeClaim
-      tags: [claims]
-      summary: Get a single claim with its event history
-      responses:
-        "200":
-          description: Claim detail
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OutcomeClaimDetail"
-
-  /outcome-claims/{claimId}/verify:
-    parameters:
-      - in: path
-        name: claimId
-        required: true
-        schema:
-          type: string
-    post:
-      operationId: verifyOutcomeClaim
-      tags: [claims]
-      summary: Verify a claim (admin-only). Append-only state transition.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/VerifyClaimBody"
-      responses:
-        "200":
-          description: Updated claim
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OutcomeClaim"
-
-  /outcome-claims/{claimId}/deny:
-    parameters:
-      - in: path
-        name: claimId
-        required: true
-        schema:
-          type: string
-    post:
-      operationId: denyOutcomeClaim
-      tags: [claims]
-      summary: Deny a claim with a required reason. Append-only state transition.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DenyClaimBody"
-      responses:
-        "200":
-          description: Updated claim
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OutcomeClaim"
-
-  /ledger/summary:
-    get:
-      operationId: getLedgerSummary
-      tags: [ledger]
-      summary: Org-wide ledger totals (claimed / verified / denied / invoiced)
-      responses:
-        "200":
-          description: Summary totals
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LedgerSummary"
-
-  /ledger/recent-activity:
-    get:
-      operationId: getRecentActivity
-      tags: [ledger]
-      summary: Most recent claim events across the org
+      operationId: getJob
+      tags: [jobs]
+      summary: Get an async job's status + result
       parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+
+  /ingest/csv:
+    post:
+      operationId: ingestCsvBatch
+      tags: [ingest]
+      summary: Run the CSV adapter against an inline payload
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
         - in: query
-          name: limit
+          name: async
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 50
-            default: 12
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CsvIngestRequest"
       responses:
         "200":
-          description: Recent activity feed
+          description: Synchronous sync result
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ActivityEntry"
+                $ref: "#/components/schemas/SyncResultResponse"
+        "202":
+          description: Job enqueued for async execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
 
-  /ledger/value-by-agent:
-    get:
-      operationId: getValueByAgent
-      tags: [ledger]
-      summary: Verified value grouped by agent (for charts)
+  /ingest/mock-erp:
+    post:
+      operationId: ingestMockErp
+      tags: [ingest]
+      summary: Run the Mock ERP adapter (proves the abstraction)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: async
+          required: false
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MockErpIngestRequest"
       responses:
         "200":
-          description: Per-agent verified totals
+          description: Synchronous sync result
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AgentValueRow"
+                $ref: "#/components/schemas/SyncResultResponse"
+        "202":
+          description: Job enqueued for async execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
 
-  /ledger/value-over-time:
+  /billing/summary:
     get:
-      operationId: getValueOverTime
-      tags: [ledger]
-      summary: Verified value over time (daily buckets, last 30d)
+      operationId: getBillingSummary
+      tags: [opportunities]
+      summary: Realized savings + success-fee summary
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
       responses:
         "200":
-          description: Time series of verified value
+          description: Billing summary
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/TimeBucket"
+                $ref: "#/components/schemas/BillingSummary"
 
 components:
+  parameters:
+    OrgIdHeader:
+      in: header
+      name: x-org-id
+      required: false
+      schema: { type: string }
+      description: |
+        Tenant ID hint. In production, requests MUST present
+        `Authorization: Bearer <token>` and `x-org-id` (if supplied) must
+        match the org bound to that token. In development, this header is
+        accepted standalone.
+    IdPath:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Per-tenant API token. The plaintext token is sha256-hashed server-side
+        and matched against `org_api_tokens.token_hash` to derive the active
+        tenant scope. Required in production; optional in development.
+
+  responses:
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   schemas:
     HealthStatus:
       type: object
+      required: [status, timestamp]
       properties:
         status:
           type: string
-      required: [status]
+          enum: [ok]
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        details: {}
 
     Org:
       type: object
+      required: [id, slug, name, createdAt]
       properties:
-        id:
-          type: string
-        name:
-          type: string
-        slug:
-          type: string
-      required: [id, name, slug]
-
-    AgentStatus:
-      type: string
-      enum: [active, paused, retired]
-
-    ClaimStatus:
-      type: string
-      enum: [claimed, verified, denied, invoiced]
-
-    ClaimEventType:
-      type: string
-      enum: [claimed, verified, denied, invoiced]
-
-    Agent:
-      type: object
-      properties:
-        id:
-          type: string
-        orgId:
-          type: string
-        name:
-          type: string
-        role:
-          type: string
-          description: Job description / role summary
-        kpiDefinition:
-          type: string
-          description: How this agent's outcome is measured
-        status:
-          $ref: "#/components/schemas/AgentStatus"
-        ratePerOutcomeUsd:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        successFeePct:
           type: number
-          format: float
-          description: USD billed to the customer per verified outcome
-        createdAt:
-          type: string
-          format: date-time
-      required:
-        - id
-        - orgId
-        - name
-        - role
-        - kpiDefinition
-        - status
-        - ratePerOutcomeUsd
-        - createdAt
+          description: Default contingency fee on realized savings
+        createdAt: { type: string, format: date-time }
 
-    AgentDetail:
-      allOf:
-        - $ref: "#/components/schemas/Agent"
-        - type: object
-          properties:
-            lifetimeClaimsByStatus:
-              type: object
-              properties:
-                claimed:
-                  type: integer
-                verified:
-                  type: integer
-                denied:
-                  type: integer
-                invoiced:
-                  type: integer
-              required: [claimed, verified, denied, invoiced]
-            lifetimeVerifiedValueUsd:
-              type: number
-              format: float
-            lifetimeBillableUsd:
-              type: number
-              format: float
-              description: ratePerOutcomeUsd * (verified + invoiced count)
+    MeResponse:
+      type: object
+      required: [org]
+      properties:
+        org:
+          $ref: "#/components/schemas/Org"
+        actorEmail: { type: string }
+
+    LeverId:
+      type: string
+      enum:
+        - sku_price_benchmark
+        - maverick_spend
+        - contract_leakage
+        - duplicate_payment
+        - missed_volume_threshold
+        - payment_term_extension
+        - tail_spend_rationalization
+        - supplier_consolidation
+        - contract_renegotiation_trigger
+
+    RejectionReasonCode:
+      type: string
+      enum:
+        - supplier_strategic_do_not_consolidate
+        - supplier_dei_or_diverse_program
+        - compliance_or_legal_block
+        - quality_risk_too_high
+        - timing_blocked_by_business
+        - savings_overstated
+        - already_actioned
+        - other
+
+    SpendOverview:
+      type: object
+      required:
+        [
+          totalSpendUsd,
+          byClass,
+          byCategory,
+          bySupplier,
+          byBusinessUnit,
+          concentration,
+        ]
+      properties:
+        totalSpendUsd: { type: number }
+        byClass:
+          type: array
+          items:
+            type: object
+            required: [spendClass, spendUsd]
+            properties:
+              spendClass: { type: string }
+              spendUsd: { type: number }
+        byCategory:
+          type: array
+          items:
+            type: object
+            required: [categoryId, categoryName, categoryClass, spendUsd]
+            properties:
+              categoryId: { type: string }
+              categoryName: { type: string }
+              categoryClass: { type: string }
+              spendUsd: { type: number }
+        bySupplier:
+          type: array
+          items:
+            type: object
+            required: [supplierId, supplierName, spendUsd, poCount]
+            properties:
+              supplierId: { type: string }
+              supplierName: { type: string }
+              spendUsd: { type: number }
+              poCount: { type: number }
+        byBusinessUnit:
+          type: array
+          items:
+            type: object
+            required: [businessUnit, spendUsd]
+            properties:
+              businessUnit: { type: string }
+              spendUsd: { type: number }
+        concentration:
+          type: object
           required:
-            - lifetimeClaimsByStatus
-            - lifetimeVerifiedValueUsd
-            - lifetimeBillableUsd
-
-    RegisterAgentRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-        role:
-          type: string
-          minLength: 1
-        kpiDefinition:
-          type: string
-          minLength: 1
-        ratePerOutcomeUsd:
-          type: number
-          format: float
-          minimum: 0
-        status:
-          $ref: "#/components/schemas/AgentStatus"
-      required: [name, role, kpiDefinition, ratePerOutcomeUsd]
-
-    UpdateAgentRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-        role:
-          type: string
-          minLength: 1
-        kpiDefinition:
-          type: string
-          minLength: 1
-        ratePerOutcomeUsd:
-          type: number
-          format: float
-          minimum: 0
-        status:
-          $ref: "#/components/schemas/AgentStatus"
-
-    OutcomeClaim:
-      type: object
-      properties:
-        id:
-          type: string
-        orgId:
-          type: string
-        agentId:
-          type: string
-        agentName:
-          type: string
-        claimType:
-          type: string
-          description: Domain label (e.g. "exception_resolution", "contract_renegotiation")
-        title:
-          type: string
-        description:
-          type: string
-          nullable: true
-        evidenceUrl:
-          type: string
-          nullable: true
-        evidenceLabel:
-          type: string
-          nullable: true
-        estimatedValueUsd:
-          type: number
-          format: float
-        status:
-          $ref: "#/components/schemas/ClaimStatus"
-        verifiedBy:
-          type: string
-          nullable: true
-        verifiedAt:
-          type: string
-          format: date-time
-          nullable: true
-        denialReason:
-          type: string
-          nullable: true
-        claimedAt:
-          type: string
-          format: date-time
-      required:
-        - id
-        - orgId
-        - agentId
-        - agentName
-        - claimType
-        - title
-        - estimatedValueUsd
-        - status
-        - claimedAt
-
-    ClaimEvent:
-      type: object
-      properties:
-        id:
-          type: string
-        claimId:
-          type: string
-        eventType:
-          $ref: "#/components/schemas/ClaimEventType"
-        actor:
-          type: string
-          description: Who performed the transition (agent name or user id)
-        reason:
-          type: string
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-      required: [id, claimId, eventType, actor, createdAt]
-
-    OutcomeClaimDetail:
-      allOf:
-        - $ref: "#/components/schemas/OutcomeClaim"
-        - type: object
+            [
+              top10SupplierShare,
+              activeSupplierCount,
+              tailSupplierCount,
+              tailSpendUsd,
+            ]
           properties:
-            events:
-              type: array
-              items:
-                $ref: "#/components/schemas/ClaimEvent"
-          required: [events]
+            top10SupplierShare: { type: number }
+            activeSupplierCount: { type: number }
+            tailSupplierCount: { type: number }
+            tailSpendUsd: { type: number }
 
-    ClaimListResponse:
+    Supplier:
       type: object
+      required: [id, name, isStrategic, isPreferred]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        countryCode: { type: string, nullable: true }
+        paymentTermsDays: { type: string, nullable: true }
+        isStrategic: { type: boolean }
+        isPreferred: { type: boolean }
+        tags:
+          type: array
+          items: { type: string }
+
+    SupplierListResponse:
+      type: object
+      required: [items]
       properties:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/OutcomeClaim"
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-      required: [items, total, limit, offset]
+            $ref: "#/components/schemas/Supplier"
+        nextCursor:
+          type: string
+          nullable: true
 
-    CreateClaimBody:
+    Opportunity:
       type: object
-      properties:
-        agentId:
-          type: string
-        claimType:
-          type: string
-          minLength: 1
-        title:
-          type: string
-          minLength: 1
-        description:
-          type: string
-        evidenceUrl:
-          type: string
-        evidenceLabel:
-          type: string
-        estimatedValueUsd:
-          type: number
-          format: float
-          minimum: 0
-      required: [agentId, claimType, title, estimatedValueUsd]
-
-    VerifyClaimBody:
-      type: object
-      properties:
-        note:
-          type: string
-
-    DenyClaimBody:
-      type: object
-      properties:
-        reason:
-          type: string
-          minLength: 1
-      required: [reason]
-
-    LedgerSummary:
-      type: object
-      properties:
-        totalClaims:
-          type: integer
-        claimedCount:
-          type: integer
-        verifiedCount:
-          type: integer
-        deniedCount:
-          type: integer
-        invoicedCount:
-          type: integer
-        claimedValueUsd:
-          type: number
-          format: float
-        verifiedValueUsd:
-          type: number
-          format: float
-        deniedValueUsd:
-          type: number
-          format: float
-        invoicedValueUsd:
-          type: number
-          format: float
-        billableUsd:
-          type: number
-          format: float
-          description: Sum of ratePerOutcomeUsd across verified claims (what could be invoiced)
       required:
-        - totalClaims
-        - claimedCount
-        - verifiedCount
-        - deniedCount
-        - invoicedCount
-        - claimedValueUsd
-        - verifiedValueUsd
-        - deniedValueUsd
-        - invoicedValueUsd
-        - billableUsd
-
-    ActivityEntry:
-      type: object
+        [
+          id,
+          orgId,
+          cycleId,
+          leverId,
+          tier,
+          status,
+          title,
+          rationale,
+          recommendedAction,
+          rawProjectedSavingsUsd,
+          projectedSavingsUsd,
+          confidence,
+          createdAt,
+        ]
       properties:
-        eventId:
+        id: { type: string }
+        orgId: { type: string }
+        cycleId: { type: string }
+        leverId:
+          $ref: "#/components/schemas/LeverId"
+        tier: { type: integer }
+        status:
           type: string
-        claimId:
+          enum:
+            [proposed, approved, rejected, executing, realized, expired]
+        title: { type: string }
+        rationale: { type: string }
+        recommendedAction: { type: string }
+        supplierId: { type: string, nullable: true }
+        supplierName: { type: string, nullable: true }
+        categoryId: { type: string, nullable: true }
+        categoryName: { type: string, nullable: true }
+        rawProjectedSavingsUsd: { type: number }
+        projectedSavingsUsd: { type: number }
+        confidence: { type: number }
+        realizedSavingsUsd: { type: number, nullable: true }
+        rejectedReasonCode:
+          allOf:
+            - $ref: "#/components/schemas/RejectionReasonCode"
+          nullable: true
+        rejectedReasonText: { type: string, nullable: true }
+        approvedAt: { type: string, format: date-time, nullable: true }
+        rejectedAt: { type: string, format: date-time, nullable: true }
+        executingAt: { type: string, format: date-time, nullable: true }
+        realizedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    OpportunityDetail:
+      allOf:
+        - $ref: "#/components/schemas/Opportunity"
+        - type: object
+          properties:
+            inputs:
+              type: object
+              additionalProperties: true
+            decisions:
+              type: array
+              items:
+                $ref: "#/components/schemas/Decision"
+
+    OpportunityListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Opportunity"
+        nextCursor:
           type: string
-        claimTitle:
-          type: string
-        agentId:
-          type: string
-        agentName:
-          type: string
+          nullable: true
+
+    Decision:
+      type: object
+      required: [id, opportunityId, eventType, actorEmail, createdAt]
+      properties:
+        id: { type: string }
+        opportunityId: { type: string }
         eventType:
-          $ref: "#/components/schemas/ClaimEventType"
-        actor:
           type: string
-        valueUsd:
-          type: number
-          format: float
-        createdAt:
-          type: string
-          format: date-time
+          enum: [approve, reject, execute, realize]
+        actorEmail: { type: string }
+        rejectedReasonCode:
+          allOf:
+            - $ref: "#/components/schemas/RejectionReasonCode"
+          nullable: true
+        rejectedReasonText: { type: string, nullable: true }
+        realizedSavingsUsd: { type: number, nullable: true }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    ApproveOpportunityRequest:
+      type: object
+      properties:
+        notes: { type: string }
+
+    RejectOpportunityRequest:
+      type: object
+      required: [reasonCode]
+      properties:
+        reasonCode:
+          $ref: "#/components/schemas/RejectionReasonCode"
+        reasonText: { type: string }
+
+    RealizeOpportunityRequest:
+      type: object
+      required: [realizedSavingsUsd]
+      properties:
+        realizedSavingsUsd: { type: number }
+        notes: { type: string }
+
+    Cycle:
+      type: object
       required:
-        - eventId
-        - claimId
-        - claimTitle
-        - agentId
-        - agentName
-        - eventType
-        - actor
-        - valueUsd
-        - createdAt
+        [
+          id,
+          orgId,
+          generation,
+          status,
+          opportunitiesCreated,
+          totalProjectedUsd,
+          startedAt,
+        ]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        generation: { type: integer }
+        status:
+          type: string
+          enum: [running, completed, failed]
+        triggeredBy: { type: string }
+        opportunitiesCreated: { type: integer }
+        totalProjectedUsd: { type: number }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
 
-    AgentValueRow:
+    CycleDetail:
+      allOf:
+        - $ref: "#/components/schemas/Cycle"
+        - type: object
+          properties:
+            observePayload: { type: object, additionalProperties: true }
+            orientPayload: { type: object, additionalProperties: true }
+            decidePayload: { type: object, additionalProperties: true }
+            actPayload: { type: object, additionalProperties: true }
+            learnPayload: { type: object, additionalProperties: true }
+
+    RunCycleResponse:
+      type: object
+      required:
+        [cycleId, generation, opportunitiesCreated, totalProjectedUsd]
+      properties:
+        cycleId: { type: string }
+        generation: { type: integer }
+        opportunitiesCreated: { type: integer }
+        totalProjectedUsd: { type: number }
+        priorDeltas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PriorDelta"
+
+    LearnedPrior:
+      type: object
+      required:
+        [
+          leverId,
+          projectionMultiplier,
+          confidenceWeight,
+          evidenceCount,
+          approvalCount,
+          rejectionCount,
+          realizationCount,
+        ]
+      properties:
+        leverId:
+          $ref: "#/components/schemas/LeverId"
+        projectionMultiplier: { type: number }
+        confidenceWeight: { type: number }
+        evidenceCount: { type: integer }
+        approvalCount: { type: integer }
+        rejectionCount: { type: integer }
+        realizationCount: { type: integer }
+        updatedAtCycle: { type: integer, nullable: true }
+
+    PriorDelta:
+      type: object
+      required:
+        [
+          leverId,
+          prevProjectionMultiplier,
+          newProjectionMultiplier,
+          prevConfidenceWeight,
+          newConfidenceWeight,
+          rationale,
+        ]
+      properties:
+        leverId:
+          $ref: "#/components/schemas/LeverId"
+        prevProjectionMultiplier: { type: number }
+        newProjectionMultiplier: { type: number }
+        prevConfidenceWeight: { type: number }
+        newConfidenceWeight: { type: number }
+        approvals: { type: integer }
+        rejections: { type: integer }
+        realizations: { type: integer }
+        rationale: { type: string }
+
+    Collector:
+      type: object
+      required: [id, name, posture, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        posture:
+          type: string
+          enum:
+            [public-api, published-data, respect-robots-crawl, aggressive-crawl]
+        status:
+          type: string
+          enum: [enabled, disabled, killed]
+        sourceUrl: { type: string, nullable: true }
+        defaultRateLimitRpm: { type: integer, nullable: true }
+        defaultScheduleCron: { type: string, nullable: true }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastSignalCount: { type: integer, nullable: true }
+
+    CollectorRunResult:
+      type: object
+      required: [collectorId, signalsWritten, durationMs]
+      properties:
+        collectorId: { type: string }
+        signalsWritten: { type: integer }
+        durationMs: { type: integer }
+        skipped: { type: boolean }
+        skipReason: { type: string }
+
+    MarketSignal:
+      type: object
+      required: [id, signalType, value, observedAt, createdAt]
+      properties:
+        id: { type: string }
+        collectorId: { type: string, nullable: true }
+        signalType: { type: string }
+        scopeMaterialCode: { type: string, nullable: true }
+        scopeCategoryId: { type: string, nullable: true }
+        scopeSupplierId: { type: string, nullable: true }
+        value: { type: number }
+        unit: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        confidence: { type: number, nullable: true }
+        observedAt: { type: string, format: date-time }
+        sourceUrl: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Job:
+      type: object
+      required: [id, kind, status, attempts, enqueuedAt]
+      properties:
+        id: { type: string }
+        orgId: { type: string, nullable: true }
+        kind: { type: string }
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        attempts: { type: integer }
+        progress: { type: integer }
+        result: { type: object, additionalProperties: true, nullable: true }
+        error: { type: string, nullable: true }
+        enqueuedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+
+    SyncResultResponse:
+      type: object
+      required: [recordsProcessed, recordsCreated, recordsUpdated, durationMs]
+      properties:
+        recordsProcessed: { type: integer }
+        recordsCreated: { type: integer }
+        recordsUpdated: { type: integer }
+        recordsDeleted: { type: integer }
+        cursor: { type: string, nullable: true }
+        durationMs: { type: integer }
+
+    CsvIngestRequest:
       type: object
       properties:
-        agentId:
-          type: string
-        agentName:
-          type: string
-        verifiedValueUsd:
-          type: number
-          format: float
-        verifiedCount:
-          type: integer
-      required: [agentId, agentName, verifiedValueUsd, verifiedCount]
+        suppliers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        categories:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        contracts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        purchaseOrders:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        invoices:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        payments:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        shipments:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
 
-    TimeBucket:
+    MockErpIngestRequest:
+      type: object
+      required: [feed]
+      properties:
+        feed:
+          type: array
+          items:
+            type: object
+            required: [type, externalId, updatedAt, payload]
+            properties:
+              type:
+                type: string
+                enum: [supplier, purchase_order, invoice]
+              externalId: { type: string }
+              updatedAt: { type: string, format: date-time }
+              payload:
+                type: object
+                additionalProperties: true
+              deleted: { type: boolean }
+        cursor: { type: string }
+
+    BillingSummary:
+      type: object
+      required:
+        [
+          successFeePct,
+          totalRealizedUsd,
+          totalProjectedUsd,
+          successFeeUsd,
+          byLever,
+        ]
+      properties:
+        successFeePct: { type: number }
+        totalRealizedUsd: { type: number }
+        totalProjectedUsd: { type: number }
+        successFeeUsd: { type: number }
+        byLever:
+          type: array
+          items:
+            type: object
+            required: [leverId, realizedUsd, opportunityCount]
+            properties:
+              leverId:
+                $ref: "#/components/schemas/LeverId"
+              realizedUsd: { type: number }
+              projectedUsd: { type: number }
+              opportunityCount: { type: integer }
+
+    JobAccepted:
+      type: object
+      required: [jobId, status]
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [pending, running] }
+
+    RegisterCollectorRequest:
+      type: object
+      required: [id, name, description, posture, owner, sourceUrl]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 120 }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, minLength: 1, maxLength: 2000 }
+        posture:
+          type: string
+          enum: [public-api, published-data, respect-robots-crawl, aggressive-crawl]
+        owner: { type: string, minLength: 1, maxLength: 200 }
+        sourceUrl: { type: string, format: uri }
+        rateLimitRpm: { type: integer, minimum: 1, maximum: 10000 }
+        scheduleCron: { type: string, nullable: true, maxLength: 120 }
+        notes: { type: string, nullable: true, maxLength: 5000 }
+
+    PatchCollectorRequest:
       type: object
       properties:
-        date:
+        status:
           type: string
-          description: YYYY-MM-DD
-        verifiedValueUsd:
-          type: number
-          format: float
-        verifiedCount:
-          type: integer
-      required: [date, verifiedValueUsd, verifiedCount]
+          enum: [draft, approved, killed, rejected]
+        rateLimitRpm: { type: integer, minimum: 1, maximum: 10000 }
+        scheduleCron: { type: string, nullable: true, maxLength: 120 }
+
+    CollectorMutationResult:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        status: { type: string }
+        killSwitch: { type: boolean }
+        rateLimitRpm: { type: integer }
+
+    CollectorKillResult:
+      type: object
+      required: [id, killSwitch]
+      properties:
+        id: { type: string }
+        killSwitch: { type: boolean }
+
+    CollectorAuditEntry:
+      type: object
+      required: [id, collectorId, event, createdAt]
+      properties:
+        id: { type: string }
+        collectorId: { type: string }
+        event: { type: string }
+        targetUrl: { type: string, nullable: true }
+        statusCode: { type: integer, nullable: true }
+        error: { type: string, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }

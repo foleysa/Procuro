@@ -1,234 +1,164 @@
-import {
-  useGetLedgerSummary,
-  useGetValueByAgent,
-  useGetValueOverTime,
-  useGetRecentActivity,
-} from "@workspace/api-client-react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { formatDistanceToNow, format } from "date-fns";
-import {
-  Bar,
-  BarChart,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  AreaChart,
-  Area,
-  CartesianGrid,
-} from "recharts";
-import { Activity, CheckCircle2, DollarSign, ListTodo } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useGetSpendOverview, useGetMe } from "@workspace/api-client-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatUsd, formatPercent } from "@/lib/format";
+import { Loader2 } from "lucide-react";
 
 export default function Dashboard() {
-  const { data: summary, isLoading: loadingSummary } = useGetLedgerSummary();
-  const { data: valueByAgent, isLoading: loadingByAgent } = useGetValueByAgent();
-  const { data: valueOverTime, isLoading: loadingOverTime } = useGetValueOverTime();
-  const { data: recentActivity, isLoading: loadingActivity } = useGetRecentActivity({ limit: 10 });
+  const { data: me } = useGetMe();
+  const { data, isLoading, error } = useGetSpendOverview();
+
+  if (isLoading) {
+    return (
+      <div className="p-8 flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Loading spend overview…
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="p-8 text-destructive">
+        Failed to load spend overview.
+      </div>
+    );
+  }
+
+  const top10Cat = [...data.byCategory]
+    .sort((a, b) => b.spendUsd - a.spendUsd)
+    .slice(0, 10);
+  const top10Sup = [...data.bySupplier]
+    .sort((a, b) => b.spendUsd - a.spendUsd)
+    .slice(0, 10);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-8 space-y-6 max-w-7xl">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of agent outcomes and verified value.</p>
+        <h1 data-testid="text-page-title" className="text-3xl font-bold">
+          Spend Overview
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          {me?.org.name} · all addressable spend (last 12 months)
+        </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Total Claims"
-          value={summary ? String(summary.totalClaims ?? 0) : undefined}
-          icon={ListTodo}
-          loading={loadingSummary}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Kpi label="Total spend" value={formatUsd(data.totalSpendUsd, { compact: true })} />
+        <Kpi label="Active suppliers" value={data.concentration.activeSupplierCount.toLocaleString()} />
+        <Kpi
+          label="Top‑10 supplier share"
+          value={formatPercent(data.concentration.top10SupplierShare)}
         />
-        <MetricCard
-          title="Verified Outcomes"
-          value={summary ? String(summary.verifiedCount ?? 0) : undefined}
-          icon={CheckCircle2}
-          loading={loadingSummary}
-        />
-        <MetricCard
-          title="Verified Value"
-          value={
-            summary
-              ? `$${Number(summary.verifiedValueUsd ?? 0).toLocaleString()}`
-              : undefined
-          }
-          icon={DollarSign}
-          loading={loadingSummary}
-        />
-        <MetricCard
-          title="Billable Revenue"
-          value={
-            summary
-              ? `$${Number(summary.billableUsd ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-              : undefined
-          }
-          icon={DollarSign}
-          loading={loadingSummary}
-          highlight
+        <Kpi
+          label="Tail spend"
+          value={formatUsd(data.concentration.tailSpendUsd, { compact: true })}
+          sub={`${data.concentration.tailSupplierCount} tail suppliers`}
         />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <Card className="col-span-4">
-          <CardHeader>
-            <CardTitle>Verified Value Over Time</CardTitle>
-            <CardDescription>Daily verified value for the last 30 days</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            {loadingOverTime ? (
-              <Skeleton className="w-full h-full" />
-            ) : valueOverTime && valueOverTime.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={valueOverTime}>
-                  <defs>
-                    <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => format(new Date(val), 'MMM d')}
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis 
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `$${value}`}
-                  />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))' }}
-                    labelFormatter={(val) => format(new Date(val), 'MMM d, yyyy')}
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Verified Value']}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="verifiedValueUsd"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorValue)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
-                No data available
-              </div>
-            )}
+      <Card>
+        <CardHeader><CardTitle>Spend by class</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {data.byClass.map((c) => {
+              const pct = data.totalSpendUsd > 0 ? c.spendUsd / data.totalSpendUsd : 0;
+              return (
+                <div key={c.spendClass} data-testid={`row-class-${c.spendClass}`}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-medium capitalize">{c.spendClass}</span>
+                    <span className="tabular-nums">
+                      {formatUsd(c.spendUsd, { compact: true })} · {formatPercent(pct)}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted rounded">
+                    <div
+                      className="h-full bg-primary rounded"
+                      style={{ width: `${pct * 100}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader><CardTitle>Top 10 categories</CardTitle></CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <tbody>
+                {top10Cat.map((c) => (
+                  <tr key={c.categoryId} className="border-b last:border-0">
+                    <td className="py-2">
+                      <div className="font-medium">{c.categoryName}</div>
+                      <div className="text-xs text-muted-foreground capitalize">
+                        {c.categoryClass}
+                      </div>
+                    </td>
+                    <td className="py-2 text-right tabular-nums">
+                      {formatUsd(c.spendUsd, { compact: true })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
 
-        <Card className="col-span-3">
-          <CardHeader>
-            <CardTitle>Value by Agent</CardTitle>
-            <CardDescription>Total verified value per agent</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            {loadingByAgent ? (
-              <Skeleton className="w-full h-full" />
-            ) : valueByAgent && valueByAgent.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={valueByAgent} layout="vertical" margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
-                  <XAxis type="number" hide />
-                  <YAxis 
-                    dataKey="agentName" 
-                    type="category" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    fontSize={12}
-                    width={100}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: 'hsl(var(--muted))' }}
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))' }}
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Verified Value']}
-                  />
-                  <Bar dataKey="verifiedValueUsd" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
-                No data available
-              </div>
-            )}
+        <Card>
+          <CardHeader><CardTitle>Top 10 suppliers</CardTitle></CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <tbody>
+                {top10Sup.map((s) => (
+                  <tr key={s.supplierId} className="border-b last:border-0">
+                    <td className="py-2">
+                      <div className="font-medium">{s.supplierName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {s.poCount} POs
+                      </div>
+                    </td>
+                    <td className="py-2 text-right tabular-nums">
+                      {formatUsd(s.spendUsd, { compact: true })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest claim events across all agents</CardDescription>
-        </CardHeader>
+        <CardHeader><CardTitle>Spend by business unit</CardTitle></CardHeader>
         <CardContent>
-          {loadingActivity ? (
-            <div className="space-y-4">
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
-            </div>
-          ) : recentActivity && recentActivity.length > 0 ? (
-            <div className="space-y-4">
-              {recentActivity.map((activity) => (
-                <div key={activity.eventId} className="flex items-center gap-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">
-                      Claim <span className="font-semibold">{activity.claimTitle}</span> was {activity.eventType} by {activity.actor}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Agent: {activity.agentName} • Value: ${activity.valueUsd.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="text-xs text-muted-foreground whitespace-nowrap">
-                    {formatDistanceToNow(new Date(activity.createdAt), { addSuffix: true })}
-                  </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {data.byBusinessUnit.map((bu) => (
+              <div key={bu.businessUnit} className="bg-muted/40 rounded-lg p-4">
+                <div className="text-sm font-medium">{bu.businessUnit}</div>
+                <div className="text-xl font-bold tabular-nums mt-1">
+                  {formatUsd(bu.spendUsd, { compact: true })}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-4 text-muted-foreground">
-              No recent activity
-            </div>
-          )}
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function MetricCard({ title, value, icon: Icon, loading, highlight }: any) {
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <Card className={highlight ? "border-primary shadow-sm" : ""}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <Skeleton className="h-8 w-20" />
-        ) : (
-          <div className={`text-2xl font-bold ${highlight ? 'text-primary' : ''}`}>
-            {value !== undefined ? value : "0"}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <div className="bg-card border rounded-lg p-4">
+      <div className="text-xs uppercase text-muted-foreground tracking-wide">
+        {label}
+      </div>
+      <div className="text-2xl font-bold mt-1 tabular-nums">{value}</div>
+      {sub && (
+        <div className="text-xs text-muted-foreground mt-1">{sub}</div>
+      )}
+    </div>
   );
 }
