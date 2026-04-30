@@ -16,7 +16,7 @@ import { parse, type Parser } from "csv-parse";
 import type { Readable } from "node:stream";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
+import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
 import type {
   IsCancelledFn,
   SourceAdapter,
@@ -1390,7 +1390,13 @@ async function flushBatch(
     }
     default: {
       const _exhaustive: never = entity;
-      throw new Error(`streamCsvEntity: unknown entity '${_exhaustive}'`);
+      // Permanent input error: an unknown entity name will never become
+      // valid by retrying. Throw `UnrecoverableJobError` so any caller
+      // running this through the job queue fails immediately on
+      // attempt #1 instead of burning the full retry budget on a typo.
+      throw new UnrecoverableJobError(
+        `streamCsvEntity: unknown entity '${_exhaustive}'`,
+      );
     }
   }
 }

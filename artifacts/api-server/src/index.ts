@@ -15,17 +15,15 @@ import {
   registerJobHandler,
   startWorker,
   startJobPruner,
-  pruneOldJobs,
-  isJobCancelRequested,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
-import { runAnalysisCycle } from "./lib/ooda/cycle";
-import { csvSourceAdapter, type CsvPayload } from "./lib/adapters/csv-adapter";
 import {
-  mockErpSourceAdapter,
-  type MockErpConfig,
-} from "./lib/adapters/mock-erp-adapter";
-import { runCollector } from "./lib/intelligence/runtime";
+  ingestCsvHandler,
+  ingestMockErpHandler,
+  pruneJobsHandler,
+  runAnalysisCycleHandler,
+  runCollectorHandler,
+} from "./lib/jobs/handlers";
 
 const rawPort = process.env["PORT"];
 
@@ -81,58 +79,33 @@ async function seedCollectorRegistry(): Promise<void> {
   }
 }
 
-// Register job handlers.
+// Register job handlers. The handler bodies live in `lib/jobs/handlers`
+// so they can be imported (and exercised) from integration tests.
 //
-// Each long-running handler threads `() => isJobCancelRequested(job.id)`
-// into its underlying worker so an operator pressing Cancel on the
-// System / Jobs page short-circuits the run within seconds at the next
-// safe checkpoint (between OODA phases / CSV entity batches / mock ERP
-// pages / before a collector's HTTP fetch). When the helper sees a
-// cancel flag it throws `Error("Cancelled by operator")`, and
-// `processOnce` in the queue translates that into a terminal `failed`
-// row — no half-written batches, no orphaned "running" jobs.
-registerJobHandler("run_analysis_cycle", async (job) => {
-  const orgId = job.orgId!;
-  const result = await runAnalysisCycle({
-    orgId,
-    triggeredBy: (job.payload?.triggeredBy as string) ?? "job-runner",
-    isCancelled: () => isJobCancelRequested(job.id),
-  });
-  return result as unknown as Record<string, unknown>;
-});
-
-registerJobHandler("ingest_csv", async (job) => {
-  const orgId = job.orgId!;
-  const result = await csvSourceAdapter.fullSync({
-    orgId,
-    config: (job.payload?.csv as CsvPayload) ?? {},
-    isCancelled: () => isJobCancelRequested(job.id),
-  });
-  return result as unknown as Record<string, unknown>;
-});
-
-registerJobHandler("ingest_mock_erp", async (job) => {
-  const orgId = job.orgId!;
-  const result = await mockErpSourceAdapter.fullSync({
-    orgId,
-    config: (job.payload?.erp as MockErpConfig) ?? { feed: [] },
-    isCancelled: () => isJobCancelRequested(job.id),
-  });
-  return result as unknown as Record<string, unknown>;
-});
-
-registerJobHandler("run_collector", async (job) => {
-  const collectorId = (job.payload?.collectorId as string) ?? "";
-  const result = await runCollector(collectorId, {
-    isCancelled: () => isJobCancelRequested(job.id),
-  });
-  return result as unknown as Record<string, unknown>;
-});
-
-registerJobHandler("prune_jobs", async () => {
-  const result = await pruneOldJobs();
-  return result as unknown as Record<string, unknown>;
-});
+// Two cross-cutting concerns are baked into those handlers:
+//
+//   1. Cooperative cancellation — each long-running handler threads
+//      `() => isJobCancelRequested(job.id)` into its underlying worker
+//      so an operator pressing Cancel on the System / Jobs page
+//      short-circuits the run within seconds at the next safe
+//      checkpoint (between OODA phases / CSV entity batches / mock ERP
+//      pages / before a collector's HTTP fetch). When the helper sees a
+//      cancel flag it throws `Error("Cancelled by operator")`, and
+//      `processOnce` in the queue translates that into a terminal
+//      `failed` row — no half-written batches, no orphaned "running"
+//      jobs.
+//
+//   2. Unrecoverable input wrapping — known-permanent input failures
+//      (missing orgId, malformed payload, unknown collector ID, etc.)
+//      are thrown as `UnrecoverableJobError` so the queue's
+//      retry/backoff loop short-circuits to "permanent failure" on
+//      attempt #1 instead of burning the full retry budget on inputs
+//      guaranteed to fail again.
+registerJobHandler("run_analysis_cycle", runAnalysisCycleHandler);
+registerJobHandler("ingest_csv", ingestCsvHandler);
+registerJobHandler("ingest_mock_erp", ingestMockErpHandler);
+registerJobHandler("run_collector", runCollectorHandler);
+registerJobHandler("prune_jobs", pruneJobsHandler);
 
 app.listen(port, (err) => {
   if (err) {
