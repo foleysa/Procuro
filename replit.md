@@ -83,6 +83,13 @@ React + Vite + wouter + shadcn. Bootstrap auto‑selects SCIS org on first load;
 - Tenant isolation: switching tenant in the sidebar surfaces totally different spend / cycles / opportunities. Verified end‑to‑end.
 - Approve / reject / execute / realize lifecycle works from the UI with toast feedback.
 
+## Secrets catalog
+External-API intelligence collectors require the following Replit Secrets. All are read directly from `process.env`. If a secret is missing, the corresponding collector throws a clear, actionable error and writes a `fetch_failed` audit entry — it never writes signals.
+
+| Secret | Used by | Where to get it |
+| --- | --- | --- |
+| `EIA_API_KEY` | `eia-energy` collector (WTI crude, Henry Hub gas, US retail diesel/gasoline, US industrial electricity) | Free registration at https://www.eia.gov/opendata/register.php |
+
 ## Conventions
 - All PK columns are `text` (already pushed) — **never** change PK types.
 - Server logging: `req.log` in handlers; the `logger` singleton elsewhere. Never `console.log` in server code.
