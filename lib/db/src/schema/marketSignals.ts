@@ -125,6 +125,8 @@ export const marketSignalTypes = [
   "supplier_financial",
   "supplier_risk_news",
   "services_rate_card",
+  "economic_index",
+  "fx_rate",
 ] as const;
 export type MarketSignalType = (typeof marketSignalTypes)[number];
 
