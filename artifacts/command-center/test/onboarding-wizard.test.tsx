@@ -677,6 +677,95 @@ describe("<OnboardingPage /> happy path", () => {
     expectNoConsoleNoise();
   });
 
+  test("removing sample data on step 2 reverts the readiness card to the install state", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<OnboardingPage />);
+
+    // Advance off the welcome step so we land on Bring data.
+    await user.click(screen.getByTestId("step-advance"));
+    expect(screen.getByTestId("step-bring_data")).toBeInTheDocument();
+
+    // Install sample data first — this is the precondition for the
+    // "Remove sample data" action being visible at all.
+    await user.click(screen.getByTestId("install-sample-data-btn"));
+    expect(calls.install).toBe(1);
+    expect(mockState.readiness?.sampleDataInstalled).toBe(true);
+    expect(screen.queryByTestId("install-sample-data-btn")).toBeNull();
+    const removeBtn = await screen.findByTestId("remove-sample-data-btn");
+    expect(removeBtn).toBeEnabled();
+
+    // Now exercise the inverse mutation: useRemoveSampleData.
+    await user.click(removeBtn);
+    expect(calls.remove).toBe(1);
+    expect(mockState.readiness?.sampleDataInstalled).toBe(false);
+
+    // The action card should swap back to the install affordance and
+    // hide the remove one — same UI as a tenant that never installed
+    // the dataset in the first place.
+    await waitFor(() => {
+      expect(screen.getByTestId("install-sample-data-btn")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("remove-sample-data-btn")).toBeNull();
+
+    expectNoConsoleNoise();
+  });
+
+  test("Back button rewinds the active step body without losing completed-step badges", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<OnboardingPage />);
+
+    // Walk forward two steps: welcome → bring_data → map_categories.
+    await user.click(screen.getByTestId("step-advance"));
+    expect(screen.getByTestId("step-bring_data")).toBeInTheDocument();
+    await user.click(screen.getByTestId("step-advance"));
+    expect(screen.getByTestId("step-map_categories")).toBeInTheDocument();
+    expect(screen.getByText(/Step 3 of 6/i)).toBeInTheDocument();
+
+    // Sanity: both prior steps are tracked as completed in state.
+    expect(
+      mockState.onboarding?.completedSteps.map((c) => c.step),
+    ).toEqual(expect.arrayContaining(["welcome", "bring_data"]));
+
+    // Click "Back" — the active step body should rewind to bring_data,
+    // and the patch stream should record the jump so the persisted
+    // currentStep matches what the user is looking at.
+    await user.click(screen.getByRole("button", { name: /Back/i }));
+    expect(screen.getByTestId("step-bring_data")).toBeInTheDocument();
+    expect(screen.queryByTestId("step-map_categories")).toBeNull();
+    expect(screen.getByText(/Step 2 of 6/i)).toBeInTheDocument();
+    expect(calls.patch).toContainEqual({ currentStep: "bring_data" });
+
+    // The previously-completed welcome pill must keep its emerald
+    // "done" styling — going backwards is a navigation aid, not a
+    // reset of progress. The active bring_data pill flips to the
+    // primary highlight, and the "Done" badge shows in the step
+    // header because bring_data is in completedSteps.
+    const welcomePill = screen.getByTestId("step-pill-welcome");
+    expect(welcomePill.className).toMatch(/emerald/);
+    const bringDataPill = screen.getByTestId("step-pill-bring_data");
+    expect(bringDataPill.className).toMatch(/border-primary/);
+    expect(
+      within(screen.getByTestId("step-bring_data")).getByText(/^Done$/),
+    ).toBeInTheDocument();
+
+    // Now jump directly via the step pill back to welcome — same
+    // contract: body rewinds, completed pills keep their styling.
+    await user.click(screen.getByTestId("step-pill-welcome"));
+    expect(screen.getByTestId("step-welcome")).toBeInTheDocument();
+    expect(screen.getByText(/Step 1 of 6/i)).toBeInTheDocument();
+    expect(calls.patch).toContainEqual({ currentStep: "welcome" });
+    // bring_data was completed before the jump and must stay green.
+    expect(
+      screen.getByTestId("step-pill-bring_data").className,
+    ).toMatch(/emerald/);
+    // Completed steps survived the round-trip.
+    expect(
+      mockState.onboarding?.completedSteps.map((c) => c.step),
+    ).toEqual(expect.arrayContaining(["welcome", "bring_data"]));
+
+    expectNoConsoleNoise();
+  });
+
   test("'Skip for now' patches dismissed=true and navigates back to /", async () => {
     const user = userEvent.setup();
     const { memory } = renderWithRouter(<OnboardingPage />, {
