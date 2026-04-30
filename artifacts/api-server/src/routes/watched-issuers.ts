@@ -28,7 +28,7 @@ import {
   suppliersTable,
   type WatchedIssuerSource,
 } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
@@ -37,6 +37,12 @@ import {
   type SecIssuerRef,
 } from "../lib/intelligence/collectors/sec-edgar";
 import { normaliseCompaniesHouseNumber } from "../lib/intelligence/collectors/companies-house";
+import {
+  suggestForTenant,
+  defaultReferenceLookups,
+  type ReferenceLookups,
+  type SuggesterSupplierInput,
+} from "../lib/intelligence/suggest-watched-issuers";
 
 const router: IRouter = Router();
 
@@ -283,6 +289,114 @@ router.delete("/watched-issuers/:id", tenantMiddleware, async (req, res) => {
     return;
   }
   res.status(204).end();
+});
+
+// Test seam: live HTTP by default; tests swap in canned responses.
+let activeSuggestLookups: ReferenceLookups = defaultReferenceLookups;
+export function setSuggestLookupsForTests(lookups: ReferenceLookups): void {
+  activeSuggestLookups = lookups;
+}
+export function resetSuggestLookupsForTests(): void {
+  activeSuggestLookups = defaultReferenceLookups;
+}
+
+/**
+ * GET /watched-issuers/suggestions
+ *
+ * Returns ranked SEC CIK / Companies House suggestions for the active
+ * tenant's suppliers. Computes live, never writes. Confirm via
+ * POST /watched-issuers with `supplierUid`.
+ *
+ * Query params:
+ *   - `supplierId` (optional, repeatable) — narrow to specific suppliers.
+ *   - `limit` (optional, default 50, max 200) — supplier count cap.
+ *
+ * Suppliers already linked from watched_issuers are skipped, and
+ * suggestions whose (source, identifier) is already on the tenant's
+ * watch list are filtered out so the UI never shows a confirm that
+ * would 409.
+ */
+router.get("/watched-issuers/suggestions", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const limitRaw = req.query["limit"];
+  const limit = (() => {
+    if (typeof limitRaw !== "string") return 50;
+    const n = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(n) || n <= 0) return 50;
+    return Math.min(n, 200);
+  })();
+
+  const supplierIdParam = req.query["supplierId"];
+  const supplierIds: string[] | null = (() => {
+    if (typeof supplierIdParam === "string") return [supplierIdParam];
+    if (Array.isArray(supplierIdParam)) {
+      return supplierIdParam.filter((x): x is string => typeof x === "string");
+    }
+    return null;
+  })();
+
+  // Cap supplier set so this endpoint stays within the engine's
+  // per-call budget (concurrency cap × per-supplier upstream calls).
+  const supplierWhere = [eq(suppliersTable.orgId, orgId)];
+  if (supplierIds && supplierIds.length > 0) {
+    supplierWhere.push(inArray(suppliersTable.id, supplierIds));
+  }
+  const supplierRows = await db
+    .select({
+      id: suppliersTable.id,
+      name: suppliersTable.name,
+      countryCode: suppliersTable.countryCode,
+    })
+    .from(suppliersTable)
+    .where(and(...supplierWhere))
+    .orderBy(asc(suppliersTable.name))
+    .limit(limit);
+
+  if (supplierRows.length === 0) {
+    res.json({
+      items: [],
+      suppliersConsidered: 0,
+      suppliersSkippedAlreadyWatched: 0,
+    });
+    return;
+  }
+
+  // Single batched read so the engine can dedupe in memory.
+  const watchedRows = await db
+    .select({
+      source: watchedIssuersTable.source,
+      identifier: watchedIssuersTable.identifier,
+      supplierUid: watchedIssuersTable.supplierUid,
+    })
+    .from(watchedIssuersTable)
+    .where(eq(watchedIssuersTable.orgId, orgId));
+  const bySupplierUid = new Set<string>();
+  const bySourceIdentifier = new Set<string>();
+  for (const r of watchedRows) {
+    if (r.supplierUid) bySupplierUid.add(r.supplierUid);
+    bySourceIdentifier.add(`${r.source}:${r.identifier}`);
+  }
+
+  const suppliers: SuggesterSupplierInput[] = supplierRows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    countryCode: s.countryCode,
+  }));
+
+  const result = await suggestForTenant({
+    suppliers,
+    alreadyWatched: { bySupplierUid, bySourceIdentifier },
+    lookups: activeSuggestLookups,
+    ...(process.env["COMPANIES_HOUSE_API_KEY"]
+      ? { companiesHouseApiKey: process.env["COMPANIES_HOUSE_API_KEY"] }
+      : {}),
+  });
+
+  res.json({
+    items: result.suggestions,
+    suppliersConsidered: result.suppliersConsidered,
+    suppliersSkippedAlreadyWatched: result.suppliersSkippedAlreadyWatched,
+  });
 });
 
 /**
