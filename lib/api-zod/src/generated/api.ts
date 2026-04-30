@@ -212,6 +212,109 @@ export const ListSuppliersResponse = zod.object({
 });
 
 /**
+ * Returns the unified risk-and-filings timeline for a supplier — every
+market-signal row whose canonical `entity_uid` (CIK / LEI / Companies
+House / sanctions list id / ClimateTRACE owner / ...) matches the
+supplier OR whose `scope_supplier_name` matches the supplier name
+case-insensitively. Each signal is returned with its collector's
+disclosure-tier `contract` so the Command Center can render
+attribution that respects `settings.disclosurePolicy`.
+
+ * @summary External-intelligence signals matched to one supplier
+ */
+export const GetSupplierIntelligenceParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetSupplierIntelligenceHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetSupplierIntelligenceResponse = zod.object({
+  supplierId: zod.string(),
+  supplierName: zod.string(),
+  countryCode: zod.string().nullish(),
+  resolvedEntityUid: zod
+    .string()
+    .nullable()
+    .describe(
+      "Canonical entity uid the resolver returned for this supplier —\nnull when neither identifier nor BQ-name match was found, in\nwhich case only the `supplier_name` fallback contributed\nsignals to `items`.\n",
+    ),
+  resolvedMatchType: zod
+    .enum(["identifier", "deterministic_name", "fuzzy_gemini", "unresolved"])
+    .nullish(),
+  countsByType: zod
+    .record(zod.string(), zod.number())
+    .optional()
+    .describe(
+      "Map from `SupplierIntelligenceSignalType` to the number of\nitems in this response with that type. Empty when no signals\nmatched.\n",
+    ),
+  totalCount: zod
+    .number()
+    .describe("Total number of items returned (`items.length`)."),
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      signalType: zod
+        .enum([
+          "sanctions_match",
+          "risk_screening_match",
+          "corporate_filing",
+          "entity_registry",
+          "facility_emissions",
+          "natural_hazard",
+          "event_geocoded",
+        ])
+        .describe(
+          "Subset of `MarketSignal.signalType` that the supplier-intelligence\nendpoint surfaces. These are exactly the signal types emitted by\nthe Phase-2 public-API collectors (sanctions, corporate filings,\nentity registry, facility emissions, natural hazard, geocoded\nevents, OpenSanctions risk screening).\n",
+        ),
+      observedAt: zod.coerce.date(),
+      matchKind: zod
+        .enum(["entity_uid", "supplier_name"])
+        .describe(
+          "How this signal was matched to the supplier — `entity_uid` is the\ncanonical cross-collector join, `supplier_name` is the\ncase-insensitive name fallback used when no resolved entity uid\nis available (or when the row predates resolution).\n",
+        ),
+      collectorId: zod.string(),
+      collectorName: zod.string(),
+      sourceUrl: zod.string(),
+      contract: zod.object({
+        postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+        disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+        jurisdiction: zod.string(),
+        retentionDays: zod.number(),
+        tenantOptInDefault: zod.boolean(),
+      }),
+      scopeSupplierName: zod.string().nullish(),
+      scopeCategoryCode: zod.string().nullish(),
+      scopeSku: zod.string().nullish(),
+      scopeLaneKey: zod.string().nullish(),
+      value: zod.number().optional(),
+      unit: zod.string().optional(),
+      currency: zod.string().optional(),
+      confidence: zod.number().optional(),
+      entityUid: zod.string().nullish(),
+      headline: zod
+        .string()
+        .optional()
+        .describe(
+          "Short human-readable summary derived from the signal — used as\nthe row title in the supplier risk timeline. The server picks\nthe right field from the metadata blob per signal type so the\nclient can render every row uniformly.\n",
+        ),
+      detail: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional secondary line surfaced under the headline (e.g. the\nsanctions list name, the EDGAR form code, or the natural-hazard\nmagnitude). May be null when the signal carries no useful\nsub-headline.\n",
+        ),
+    }),
+  ),
+});
+
+/**
  * @summary List opportunities, optionally filtered
  */
 export const listOpportunitiesQueryLimitDefault = 100;

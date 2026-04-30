@@ -154,6 +154,143 @@ export interface SupplierListResponse {
   nextCursor?: string | null;
 }
 
+/**
+ * Subset of `MarketSignal.signalType` that the supplier-intelligence
+endpoint surfaces. These are exactly the signal types emitted by
+the Phase-2 public-API collectors (sanctions, corporate filings,
+entity registry, facility emissions, natural hazard, geocoded
+events, OpenSanctions risk screening).
+
+ */
+export type SupplierIntelligenceSignalType =
+  (typeof SupplierIntelligenceSignalType)[keyof typeof SupplierIntelligenceSignalType];
+
+export const SupplierIntelligenceSignalType = {
+  sanctions_match: "sanctions_match",
+  risk_screening_match: "risk_screening_match",
+  corporate_filing: "corporate_filing",
+  entity_registry: "entity_registry",
+  facility_emissions: "facility_emissions",
+  natural_hazard: "natural_hazard",
+  event_geocoded: "event_geocoded",
+} as const;
+
+/**
+ * How this signal was matched to the supplier — `entity_uid` is the
+canonical cross-collector join, `supplier_name` is the
+case-insensitive name fallback used when no resolved entity uid
+is available (or when the row predates resolution).
+
+ */
+export type SupplierIntelligenceMatchKind =
+  (typeof SupplierIntelligenceMatchKind)[keyof typeof SupplierIntelligenceMatchKind];
+
+export const SupplierIntelligenceMatchKind = {
+  entity_uid: "entity_uid",
+  supplier_name: "supplier_name",
+} as const;
+
+export type SupplierIntelligenceSignalContractPostureClass =
+  (typeof SupplierIntelligenceSignalContractPostureClass)[keyof typeof SupplierIntelligenceSignalContractPostureClass];
+
+export const SupplierIntelligenceSignalContractPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+export type SupplierIntelligenceSignalContractDisclosureTier =
+  (typeof SupplierIntelligenceSignalContractDisclosureTier)[keyof typeof SupplierIntelligenceSignalContractDisclosureTier];
+
+export const SupplierIntelligenceSignalContractDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type SupplierIntelligenceSignalContract = {
+  postureClass: SupplierIntelligenceSignalContractPostureClass;
+  disclosureTier: SupplierIntelligenceSignalContractDisclosureTier;
+  jurisdiction: string;
+  retentionDays: number;
+  tenantOptInDefault: boolean;
+};
+
+export interface SupplierIntelligenceSignal {
+  id: string;
+  signalType: SupplierIntelligenceSignalType;
+  observedAt: string;
+  matchKind: SupplierIntelligenceMatchKind;
+  collectorId: string;
+  collectorName: string;
+  sourceUrl: string;
+  contract: SupplierIntelligenceSignalContract;
+  scopeSupplierName?: string | null;
+  scopeCategoryCode?: string | null;
+  scopeSku?: string | null;
+  scopeLaneKey?: string | null;
+  value?: number;
+  unit?: string;
+  currency?: string;
+  confidence?: number;
+  entityUid?: string | null;
+  /** Short human-readable summary derived from the signal — used as
+the row title in the supplier risk timeline. The server picks
+the right field from the metadata blob per signal type so the
+client can render every row uniformly.
+ */
+  headline?: string;
+  /** Optional secondary line surfaced under the headline (e.g. the
+sanctions list name, the EDGAR form code, or the natural-hazard
+magnitude). May be null when the signal carries no useful
+sub-headline.
+ */
+  detail?: string | null;
+}
+
+export type SupplierIntelligenceResponseResolvedMatchType =
+  | (typeof SupplierIntelligenceResponseResolvedMatchType)[keyof typeof SupplierIntelligenceResponseResolvedMatchType]
+  | null;
+
+export const SupplierIntelligenceResponseResolvedMatchType = {
+  identifier: "identifier",
+  deterministic_name: "deterministic_name",
+  fuzzy_gemini: "fuzzy_gemini",
+  unresolved: "unresolved",
+} as const;
+
+/**
+ * Map from `SupplierIntelligenceSignalType` to the number of
+items in this response with that type. Empty when no signals
+matched.
+
+ */
+export type SupplierIntelligenceResponseCountsByType = {
+  [key: string]: number;
+};
+
+export interface SupplierIntelligenceResponse {
+  supplierId: string;
+  supplierName: string;
+  countryCode?: string | null;
+  /** Canonical entity uid the resolver returned for this supplier —
+null when neither identifier nor BQ-name match was found, in
+which case only the `supplier_name` fallback contributed
+signals to `items`.
+ */
+  resolvedEntityUid: string | null;
+  resolvedMatchType?: SupplierIntelligenceResponseResolvedMatchType;
+  /** Map from `SupplierIntelligenceSignalType` to the number of
+items in this response with that type. Empty when no signals
+matched.
+ */
+  countsByType?: SupplierIntelligenceResponseCountsByType;
+  /** Total number of items returned (`items.length`). */
+  totalCount: number;
+  items: SupplierIntelligenceSignal[];
+}
+
 export type OpportunityStatus =
   (typeof OpportunityStatus)[keyof typeof OpportunityStatus];
 

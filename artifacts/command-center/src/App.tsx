@@ -7,6 +7,7 @@ import { Layout } from "./components/layout";
 import Landing from "./pages/landing";
 import Dashboard from "./pages/dashboard";
 import SpendOverview from "./pages/spend";
+import SupplierDetail from "./pages/supplier-detail";
 import Opportunities from "./pages/opportunities";
 import OpportunityDetail from "./pages/opportunity-detail";
 import Approvals from "./pages/approvals";
@@ -28,6 +29,7 @@ function Router() {
           <Switch>
             <Route path="/" component={Dashboard} />
             <Route path="/spend" component={SpendOverview} />
+            <Route path="/suppliers/:id" component={SupplierDetail} />
             <Route path="/opportunities" component={Opportunities} />
             <Route path="/opportunities/:id" component={OpportunityDetail} />
             <Route path="/approvals" component={Approvals} />

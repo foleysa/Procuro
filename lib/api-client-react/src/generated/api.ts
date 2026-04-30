@@ -77,6 +77,7 @@ import type {
   RunCycleResponse,
   RunNextCycleParams,
   SpendOverview,
+  SupplierIntelligenceResponse,
   SupplierListResponse,
   SyncResultResponse,
   UpdateJobKindSettingRequest,
@@ -546,6 +547,106 @@ export function useListSuppliers<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListSuppliersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the unified risk-and-filings timeline for a supplier — every
+market-signal row whose canonical `entity_uid` (CIK / LEI / Companies
+House / sanctions list id / ClimateTRACE owner / ...) matches the
+supplier OR whose `scope_supplier_name` matches the supplier name
+case-insensitively. Each signal is returned with its collector's
+disclosure-tier `contract` so the Command Center can render
+attribution that respects `settings.disclosurePolicy`.
+
+ * @summary External-intelligence signals matched to one supplier
+ */
+export const getGetSupplierIntelligenceUrl = (id: string) => {
+  return `/api/suppliers/${id}/intelligence`;
+};
+
+export const getSupplierIntelligence = async (
+  id: string,
+  options?: RequestInit,
+): Promise<SupplierIntelligenceResponse> => {
+  return customFetch<SupplierIntelligenceResponse>(
+    getGetSupplierIntelligenceUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSupplierIntelligenceQueryKey = (id: string) => {
+  return [`/api/suppliers/${id}/intelligence`] as const;
+};
+
+export const getGetSupplierIntelligenceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSupplierIntelligence>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSupplierIntelligence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSupplierIntelligenceQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSupplierIntelligence>>
+  > = ({ signal }) =>
+    getSupplierIntelligence(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSupplierIntelligence>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSupplierIntelligenceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSupplierIntelligence>>
+>;
+export type GetSupplierIntelligenceQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary External-intelligence signals matched to one supplier
+ */
+
+export function useGetSupplierIntelligence<
+  TData = Awaited<ReturnType<typeof getSupplierIntelligence>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSupplierIntelligence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSupplierIntelligenceQueryOptions(id, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

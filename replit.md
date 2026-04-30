@@ -44,9 +44,11 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
     - Enforces tenant isolation via `x-org-id` header validation.
     - Provides APIs for `health`, `orgs`, `me`, `spend`, `suppliers`, `opportunities`, `cycles`, `collectors`, `market-signals`, `jobs`, `ingest`, `billing`.
     - All endpoints inherently filter data by `orgId`.
+    - `GET /suppliers/:id/intelligence` joins `market_signals` to a supplier via `metadata.entityUid` (from `resolveEntity`) OR case-insensitive `scope_supplier_name`, restricted to the Phase-2 supplier-intelligence signal types (`sanctions_match`, `risk_screening_match`, `corporate_filing`, `entity_registry`, `facility_emissions`, `natural_hazard`, `event_geocoded`). Each row carries the collector `contract` so the client can render disclosure-tier-respecting citations. Per-row headlines/details are rendered in `lib/supplier-intelligence.ts` (unit-tested).
 - **`artifacts/command-center` (Operator UI):**
     - A React-based frontend providing an executive dashboard, spend overview, opportunities feed, OODA wheel visualization, results and billing reports, procurement playbook, collector registry, and data ingest UI.
     - Supports CSV upload for various datasets, with streaming capabilities for large files and real-time progress updates using NDJSON.
+    - `pages/supplier-detail.tsx` (`/suppliers/:id`) renders a supplier-detail page with a "Risk & Filings" panel powered by `useGetSupplierIntelligence`. Top-10 supplier rows on the spend page link to it. Each row reuses `<InsightCitations>` so attribution honors `usePolicy()` (the tenant's `disclosurePolicy`).
 
 ## External Dependencies
 

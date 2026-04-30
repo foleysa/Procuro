@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import { useGetSpendOverview, useGetMe } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUsd, formatPercent } from "@/lib/format";
@@ -114,7 +115,13 @@ export default function SpendOverview() {
                 {top10Sup.map((s) => (
                   <tr key={s.supplierId} className="border-b last:border-0">
                     <td className="py-2">
-                      <div className="font-medium">{s.supplierName}</div>
+                      <Link
+                        href={`/suppliers/${s.supplierId}`}
+                        className="font-medium hover:underline"
+                        data-testid={`link-supplier-${s.supplierId}`}
+                      >
+                        {s.supplierName}
+                      </Link>
                       <div className="text-xs text-muted-foreground">
                         {s.poCount} POs
                       </div>

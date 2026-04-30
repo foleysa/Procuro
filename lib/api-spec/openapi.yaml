@@ -144,6 +144,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/SupplierListResponse"
 
+  /suppliers/{id}/intelligence:
+    get:
+      operationId: getSupplierIntelligence
+      tags: [suppliers]
+      summary: External-intelligence signals matched to one supplier
+      description: |
+        Returns the unified risk-and-filings timeline for a supplier — every
+        market-signal row whose canonical `entity_uid` (CIK / LEI / Companies
+        House / sanctions list id / ClimateTRACE owner / ...) matches the
+        supplier OR whose `scope_supplier_name` matches the supplier name
+        case-insensitively. Each signal is returned with its collector's
+        disclosure-tier `contract` so the Command Center can render
+        attribution that respects `settings.disclosurePolicy`.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Risk & filings timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierIntelligenceResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /opportunities:
     get:
       operationId: listOpportunities
@@ -1408,6 +1434,135 @@ components:
         nextCursor:
           type: string
           nullable: true
+
+    SupplierIntelligenceSignalType:
+      type: string
+      description: |
+        Subset of `MarketSignal.signalType` that the supplier-intelligence
+        endpoint surfaces. These are exactly the signal types emitted by
+        the Phase-2 public-API collectors (sanctions, corporate filings,
+        entity registry, facility emissions, natural hazard, geocoded
+        events, OpenSanctions risk screening).
+      enum:
+        - sanctions_match
+        - risk_screening_match
+        - corporate_filing
+        - entity_registry
+        - facility_emissions
+        - natural_hazard
+        - event_geocoded
+
+    SupplierIntelligenceMatchKind:
+      type: string
+      description: |
+        How this signal was matched to the supplier — `entity_uid` is the
+        canonical cross-collector join, `supplier_name` is the
+        case-insensitive name fallback used when no resolved entity uid
+        is available (or when the row predates resolution).
+      enum: [entity_uid, supplier_name]
+
+    SupplierIntelligenceSignal:
+      type: object
+      required:
+        [
+          id,
+          signalType,
+          observedAt,
+          matchKind,
+          collectorId,
+          collectorName,
+          sourceUrl,
+          contract,
+        ]
+      properties:
+        id: { type: string }
+        signalType:
+          $ref: "#/components/schemas/SupplierIntelligenceSignalType"
+        observedAt: { type: string, format: date-time }
+        matchKind:
+          $ref: "#/components/schemas/SupplierIntelligenceMatchKind"
+        collectorId: { type: string }
+        collectorName: { type: string }
+        sourceUrl: { type: string }
+        contract:
+          type: object
+          required:
+            [
+              postureClass,
+              disclosureTier,
+              jurisdiction,
+              retentionDays,
+              tenantOptInDefault,
+            ]
+          properties:
+            postureClass:
+              type: string
+              enum: [public_api, tos_restricted, gray_hat]
+            disclosureTier:
+              type: string
+              enum: [T1, T2, T3, T4]
+            jurisdiction: { type: string }
+            retentionDays: { type: integer }
+            tenantOptInDefault: { type: boolean }
+        scopeSupplierName: { type: string, nullable: true }
+        scopeCategoryCode: { type: string, nullable: true }
+        scopeSku: { type: string, nullable: true }
+        scopeLaneKey: { type: string, nullable: true }
+        value: { type: number }
+        unit: { type: string }
+        currency: { type: string }
+        confidence: { type: number }
+        entityUid: { type: string, nullable: true }
+        headline:
+          type: string
+          description: |
+            Short human-readable summary derived from the signal — used as
+            the row title in the supplier risk timeline. The server picks
+            the right field from the metadata blob per signal type so the
+            client can render every row uniformly.
+        detail:
+          type: string
+          nullable: true
+          description: |
+            Optional secondary line surfaced under the headline (e.g. the
+            sanctions list name, the EDGAR form code, or the natural-hazard
+            magnitude). May be null when the signal carries no useful
+            sub-headline.
+
+    SupplierIntelligenceResponse:
+      type: object
+      required:
+        [supplierId, supplierName, resolvedEntityUid, totalCount, items]
+      properties:
+        supplierId: { type: string }
+        supplierName: { type: string }
+        countryCode: { type: string, nullable: true }
+        resolvedEntityUid:
+          type: string
+          nullable: true
+          description: |
+            Canonical entity uid the resolver returned for this supplier —
+            null when neither identifier nor BQ-name match was found, in
+            which case only the `supplier_name` fallback contributed
+            signals to `items`.
+        resolvedMatchType:
+          type: string
+          nullable: true
+          enum: [identifier, deterministic_name, fuzzy_gemini, unresolved]
+        countsByType:
+          type: object
+          description: |
+            Map from `SupplierIntelligenceSignalType` to the number of
+            items in this response with that type. Empty when no signals
+            matched.
+          additionalProperties: { type: integer }
+        totalCount:
+          type: integer
+          description: Total number of items returned (`items.length`).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupplierIntelligenceSignal"
 
     Opportunity:
       type: object
