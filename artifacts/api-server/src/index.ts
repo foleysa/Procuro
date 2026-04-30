@@ -14,6 +14,8 @@ import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
   startWorker,
+  startJobPruner,
+  pruneOldJobs,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import { runAnalysisCycle } from "./lib/ooda/cycle";
@@ -112,6 +114,11 @@ registerJobHandler("run_collector", async (job) => {
   return result as unknown as Record<string, unknown>;
 });
 
+registerJobHandler("prune_jobs", async () => {
+  const result = await pruneOldJobs();
+  return result as unknown as Record<string, unknown>;
+});
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -119,7 +126,11 @@ app.listen(port, (err) => {
   }
 
   startWorker(1500);
-  logger.info({ port }, "Server listening; job worker started");
+  startJobPruner();
+  logger.info(
+    { port },
+    "Server listening; job worker and pruner scheduler started",
+  );
 
   void seedCollectorRegistry().then(
     () => logger.info("Collector registry seeded"),

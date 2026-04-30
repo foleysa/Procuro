@@ -21,6 +21,7 @@ export const jobKindValues = [
   "ingest_mock_erp",
   "run_analysis_cycle",
   "run_collector",
+  "prune_jobs",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 
@@ -56,6 +57,9 @@ export const jobsTable = pgTable(
     index("jobs_status_idx").on(t.status),
     index("jobs_kind_idx").on(t.kind),
     index("jobs_enqueued_at_idx").on(t.enqueuedAt),
+    // Supports the periodic prune query
+    // (`WHERE status = ? AND completed_at < ?`).
+    index("jobs_status_completed_at_idx").on(t.status, t.completedAt),
   ],
 );
 

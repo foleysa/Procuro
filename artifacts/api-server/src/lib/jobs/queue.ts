@@ -256,3 +256,216 @@ export async function listJobsByOrg(
     .orderBy(asc(jobsTable.enqueuedAt))
     .limit(limit);
 }
+
+// ---------------------------------------------------------------------------
+// Job retention / pruning
+//
+// Operators don't need indefinitely-old completed jobs in the queue table,
+// and the table will eventually slow down list queries / bloat backups.
+// Two retention windows are tracked separately:
+//   - succeeded jobs: pruned after a short window (default 7 days)
+//   - failed jobs:    kept longer so operators can inspect / retry them
+//                     (default 30 days)
+// Both windows are configurable via env vars; the prune itself runs as a
+// scheduled `prune_jobs` job (see `startJobPruner`) so it's serialized
+// through the same worker that processes everything else.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_RETENTION_SUCCEEDED_DAYS = 7;
+const DEFAULT_RETENTION_FAILED_DAYS = 30;
+const DEFAULT_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+
+function envPositiveNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    logger.warn(
+      { envVar: name, value: raw, fallback },
+      "Invalid env var (must be a positive number); falling back to default",
+    );
+    return fallback;
+  }
+  return n;
+}
+
+export interface JobRetentionConfig {
+  succeededOlderThanMs: number;
+  failedOlderThanMs: number;
+}
+
+/** Resolve the configured retention windows, in milliseconds. */
+export function getJobRetentionConfig(): JobRetentionConfig {
+  const succeededDays = envPositiveNumber(
+    "JOB_RETENTION_SUCCEEDED_DAYS",
+    DEFAULT_RETENTION_SUCCEEDED_DAYS,
+  );
+  const failedDays = envPositiveNumber(
+    "JOB_RETENTION_FAILED_DAYS",
+    DEFAULT_RETENTION_FAILED_DAYS,
+  );
+  return {
+    succeededOlderThanMs: succeededDays * DAY_MS,
+    failedOlderThanMs: failedDays * DAY_MS,
+  };
+}
+
+export interface PruneJobsResult {
+  succeededDeleted: number;
+  failedDeleted: number;
+  succeededOlderThanMs: number;
+  failedOlderThanMs: number;
+}
+
+/**
+ * Delete completed jobs older than the configured retention windows.
+ * Always uses `completed_at` (never `enqueued_at`) so a long-running job
+ * isn't deleted out from under the worker. Leaves `pending` and `running`
+ * jobs untouched.
+ */
+export async function pruneOldJobs(
+  overrides: Partial<JobRetentionConfig> = {},
+): Promise<PruneJobsResult> {
+  const cfg = getJobRetentionConfig();
+  const succeededOlderThanMs =
+    overrides.succeededOlderThanMs ?? cfg.succeededOlderThanMs;
+  const failedOlderThanMs =
+    overrides.failedOlderThanMs ?? cfg.failedOlderThanMs;
+
+  const now = Date.now();
+  const succeededCutoff = new Date(now - succeededOlderThanMs).toISOString();
+  const failedCutoff = new Date(now - failedOlderThanMs).toISOString();
+
+  const succeededRes = await db.execute(sql`
+    DELETE FROM jobs
+    WHERE status = 'succeeded'
+      AND completed_at IS NOT NULL
+      AND completed_at < ${succeededCutoff}
+    RETURNING id
+  `);
+  const failedRes = await db.execute(sql`
+    DELETE FROM jobs
+    WHERE status = 'failed'
+      AND completed_at IS NOT NULL
+      AND completed_at < ${failedCutoff}
+    RETURNING id
+  `);
+
+  const succeededDeleted = succeededRes.rows?.length ?? 0;
+  const failedDeleted = failedRes.rows?.length ?? 0;
+
+  if (succeededDeleted > 0 || failedDeleted > 0) {
+    logger.info(
+      {
+        succeededDeleted,
+        failedDeleted,
+        succeededOlderThanMs,
+        failedOlderThanMs,
+      },
+      "Pruned old jobs",
+    );
+  }
+
+  return {
+    succeededDeleted,
+    failedDeleted,
+    succeededOlderThanMs,
+    failedOlderThanMs,
+  };
+}
+
+/**
+ * Fixed advisory-lock key used to serialize prune-job scheduling across
+ * every process and every scheduler tick. Lives in the same namespace
+ * as `JOB_ENQUEUE_LOCK_NS` so collisions with org-scoped enqueue locks
+ * are impossible (different sub-key space).
+ */
+const PRUNE_SCHEDULE_LOCK_KEY = 0x5052554e; // "PRUN"
+
+/**
+ * Enqueue a `prune_jobs` job iff there isn't one already pending or
+ * running. Returns the new job row, or `null` if a prune was already
+ * scheduled.
+ *
+ * The check-then-insert runs under a transaction-scoped advisory lock
+ * (`pg_advisory_xact_lock(JOB_ENQUEUE_LOCK_NS, PRUNE_SCHEDULE_LOCK_KEY)`)
+ * so concurrent scheduler ticks — across multiple worker processes or
+ * across a fast restart loop — cannot both observe "no active prune"
+ * and both insert. Without this, two callers could each pass the
+ * SELECT and each INSERT, leaving two pending `prune_jobs` rows.
+ */
+export async function ensurePruneJobScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${PRUNE_SCHEDULE_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'prune_jobs' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) {
+      return; // inserted stays false; advisory lock released on tx end
+    }
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'prune_jobs', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let prunerStarted = false;
+let prunerHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic job-pruner scheduler. Enqueues a `prune_jobs` job
+ * immediately at startup, then again on a fixed interval (default 6h,
+ * overridable via `JOB_PRUNE_INTERVAL_MS`). Idempotent — calling twice
+ * has no effect.
+ */
+export function startJobPruner(intervalMs?: number): void {
+  if (prunerStarted) return;
+  prunerStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber("JOB_PRUNE_INTERVAL_MS", DEFAULT_PRUNE_INTERVAL_MS);
+
+  // Run once at startup so the first prune happens promptly after boot
+  // even if the interval is long.
+  void ensurePruneJobScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial prune_jobs",
+    );
+  });
+
+  prunerHandle = setInterval(() => {
+    ensurePruneJobScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled prune_jobs",
+      );
+    });
+  }, ms);
+}
+
+export function stopJobPruner(): void {
+  if (prunerHandle) clearInterval(prunerHandle);
+  prunerHandle = null;
+  prunerStarted = false;
+}
