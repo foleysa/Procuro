@@ -19,6 +19,7 @@ import {
   Loader2,
   X,
   Database,
+  Download,
 } from "lucide-react";
 
 type EntityKey =
@@ -37,6 +38,12 @@ interface EntityDef {
   description: string;
   required: string[];
   optional: string[];
+  /**
+   * Example rows used for the downloadable CSV template. For grouped
+   * entities (contracts, purchaseOrders), include 2 rows that share the
+   * same `externalId` to demonstrate how grouping works.
+   */
+  examples: Record<string, string>[];
   /** Convert CSV rows for this entity to the JSON payload shape. */
   toPayload: (rows: Record<string, string>[]) => unknown[];
 }
@@ -75,6 +82,14 @@ const ENTITIES: EntityDef[] = [
     description: "Spend taxonomy.",
     required: ["externalId", "code", "name", "class"],
     optional: [],
+    examples: [
+      {
+        externalId: "CAT-001",
+        code: "ELEC-01",
+        name: "Electrical Components",
+        class: "direct",
+      },
+    ],
     toPayload: (rows) =>
       rows.map((r) => ({
         externalId: r["externalId"],
@@ -94,6 +109,17 @@ const ENTITIES: EntityDef[] = [
       "isStrategic",
       "isPreferred",
       "tags",
+    ],
+    examples: [
+      {
+        externalId: "SUP-001",
+        name: "Acme Industrial",
+        countryCode: "US",
+        paymentTermsDays: "30",
+        isStrategic: "true",
+        isPreferred: "true",
+        tags: "electronics|preferred",
+      },
     ],
     toPayload: (rows) =>
       rows.map((r) => ({
@@ -116,6 +142,17 @@ const ENTITIES: EntityDef[] = [
       "mfgPartNumber",
       "uom",
       "normalizedKey",
+    ],
+    examples: [
+      {
+        externalId: "ITM-001",
+        sku: "WDG-100",
+        description: "1 inch widget",
+        categoryExternalId: "CAT-001",
+        mfgPartNumber: "WDG100MFG",
+        uom: "EA",
+        normalizedKey: "widget-1in",
+      },
     ],
     toPayload: (rows) =>
       rows.map((r) => ({
@@ -148,6 +185,36 @@ const ENTITIES: EntityDef[] = [
       "paymentTermsDays",
       "referenceIndex",
       "annualBaselineUsd",
+    ],
+    examples: [
+      {
+        externalId: "CON-001",
+        contractNumber: "MSA-2025-001",
+        title: "Acme Master Agreement",
+        supplierExternalId: "SUP-001",
+        startDate: "2025-01-01",
+        endDate: "2026-12-31",
+        sku: "WDG-100",
+        contractedUnitPriceUsd: "9.50",
+        categoryExternalId: "CAT-001",
+        paymentTermsDays: "30",
+        referenceIndex: "",
+        annualBaselineUsd: "120000",
+      },
+      {
+        externalId: "CON-001",
+        contractNumber: "MSA-2025-001",
+        title: "Acme Master Agreement",
+        supplierExternalId: "SUP-001",
+        startDate: "2025-01-01",
+        endDate: "2026-12-31",
+        sku: "WDG-200",
+        contractedUnitPriceUsd: "14.00",
+        categoryExternalId: "CAT-001",
+        paymentTermsDays: "30",
+        referenceIndex: "",
+        annualBaselineUsd: "120000",
+      },
     ],
     toPayload: (rows) => {
       const map = new Map<
@@ -220,6 +287,42 @@ const ENTITIES: EntityDef[] = [
       "categoryExternalId",
       "uom",
     ],
+    examples: [
+      {
+        externalId: "PO-1001",
+        poNumber: "PO-2025-1001",
+        supplierExternalId: "SUP-001",
+        orderDate: "2025-03-01",
+        lineNumber: "1",
+        sku: "WDG-100",
+        description: "1 inch widget",
+        spendClass: "direct",
+        qty: "100",
+        unitPriceUsd: "9.50",
+        contractExternalId: "CON-001",
+        businessUnit: "Operations",
+        site: "Plant-1",
+        categoryExternalId: "CAT-001",
+        uom: "EA",
+      },
+      {
+        externalId: "PO-1001",
+        poNumber: "PO-2025-1001",
+        supplierExternalId: "SUP-001",
+        orderDate: "2025-03-01",
+        lineNumber: "2",
+        sku: "WDG-200",
+        description: "2 inch widget",
+        spendClass: "direct",
+        qty: "50",
+        unitPriceUsd: "14.00",
+        contractExternalId: "CON-001",
+        businessUnit: "Operations",
+        site: "Plant-1",
+        categoryExternalId: "CAT-001",
+        uom: "EA",
+      },
+    ],
     toPayload: (rows) => {
       const map = new Map<
         string,
@@ -289,6 +392,18 @@ const ENTITIES: EntityDef[] = [
       "dedupKey",
     ],
     optional: ["poExternalId", "status"],
+    examples: [
+      {
+        externalId: "INV-001",
+        invoiceNumber: "INV-2025-001",
+        supplierExternalId: "SUP-001",
+        invoiceDate: "2025-03-15",
+        amountUsd: "1650.00",
+        dedupKey: "SUP-001|INV-2025-001|1650.00",
+        poExternalId: "PO-1001",
+        status: "approved",
+      },
+    ],
     toPayload: (rows) =>
       rows.map((r) => ({
         externalId: r["externalId"],
@@ -318,6 +433,15 @@ const ENTITIES: EntityDef[] = [
       "amountUsd",
     ],
     optional: ["paymentTermsDays"],
+    examples: [
+      {
+        externalId: "PMT-001",
+        invoiceExternalId: "INV-001",
+        paidDate: "2025-04-14",
+        amountUsd: "1650.00",
+        paymentTermsDays: "30",
+      },
+    ],
     toPayload: (rows) =>
       rows.map((r) => ({
         externalId: r["externalId"],
@@ -346,6 +470,22 @@ const ENTITIES: EntityDef[] = [
       "destCountry",
       "weightKg",
       "incoterms",
+    ],
+    examples: [
+      {
+        externalId: "SHP-001",
+        carrier: "FedEx Freight",
+        mode: "ltl",
+        laneKey: "US-CA-TX",
+        freightCostUsd: "425.00",
+        shipDate: "2025-03-10",
+        poExternalId: "PO-1001",
+        supplierExternalId: "SUP-001",
+        originCountry: "US",
+        destCountry: "US",
+        weightKg: "320",
+        incoterms: "FOB",
+      },
     ],
     toPayload: (rows) =>
       rows.map((r) => ({
@@ -414,6 +554,23 @@ async function parseCsvFile(file: File): Promise<ParsedFile> {
       },
     });
   });
+}
+
+function downloadEntityTemplate(entity: EntityDef) {
+  const headers = [...entity.required, ...entity.optional];
+  const csv = Papa.unparse({
+    fields: headers,
+    data: entity.examples.map((row) => headers.map((h) => row[h] ?? "")),
+  });
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${entity.key}-template.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 interface SuccessResult {
@@ -678,6 +835,20 @@ function EntityRow({
             <code className="text-[11px]">{entity.optional.join(", ")}</code>
           </>
         )}
+      </div>
+
+      <div>
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs"
+          onClick={() => downloadEntityTemplate(entity)}
+          data-testid={`btn-download-template-${entity.key}`}
+        >
+          <Download className="w-3 h-3 mr-1" />
+          Download template
+        </Button>
       </div>
 
       <Input
