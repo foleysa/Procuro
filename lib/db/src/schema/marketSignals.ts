@@ -207,3 +207,42 @@ export const marketSignalsTable = pgTable(
 
 export type MarketSignalRow = typeof marketSignalsTable.$inferSelect;
 export type InsertMarketSignalRow = typeof marketSignalsTable.$inferInsert;
+
+/**
+ * Per-tenant opt-in matrix for collectors. Each row is an explicit
+ * override of the collector's `tenantOptInDefault` for one tenant.
+ *
+ * Resolution rule: when looking up "is collector X enabled for tenant Y?"
+ *   - if a row exists for (Y, X), return `optedIn`
+ *   - otherwise fall back to the registered collector's
+ *     `tenantOptInDefault` (declared in code on the collector contract).
+ *
+ * Kept tenant-scoped so a single admin's checkbox change for one client
+ * never bleeds into another tenant's surface.
+ */
+export const collectorTenantOptInsTable = pgTable(
+  "collector_tenant_opt_ins",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => orgsTable.id, { onDelete: "cascade" }),
+    collectorId: text("collector_id")
+      .notNull()
+      .references(() => collectorsTable.id, { onDelete: "cascade" }),
+    optedIn: integer("opted_in").notNull().default(1),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (t) => [
+    uniqueIndex("collector_tenant_opt_ins_uq").on(t.orgId, t.collectorId),
+    index("collector_tenant_opt_ins_collector_idx").on(t.collectorId),
+  ],
+);
+
+export type CollectorTenantOptInRow =
+  typeof collectorTenantOptInsTable.$inferSelect;
+export type InsertCollectorTenantOptInRow =
+  typeof collectorTenantOptInsTable.$inferInsert;

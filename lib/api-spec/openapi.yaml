@@ -517,6 +517,269 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /collectors/{id}/posture:
+    get:
+      operationId: getCollectorPosture
+      tags: [collectors]
+      summary: |
+        Read the posture summary for a single collector.
+      description: |
+        Returns the same shape as `patchCollectorPosture` so the
+        Posture tab can prefill its form (and any other tab can
+        reuse the resolution) without round-tripping through
+        `/collectors`. Tenant membership is required because the
+        response includes the per-tenant `tenantOptedIn` resolution;
+        admin gating is not applied — analysts may read.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Posture metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorPostureResult"
+        "404":
+          description: Collector not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: patchCollectorPosture
+      tags: [collectors]
+      summary: |
+        Edit operator-managed posture metadata for a collector.
+      description: |
+        Lets a platform admin (`x-platform-admin-token`) edit the
+        in-database fields backing the Posture & Compliance tab —
+        notes (which double as the ToS link snapshot store) and
+        per-tenant opt-in for the active tenant. Static contract
+        fields like `postureClass`, `disclosureTier`, `jurisdiction`,
+        and `retentionDays` live in code on the collector and are
+        not editable here.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchCollectorPostureRequest"
+      responses:
+        "200":
+          description: Updated posture metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorPostureResult"
+        "401":
+          description: Missing or invalid platform-admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /collectors/workbench/catalog:
+    get:
+      operationId: listCollectorCatalog
+      tags: [collectors]
+      summary: Operator catalog view of every registered collector.
+      description: |
+        Drives the Catalog tab. Returns one entry per registered
+        collector enriched with the workbench-only metadata (ToS URL,
+        license note, logo, cadence, scope kinds, output signal types)
+        on top of the live registry row. Posture/disclosure/jurisdiction
+        come from the collector contract; runtime fields like
+        `lastRunAt` come from the DB.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Catalog entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CollectorCatalogEntry"
+
+  /collectors/workbench/source-health:
+    get:
+      operationId: listCollectorSourceHealth
+      tags: [collectors]
+      summary: Source-health roll-up across collectors.
+      description: |
+        For each collector, computes counts of recent successful runs,
+        failures, fetch errors, and schema-drift events from the audit
+        log and the schema-drift registry. Used by the Source Health
+        tab and the bell-on-failure indicator in the sidebar.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: lookbackHours
+          schema: { type: integer, minimum: 1, maximum: 720, default: 168 }
+      responses:
+        "200":
+          description: Source-health entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, lookbackHours]
+                properties:
+                  lookbackHours: { type: integer }
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CollectorSourceHealthEntry"
+
+  /collectors/workbench/lineage:
+    get:
+      operationId: getCollectorLineage
+      tags: [collectors]
+      summary: Bipartite source → consumer lineage graph.
+      description: |
+        Returns a static lineage graph linking each collector to the
+        BigQuery tables it writes, the marts that read those tables,
+        and the lever / fusion-center panes that consume them. Used
+        by the Lineage tab and by audit "what citing what" overlays.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Lineage graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorLineageGraph"
+
+  /collectors/workbench/coverage:
+    get:
+      operationId: getCollectorCoverage
+      tags: [collectors]
+      summary: |
+        Material × jurisdiction coverage matrix vs the tenant's spend.
+      description: |
+        For every canonical material code in scope-taxonomy, returns
+        which collectors cover it (via signal scope) and which
+        jurisdictions are present in the tenant's supplier base. Used
+        by the Coverage tab to surface gaps.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Coverage matrix
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorCoverageMatrix"
+
+  /collectors/workbench/cost:
+    get:
+      operationId: getCollectorCost
+      tags: [collectors]
+      summary: Per-collector cost & throughput estimate.
+      description: |
+        Honest fallback: real BigQuery cost requires
+        `INFORMATION_SCHEMA.JOBS` access which is not configured in
+        local/dev environments. This endpoint derives a *proxy* cost
+        from audit-log throughput (rows pulled, runs in window) and
+        flags the estimate as `proxy`. Production deployments wire
+        this to the real BQ slot/byte numbers.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: lookbackHours
+          schema: { type: integer, minimum: 1, maximum: 720, default: 168 }
+      responses:
+        "200":
+          description: Cost estimates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source, lookbackHours, entries]
+                properties:
+                  source: { type: string, enum: [proxy, bigquery] }
+                  lookbackHours: { type: integer }
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CollectorCostEntry"
+
+  /collectors/workbench/runs:
+    get:
+      operationId: listCollectorRunsAndErrors
+      tags: [collectors]
+      summary: Recent runs and errors across collectors.
+      description: |
+        Reads the audit log for the past `lookbackHours` and returns
+        a flat, paginated stream of run starts/completions and fetch
+        errors. Used by the Runs & Errors tab.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: lookbackHours
+          schema: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+        - in: query
+          name: collectorId
+          schema: { type: string }
+        - in: query
+          name: onlyErrors
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, lookbackHours]
+                properties:
+                  lookbackHours: { type: integer }
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CollectorAuditEntry"
+
+  /data-sources:
+    get:
+      operationId: listDataSources
+      tags: [collectors]
+      summary: Client-facing list of opted-in data sources.
+      description: |
+        The read-only client view at `/data-sources`. Filters the
+        collector registry to entries that are enabled for the active
+        tenant (resolved opt-in matrix) and projects only the
+        client-safe fields: name, logo, license note, jurisdiction,
+        cadence, disclosure tier, last refresh time. No posture-class
+        or kill-criteria leakage.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Client data-source cards
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ClientDataSource"
+
   /market-signals:
     get:
       operationId: listMarketSignals
@@ -1398,6 +1661,33 @@ components:
         defaultScheduleCron: { type: string, nullable: true }
         lastRunAt: { type: string, format: date-time, nullable: true }
         lastSignalCount: { type: integer, nullable: true }
+        postureClass:
+          type: string
+          enum: [public_api, tos_restricted, gray_hat]
+          description: |
+            Canonical posture classification used by the disclosure tier
+            renderer (`public-api`/`published-data` map to `public_api`,
+            `respect-robots-crawl` maps to `tos_restricted`,
+            `aggressive-crawl` maps to `gray_hat`).
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+          description: |
+            Tier at which this source can be cited downstream. T1 = full
+            attribution, T4 = invisible / confidence boost only.
+        jurisdiction:
+          type: string
+          description: ISO-3166 alpha-2 code or "GLOBAL".
+        flagEmoji: { type: string, nullable: true }
+        retentionDays: { type: integer, nullable: true }
+        tenantOptInDefault: { type: boolean, nullable: true }
+        tenantOptedIn:
+          type: boolean
+          nullable: true
+          description: |
+            Resolved opt-in state for the active tenant. Falls back to
+            `tenantOptInDefault` when the tenant has no explicit override
+            in `collector_tenant_opt_ins`.
 
     CollectorRunResult:
       type: object
@@ -1839,3 +2129,234 @@ components:
           type: object
           additionalProperties: true
         createdAt: { type: string, format: date-time }
+
+    PatchCollectorPostureRequest:
+      type: object
+      properties:
+        notes:
+          type: string
+          nullable: true
+          maxLength: 5000
+          description: |
+            Free-form operator notes. Doubles as the ToS link snapshot
+            store; the workbench renders the contract's static `tosUrl`
+            unless `notes` contains a `tos:` line that overrides it.
+        tenantOptedIn:
+          type: boolean
+          nullable: true
+          description: |
+            Per-tenant opt-in toggle for the active tenant. Setting
+            null deletes the override and restores the default.
+
+    CollectorPostureResult:
+      type: object
+      required: [id, postureClass, disclosureTier, jurisdiction]
+      properties:
+        id: { type: string }
+        notes: { type: string, nullable: true }
+        postureClass:
+          type: string
+          enum: [public_api, tos_restricted, gray_hat]
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        jurisdiction: { type: string }
+        retentionDays: { type: integer, nullable: true }
+        tenantOptInDefault: { type: boolean, nullable: true }
+        tenantOptedIn: { type: boolean, nullable: true }
+
+    CollectorCatalogEntry:
+      type: object
+      required:
+        [
+          id,
+          name,
+          description,
+          status,
+          posture,
+          postureClass,
+          disclosureTier,
+          jurisdiction,
+        ]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [enabled, disabled, killed]
+        posture:
+          type: string
+          enum:
+            [public-api, published-data, respect-robots-crawl, aggressive-crawl]
+        postureClass:
+          type: string
+          enum: [public_api, tos_restricted, gray_hat]
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        jurisdiction: { type: string }
+        flagEmoji: { type: string }
+        sourceUrl: { type: string, nullable: true }
+        tosUrl: { type: string }
+        licenseNote: { type: string }
+        logoUrl: { type: string }
+        cadenceLabel: { type: string }
+        retentionDays: { type: integer, nullable: true }
+        piiClassification:
+          type: string
+          enum: [none, low, medium, high]
+        outputSignalTypes:
+          type: array
+          items: { type: string }
+        scopeKinds:
+          type: array
+          items:
+            type: string
+            enum: [material, category, supplier, sku, lane]
+        rateLimitRpm: { type: integer, nullable: true }
+        scheduleCron: { type: string, nullable: true }
+        tenantOptInDefault: { type: boolean, nullable: true }
+        tenantOptedIn: { type: boolean, nullable: true }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastSignalCount: { type: integer, nullable: true }
+
+    CollectorSourceHealthEntry:
+      type: object
+      required: [collectorId, name, status, runs, failures, fetchErrors]
+      properties:
+        collectorId: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum: [enabled, disabled, killed]
+        runs: { type: integer }
+        failures: { type: integer }
+        fetchErrors: { type: integer }
+        schemaDriftEvents: { type: integer }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastFailureAt: { type: string, format: date-time, nullable: true }
+        lastSchemaDriftAt: { type: string, format: date-time, nullable: true }
+        recentDrifts:
+          type: array
+          items:
+            type: object
+            required: [signalType, observedAt]
+            properties:
+              signalType: { type: string }
+              observedAt: { type: string, format: date-time }
+              addedKeysCount: { type: integer }
+              removedKeysCount: { type: integer }
+              changedKeys:
+                type: array
+                items: { type: string }
+        healthScore:
+          type: integer
+          description: 0-100 (100 = clean, 0 = all runs failing).
+
+    CollectorLineageGraph:
+      type: object
+      required: [collectors, bqTables, marts, consumers, edges]
+      properties:
+        collectors:
+          type: array
+          items:
+            type: object
+            required: [id, name, postureClass, disclosureTier]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              postureClass:
+                type: string
+                enum: [public_api, tos_restricted, gray_hat]
+              disclosureTier:
+                type: string
+                enum: [T1, T2, T3, T4]
+        bqTables:
+          type: array
+          items: { type: string }
+        marts:
+          type: array
+          items: { type: string }
+        consumers:
+          type: array
+          items: { type: string }
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: { type: string }
+              to: { type: string }
+              kind:
+                type: string
+                enum: [collector_to_table, table_to_mart, mart_to_consumer]
+
+    CollectorCoverageMatrix:
+      type: object
+      required: [materials, jurisdictions, supplierCountryCounts, rows]
+      properties:
+        materials:
+          type: array
+          items:
+            type: object
+            required: [code]
+            properties:
+              code: { type: string }
+              label: { type: string, nullable: true }
+        jurisdictions:
+          type: array
+          items: { type: string }
+        supplierCountryCounts:
+          type: array
+          items:
+            type: object
+            required: [countryCode, supplierCount]
+            properties:
+              countryCode: { type: string, nullable: true }
+              supplierCount: { type: integer }
+        rows:
+          type: array
+          description: |
+            One row per material code. `coveredBy` is the list of
+            collector IDs that have written at least one signal for
+            that material in the lookback window.
+          items:
+            type: object
+            required: [materialCode, signalCount, coveredBy]
+            properties:
+              materialCode: { type: string }
+              signalCount: { type: integer }
+              coveredBy:
+                type: array
+                items: { type: string }
+
+    CollectorCostEntry:
+      type: object
+      required: [collectorId, name, runs, rowsWritten, estimateUsd]
+      properties:
+        collectorId: { type: string }
+        name: { type: string }
+        runs: { type: integer }
+        rowsWritten: { type: integer }
+        estimateUsd: { type: number }
+        notes: { type: string, nullable: true }
+
+    ClientDataSource:
+      type: object
+      required:
+        [id, name, jurisdiction, disclosureTier, cadenceLabel, licenseNote]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        logoUrl: { type: string }
+        jurisdiction: { type: string }
+        flagEmoji: { type: string }
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        cadenceLabel: { type: string }
+        licenseNote: { type: string }
+        tosUrl: { type: string }
+        lastRefreshedAt: { type: string, format: date-time, nullable: true }

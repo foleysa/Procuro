@@ -11,7 +11,9 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { CollectorDisclosureTier } from "./collectorDisclosureTier";
 import type { CollectorPosture } from "./collectorPosture";
+import type { CollectorPostureClass } from "./collectorPostureClass";
 import type { CollectorStatus } from "./collectorStatus";
 
 export interface Collector {
@@ -25,4 +27,24 @@ export interface Collector {
   defaultScheduleCron?: string | null;
   lastRunAt?: Date | null;
   lastSignalCount?: number | null;
+  /** Canonical posture classification used by the disclosure tier
+renderer (`public-api`/`published-data` map to `public_api`,
+`respect-robots-crawl` maps to `tos_restricted`,
+`aggressive-crawl` maps to `gray_hat`).
+ */
+  postureClass?: CollectorPostureClass;
+  /** Tier at which this source can be cited downstream. T1 = full
+attribution, T4 = invisible / confidence boost only.
+ */
+  disclosureTier?: CollectorDisclosureTier;
+  /** ISO-3166 alpha-2 code or "GLOBAL". */
+  jurisdiction?: string;
+  flagEmoji?: string | null;
+  retentionDays?: number | null;
+  tenantOptInDefault?: boolean | null;
+  /** Resolved opt-in state for the active tenant. Falls back to
+`tenantOptInDefault` when the tenant has no explicit override
+in `collector_tenant_opt_ins`.
+ */
+  tenantOptedIn?: boolean | null;
 }

@@ -28,13 +28,18 @@ import type {
   Collector,
   CollectorAuditEntry,
   CollectorBackfillResult,
+  CollectorCoverageMatrix,
   CollectorKillResult,
+  CollectorLineageGraph,
   CollectorMutationResult,
+  CollectorPostureResult,
   CollectorRunResult,
   CsvIngestRequest,
   Cycle,
   CycleDetail,
   ErrorResponse,
+  GetCollectorCost200,
+  GetCollectorCostParams,
   HealthStatus,
   IngestCsvBatchParams,
   IngestCsvStreamBodyOne,
@@ -45,6 +50,12 @@ import type {
   JobCancelled,
   JobKindSetting,
   LearnedPrior,
+  ListCollectorCatalog200,
+  ListCollectorRunsAndErrors200,
+  ListCollectorRunsAndErrorsParams,
+  ListCollectorSourceHealth200,
+  ListCollectorSourceHealthParams,
+  ListDataSources200,
   ListJobsParams,
   ListMarketSignalsParams,
   ListOpportunitiesParams,
@@ -57,6 +68,7 @@ import type {
   OpportunityDetail,
   OpportunityListResponse,
   Org,
+  PatchCollectorPostureRequest,
   PatchCollectorRequest,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
@@ -2086,6 +2098,860 @@ export const useBackfillFredEconomicIndex = <
 > => {
   return useMutation(getBackfillFredEconomicIndexMutationOptions(options));
 };
+
+/**
+ * Returns the same shape as `patchCollectorPosture` so the
+Posture tab can prefill its form (and any other tab can
+reuse the resolution) without round-tripping through
+`/collectors`. Tenant membership is required because the
+response includes the per-tenant `tenantOptedIn` resolution;
+admin gating is not applied — analysts may read.
+
+ * @summary Read the posture summary for a single collector.
+
+ */
+export const getGetCollectorPostureUrl = (id: string) => {
+  return `/api/collectors/${id}/posture`;
+};
+
+export const getCollectorPosture = async (
+  id: string,
+  options?: RequestInit,
+): Promise<CollectorPostureResult> => {
+  return customFetch<CollectorPostureResult>(getGetCollectorPostureUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCollectorPostureQueryKey = (id: string) => {
+  return [`/api/collectors/${id}/posture`] as const;
+};
+
+export const getGetCollectorPostureQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCollectorPosture>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorPosture>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCollectorPostureQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCollectorPosture>>
+  > = ({ signal }) => getCollectorPosture(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorPosture>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCollectorPostureQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCollectorPosture>>
+>;
+export type GetCollectorPostureQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read the posture summary for a single collector.
+
+ */
+
+export function useGetCollectorPosture<
+  TData = Awaited<ReturnType<typeof getCollectorPosture>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorPosture>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCollectorPostureQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Lets a platform admin (`x-platform-admin-token`) edit the
+in-database fields backing the Posture & Compliance tab —
+notes (which double as the ToS link snapshot store) and
+per-tenant opt-in for the active tenant. Static contract
+fields like `postureClass`, `disclosureTier`, `jurisdiction`,
+and `retentionDays` live in code on the collector and are
+not editable here.
+
+ * @summary Edit operator-managed posture metadata for a collector.
+
+ */
+export const getPatchCollectorPostureUrl = (id: string) => {
+  return `/api/collectors/${id}/posture`;
+};
+
+export const patchCollectorPosture = async (
+  id: string,
+  patchCollectorPostureRequest: PatchCollectorPostureRequest,
+  options?: RequestInit,
+): Promise<CollectorPostureResult> => {
+  return customFetch<CollectorPostureResult>(getPatchCollectorPostureUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchCollectorPostureRequest),
+  });
+};
+
+export const getPatchCollectorPostureMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchCollectorPosture>>,
+    TError,
+    { id: string; data: BodyType<PatchCollectorPostureRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchCollectorPosture>>,
+  TError,
+  { id: string; data: BodyType<PatchCollectorPostureRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchCollectorPosture"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchCollectorPosture>>,
+    { id: string; data: BodyType<PatchCollectorPostureRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchCollectorPosture(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchCollectorPostureMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchCollectorPosture>>
+>;
+export type PatchCollectorPostureMutationBody =
+  BodyType<PatchCollectorPostureRequest>;
+export type PatchCollectorPostureMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Edit operator-managed posture metadata for a collector.
+
+ */
+export const usePatchCollectorPosture = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchCollectorPosture>>,
+    TError,
+    { id: string; data: BodyType<PatchCollectorPostureRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchCollectorPosture>>,
+  TError,
+  { id: string; data: BodyType<PatchCollectorPostureRequest> },
+  TContext
+> => {
+  return useMutation(getPatchCollectorPostureMutationOptions(options));
+};
+
+/**
+ * Drives the Catalog tab. Returns one entry per registered
+collector enriched with the workbench-only metadata (ToS URL,
+license note, logo, cadence, scope kinds, output signal types)
+on top of the live registry row. Posture/disclosure/jurisdiction
+come from the collector contract; runtime fields like
+`lastRunAt` come from the DB.
+
+ * @summary Operator catalog view of every registered collector.
+ */
+export const getListCollectorCatalogUrl = () => {
+  return `/api/collectors/workbench/catalog`;
+};
+
+export const listCollectorCatalog = async (
+  options?: RequestInit,
+): Promise<ListCollectorCatalog200> => {
+  return customFetch<ListCollectorCatalog200>(getListCollectorCatalogUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListCollectorCatalogQueryKey = () => {
+  return [`/api/collectors/workbench/catalog`] as const;
+};
+
+export const getListCollectorCatalogQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCollectorCatalog>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCollectorCatalog>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCollectorCatalogQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCollectorCatalog>>
+  > = ({ signal }) => listCollectorCatalog({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCollectorCatalog>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCollectorCatalogQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCollectorCatalog>>
+>;
+export type ListCollectorCatalogQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Operator catalog view of every registered collector.
+ */
+
+export function useListCollectorCatalog<
+  TData = Awaited<ReturnType<typeof listCollectorCatalog>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCollectorCatalog>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCollectorCatalogQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * For each collector, computes counts of recent successful runs,
+failures, fetch errors, and schema-drift events from the audit
+log and the schema-drift registry. Used by the Source Health
+tab and the bell-on-failure indicator in the sidebar.
+
+ * @summary Source-health roll-up across collectors.
+ */
+export const getListCollectorSourceHealthUrl = (
+  params?: ListCollectorSourceHealthParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/collectors/workbench/source-health?${stringifiedParams}`
+    : `/api/collectors/workbench/source-health`;
+};
+
+export const listCollectorSourceHealth = async (
+  params?: ListCollectorSourceHealthParams,
+  options?: RequestInit,
+): Promise<ListCollectorSourceHealth200> => {
+  return customFetch<ListCollectorSourceHealth200>(
+    getListCollectorSourceHealthUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListCollectorSourceHealthQueryKey = (
+  params?: ListCollectorSourceHealthParams,
+) => {
+  return [
+    `/api/collectors/workbench/source-health`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListCollectorSourceHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCollectorSourceHealth>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListCollectorSourceHealthParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCollectorSourceHealth>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListCollectorSourceHealthQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCollectorSourceHealth>>
+  > = ({ signal }) =>
+    listCollectorSourceHealth(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCollectorSourceHealth>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCollectorSourceHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCollectorSourceHealth>>
+>;
+export type ListCollectorSourceHealthQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Source-health roll-up across collectors.
+ */
+
+export function useListCollectorSourceHealth<
+  TData = Awaited<ReturnType<typeof listCollectorSourceHealth>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListCollectorSourceHealthParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCollectorSourceHealth>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCollectorSourceHealthQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns a static lineage graph linking each collector to the
+BigQuery tables it writes, the marts that read those tables,
+and the lever / fusion-center panes that consume them. Used
+by the Lineage tab and by audit "what citing what" overlays.
+
+ * @summary Bipartite source → consumer lineage graph.
+ */
+export const getGetCollectorLineageUrl = () => {
+  return `/api/collectors/workbench/lineage`;
+};
+
+export const getCollectorLineage = async (
+  options?: RequestInit,
+): Promise<CollectorLineageGraph> => {
+  return customFetch<CollectorLineageGraph>(getGetCollectorLineageUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCollectorLineageQueryKey = () => {
+  return [`/api/collectors/workbench/lineage`] as const;
+};
+
+export const getGetCollectorLineageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCollectorLineage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorLineage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCollectorLineageQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCollectorLineage>>
+  > = ({ signal }) => getCollectorLineage({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorLineage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCollectorLineageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCollectorLineage>>
+>;
+export type GetCollectorLineageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Bipartite source → consumer lineage graph.
+ */
+
+export function useGetCollectorLineage<
+  TData = Awaited<ReturnType<typeof getCollectorLineage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorLineage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCollectorLineageQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * For every canonical material code in scope-taxonomy, returns
+which collectors cover it (via signal scope) and which
+jurisdictions are present in the tenant's supplier base. Used
+by the Coverage tab to surface gaps.
+
+ * @summary Material × jurisdiction coverage matrix vs the tenant's spend.
+
+ */
+export const getGetCollectorCoverageUrl = () => {
+  return `/api/collectors/workbench/coverage`;
+};
+
+export const getCollectorCoverage = async (
+  options?: RequestInit,
+): Promise<CollectorCoverageMatrix> => {
+  return customFetch<CollectorCoverageMatrix>(getGetCollectorCoverageUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCollectorCoverageQueryKey = () => {
+  return [`/api/collectors/workbench/coverage`] as const;
+};
+
+export const getGetCollectorCoverageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCollectorCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCollectorCoverageQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCollectorCoverage>>
+  > = ({ signal }) => getCollectorCoverage({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorCoverage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCollectorCoverageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCollectorCoverage>>
+>;
+export type GetCollectorCoverageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Material × jurisdiction coverage matrix vs the tenant's spend.
+
+ */
+
+export function useGetCollectorCoverage<
+  TData = Awaited<ReturnType<typeof getCollectorCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCollectorCoverageQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Honest fallback: real BigQuery cost requires
+`INFORMATION_SCHEMA.JOBS` access which is not configured in
+local/dev environments. This endpoint derives a *proxy* cost
+from audit-log throughput (rows pulled, runs in window) and
+flags the estimate as `proxy`. Production deployments wire
+this to the real BQ slot/byte numbers.
+
+ * @summary Per-collector cost & throughput estimate.
+ */
+export const getGetCollectorCostUrl = (params?: GetCollectorCostParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/collectors/workbench/cost?${stringifiedParams}`
+    : `/api/collectors/workbench/cost`;
+};
+
+export const getCollectorCost = async (
+  params?: GetCollectorCostParams,
+  options?: RequestInit,
+): Promise<GetCollectorCost200> => {
+  return customFetch<GetCollectorCost200>(getGetCollectorCostUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCollectorCostQueryKey = (
+  params?: GetCollectorCostParams,
+) => {
+  return [
+    `/api/collectors/workbench/cost`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetCollectorCostQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCollectorCost>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCollectorCostParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorCost>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCollectorCostQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCollectorCost>>
+  > = ({ signal }) => getCollectorCost(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorCost>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCollectorCostQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCollectorCost>>
+>;
+export type GetCollectorCostQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-collector cost & throughput estimate.
+ */
+
+export function useGetCollectorCost<
+  TData = Awaited<ReturnType<typeof getCollectorCost>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCollectorCostParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorCost>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCollectorCostQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Reads the audit log for the past `lookbackHours` and returns
+a flat, paginated stream of run starts/completions and fetch
+errors. Used by the Runs & Errors tab.
+
+ * @summary Recent runs and errors across collectors.
+ */
+export const getListCollectorRunsAndErrorsUrl = (
+  params?: ListCollectorRunsAndErrorsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/collectors/workbench/runs?${stringifiedParams}`
+    : `/api/collectors/workbench/runs`;
+};
+
+export const listCollectorRunsAndErrors = async (
+  params?: ListCollectorRunsAndErrorsParams,
+  options?: RequestInit,
+): Promise<ListCollectorRunsAndErrors200> => {
+  return customFetch<ListCollectorRunsAndErrors200>(
+    getListCollectorRunsAndErrorsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListCollectorRunsAndErrorsQueryKey = (
+  params?: ListCollectorRunsAndErrorsParams,
+) => {
+  return [
+    `/api/collectors/workbench/runs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListCollectorRunsAndErrorsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCollectorRunsAndErrors>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListCollectorRunsAndErrorsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCollectorRunsAndErrors>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListCollectorRunsAndErrorsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCollectorRunsAndErrors>>
+  > = ({ signal }) =>
+    listCollectorRunsAndErrors(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCollectorRunsAndErrors>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCollectorRunsAndErrorsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCollectorRunsAndErrors>>
+>;
+export type ListCollectorRunsAndErrorsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recent runs and errors across collectors.
+ */
+
+export function useListCollectorRunsAndErrors<
+  TData = Awaited<ReturnType<typeof listCollectorRunsAndErrors>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListCollectorRunsAndErrorsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCollectorRunsAndErrors>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCollectorRunsAndErrorsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * The read-only client view at `/data-sources`. Filters the
+collector registry to entries that are enabled for the active
+tenant (resolved opt-in matrix) and projects only the
+client-safe fields: name, logo, license note, jurisdiction,
+cadence, disclosure tier, last refresh time. No posture-class
+or kill-criteria leakage.
+
+ * @summary Client-facing list of opted-in data sources.
+ */
+export const getListDataSourcesUrl = () => {
+  return `/api/data-sources`;
+};
+
+export const listDataSources = async (
+  options?: RequestInit,
+): Promise<ListDataSources200> => {
+  return customFetch<ListDataSources200>(getListDataSourcesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDataSourcesQueryKey = () => {
+  return [`/api/data-sources`] as const;
+};
+
+export const getListDataSourcesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDataSources>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDataSources>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListDataSourcesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDataSources>>> = ({
+    signal,
+  }) => listDataSources({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDataSources>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDataSourcesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDataSources>>
+>;
+export type ListDataSourcesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Client-facing list of opted-in data sources.
+ */
+
+export function useListDataSources<
+  TData = Awaited<ReturnType<typeof listDataSources>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDataSources>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDataSourcesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns market signals scoped to the active tenant plus any

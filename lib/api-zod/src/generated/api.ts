@@ -918,6 +918,31 @@ export const ListCollectorsResponseItem = zod.object({
   defaultScheduleCron: zod.string().nullish(),
   lastRunAt: zod.coerce.date().nullish(),
   lastSignalCount: zod.number().nullish(),
+  postureClass: zod
+    .enum(["public_api", "tos_restricted", "gray_hat"])
+    .optional()
+    .describe(
+      "Canonical posture classification used by the disclosure tier\nrenderer (`public-api`\/`published-data` map to `public_api`,\n`respect-robots-crawl` maps to `tos_restricted`,\n`aggressive-crawl` maps to `gray_hat`).\n",
+    ),
+  disclosureTier: zod
+    .enum(["T1", "T2", "T3", "T4"])
+    .optional()
+    .describe(
+      "Tier at which this source can be cited downstream. T1 = full\nattribution, T4 = invisible \/ confidence boost only.\n",
+    ),
+  jurisdiction: zod
+    .string()
+    .optional()
+    .describe('ISO-3166 alpha-2 code or \"GLOBAL\".'),
+  flagEmoji: zod.string().nullish(),
+  retentionDays: zod.number().nullish(),
+  tenantOptInDefault: zod.boolean().nullish(),
+  tenantOptedIn: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "Resolved opt-in state for the active tenant. Falls back to\n`tenantOptInDefault` when the tenant has no explicit override\nin `collector_tenant_opt_ins`.\n",
+    ),
 });
 export const ListCollectorsResponse = zod.array(ListCollectorsResponseItem);
 
@@ -1155,6 +1180,436 @@ export const BackfillFredEconomicIndexResponse = zod.object({
       "Drafts that matched an existing\n`(scope_material_code, observed_at)` row and were not re-inserted.\n",
     ),
   durationMs: zod.number(),
+});
+
+/**
+ * Returns the same shape as `patchCollectorPosture` so the
+Posture tab can prefill its form (and any other tab can
+reuse the resolution) without round-tripping through
+`/collectors`. Tenant membership is required because the
+response includes the per-tenant `tenantOptedIn` resolution;
+admin gating is not applied — analysts may read.
+
+ * @summary Read the posture summary for a single collector.
+
+ */
+export const GetCollectorPostureParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetCollectorPostureHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetCollectorPostureResponse = zod.object({
+  id: zod.string(),
+  notes: zod.string().nullish(),
+  postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+  disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+  jurisdiction: zod.string(),
+  retentionDays: zod.number().nullish(),
+  tenantOptInDefault: zod.boolean().nullish(),
+  tenantOptedIn: zod.boolean().nullish(),
+});
+
+/**
+ * Lets a platform admin (`x-platform-admin-token`) edit the
+in-database fields backing the Posture & Compliance tab —
+notes (which double as the ToS link snapshot store) and
+per-tenant opt-in for the active tenant. Static contract
+fields like `postureClass`, `disclosureTier`, `jurisdiction`,
+and `retentionDays` live in code on the collector and are
+not editable here.
+
+ * @summary Edit operator-managed posture metadata for a collector.
+
+ */
+export const PatchCollectorPostureParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchCollectorPostureHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const patchCollectorPostureBodyNotesMax = 5000;
+
+export const PatchCollectorPostureBody = zod.object({
+  notes: zod
+    .string()
+    .max(patchCollectorPostureBodyNotesMax)
+    .nullish()
+    .describe(
+      "Free-form operator notes. Doubles as the ToS link snapshot\nstore; the workbench renders the contract's static `tosUrl`\nunless `notes` contains a `tos:` line that overrides it.\n",
+    ),
+  tenantOptedIn: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "Per-tenant opt-in toggle for the active tenant. Setting\nnull deletes the override and restores the default.\n",
+    ),
+});
+
+export const PatchCollectorPostureResponse = zod.object({
+  id: zod.string(),
+  notes: zod.string().nullish(),
+  postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+  disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+  jurisdiction: zod.string(),
+  retentionDays: zod.number().nullish(),
+  tenantOptInDefault: zod.boolean().nullish(),
+  tenantOptedIn: zod.boolean().nullish(),
+});
+
+/**
+ * Drives the Catalog tab. Returns one entry per registered
+collector enriched with the workbench-only metadata (ToS URL,
+license note, logo, cadence, scope kinds, output signal types)
+on top of the live registry row. Posture/disclosure/jurisdiction
+come from the collector contract; runtime fields like
+`lastRunAt` come from the DB.
+
+ * @summary Operator catalog view of every registered collector.
+ */
+export const ListCollectorCatalogHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListCollectorCatalogResponse = zod.object({
+  entries: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      description: zod.string(),
+      status: zod.enum(["enabled", "disabled", "killed"]),
+      posture: zod.enum([
+        "public-api",
+        "published-data",
+        "respect-robots-crawl",
+        "aggressive-crawl",
+      ]),
+      postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+      disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+      jurisdiction: zod.string(),
+      flagEmoji: zod.string().optional(),
+      sourceUrl: zod.string().nullish(),
+      tosUrl: zod.string().optional(),
+      licenseNote: zod.string().optional(),
+      logoUrl: zod.string().optional(),
+      cadenceLabel: zod.string().optional(),
+      retentionDays: zod.number().nullish(),
+      piiClassification: zod.enum(["none", "low", "medium", "high"]).optional(),
+      outputSignalTypes: zod.array(zod.string()).optional(),
+      scopeKinds: zod
+        .array(zod.enum(["material", "category", "supplier", "sku", "lane"]))
+        .optional(),
+      rateLimitRpm: zod.number().nullish(),
+      scheduleCron: zod.string().nullish(),
+      tenantOptInDefault: zod.boolean().nullish(),
+      tenantOptedIn: zod.boolean().nullish(),
+      lastRunAt: zod.coerce.date().nullish(),
+      lastSignalCount: zod.number().nullish(),
+    }),
+  ),
+});
+
+/**
+ * For each collector, computes counts of recent successful runs,
+failures, fetch errors, and schema-drift events from the audit
+log and the schema-drift registry. Used by the Source Health
+tab and the bell-on-failure indicator in the sidebar.
+
+ * @summary Source-health roll-up across collectors.
+ */
+export const listCollectorSourceHealthQueryLookbackHoursDefault = 168;
+export const listCollectorSourceHealthQueryLookbackHoursMax = 720;
+
+export const ListCollectorSourceHealthQueryParams = zod.object({
+  lookbackHours: zod.coerce
+    .number()
+    .min(1)
+    .max(listCollectorSourceHealthQueryLookbackHoursMax)
+    .default(listCollectorSourceHealthQueryLookbackHoursDefault),
+});
+
+export const ListCollectorSourceHealthHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListCollectorSourceHealthResponse = zod.object({
+  lookbackHours: zod.number(),
+  entries: zod.array(
+    zod.object({
+      collectorId: zod.string(),
+      name: zod.string(),
+      status: zod.enum(["enabled", "disabled", "killed"]),
+      runs: zod.number(),
+      failures: zod.number(),
+      fetchErrors: zod.number(),
+      schemaDriftEvents: zod.number().optional(),
+      lastRunAt: zod.coerce.date().nullish(),
+      lastFailureAt: zod.coerce.date().nullish(),
+      lastSchemaDriftAt: zod.coerce.date().nullish(),
+      recentDrifts: zod
+        .array(
+          zod.object({
+            signalType: zod.string(),
+            observedAt: zod.coerce.date(),
+            addedKeysCount: zod.number().optional(),
+            removedKeysCount: zod.number().optional(),
+            changedKeys: zod.array(zod.string()).optional(),
+          }),
+        )
+        .optional(),
+      healthScore: zod
+        .number()
+        .optional()
+        .describe("0-100 (100 = clean, 0 = all runs failing)."),
+    }),
+  ),
+});
+
+/**
+ * Returns a static lineage graph linking each collector to the
+BigQuery tables it writes, the marts that read those tables,
+and the lever / fusion-center panes that consume them. Used
+by the Lineage tab and by audit "what citing what" overlays.
+
+ * @summary Bipartite source → consumer lineage graph.
+ */
+export const GetCollectorLineageHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetCollectorLineageResponse = zod.object({
+  collectors: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+      disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+    }),
+  ),
+  bqTables: zod.array(zod.string()),
+  marts: zod.array(zod.string()),
+  consumers: zod.array(zod.string()),
+  edges: zod.array(
+    zod.object({
+      from: zod.string(),
+      to: zod.string(),
+      kind: zod
+        .enum(["collector_to_table", "table_to_mart", "mart_to_consumer"])
+        .optional(),
+    }),
+  ),
+});
+
+/**
+ * For every canonical material code in scope-taxonomy, returns
+which collectors cover it (via signal scope) and which
+jurisdictions are present in the tenant's supplier base. Used
+by the Coverage tab to surface gaps.
+
+ * @summary Material × jurisdiction coverage matrix vs the tenant's spend.
+
+ */
+export const GetCollectorCoverageHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetCollectorCoverageResponse = zod.object({
+  materials: zod.array(
+    zod.object({
+      code: zod.string(),
+      label: zod.string().nullish(),
+    }),
+  ),
+  jurisdictions: zod.array(zod.string()),
+  supplierCountryCounts: zod.array(
+    zod.object({
+      countryCode: zod.string().nullable(),
+      supplierCount: zod.number(),
+    }),
+  ),
+  rows: zod
+    .array(
+      zod.object({
+        materialCode: zod.string(),
+        signalCount: zod.number(),
+        coveredBy: zod.array(zod.string()),
+      }),
+    )
+    .describe(
+      "One row per material code. `coveredBy` is the list of\ncollector IDs that have written at least one signal for\nthat material in the lookback window.\n",
+    ),
+});
+
+/**
+ * Honest fallback: real BigQuery cost requires
+`INFORMATION_SCHEMA.JOBS` access which is not configured in
+local/dev environments. This endpoint derives a *proxy* cost
+from audit-log throughput (rows pulled, runs in window) and
+flags the estimate as `proxy`. Production deployments wire
+this to the real BQ slot/byte numbers.
+
+ * @summary Per-collector cost & throughput estimate.
+ */
+export const getCollectorCostQueryLookbackHoursDefault = 168;
+export const getCollectorCostQueryLookbackHoursMax = 720;
+
+export const GetCollectorCostQueryParams = zod.object({
+  lookbackHours: zod.coerce
+    .number()
+    .min(1)
+    .max(getCollectorCostQueryLookbackHoursMax)
+    .default(getCollectorCostQueryLookbackHoursDefault),
+});
+
+export const GetCollectorCostHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetCollectorCostResponse = zod.object({
+  source: zod.enum(["proxy", "bigquery"]),
+  lookbackHours: zod.number(),
+  entries: zod.array(
+    zod.object({
+      collectorId: zod.string(),
+      name: zod.string(),
+      runs: zod.number(),
+      rowsWritten: zod.number(),
+      estimateUsd: zod.number(),
+      notes: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * Reads the audit log for the past `lookbackHours` and returns
+a flat, paginated stream of run starts/completions and fetch
+errors. Used by the Runs & Errors tab.
+
+ * @summary Recent runs and errors across collectors.
+ */
+export const listCollectorRunsAndErrorsQueryLookbackHoursDefault = 168;
+export const listCollectorRunsAndErrorsQueryLookbackHoursMax = 720;
+
+export const listCollectorRunsAndErrorsQueryLimitDefault = 200;
+export const listCollectorRunsAndErrorsQueryLimitMax = 1000;
+
+export const listCollectorRunsAndErrorsQueryOnlyErrorsDefault = false;
+
+export const ListCollectorRunsAndErrorsQueryParams = zod.object({
+  lookbackHours: zod.coerce
+    .number()
+    .min(1)
+    .max(listCollectorRunsAndErrorsQueryLookbackHoursMax)
+    .default(listCollectorRunsAndErrorsQueryLookbackHoursDefault),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listCollectorRunsAndErrorsQueryLimitMax)
+    .default(listCollectorRunsAndErrorsQueryLimitDefault),
+  collectorId: zod.coerce.string().optional(),
+  onlyErrors: zod.coerce
+    .boolean()
+    .default(listCollectorRunsAndErrorsQueryOnlyErrorsDefault),
+});
+
+export const ListCollectorRunsAndErrorsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListCollectorRunsAndErrorsResponse = zod.object({
+  lookbackHours: zod.number(),
+  entries: zod.array(
+    zod.object({
+      id: zod.string(),
+      collectorId: zod.string(),
+      event: zod.string(),
+      targetUrl: zod.string().nullish(),
+      statusCode: zod.number().nullish(),
+      error: zod.string().nullish(),
+      metadata: zod.record(zod.string(), zod.unknown()).optional(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * The read-only client view at `/data-sources`. Filters the
+collector registry to entries that are enabled for the active
+tenant (resolved opt-in matrix) and projects only the
+client-safe fields: name, logo, license note, jurisdiction,
+cadence, disclosure tier, last refresh time. No posture-class
+or kill-criteria leakage.
+
+ * @summary Client-facing list of opted-in data sources.
+ */
+export const ListDataSourcesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListDataSourcesResponse = zod.object({
+  entries: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      logoUrl: zod.string().optional(),
+      jurisdiction: zod.string(),
+      flagEmoji: zod.string().optional(),
+      disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+      cadenceLabel: zod.string(),
+      licenseNote: zod.string(),
+      tosUrl: zod.string().optional(),
+      lastRefreshedAt: zod.coerce.date().nullish(),
+    }),
+  ),
 });
 
 /**

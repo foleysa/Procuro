@@ -377,6 +377,37 @@ export const CollectorStatus = {
   killed: "killed",
 } as const;
 
+/**
+ * Canonical posture classification used by the disclosure tier
+renderer (`public-api`/`published-data` map to `public_api`,
+`respect-robots-crawl` maps to `tos_restricted`,
+`aggressive-crawl` maps to `gray_hat`).
+
+ */
+export type CollectorPostureClass =
+  (typeof CollectorPostureClass)[keyof typeof CollectorPostureClass];
+
+export const CollectorPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+/**
+ * Tier at which this source can be cited downstream. T1 = full
+attribution, T4 = invisible / confidence boost only.
+
+ */
+export type CollectorDisclosureTier =
+  (typeof CollectorDisclosureTier)[keyof typeof CollectorDisclosureTier];
+
+export const CollectorDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
 export interface Collector {
   id: string;
   name: string;
@@ -388,6 +419,26 @@ export interface Collector {
   defaultScheduleCron?: string | null;
   lastRunAt?: string | null;
   lastSignalCount?: number | null;
+  /** Canonical posture classification used by the disclosure tier
+renderer (`public-api`/`published-data` map to `public_api`,
+`respect-robots-crawl` maps to `tos_restricted`,
+`aggressive-crawl` maps to `gray_hat`).
+ */
+  postureClass?: CollectorPostureClass;
+  /** Tier at which this source can be cited downstream. T1 = full
+attribution, T4 = invisible / confidence boost only.
+ */
+  disclosureTier?: CollectorDisclosureTier;
+  /** ISO-3166 alpha-2 code or "GLOBAL". */
+  jurisdiction?: string;
+  flagEmoji?: string | null;
+  retentionDays?: number | null;
+  tenantOptInDefault?: boolean | null;
+  /** Resolved opt-in state for the active tenant. Falls back to
+`tenantOptInDefault` when the tenant has no explicit override
+in `collector_tenant_opt_ins`.
+ */
+  tenantOptedIn?: boolean | null;
 }
 
 export interface CollectorRunResult {
@@ -866,6 +917,278 @@ export interface CollectorAuditEntry {
   createdAt: string;
 }
 
+export interface PatchCollectorPostureRequest {
+  /**
+   * Free-form operator notes. Doubles as the ToS link snapshot
+store; the workbench renders the contract's static `tosUrl`
+unless `notes` contains a `tos:` line that overrides it.
+
+   * @maxLength 5000
+   */
+  notes?: string | null;
+  /** Per-tenant opt-in toggle for the active tenant. Setting
+null deletes the override and restores the default.
+ */
+  tenantOptedIn?: boolean | null;
+}
+
+export type CollectorPostureResultPostureClass =
+  (typeof CollectorPostureResultPostureClass)[keyof typeof CollectorPostureResultPostureClass];
+
+export const CollectorPostureResultPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+export type CollectorPostureResultDisclosureTier =
+  (typeof CollectorPostureResultDisclosureTier)[keyof typeof CollectorPostureResultDisclosureTier];
+
+export const CollectorPostureResultDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export interface CollectorPostureResult {
+  id: string;
+  notes?: string | null;
+  postureClass: CollectorPostureResultPostureClass;
+  disclosureTier: CollectorPostureResultDisclosureTier;
+  jurisdiction: string;
+  retentionDays?: number | null;
+  tenantOptInDefault?: boolean | null;
+  tenantOptedIn?: boolean | null;
+}
+
+export type CollectorCatalogEntryStatus =
+  (typeof CollectorCatalogEntryStatus)[keyof typeof CollectorCatalogEntryStatus];
+
+export const CollectorCatalogEntryStatus = {
+  enabled: "enabled",
+  disabled: "disabled",
+  killed: "killed",
+} as const;
+
+export type CollectorCatalogEntryPosture =
+  (typeof CollectorCatalogEntryPosture)[keyof typeof CollectorCatalogEntryPosture];
+
+export const CollectorCatalogEntryPosture = {
+  "public-api": "public-api",
+  "published-data": "published-data",
+  "respect-robots-crawl": "respect-robots-crawl",
+  "aggressive-crawl": "aggressive-crawl",
+} as const;
+
+export type CollectorCatalogEntryPostureClass =
+  (typeof CollectorCatalogEntryPostureClass)[keyof typeof CollectorCatalogEntryPostureClass];
+
+export const CollectorCatalogEntryPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+export type CollectorCatalogEntryDisclosureTier =
+  (typeof CollectorCatalogEntryDisclosureTier)[keyof typeof CollectorCatalogEntryDisclosureTier];
+
+export const CollectorCatalogEntryDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type CollectorCatalogEntryPiiClassification =
+  (typeof CollectorCatalogEntryPiiClassification)[keyof typeof CollectorCatalogEntryPiiClassification];
+
+export const CollectorCatalogEntryPiiClassification = {
+  none: "none",
+  low: "low",
+  medium: "medium",
+  high: "high",
+} as const;
+
+export type CollectorCatalogEntryScopeKindsItem =
+  (typeof CollectorCatalogEntryScopeKindsItem)[keyof typeof CollectorCatalogEntryScopeKindsItem];
+
+export const CollectorCatalogEntryScopeKindsItem = {
+  material: "material",
+  category: "category",
+  supplier: "supplier",
+  sku: "sku",
+  lane: "lane",
+} as const;
+
+export interface CollectorCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  status: CollectorCatalogEntryStatus;
+  posture: CollectorCatalogEntryPosture;
+  postureClass: CollectorCatalogEntryPostureClass;
+  disclosureTier: CollectorCatalogEntryDisclosureTier;
+  jurisdiction: string;
+  flagEmoji?: string;
+  sourceUrl?: string | null;
+  tosUrl?: string;
+  licenseNote?: string;
+  logoUrl?: string;
+  cadenceLabel?: string;
+  retentionDays?: number | null;
+  piiClassification?: CollectorCatalogEntryPiiClassification;
+  outputSignalTypes?: string[];
+  scopeKinds?: CollectorCatalogEntryScopeKindsItem[];
+  rateLimitRpm?: number | null;
+  scheduleCron?: string | null;
+  tenantOptInDefault?: boolean | null;
+  tenantOptedIn?: boolean | null;
+  lastRunAt?: string | null;
+  lastSignalCount?: number | null;
+}
+
+export type CollectorSourceHealthEntryStatus =
+  (typeof CollectorSourceHealthEntryStatus)[keyof typeof CollectorSourceHealthEntryStatus];
+
+export const CollectorSourceHealthEntryStatus = {
+  enabled: "enabled",
+  disabled: "disabled",
+  killed: "killed",
+} as const;
+
+export type CollectorSourceHealthEntryRecentDriftsItem = {
+  signalType: string;
+  observedAt: string;
+  addedKeysCount?: number;
+  removedKeysCount?: number;
+  changedKeys?: string[];
+};
+
+export interface CollectorSourceHealthEntry {
+  collectorId: string;
+  name: string;
+  status: CollectorSourceHealthEntryStatus;
+  runs: number;
+  failures: number;
+  fetchErrors: number;
+  schemaDriftEvents?: number;
+  lastRunAt?: string | null;
+  lastFailureAt?: string | null;
+  lastSchemaDriftAt?: string | null;
+  recentDrifts?: CollectorSourceHealthEntryRecentDriftsItem[];
+  /** 0-100 (100 = clean, 0 = all runs failing). */
+  healthScore?: number;
+}
+
+export type CollectorLineageGraphCollectorsItemPostureClass =
+  (typeof CollectorLineageGraphCollectorsItemPostureClass)[keyof typeof CollectorLineageGraphCollectorsItemPostureClass];
+
+export const CollectorLineageGraphCollectorsItemPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+export type CollectorLineageGraphCollectorsItemDisclosureTier =
+  (typeof CollectorLineageGraphCollectorsItemDisclosureTier)[keyof typeof CollectorLineageGraphCollectorsItemDisclosureTier];
+
+export const CollectorLineageGraphCollectorsItemDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type CollectorLineageGraphCollectorsItem = {
+  id: string;
+  name: string;
+  postureClass: CollectorLineageGraphCollectorsItemPostureClass;
+  disclosureTier: CollectorLineageGraphCollectorsItemDisclosureTier;
+};
+
+export type CollectorLineageGraphEdgesItemKind =
+  (typeof CollectorLineageGraphEdgesItemKind)[keyof typeof CollectorLineageGraphEdgesItemKind];
+
+export const CollectorLineageGraphEdgesItemKind = {
+  collector_to_table: "collector_to_table",
+  table_to_mart: "table_to_mart",
+  mart_to_consumer: "mart_to_consumer",
+} as const;
+
+export type CollectorLineageGraphEdgesItem = {
+  from: string;
+  to: string;
+  kind?: CollectorLineageGraphEdgesItemKind;
+};
+
+export interface CollectorLineageGraph {
+  collectors: CollectorLineageGraphCollectorsItem[];
+  bqTables: string[];
+  marts: string[];
+  consumers: string[];
+  edges: CollectorLineageGraphEdgesItem[];
+}
+
+export type CollectorCoverageMatrixMaterialsItem = {
+  code: string;
+  label?: string | null;
+};
+
+export type CollectorCoverageMatrixSupplierCountryCountsItem = {
+  countryCode: string | null;
+  supplierCount: number;
+};
+
+export type CollectorCoverageMatrixRowsItem = {
+  materialCode: string;
+  signalCount: number;
+  coveredBy: string[];
+};
+
+export interface CollectorCoverageMatrix {
+  materials: CollectorCoverageMatrixMaterialsItem[];
+  jurisdictions: string[];
+  supplierCountryCounts: CollectorCoverageMatrixSupplierCountryCountsItem[];
+  /** One row per material code. `coveredBy` is the list of
+collector IDs that have written at least one signal for
+that material in the lookback window.
+ */
+  rows: CollectorCoverageMatrixRowsItem[];
+}
+
+export interface CollectorCostEntry {
+  collectorId: string;
+  name: string;
+  runs: number;
+  rowsWritten: number;
+  estimateUsd: number;
+  notes?: string | null;
+}
+
+export type ClientDataSourceDisclosureTier =
+  (typeof ClientDataSourceDisclosureTier)[keyof typeof ClientDataSourceDisclosureTier];
+
+export const ClientDataSourceDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export interface ClientDataSource {
+  id: string;
+  name: string;
+  logoUrl?: string;
+  jurisdiction: string;
+  flagEmoji?: string;
+  disclosureTier: ClientDataSourceDisclosureTier;
+  cadenceLabel: string;
+  licenseNote: string;
+  tosUrl?: string;
+  lastRefreshedAt?: string | null;
+}
+
 /**
  * Not found
  */
@@ -919,6 +1242,69 @@ export type RunNextCycleParams = {
    * Enqueue as a background job and return a jobId.
    */
   async?: boolean;
+};
+
+export type ListCollectorCatalog200 = {
+  entries: CollectorCatalogEntry[];
+};
+
+export type ListCollectorSourceHealthParams = {
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  lookbackHours?: number;
+};
+
+export type ListCollectorSourceHealth200 = {
+  lookbackHours: number;
+  entries: CollectorSourceHealthEntry[];
+};
+
+export type GetCollectorCostParams = {
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  lookbackHours?: number;
+};
+
+export type GetCollectorCost200Source =
+  (typeof GetCollectorCost200Source)[keyof typeof GetCollectorCost200Source];
+
+export const GetCollectorCost200Source = {
+  proxy: "proxy",
+  bigquery: "bigquery",
+} as const;
+
+export type GetCollectorCost200 = {
+  source: GetCollectorCost200Source;
+  lookbackHours: number;
+  entries: CollectorCostEntry[];
+};
+
+export type ListCollectorRunsAndErrorsParams = {
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  lookbackHours?: number;
+  /**
+   * @minimum 1
+   * @maximum 1000
+   */
+  limit?: number;
+  collectorId?: string;
+  onlyErrors?: boolean;
+};
+
+export type ListCollectorRunsAndErrors200 = {
+  lookbackHours: number;
+  entries: CollectorAuditEntry[];
+};
+
+export type ListDataSources200 = {
+  entries: ClientDataSource[];
 };
 
 export type ListMarketSignalsParams = {
