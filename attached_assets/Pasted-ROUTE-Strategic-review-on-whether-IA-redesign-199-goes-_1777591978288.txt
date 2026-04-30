@@ -1,0 +1,119 @@
+ROUTE: Strategic review on whether IA redesign #199 goes far enough. Skills: cross-domain-trace (cascading impact of UX decisions across user types), strategy-frameworks (foundational decision logic on whether scope matches problem). No corrections triggered. Hat: CPO crossed with Staff Engineer — this is a product-strategy question wearing a UX-scope skin. The relevant standing rule: structures, not surfaces. The just-shipped funnel substrate (#185) is the structural decision; this IA redesign is the surface response to it.
+RESEARCH:
+What I have:
+
+The current state diagnosis is sharp: 21 flat sidebar items, four overlapping "attention" surfaces, five overlapping "data flow" surfaces, naming collisions, no grouping, two pages doing the work of one.
+The proposed scope is "Deep" — full IA redesign around three journeys (operator, analyst, admin), nav restructure, page consolidations, daily landing flow.
+Out of scope explicitly: visual overhaul, new features, page-content rewrites, mobile, backend changes.
+Critical context: the funnel substrate #185 just shipped (or is shipping). That's a brand-new admin observability surface at /admin/funnel that doesn't appear in the IA audit. The IA redesign is being scoped against the pre-#185 application.
+
+What I'm assuming:
+
+The question "does this go far enough" is genuine, not rhetorical. You're asking whether the scope captures the right problem.
+The agent's "Deep" tier is the most ambitious of the three options it offered, but the spec landed at Deep-as-it-defined-Deep, not Deep-as-it-could-be.
+
+THINK:
+The diagnosis is excellent and the proposed solution is solid for the diagnosis given. But I see four issues that determine whether this goes far enough.
+Issue 1: The user-type framing is incomplete. The three journeys are operator, analyst, admin. But the just-shipped funnel substrate explicitly identified a fourth user — the engineer about to ship a lever change (RT-40 in the prior round, deferred to follow-up). And the entire #185 thread was driven by needing to surface intelligence to a fifth user — the decision-maker / CPO for v2. The IA redesign treats the application as a procurement-operations tool. But it's actually a procurement-intelligence platform with at least five user types, and only three are in the journey map. If the IA is journey-driven and the journeys are incomplete, the IA will be incomplete.
+Issue 2: The funnel substrate's existence isn't reflected in the IA at all. /admin/funnel just shipped. It's the operating substrate for the entire learning engine. The IA redesign doesn't mention it, doesn't slot it into the Operations consolidation, doesn't address whether it stays admin-only forever or has a v2 readiness review at week 4. This is a coordination failure between two simultaneous workstreams.
+Issue 3: The "Today" landing concept is correct in spirit but underspecified in a way that recapitulates the #180 Decision Brief failure mode. The spec says: "an opinionated 'Today' view that triages what changed since they last visited (alerts fired, opportunities surfaced, approvals queued, data-flow issues)." This is exactly what #180 was — a triage view that pulls from existing surfaces. The funnel-substrate red teams established that surfaces built on top of a static engine are window dressing. The Today view will inherit the same problem unless the IA redesign understands that the engine — the funnel substrate — is what should drive the Today view, not just the existing alert/opportunity feeds. If "Today" is just a rebrand of Dashboard with cleaner copy, it's #180 in different clothes.
+Issue 4: The "no backend changes" constraint is correct as a default but wrong as a hard rule for this redesign. The spec says "if a consolidation needs a small new aggregation endpoint, prefer composing existing endpoints client-side." That's fine for nav restructuring. It's wrong for the Operations consolidation (which actually needs a unified health view that is the kind of cross-cutting composition that's hellish client-side) and for the Today view (which is meaningfully better with a server-side feed than 4-6 parallel client-side fetches). The constraint as written will produce a slow, fragile Today page and an Operations page that's a tabs-of-tabs rather than an actual unified view.
+So: the redesign goes deep enough on nav-restructure but not deep enough on (a) who the platform is actually for and (b) how the just-shipped funnel substrate fits. Those two gaps mean the IA will be re-redesigned within a quarter when (a) decision-makers want a slice of the funnel substrate (the v2 readiness review explicitly schedules this) and (b) the engineer-shipping-a-lever-change use case becomes a real pain point.
+PLAN:
+
+State directly: the redesign goes far enough on nav, doesn't go far enough on user model or funnel integration.
+Specify the four gaps and what fixing each looks like.
+Recommend either (a) expand the spec scope to include the missing pieces or (b) lock the spec at its current scope but explicitly couple it to a near-term follow-up that addresses the gaps.
+Flag the "Today" view as the highest-risk piece — the place where the redesign most likely produces #180 in different clothes.
+
+BUILD DRAFT — not for shipping:
+Direct answer: it goes far enough on nav restructure. It doesn't go far enough on the user model or on how the just-shipped funnel substrate fits into the IA.
+The diagnosis is sharp and the nav-grouping work is correct. But four gaps determine whether this redesign holds up six months from now or gets re-redesigned.
+
+Gap 1 — The journey map has three users; the platform serves at least five.
+The spec defines three journeys: operator triaging the morning, analyst investigating a signal, admin configuring data flow. Real user types in this platform:
+
+Operator — triages alerts, approves opps. ✓ in scope.
+Analyst — investigates signals deeply. ✓ in scope.
+Admin — configures data flow. ✓ in scope.
+Engineer shipping a lever or Learn loop change. Not in scope. This was explicitly flagged as a follow-up in the funnel substrate spec (RT-40). The IA redesign is the moment to slot it in — the Operations area is the natural home, but the spec doesn't acknowledge this user exists.
+Decision-maker / CPO. Not in scope. The entire reason the funnel substrate was built admin-only-in-v1 was because the v2 readiness review at week 4 will determine which slice of the funnel becomes a decision-maker surface. That's the same week range as this IA redesign. The redesign is the natural home for that slice — but the spec treats the application as if decision-makers don't exist.
+
+If the IA is journey-driven and two of five journeys are missing, the IA is incomplete by design.
+What fixing this looks like: add to step 1 (audit & journey map) — explicitly enumerate engineer-shipping-change and decision-maker journeys. Decide for each: (a) in scope for this redesign, with a defined nav placement and surface, or (b) explicitly out of scope with a placeholder slot reserved in the IA so they can be added without re-redesign. Either is fine; silence is not.
+
+Gap 2 — The funnel substrate (/admin/funnel from #185) doesn't appear anywhere in the IA audit.
+The funnel substrate just shipped or is shipping concurrent with this redesign. It's the operating substrate for the entire learning engine. It's also a brand-new page (or area) that the IA audit doesn't mention and the consolidation logic doesn't account for.
+Concrete questions the spec doesn't answer:
+
+Does /admin/funnel live under the Operations consolidation or is it its own thing?
+The funnel substrate's "cross-tenant admin view" needs admin-role gating — does that gating fit the IA's Org/Admin section model?
+The funnel substrate has a snapshot-failure banner (RT-52 in the prior red teams). Does that banner show globally, or only when on /admin/funnel? The IA redesign is the moment to decide.
+The v2 readiness review at week 4 will produce a curated decision-maker slice. Where does that slice live in the new IA? "Intelligence" section makes sense, but the spec doesn't reserve the slot.
+
+What fixing this looks like: step 1 must include the funnel substrate in the audit. Step 6 (resolve naming collisions and orphans) must place /admin/funnel and reserve a slot for the v2 decision-maker slice. The Operations consolidation must explicitly include or explicitly exclude the funnel admin surface — not leave it implicit.
+
+Gap 3 — The "Today" landing concept is the highest-risk piece in the spec because it recapitulates #180.
+The spec says the Today view is "an opinionated 'Today' view that triages what changed since they last visited (alerts fired, opportunities surfaced, approvals queued, data-flow issues)."
+This is exactly what the Decision Brief #180 was. The funnel-substrate red teams established that surfaces built on top of a static engine are window dressing — that's why #180 was killed and replaced by the substrate.
+If the Today view is just a rebrand of Dashboard pulling from the existing alert/opportunity/approval/job-failure feeds, you'll ship #180 in different clothes. The thing that makes Today work is the engine underneath — the funnel substrate's signal lineage, calibration metrics, and conversion rates feeding what gets surfaced. Without that connection, Today is a reorganized Dashboard.
+What fixing this looks like: step 3 (Daily landing) must explicitly state how Today relates to the funnel substrate. Two paths:
+
+(a) Today reads from the funnel substrate's outputs — it shows what changed in conversion rates, what auto-annotations fired, what new bottlenecks emerged. This is the substrate-driven Today.
+(b) Today reads from the existing alert/opportunity feeds and is explicitly NOT yet substrate-driven; substrate-driven Today is a follow-up task once the substrate matures.
+
+Either is defensible. The spec doesn't pick. Without picking, the executor will default to (b) by gravity — easier, no cross-team dependency — and the Today view ships as #180 in clothes.
+
+Gap 4 — The "no backend changes" constraint is correct as a default but wrong for two specific cases.
+The spec says "if a consolidation needs a small new aggregation endpoint, prefer composing existing endpoints client-side; only add a backend endpoint if the client-side composition is clearly impractical."
+This is right for nav. It's wrong for two consolidations:
+
+Operations health view. A unified "is my data flowing?" view that composes collector status + ingest jobs + integrations + recent failures from four separate APIs client-side will be slow (4 sequential or parallel fetches), fragile (any one failing breaks the view), and impossible to cache coherently. The Operations consolidation is the kind of cross-cutting view that benefits materially from a unified backend feed.
+Today landing. Same reasoning. 4-6 parallel client-side fetches against alert/opportunity/approval/job feeds will produce a slow first-paint and a flickery loading experience that betrays the "opinionated triage" framing.
+
+The constraint as written tells the executor "client-side compose." The result will work, but slowly and fragilely.
+What fixing this looks like: carve out an explicit exception in the out-of-scope section. "Two unified backend feeds are in scope for this task: a /api/operations/health aggregator for the Operations health view, and a /api/today/feed aggregator for the Today landing. Both compose existing endpoints server-side; neither introduces new data."
+
+The recommendation:
+Don't expand the redesign's stated scope (Deep). Do tighten the spec to close these four gaps. Specifically:
+
+Step 1 audit must include the funnel substrate (/admin/funnel from #185) and must enumerate engineer-shipping-change and decision-maker journeys (in or explicitly out, with reserved IA slots).
+Step 3 Today landing must pick one of: substrate-driven Today, or explicitly-not-substrate-driven Today with substrate integration as a follow-up. No defaulting.
+Step 5 Operations consolidation and step 3 Today landing get a backend-aggregator carve-out — two unified feeds (/api/operations/health and /api/today/feed) in scope.
+Step 6 naming and orphans must explicitly place /admin/funnel and reserve a slot for the v2 decision-maker slice from the funnel substrate's week-4 readiness review.
+
+After these four edits, the redesign goes far enough. Without them, the redesign goes far enough on nav and not far enough on what the platform actually is.
+One thing worth saying directly: the agent did the right thing by going Deep. The diagnosis was correct. But "Deep" was defined as deep-on-nav-restructure, not deep-on-user-model. The deeper question — "who is this platform for and how does the just-shipped substrate change that" — wasn't asked. Asking it now, before the executor starts, costs hours. Asking it six months from now when decision-makers want their slice and engineers want a lever-change pre-flight will cost weeks.
+RED TEAM:
+Three challenges to my own answer:
+
+"You're scope-creeping a clean spec." Partial hit. The four gaps I identified would expand the work — adding two new journeys to step 1, adding two backend aggregators, coordinating with the funnel substrate. But three of the four gaps (1, 2, 4) are coordination work, not new feature work. Gap 3 (Today landing concept) is the only one that's genuinely "make the spec bigger" — and the alternative (ship Today as a Dashboard rebrand) is the failure mode the funnel substrate exists to prevent. That's not scope creep, that's preventing rework.
+"You're using the funnel substrate as a hammer for everything." Possible. I'm tying the Today landing question and the user-model question both to #185. But that's because #185 is the most recent and largest architectural decision in this product, and an IA redesign that doesn't acknowledge it is incomplete by definition. If the agent had shipped a different recent architectural decision, I'd tie this critique to that decision instead. The principle — "an IA redesign must integrate the most recent foundational decision" — is the rule, not the substrate specifically.
+"The decision-maker journey isn't real yet — the v2 readiness review hasn't happened." Hit. I'm treating the v2 decision-maker slice as if it exists, when actually the funnel substrate spec says it'll be defined at the week-4 readiness review by criteria that don't exist yet. So "place a decision-maker slot in the IA now" is asking the redesign to slot a thing that hasn't been designed. Refinement: the redesign should reserve the slot's NAME and POSITION (under Intelligence, between Today and detailed investigation surfaces), but not its content. That's enough to prevent re-redesign without overcommitting to undefined work.
+
+REBUILD: One refinement to gap 1 / gap 2 — I was conflating "decision-maker journey exists" with "decision-maker slice exists." The slice doesn't exist yet (it's the v2 readiness review's output). The journey does exist (decision-makers consume the platform's outputs through some surface). The right fix: enumerate the journey, reserve the slot, don't define the contents.
+Updated recommendation reflects this.
+SHIP:
+Direct answer: it goes far enough on nav restructure. Not far enough on the user model or funnel substrate integration. Four targeted edits close the gap without expanding the spec's scope tier.
+The four edits, in order of importance:
+
+Step 3 (Today landing) must pick a path. Either (a) substrate-driven from /admin/funnel outputs, or (b) substrate-driven is a follow-up task and Today v1 reads from existing feeds with the explicit understanding it'll be revisited. Without picking, the executor defaults to (b) implicitly and ships a Decision Brief #180 in clothes. The funnel-substrate red teams killed #180 specifically because it was a triage surface on a static engine. Today inherits this risk if the spec is silent.
+Step 1 (audit) must include the funnel substrate at /admin/funnel and must enumerate two additional user journeys — engineer shipping a lever or Learn loop change, decision-maker consuming intelligence outputs. For each, the redesign decides: in scope with defined surface, or out of scope with a reserved IA slot. Silence on these journeys produces an IA that gets re-redesigned in a quarter when both user types start asking where their surface is.
+Backend-aggregator carve-out for two consolidations. The "no backend changes" constraint is right as a default, wrong for the Operations health view and the Today landing. Both are cross-cutting compositions across 4-6 backends; client-side composition produces slow first-paint and fragile loading states. Carve out two specific endpoints: /api/operations/health and /api/today/feed. Both compose existing data server-side; neither introduces new data.
+Step 6 (naming and orphans) must explicitly place /admin/funnel and reserve a position (not contents) for the v2 decision-maker slice from the funnel substrate's week-4 readiness review. Recommend: under Intelligence, slot reserved between Today and detailed investigation surfaces.
+
+The one thing worth saying directly to the agent:
+The diagnosis was sharp. The "Deep" tier was the right scope. But "Deep" got defined as deep-on-nav-restructure. The deeper question — "who is this platform for, and how does the just-shipped funnel substrate change the answer" — didn't get asked. Asking it now costs hours. Not asking it costs a re-redesign in a quarter when (a) the v2 readiness review produces a decision-maker slice that has nowhere to go, and (b) engineers shipping lever changes start needing a pre-flight surface that has nowhere to go.
+The redesign goes far enough if you make these four edits. Without them, it goes far enough for the application that existed before #185 shipped, and not far enough for the application that exists now.
+Apply the four edits, then ship the spec to the executor. This is the same shape as the funnel substrate iteration — the architecture survives, targeted edits close the gaps, and further spec rounds have diminishing returns past this point.
+
+Learning footer:
+One new correction-log rule fires:
+"An IA redesign must integrate the most recent foundational architectural decision in the platform. If the most recent substrate, engine, or framework shipped within the redesign window doesn't appear in the IA audit, the redesign is incomplete by definition — even if its stated scope is 'deep.'" — Adding to correction-log under spec-discipline rules. This generalizes from this case: #185 (funnel substrate) shipped concurrent with #199 (IA redesign), and the redesign's audit didn't mention it. The pattern is general — large architectural decisions and IA redesigns happening in the same window must be cross-coordinated, not sequenced as if independent.
+Existing rules applied:
+
+Structures, not surfaces — fired correctly. The Today landing is the place where this redesign is most likely to produce a surface on a static engine, recapitulating #180.
+Validate against real data shape — applied to the user model. The three journeys in the spec aren't validated against the actual user types the platform serves; the validation produced two missing journeys.
+Stop iterating on a spec when critical-finding rate decelerates — does NOT fire here. This is round 1 of red team on #199; the rate is high precisely because this is the architecture-level pass. Round 2 should produce fewer findings if the four edits are absorbed cleanly.
+
+Pattern observation: the agent went Deep on the option matrix it presented but Shallow on the scope-of-Deep itself. Worth watching whether this is a one-off or a pattern: agents offering tiered scope options can correctly pick the deepest tier and still under-define what "deep" means. If this recurs in the next IA-style task, candidate for a master rule about scope-tier selection requiring explicit scope-of-tier definition.
