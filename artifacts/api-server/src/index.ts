@@ -16,6 +16,7 @@ import {
   startWorker,
   startJobPruner,
   pruneOldJobs,
+  isJobCancelRequested,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import { runAnalysisCycle } from "./lib/ooda/cycle";
@@ -80,12 +81,22 @@ async function seedCollectorRegistry(): Promise<void> {
   }
 }
 
-// Register job handlers
+// Register job handlers.
+//
+// Each long-running handler threads `() => isJobCancelRequested(job.id)`
+// into its underlying worker so an operator pressing Cancel on the
+// System / Jobs page short-circuits the run within seconds at the next
+// safe checkpoint (between OODA phases / CSV entity batches / mock ERP
+// pages / before a collector's HTTP fetch). When the helper sees a
+// cancel flag it throws `Error("Cancelled by operator")`, and
+// `processOnce` in the queue translates that into a terminal `failed`
+// row — no half-written batches, no orphaned "running" jobs.
 registerJobHandler("run_analysis_cycle", async (job) => {
   const orgId = job.orgId!;
   const result = await runAnalysisCycle({
     orgId,
     triggeredBy: (job.payload?.triggeredBy as string) ?? "job-runner",
+    isCancelled: () => isJobCancelRequested(job.id),
   });
   return result as unknown as Record<string, unknown>;
 });
@@ -95,6 +106,7 @@ registerJobHandler("ingest_csv", async (job) => {
   const result = await csvSourceAdapter.fullSync({
     orgId,
     config: (job.payload?.csv as CsvPayload) ?? {},
+    isCancelled: () => isJobCancelRequested(job.id),
   });
   return result as unknown as Record<string, unknown>;
 });
@@ -104,13 +116,16 @@ registerJobHandler("ingest_mock_erp", async (job) => {
   const result = await mockErpSourceAdapter.fullSync({
     orgId,
     config: (job.payload?.erp as MockErpConfig) ?? { feed: [] },
+    isCancelled: () => isJobCancelRequested(job.id),
   });
   return result as unknown as Record<string, unknown>;
 });
 
 registerJobHandler("run_collector", async (job) => {
   const collectorId = (job.payload?.collectorId as string) ?? "";
-  const result = await runCollector(collectorId);
+  const result = await runCollector(collectorId, {
+    isCancelled: () => isJobCancelRequested(job.id),
+  });
   return result as unknown as Record<string, unknown>;
 });
 

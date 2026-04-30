@@ -383,6 +383,24 @@ export async function scheduleRetry(
   return next;
 }
 
+/**
+ * Convenience helper for handlers and the long-running code they call:
+ * throws `new Error(CANCELLED_ERROR_MESSAGE)` if cancellation has been
+ * requested for this job, otherwise resolves with no-op. Use at safe
+ * checkpoints (between batches, between collector pages, between OODA
+ * phases) so a `running` job stops within seconds of the operator
+ * pressing Cancel instead of running to natural completion.
+ *
+ * The thrown error is the same string the worker normalizes to in
+ * `processOnce`, so the terminal state remains "Cancelled by operator"
+ * regardless of which checkpoint surfaces it.
+ */
+export async function throwIfJobCancelled(jobId: string): Promise<void> {
+  if (await isJobCancelRequested(jobId)) {
+    throw new Error(CANCELLED_ERROR_MESSAGE);
+  }
+}
+
 export async function setJobProgress(jobId: string, pct: number): Promise<void> {
   await db
     .update(jobsTable)

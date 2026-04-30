@@ -26,6 +26,18 @@ export interface SyncResult {
   durationMs: number;
 }
 
+/**
+ * Optional cooperative-cancellation hook. The job worker passes
+ * `() => isJobCancelRequested(job.id)` so an operator pressing Cancel on
+ * the System / Jobs page short-circuits long-running ingests within
+ * seconds of a batch boundary instead of waiting for the entire feed to
+ * drain. Implementations should await it at safe checkpoints (between
+ * batches, between pages) and let the thrown
+ * `Error("Cancelled by operator")` propagate — the queue's `processOnce`
+ * normalises that into the terminal `failed` state.
+ */
+export type IsCancelledFn = () => Promise<boolean>;
+
 export interface SourceAdapter<TConfig = Record<string, unknown>> {
   /** Stable adapter key, e.g. "csv", "mock_erp_sap" */
   readonly key: string;
@@ -37,6 +49,7 @@ export interface SourceAdapter<TConfig = Record<string, unknown>> {
     orgId: string;
     config: TConfig;
     onProgress?: (p: SyncProgress) => Promise<void> | void;
+    isCancelled?: IsCancelledFn;
   }): Promise<SyncResult>;
 
   /** Incremental sync from a cursor — implementer defines cursor semantics. */
@@ -45,6 +58,7 @@ export interface SourceAdapter<TConfig = Record<string, unknown>> {
     config: TConfig;
     cursor: SourceCursor;
     onProgress?: (p: SyncProgress) => Promise<void> | void;
+    isCancelled?: IsCancelledFn;
   }): Promise<SyncResult>;
 
   /** Optional: idempotent single-record delete. */

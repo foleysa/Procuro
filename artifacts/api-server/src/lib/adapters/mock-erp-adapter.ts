@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { newId } from "../ids";
+import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
 import type { SourceAdapter, SyncResult } from "./source-adapter";
 
 /**
@@ -46,7 +47,7 @@ export const mockErpSourceAdapter: SourceAdapter<MockErpConfig> = {
   key: SOURCE,
   label: "Mock ERP (SAP-like)",
 
-  async fullSync({ orgId, config, onProgress }): Promise<SyncResult> {
+  async fullSync({ orgId, config, onProgress, isCancelled }): Promise<SyncResult> {
     const start = Date.now();
     let processed = 0;
     let created = 0;
@@ -54,6 +55,12 @@ export const mockErpSourceAdapter: SourceAdapter<MockErpConfig> = {
     let deleted = 0;
     const pageSize = config.pageSize ?? 250;
     for (let i = 0; i < config.feed.length; i += pageSize) {
+      // Page boundary is the natural cancel checkpoint — we've finished
+      // a self-contained chunk of upserts and the operator's Cancel
+      // signal hasn't lost any work.
+      if (isCancelled && (await isCancelled())) {
+        throw new Error(CANCELLED_ERROR_MESSAGE);
+      }
       const page = config.feed.slice(i, i + pageSize);
       for (const rec of page) {
         const r = await applyRecord(orgId, rec);
@@ -74,7 +81,7 @@ export const mockErpSourceAdapter: SourceAdapter<MockErpConfig> = {
     };
   },
 
-  async incrementalSync({ orgId, config, cursor, onProgress }): Promise<SyncResult> {
+  async incrementalSync({ orgId, config, cursor, onProgress, isCancelled }): Promise<SyncResult> {
     const start = Date.now();
     const since = cursor ? new Date(cursor) : new Date(0);
     let processed = 0;
@@ -87,6 +94,9 @@ export const mockErpSourceAdapter: SourceAdapter<MockErpConfig> = {
     const pageSize = config.pageSize ?? 250;
     let lastCursor = cursor ?? new Date(0).toISOString();
     for (let i = 0; i < filtered.length; i += pageSize) {
+      if (isCancelled && (await isCancelled())) {
+        throw new Error(CANCELLED_ERROR_MESSAGE);
+      }
       const page = filtered.slice(i, i + pageSize);
       for (const rec of page) {
         const r = await applyRecord(orgId, rec);

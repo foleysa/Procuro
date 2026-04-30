@@ -10,6 +10,7 @@ import {
 import { eq, and, asc, desc, gt, lte, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
+import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
 import { ALL_LEVERS } from "../levers";
 import {
   applyLearnUpdates,
@@ -49,8 +50,26 @@ export interface RunCycleResult {
 export async function runAnalysisCycle(args: {
   orgId: string;
   triggeredBy: string;
+  /**
+   * Optional cooperative-cancellation hook. Wired up by the job worker as
+   * `() => isJobCancelRequested(job.id)` so an operator pressing Cancel
+   * on the System / Jobs page short-circuits a running cycle within
+   * seconds at the next phase / lever / opportunity boundary instead of
+   * waiting for every analyzer to finish. We deliberately check between
+   * phases (Observe / Learn / Orient / Decide / Act) and inside the per-
+   * lever and per-opportunity loops — these are the only safe spots:
+   * the cycle row is already in `running`, and bailing out causes the
+   * surrounding `try/catch` to flip it to `failed` along with the
+   * job itself. Direct callers (REST routes) just don't pass this.
+   */
+  isCancelled?: () => Promise<boolean>;
 }): Promise<RunCycleResult> {
-  const { orgId, triggeredBy } = args;
+  const { orgId, triggeredBy, isCancelled } = args;
+  const checkpoint = async (): Promise<void> => {
+    if (isCancelled && (await isCancelled())) {
+      throw new Error(CANCELLED_ERROR_MESSAGE);
+    }
+  };
 
   await ensurePriorsBootstrapped(orgId);
 
@@ -75,9 +94,11 @@ export async function runAnalysisCycle(args: {
   });
 
   try {
+    await checkpoint();
     // --- 1. Observe ---
     const observe = await observeStep(orgId, previousCycleId);
 
+    await checkpoint();
     // --- 2. Learn (from outcomes since previous cycle) ---
     const outcomes = await collectOutcomesSinceLastCycle(
       orgId,
@@ -91,6 +112,7 @@ export async function runAnalysisCycle(args: {
       outcomes,
     });
 
+    await checkpoint();
     // --- 3. Orient ---
     const priors = await loadPriors(orgId);
     const exclusions = await loadActiveExclusions(orgId);
@@ -100,9 +122,14 @@ export async function runAnalysisCycle(args: {
       activeExclusionCount: exclusions.length,
     };
 
+    await checkpoint();
     // --- 4. Decide ---
+    // Per-lever analyzers are the slowest part of a typical cycle, so
+    // checkpoint between each one to get sub-second cancel response on
+    // big tenants.
     const drafts: { draft: OpportunityDraft; rank: number }[] = [];
     for (const lever of ALL_LEVERS) {
+      await checkpoint();
       const leverDrafts = await lever.analyze({ orgId, cycleId });
       for (const d of leverDrafts) {
         if (
@@ -126,10 +153,14 @@ export async function runAnalysisCycle(args: {
     }
     drafts.sort((a, b) => b.rank - a.rank);
 
+    await checkpoint();
     // --- 5. Act ---
+    // Each opportunity insert is its own DB round trip; checkpoint inside
+    // the loop so a 200-opportunity write doesn't ignore Cancel.
     const created: OpportunityRow[] = [];
     let totalProjected = 0;
     for (const { draft } of drafts) {
+      await checkpoint();
       const prior = priors[draft.leverId];
       const projected = draft.rawProjectedSavingsUsd * prior.projectionMultiplier;
       totalProjected += projected;

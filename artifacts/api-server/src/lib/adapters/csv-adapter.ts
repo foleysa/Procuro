@@ -16,7 +16,12 @@ import { parse, type Parser } from "csv-parse";
 import type { Readable } from "node:stream";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import type { SourceAdapter, SyncResult } from "./source-adapter";
+import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
+import type {
+  IsCancelledFn,
+  SourceAdapter,
+  SyncResult,
+} from "./source-adapter";
 
 /**
  * CSV ingestion. Two entry points:
@@ -59,8 +64,15 @@ async function bulkInsert<T>(
   rows: T[],
   insertChunk: (chunk: T[]) => Promise<unknown>,
   chunkSize = BATCH_SIZE,
+  isCancelled?: IsCancelledFn,
 ): Promise<void> {
   for (let i = 0; i < rows.length; i += chunkSize) {
+    // Check between batches so an operator pressing Cancel on the
+    // System / Jobs page short-circuits long ingests within seconds
+    // instead of waiting for the entire feed to drain.
+    if (isCancelled && (await isCancelled())) {
+      throw new Error(CANCELLED_ERROR_MESSAGE);
+    }
     await insertChunk(rows.slice(i, i + chunkSize));
   }
 }
@@ -170,10 +182,29 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
   key: "csv",
   label: "CSV Bulk Upload",
 
-  async fullSync({ orgId, config, onProgress }): Promise<SyncResult> {
+  async fullSync({ orgId, config, onProgress, isCancelled }): Promise<SyncResult> {
     const start = Date.now();
     let created = 0;
     let processed = 0;
+    // Lightweight checkpoint helper: throws CANCELLED_ERROR_MESSAGE if the
+    // operator has requested cancel. Called between top-level entity
+    // sections (suppliers → categories → items → contracts → POs → ...)
+    // so a 6-section payload also stops within one section's worth of
+    // work, not the whole sync.
+    const checkpoint = async (): Promise<void> => {
+      if (isCancelled && (await isCancelled())) {
+        throw new Error(CANCELLED_ERROR_MESSAGE);
+      }
+    };
+    // Closure that forwards the cancel-callback into `bulkInsert`'s
+    // between-batch checkpoint. Using a wrapper avoids having to repeat
+    // `, BATCH_SIZE, isCancelled` at every call site (and getting the
+    // chunk size wrong on a future edit).
+    const bulkInsertC = async <T>(
+      rows: T[],
+      insertChunk: (chunk: T[]) => Promise<unknown>,
+    ): Promise<void> => bulkInsert(rows, insertChunk, BATCH_SIZE, isCancelled);
+    await checkpoint();
 
     // 1. Categories — bulk upsert, then build code→id map.
     const categoryMap = new Map<string, string>();
@@ -185,7 +216,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
         name: c.name,
         class: c.class,
       }));
-      await bulkInsert(rows, async (chunk) => {
+      await bulkInsertC(rows, async (chunk) => {
         const inserted = await db
           .insert(categoriesTable)
           .values(chunk)
@@ -209,6 +240,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       await onProgress?.({ recordsProcessed: processed });
     }
 
+    await checkpoint();
     // 2. Suppliers — bulk upsert by (org, source_system, source_external_id).
     const supplierMap = new Map<string, string>();
     if (config.suppliers?.length) {
@@ -226,7 +258,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
         sourceSystem: SOURCE,
         sourceExternalId: s.externalId,
       }));
-      await bulkInsert(rows, async (chunk) => {
+      await bulkInsertC(rows, async (chunk) => {
         const inserted = await db
           .insert(suppliersTable)
           .values(chunk)
@@ -258,6 +290,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       await onProgress?.({ recordsProcessed: processed });
     }
 
+    await checkpoint();
     // 3. Items — bulk upsert.
     const itemMap = new Map<string, string>();
     if (config.items?.length) {
@@ -275,7 +308,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
         sourceSystem: SOURCE,
         sourceExternalId: it.externalId,
       }));
-      await bulkInsert(rows, async (chunk) => {
+      await bulkInsertC(rows, async (chunk) => {
         const inserted = await db
           .insert(itemsTable)
           .values(chunk)
@@ -302,6 +335,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       await onProgress?.({ recordsProcessed: processed });
     }
 
+    await checkpoint();
     // 4. Contracts + items — contracts bulk-upserted, then per-contract item
     // wipe+insert (item lists are typically tiny; bulk-insert each).
     const contractMap = new Map<string, string>();
@@ -326,7 +360,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           sourceSystem: SOURCE,
           sourceExternalId: c.externalId,
         }));
-      await bulkInsert(rows, async (chunk) => {
+      await bulkInsertC(rows, async (chunk) => {
         const inserted = await db
           .insert(contractsTable)
           .values(chunk)
@@ -363,7 +397,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           contractedUnitPriceUsd: ci.contractedUnitPriceUsd.toFixed(4),
           tiers: ci.tiers ?? [],
         }));
-        await bulkInsert(itemRows, (chunk) =>
+        await bulkInsertC(itemRows, (chunk) =>
           db.insert(contractItemsTable).values(chunk),
         );
       }
@@ -372,6 +406,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       await onProgress?.({ recordsProcessed: processed });
     }
 
+    await checkpoint();
     // 5. POs + lines — POs bulk-upsert, lines wiped+bulk-inserted per PO.
     const poMap = new Map<string, string>();
     if (config.purchaseOrders?.length) {
@@ -400,7 +435,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           sourceExternalId: po.externalId,
         };
       });
-      await bulkInsert(poRows, async (chunk) => {
+      await bulkInsertC(poRows, async (chunk) => {
         const inserted = await db
           .insert(purchaseOrdersTable)
           .values(chunk)
@@ -452,7 +487,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           });
         }
       }
-      await bulkInsert(allLines, (chunk) =>
+      await bulkInsertC(allLines, (chunk) =>
         db
           .insert(poLinesTable)
           .values(chunk)
@@ -479,6 +514,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       await onProgress?.({ recordsProcessed: processed });
     }
 
+    await checkpoint();
     // 6. Invoices — bulk upsert.
     const invoiceMap = new Map<string, string>();
     if (config.invoices?.length) {
@@ -497,7 +533,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           sourceSystem: SOURCE,
           sourceExternalId: inv.externalId,
         }));
-      await bulkInsert(rows, async (chunk) => {
+      await bulkInsertC(rows, async (chunk) => {
         const inserted = await db
           .insert(invoicesTable)
           .values(chunk)
@@ -519,6 +555,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
       processed += config.invoices.length;
     }
 
+    await checkpoint();
     // 7. Payments — bulk insert (skip if invoice not in this batch).
     if (config.payments?.length) {
       const rows = config.payments
@@ -533,13 +570,14 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           sourceSystem: SOURCE,
           sourceExternalId: p.externalId,
         }));
-      await bulkInsert(rows, (chunk) =>
+      await bulkInsertC(rows, (chunk) =>
         db.insert(paymentsTable).values(chunk).onConflictDoNothing(),
       );
       created += rows.length;
       processed += rows.length;
     }
 
+    await checkpoint();
     // 8. Shipments — bulk insert.
     if (config.shipments?.length) {
       const rows = config.shipments.map((sh) => ({
@@ -561,7 +599,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
         sourceSystem: SOURCE,
         sourceExternalId: sh.externalId,
       }));
-      await bulkInsert(rows, (chunk) =>
+      await bulkInsertC(rows, (chunk) =>
         db.insert(shipmentsTable).values(chunk).onConflictDoNothing(),
       );
       created += rows.length;

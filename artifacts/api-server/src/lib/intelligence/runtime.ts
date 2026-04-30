@@ -8,7 +8,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import { UnrecoverableJobError } from "../jobs/queue";
+import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
 import type { IntelligenceCollector, MarketSignalDraft } from "./collector";
 import {
   ECB_FX_RATES_COLLECTOR_ID,
@@ -155,7 +155,18 @@ async function audit(
 
 export async function runCollector(
   collectorId: string,
-  opts: { force?: boolean } = {},
+  opts: {
+    force?: boolean;
+    /**
+     * Optional cooperative-cancellation hook from the job worker. We
+     * check it at the two points that matter: right before the
+     * potentially-long `collector.collect()` HTTP fetch, and right
+     * before persisting signals (so we don't half-write a batch).
+     * The skip-gates above are pure DB lookups and run fast enough
+     * that an extra check there would just add noise.
+     */
+    isCancelled?: () => Promise<boolean>;
+  } = {},
 ): Promise<{ signalsCollected: number; durationMs: number; skipped?: string }> {
   const start = Date.now();
 
@@ -168,6 +179,13 @@ export async function runCollector(
       "runCollector requires a non-empty collectorId",
     );
   }
+
+  const checkCancel = async (): Promise<void> => {
+    if (opts.isCancelled && (await opts.isCancelled())) {
+      throw new Error(CANCELLED_ERROR_MESSAGE);
+    }
+  };
+
   const [reg] = await db
     .select()
     .from(collectorsTable)
@@ -218,8 +236,10 @@ export async function runCollector(
   }
 
   try {
+    await checkCancel();
     await audit(collectorId, "fetch_started");
     const drafts = await collector.collect({ since: null });
+    await checkCancel();
     const rows = drafts.map((d) => ({
       id: newId("sig"),
       orgId: null,
