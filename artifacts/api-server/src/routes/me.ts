@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, orgsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { requirePermission } from "../lib/rbac";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 
@@ -49,7 +50,7 @@ router.get("/me", tenantMiddleware, async (req, res) => {
  * handler turns any `ZodError` into the standard
  * `400 { error, details }` response without per-route wiring.
  */
-router.patch("/me/settings", tenantMiddleware, async (req, res) => {
+router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const body = PatchMeSettingsBody.parse(req.body);
 

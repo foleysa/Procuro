@@ -8,6 +8,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, isNull, or, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { requirePermission } from "../lib/rbac";
 import {
   enqueueJob,
   requestJobCancellation,
@@ -147,7 +148,7 @@ router.get("/jobs/settings", tenantMiddleware, async (req, res) => {
   res.json(rows);
 });
 
-router.put("/jobs/settings/:kind", tenantMiddleware, async (req, res) => {
+router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const kind = String(req.params.kind ?? "") as JobKind;
   if (!configurableKindSet.has(kind)) {
@@ -212,7 +213,7 @@ router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
   res.json(mapJob(row));
 });
 
-router.post("/jobs/:id/retry", tenantMiddleware, async (req, res) => {
+router.post("/jobs/:id/retry", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const [row] = await db
     .select()
@@ -246,7 +247,7 @@ router.post("/jobs/:id/retry", tenantMiddleware, async (req, res) => {
   res.status(202).json({ jobId: job.id, status: job.status });
 });
 
-router.post("/jobs/:id/cancel", tenantMiddleware, async (req, res) => {
+router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
   const [row] = await db

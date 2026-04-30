@@ -12,6 +12,7 @@ import {
 import { and, eq, desc, sql, or, lt } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { requirePermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
 import { extractSourcesFromInputs } from "../lib/insight-sources";
 
@@ -291,7 +292,7 @@ async function loadOppOrThrow(orgId: string, id: string) {
   return row;
 }
 
-router.post("/opportunities/:id/approve", tenantMiddleware, async (req, res) => {
+router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("opp:approve"), async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
   const opp = await loadOppOrThrow(orgId, id);
@@ -325,7 +326,7 @@ router.post("/opportunities/:id/approve", tenantMiddleware, async (req, res) => 
   res.json(mapOpportunity({ opp: updated! }));
 });
 
-router.post("/opportunities/:id/reject", tenantMiddleware, async (req, res) => {
+router.post("/opportunities/:id/reject", tenantMiddleware, requirePermission("opp:approve"), async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
   // Throw on invalid input and let the global error handler shape the
@@ -371,7 +372,7 @@ router.post("/opportunities/:id/reject", tenantMiddleware, async (req, res) => {
   res.json(mapOpportunity({ opp: updated! }));
 });
 
-router.post("/opportunities/:id/execute", tenantMiddleware, async (req, res) => {
+router.post("/opportunities/:id/execute", tenantMiddleware, requirePermission("opp:execute"), async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
   const opp = await loadOppOrThrow(orgId, id);
@@ -405,7 +406,7 @@ router.post("/opportunities/:id/execute", tenantMiddleware, async (req, res) => 
   res.json(mapOpportunity({ opp: updated! }));
 });
 
-router.post("/opportunities/:id/realize", tenantMiddleware, async (req, res) => {
+router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("opp:realize"), async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
   // Throw on invalid input and let the global error handler shape the

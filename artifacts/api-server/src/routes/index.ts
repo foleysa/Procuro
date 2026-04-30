@@ -13,6 +13,13 @@ import ingestRouter from "./ingest";
 import billingRouter from "./billing";
 import watchedIssuersRouter from "./watched-issuers";
 import integrationsRouter from "./integrations";
+import adminWhoamiRouter from "./admin-whoami";
+import adminUsersRouter from "./admin-users";
+import adminApiKeysRouter from "./admin-api-keys";
+import adminAuditRouter from "./admin-audit";
+import adminSsoRouter from "./admin-sso";
+import adminTenantRouter from "./admin-tenant";
+import scimRouter from "./scim";
 
 const router: IRouter = Router();
 
@@ -30,5 +37,12 @@ router.use(ingestRouter);
 router.use(billingRouter);
 router.use(watchedIssuersRouter);
 router.use(integrationsRouter);
+router.use(adminWhoamiRouter);
+router.use(adminUsersRouter);
+router.use(adminApiKeysRouter);
+router.use(adminAuditRouter);
+router.use(adminSsoRouter);
+router.use(adminTenantRouter);
+router.use(scimRouter);
 
 export default router;

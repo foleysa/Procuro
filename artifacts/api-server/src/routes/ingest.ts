@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request } from "express";
 import type { Readable } from "node:stream";
 import Busboy from "busboy";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { requirePermission } from "../lib/rbac";
 import {
   csvSourceAdapter,
   streamCsvEntity,
@@ -56,7 +57,7 @@ function countCsvItems(csv: CsvPayload): number {
   return total;
 }
 
-router.post("/ingest/csv", tenantMiddleware, async (req, res) => {
+router.post("/ingest/csv", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const csv = (req.body ?? {}) as CsvPayload;
 
@@ -83,7 +84,7 @@ router.post("/ingest/csv", tenantMiddleware, async (req, res) => {
   res.json(result);
 });
 
-router.post("/ingest/mock-erp", tenantMiddleware, async (req, res) => {
+router.post("/ingest/mock-erp", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const body = (req.body ?? {}) as { feed?: unknown[]; cursor?: string };
   if (!Array.isArray(body.feed)) {
@@ -318,7 +319,7 @@ function runMultipartIngest(args: {
 
 type StreamCsvArgsOnProgress = (p: StreamCsvProgress) => void;
 
-router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
+router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const entity = String(req.query["entity"] ?? "") as CsvEntity;
 

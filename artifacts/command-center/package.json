@@ -83,6 +83,8 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@clerk/react": "^6.4.6",
+    "@clerk/themes": "^2.4.57",
     "@types/papaparse": "^5.5.2",
     "@workspace/intelligence": "workspace:*",
     "jszip": "^3.10.1",

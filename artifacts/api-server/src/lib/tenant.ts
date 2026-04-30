@@ -1,10 +1,12 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { db, orgsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, orgsTable, userRolesTable, apiKeysTable } from "@workspace/db";
+import { and, eq, isNull } from "drizzle-orm";
+import { getAuth } from "@clerk/express";
 import {
   extractBearerToken,
   resolveOrgFromToken,
   isProduction,
+  hashToken,
 } from "./auth";
 
 const orgCache = new Map<string, { id: string; expiresAt: number }>();
@@ -54,7 +56,31 @@ export const tenantMiddleware: RequestHandler = async (
     !isProduction() && process.env["ALLOW_DEV_TENANT_HEADER"] === "true";
 
   if (bearer) {
-    const tokenOrgId = await resolveOrgFromToken(bearer);
+    // Try the new tenant-scoped API keys table first; fall back to the
+    // legacy org_api_tokens for system-to-system callers.
+    const tokenHash = hashToken(bearer);
+    const [apiKey] = await db
+      .select({
+        orgId: apiKeysTable.orgId,
+        scopeRole: apiKeysTable.scopeRole,
+        label: apiKeysTable.label,
+      })
+      .from(apiKeysTable)
+      .where(
+        and(
+          eq(apiKeysTable.tokenHash, tokenHash),
+          isNull(apiKeysTable.revokedAt),
+        ),
+      )
+      .limit(1);
+    let tokenOrgId: string | null = apiKey?.orgId ?? null;
+    let mode: NonNullable<Request["authMode"]> = "api-key";
+    let actor = `apikey:${apiKey?.label ?? "unknown"}@procuro.ai`;
+    if (!tokenOrgId) {
+      tokenOrgId = await resolveOrgFromToken(bearer);
+      mode = "token";
+      actor = "system@procuro.ai";
+    }
     if (!tokenOrgId) {
       res.status(401).json({ error: "Invalid API token" });
       return;
@@ -66,8 +92,70 @@ export const tenantMiddleware: RequestHandler = async (
       return;
     }
     req.orgId = tokenOrgId;
-    req.authMode = "token";
-    req.actorEmail = "system@procuro.ai";
+    req.authMode = mode;
+    req.actorEmail = actor;
+    next();
+    return;
+  }
+
+  // Clerk session — once `clerkMiddleware` has populated req.auth, look
+  // up the active tenant via the `x-org-id` header (or fall back to the
+  // user's first org membership). We never trust a Clerk session for an
+  // org the user has no role in.
+  let clerkUserId: string | null = null;
+  let clerkEmail: string | undefined;
+  try {
+    const auth = getAuth(req);
+    clerkUserId = auth?.userId ?? null;
+    const claims = auth?.sessionClaims as Record<string, unknown> | undefined;
+    const e = claims?.["email"];
+    if (typeof e === "string") clerkEmail = e;
+  } catch {
+    // clerkMiddleware not mounted — treat as unauthenticated.
+  }
+
+  if (clerkUserId) {
+    let resolvedOrg: string | null = null;
+    if (headerOrgId) {
+      const [row] = await db
+        .select({ orgId: userRolesTable.orgId, email: userRolesTable.email })
+        .from(userRolesTable)
+        .where(
+          and(
+            eq(userRolesTable.userId, clerkUserId),
+            eq(userRolesTable.orgId, headerOrgId),
+            isNull(userRolesTable.revokedAt),
+          ),
+        )
+        .limit(1);
+      if (row) {
+        resolvedOrg = row.orgId;
+        clerkEmail = clerkEmail ?? row.email;
+      }
+    } else {
+      const [row] = await db
+        .select({ orgId: userRolesTable.orgId, email: userRolesTable.email })
+        .from(userRolesTable)
+        .where(
+          and(
+            eq(userRolesTable.userId, clerkUserId),
+            isNull(userRolesTable.revokedAt),
+          ),
+        )
+        .limit(1);
+      if (row) {
+        resolvedOrg = row.orgId;
+        clerkEmail = clerkEmail ?? row.email;
+      }
+    }
+    if (!resolvedOrg) {
+      res.status(403).json({ error: "User is not a member of any tenant" });
+      return;
+    }
+    req.orgId = resolvedOrg;
+    req.authMode = "clerk";
+    req.clerkUserId = clerkUserId;
+    req.actorEmail = clerkEmail ?? `${clerkUserId}@clerk.local`;
     next();
     return;
   }

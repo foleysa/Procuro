@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { requirePermission } from "../lib/rbac";
 import { runAnalysisCycle } from "../lib/ooda/cycle";
 import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
 import {
@@ -90,7 +91,7 @@ router.get("/cycles/:id", tenantMiddleware, async (req, res) => {
  * For real-world / F500 scale, pass `?async=true` to enqueue the run on the
  * background job queue and return a `jobId` for polling via `/jobs/:id`.
  */
-router.post("/cycles/run", tenantMiddleware, async (req, res) => {
+router.post("/cycles/run", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const triggeredBy = req.actorEmail ?? "system@procuro.ai";
   const isAsync =

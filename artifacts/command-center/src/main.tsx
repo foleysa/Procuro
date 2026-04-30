@@ -4,8 +4,31 @@ import { useEffect, useState } from "react";
 import App from "./App";
 import "./index.css";
 
+// Forward the active tenant on every same-origin /api/* request. We must
+// NOT add this header on external requests (e.g. Clerk's frontend API)
+// — they will reject the preflight because `x-org-id` is not on their
+// Access-Control-Allow-Headers allowlist.
 const originalFetch = window.fetch;
+function isInternalApiRequest(input: RequestInfo | URL): boolean {
+  try {
+    const raw =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (!raw) return false;
+    if (raw.startsWith("/api/") || raw === "/api") return true;
+    const u = new URL(raw, window.location.origin);
+    return u.origin === window.location.origin && u.pathname.startsWith("/api/");
+  } catch {
+    return false;
+  }
+}
 window.fetch = (input, init = {}) => {
+  if (!isInternalApiRequest(input)) {
+    return originalFetch(input, init);
+  }
   const orgId = localStorage.getItem("activeOrgId") ?? "";
   const orgAdminToken = localStorage.getItem("orgAdminToken") ?? "";
   const headers = new Headers(init.headers);

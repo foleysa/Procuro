@@ -1,11 +1,22 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import { clerkMiddleware } from "@clerk/express";
+import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { globalErrorHandler } from "./lib/global-error-handler";
+import {
+  CLERK_PROXY_PATH,
+  clerkProxyMiddleware,
+  getClerkProxyHost,
+} from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
+
+// Clerk Frontend API proxy MUST be mounted before any body parser; it
+// streams raw bytes and intercepts only `/api/__clerk/*`.
+app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 app.use(
   pinoHttp({
@@ -49,6 +60,19 @@ app.use((req, res, next) => {
     : DEFAULT_BODY_LIMIT;
   return express.urlencoded({ extended: true, limit })(req, res, next);
 });
+
+// Resolve the publishable key from the request host so the same server
+// can serve multiple Clerk custom domains. clerkMiddleware adds session
+// claims to req.auth without rejecting unauthenticated requests — RBAC
+// gating is the role of `requirePermission` later in the pipeline.
+app.use(
+  clerkMiddleware((req) => ({
+    publishableKey: publishableKeyFromHost(
+      getClerkProxyHost(req) ?? "",
+      process.env["CLERK_PUBLISHABLE_KEY"],
+    ),
+  })),
+);
 
 app.use("/api", router);
 

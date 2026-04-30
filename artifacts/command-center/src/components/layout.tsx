@@ -14,9 +14,13 @@ import {
   Database,
   Plug,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
+import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
 import { cn } from "@/lib/utils";
+import { useMyRole } from "@/lib/use-my-role";
+import { Button } from "@/components/ui/button";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -24,8 +28,11 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
+  const { isOrgAdmin } = useMyRole();
+  const { user } = useUser();
+  const { signOut } = useClerk();
 
-  const navItems = [
+  const baseNav = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/spend", label: "Spend Overview", icon: BarChart3 },
     { href: "/opportunities", label: "Opportunities", icon: Sparkles },
@@ -40,6 +47,12 @@ export function Layout({ children }: LayoutProps) {
     { href: "/integrations", label: "Integrations", icon: Plug },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
+  const navItems = isOrgAdmin
+    ? [
+        ...baseNav,
+        { href: "/admin", label: "Org Admin", icon: ShieldCheck },
+      ]
+    : baseNav;
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -91,12 +104,39 @@ export function Layout({ children }: LayoutProps) {
           <span className="text-sm font-medium text-muted-foreground">
             Command Center
           </span>
-          <Link
-            href="/landing"
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            What is Procuro? →
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/landing"
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              What is Procuro? →
+            </Link>
+            <Show when="signed-in">
+              <span
+                data-testid="text-user-email"
+                className="text-xs text-muted-foreground hidden sm:inline"
+              >
+                {user?.primaryEmailAddress?.emailAddress ?? user?.id ?? ""}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="button-sign-out"
+                onClick={() => void signOut()}
+              >
+                Sign out
+              </Button>
+            </Show>
+            <Show when="signed-out">
+              <Link
+                href="/sign-in"
+                data-testid="link-header-sign-in"
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Sign in
+              </Link>
+            </Show>
+          </div>
         </header>
         <div className="flex-1 overflow-y-auto">{children}</div>
       </main>
