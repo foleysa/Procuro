@@ -5,10 +5,14 @@ import {
   marketSignalsTable,
   type CollectorRow,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import type { IntelligenceCollector } from "./collector";
+import type { IntelligenceCollector, MarketSignalDraft } from "./collector";
+import {
+  ECB_FX_RATES_COLLECTOR_ID,
+  fetchEcbBackfillDrafts,
+} from "./collectors/ecb-fx-rates";
 
 const registry = new Map<string, IntelligenceCollector>();
 
@@ -118,6 +122,153 @@ export async function runCollector(
   } catch (err) {
     const e = err as Error;
     await audit(collectorId, "fetch_failed", {}, e.message);
+    throw e;
+  }
+}
+
+export interface BackfillResult {
+  collectorId: string;
+  daysWritten: number;
+  signalsInserted: number;
+  signalsSkipped: number;
+  durationMs: number;
+}
+
+/**
+ * Insert a batch of MarketSignalDrafts for a collector, skipping rows that
+ * already exist for the same `(scope_material_code, observed_at)` key.
+ *
+ * The ECB historical backfill anchors `observedAt` to a deterministic
+ * `YYYY-MM-DDT15:00:00Z` (mirroring the live collector), so a simple
+ * "already have a row at exactly this timestamp + pair" check is the
+ * cheapest correct dedupe — and it does not require a schema migration.
+ *
+ * Existence is sampled once before the insert loop to avoid N round-trips.
+ */
+async function insertSignalsIdempotent(
+  collectorRow: CollectorRow,
+  drafts: MarketSignalDraft[],
+): Promise<{ inserted: number; skipped: number }> {
+  if (drafts.length === 0) return { inserted: 0, skipped: 0 };
+
+  const existing = await db
+    .select({
+      key: marketSignalsTable.scopeMaterialCode,
+      observedAt: marketSignalsTable.observedAt,
+    })
+    .from(marketSignalsTable)
+    .where(
+      and(
+        eq(marketSignalsTable.collectorId, collectorRow.id),
+        eq(marketSignalsTable.signalType, "fx_rate"),
+      ),
+    );
+
+  const seen = new Set<string>();
+  for (const r of existing) {
+    if (r.key && r.observedAt) {
+      seen.add(`${r.key}@${r.observedAt.toISOString()}`);
+    }
+  }
+
+  let inserted = 0;
+  let skipped = 0;
+  for (const d of drafts) {
+    const k = `${d.scopeMaterialCode ?? ""}@${d.observedAt.toISOString()}`;
+    if (seen.has(k)) {
+      skipped++;
+      continue;
+    }
+    await db.insert(marketSignalsTable).values({
+      id: newId("sig"),
+      orgId: null,
+      collectorId: collectorRow.id,
+      signalType: d.signalType,
+      scopeCategoryCode: d.scopeCategoryCode ?? null,
+      scopeSku: d.scopeSku ?? null,
+      scopeMaterialCode: d.scopeMaterialCode ?? null,
+      scopeSupplierName: d.scopeSupplierName ?? null,
+      scopeLaneKey: d.scopeLaneKey ?? null,
+      value: String(d.value),
+      unit: d.unit,
+      currency: d.currency ?? "USD",
+      observedAt: d.observedAt,
+      sourceUrl: d.sourceUrl,
+      posture: collectorRow.posture,
+      confidence: String(d.confidence ?? 0.7),
+      metadata: d.metadata ?? {},
+    });
+    seen.add(k);
+    inserted++;
+  }
+  return { inserted, skipped };
+}
+
+/**
+ * Run the one-shot historical backfill for the ECB FX collector.
+ *
+ * Fetches `eurofxref-hist.xml` (one HTTP call), expands it to per-day
+ * EUR-base + USD-derived drafts using the same shape the live collector
+ * writes, and inserts only the day/pair rows that aren't already in
+ * `market_signals`. Re-running is therefore a safe no-op.
+ *
+ * Gated on the same kill switch + approval status as the live collector so
+ * a paused collector cannot be force-fed through the backfill path.
+ */
+export async function runEcbFxRatesBackfill(
+  opts: { force?: boolean } = {},
+): Promise<BackfillResult> {
+  const start = Date.now();
+  const collectorId = ECB_FX_RATES_COLLECTOR_ID;
+  const [reg] = await db
+    .select()
+    .from(collectorsTable)
+    .where(eq(collectorsTable.id, collectorId))
+    .limit(1);
+  if (!reg) {
+    throw new Error(`Collector ${collectorId} not registered`);
+  }
+  if (reg.killSwitch === 1) {
+    await audit(collectorId, "backfill_skipped_kill_switch");
+    throw new Error("Collector is killed; release the kill switch first.");
+  }
+  if (reg.status !== "approved" && !opts.force) {
+    await audit(collectorId, "backfill_skipped_not_approved", {
+      status: reg.status,
+    });
+    throw new Error(
+      `Collector status is ${reg.status}; approve it before backfilling.`,
+    );
+  }
+
+  await audit(collectorId, "backfill_started");
+  try {
+    const drafts = await fetchEcbBackfillDrafts();
+    const days = new Set(
+      drafts.map((d) => d.observedAt.toISOString().slice(0, 10)),
+    ).size;
+    const { inserted, skipped } = await insertSignalsIdempotent(reg, drafts);
+    const result: BackfillResult = {
+      collectorId,
+      daysWritten: days,
+      signalsInserted: inserted,
+      signalsSkipped: skipped,
+      durationMs: Date.now() - start,
+    };
+    await audit(collectorId, "backfill_succeeded", {
+      days,
+      inserted,
+      skipped,
+      drafts: drafts.length,
+    });
+    logger.info(
+      { collectorId, days, inserted, skipped },
+      "ECB FX backfill completed",
+    );
+    return result;
+  } catch (err) {
+    const e = err as Error;
+    await audit(collectorId, "backfill_failed", {}, e.message);
     throw e;
   }
 }

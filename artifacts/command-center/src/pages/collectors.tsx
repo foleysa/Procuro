@@ -3,13 +3,16 @@ import {
   useListCollectors,
   useListMarketSignals,
   useRunCollector,
+  useBackfillEcbFxRates,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
-import { Radar, Loader2, Play } from "lucide-react";
+import { Radar, Loader2, Play, History } from "lucide-react";
+
+const ECB_FX_RATES_COLLECTOR_ID = "ecb-fx-rates";
 
 const POSTURE_LABEL: Record<string, string> = {
   "public-api": "Public API",
@@ -46,6 +49,24 @@ export default function Collectors() {
       },
       onError: (e: Error) =>
         toast({ title: "Collector failed", description: String(e), variant: "destructive" }),
+    },
+  });
+
+  const backfillEcbM = useBackfillEcbFxRates({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "FX history backfilled",
+          description: `${resp.daysWritten} days · ${resp.signalsInserted} new, ${resp.signalsSkipped} already had · ${resp.durationMs}ms`,
+        });
+        qc.invalidateQueries({ queryKey: ["listMarketSignals"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "FX backfill failed",
+          description: String(e),
+          variant: "destructive",
+        }),
     },
   });
 
@@ -106,16 +127,37 @@ export default function Collectors() {
                     </div>
                   </div>
                 </div>
-                <Button
-                  data-testid={`btn-run-${c.id}`}
-                  size="sm"
-                  variant="outline"
-                  onClick={() => runM.mutate({ id: c.id })}
-                  disabled={runM.isPending || c.status !== "enabled"}
-                >
-                  <Play className="w-4 h-4 mr-1" />
-                  Run now
-                </Button>
+                <div className="flex flex-col gap-2 items-stretch">
+                  <Button
+                    data-testid={`btn-run-${c.id}`}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => runM.mutate({ id: c.id })}
+                    disabled={runM.isPending || c.status !== "enabled"}
+                  >
+                    <Play className="w-4 h-4 mr-1" />
+                    Run now
+                  </Button>
+                  {c.id === ECB_FX_RATES_COLLECTOR_ID && (
+                    <Button
+                      data-testid={`btn-backfill-${c.id}`}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => backfillEcbM.mutate()}
+                      disabled={
+                        backfillEcbM.isPending || c.status !== "enabled"
+                      }
+                      title="Load 5 years of historical ECB reference rates. Idempotent: safe to re-run."
+                    >
+                      {backfillEcbM.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      ) : (
+                        <History className="w-4 h-4 mr-1" />
+                      )}
+                      Backfill history
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

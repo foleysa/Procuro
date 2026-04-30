@@ -18,6 +18,7 @@ export * from "./billingSummaryByLeverItem";
 export * from "./collector";
 export * from "./collectorAuditEntry";
 export * from "./collectorAuditEntryMetadata";
+export * from "./collectorBackfillResult";
 export * from "./collectorKillResult";
 export * from "./collectorMutationResult";
 export * from "./collectorPosture";

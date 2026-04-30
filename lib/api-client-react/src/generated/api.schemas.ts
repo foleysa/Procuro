@@ -322,6 +322,19 @@ export interface CollectorRunResult {
   skipReason?: string;
 }
 
+export interface CollectorBackfillResult {
+  collectorId: string;
+  /** Distinct calendar days covered by the backfill. */
+  daysWritten: number;
+  /** New `market_signals` rows written by this run. */
+  signalsInserted: number;
+  /** Drafts that matched an existing
+`(scope_material_code, observed_at)` row and were not re-inserted.
+ */
+  signalsSkipped: number;
+  durationMs: number;
+}
+
 export interface MarketSignal {
   id: string;
   collectorId?: string | null;

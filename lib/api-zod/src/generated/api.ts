@@ -1032,6 +1032,31 @@ export const RunCollectorResponse = zod.object({
 });
 
 /**
+ * Fetches the ECB historical archive (`eurofxref-hist.xml`, ~5 years
+back) and writes one `fx_rate` MarketSignal per (day × tracked
+currency × EUR/USD base). Re-running is safe: rows that already
+exist for the same `(scope_material_code, observed_at)` are skipped.
+
+ * @summary Backfill historical ECB FX reference rates (one-shot, idempotent).
+
+ */
+export const BackfillEcbFxRatesResponse = zod.object({
+  collectorId: zod.string(),
+  daysWritten: zod
+    .number()
+    .describe("Distinct calendar days covered by the backfill."),
+  signalsInserted: zod
+    .number()
+    .describe("New `market_signals` rows written by this run."),
+  signalsSkipped: zod
+    .number()
+    .describe(
+      "Drafts that matched an existing\n`(scope_material_code, observed_at)` row and were not re-inserted.\n",
+    ),
+  durationMs: zod.number(),
+});
+
+/**
  * @summary Recent market signals
  */
 export const listMarketSignalsQueryLimitDefault = 50;

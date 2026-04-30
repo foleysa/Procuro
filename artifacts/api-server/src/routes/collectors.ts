@@ -13,7 +13,9 @@ import {
   setRateLimit,
   upsertCollectorRegistration,
   listCollectorAudit,
+  runEcbFxRatesBackfill,
 } from "../lib/intelligence/runtime";
+import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { z } from "zod";
 
 const router: IRouter = Router();
@@ -196,6 +198,36 @@ router.get("/collectors/:id/audit", requirePlatformAdmin, async (req, res) => {
     })),
   );
 });
+
+router.post(
+  "/collectors/ecb-fx-rates/backfill",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    try {
+      const result = await runEcbFxRatesBackfill();
+      res.json({
+        collectorId: result.collectorId,
+        daysWritten: result.daysWritten,
+        signalsInserted: result.signalsInserted,
+        signalsSkipped: result.signalsSkipped,
+        durationMs: result.durationMs,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Map common preflight errors back to the caller (kill switch / not approved)
+      // so the System page can surface a useful toast instead of a 500.
+      if (
+        message.includes("kill switch") ||
+        message.includes("approved") ||
+        message.includes("approve")
+      ) {
+        res.status(409).json({ error: message, collectorId: ECB_FX_RATES_COLLECTOR_ID });
+        return;
+      }
+      throw err;
+    }
+  },
+);
 
 router.post("/collectors/:id/run", requirePlatformAdmin, async (req, res) => {
   const id = String(req.params.id);

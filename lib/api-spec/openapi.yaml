@@ -462,6 +462,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/CollectorRunResult"
 
+  /collectors/ecb-fx-rates/backfill:
+    post:
+      operationId: backfillEcbFxRates
+      tags: [collectors]
+      summary: |
+        Backfill historical ECB FX reference rates (one-shot, idempotent).
+      description: |
+        Fetches the ECB historical archive (`eurofxref-hist.xml`, ~5 years
+        back) and writes one `fx_rate` MarketSignal per (day × tracked
+        currency × EUR/USD base). Re-running is safe: rows that already
+        exist for the same `(scope_material_code, observed_at)` are skipped.
+      responses:
+        "200":
+          description: Backfill result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorBackfillResult"
+        "409":
+          description: Collector is killed or not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /market-signals:
     get:
       operationId: listMarketSignals
@@ -1155,6 +1180,29 @@ components:
         durationMs: { type: integer }
         skipped: { type: boolean }
         skipReason: { type: string }
+
+    CollectorBackfillResult:
+      type: object
+      required:
+        - collectorId
+        - daysWritten
+        - signalsInserted
+        - signalsSkipped
+        - durationMs
+      properties:
+        collectorId: { type: string }
+        daysWritten:
+          type: integer
+          description: Distinct calendar days covered by the backfill.
+        signalsInserted:
+          type: integer
+          description: New `market_signals` rows written by this run.
+        signalsSkipped:
+          type: integer
+          description: |
+            Drafts that matched an existing
+            `(scope_material_code, observed_at)` row and were not re-inserted.
+        durationMs: { type: integer }
 
     MarketSignal:
       type: object

@@ -27,6 +27,7 @@ import type {
   BillingSummary,
   Collector,
   CollectorAuditEntry,
+  CollectorBackfillResult,
   CollectorKillResult,
   CollectorMutationResult,
   CollectorRunResult,
@@ -1898,6 +1899,94 @@ export const useRunCollector = <
   TContext
 > => {
   return useMutation(getRunCollectorMutationOptions(options));
+};
+
+/**
+ * Fetches the ECB historical archive (`eurofxref-hist.xml`, ~5 years
+back) and writes one `fx_rate` MarketSignal per (day × tracked
+currency × EUR/USD base). Re-running is safe: rows that already
+exist for the same `(scope_material_code, observed_at)` are skipped.
+
+ * @summary Backfill historical ECB FX reference rates (one-shot, idempotent).
+
+ */
+export const getBackfillEcbFxRatesUrl = () => {
+  return `/api/collectors/ecb-fx-rates/backfill`;
+};
+
+export const backfillEcbFxRates = async (
+  options?: RequestInit,
+): Promise<CollectorBackfillResult> => {
+  return customFetch<CollectorBackfillResult>(getBackfillEcbFxRatesUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getBackfillEcbFxRatesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillEcbFxRates>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof backfillEcbFxRates>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["backfillEcbFxRates"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof backfillEcbFxRates>>,
+    void
+  > = () => {
+    return backfillEcbFxRates(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BackfillEcbFxRatesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof backfillEcbFxRates>>
+>;
+
+export type BackfillEcbFxRatesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Backfill historical ECB FX reference rates (one-shot, idempotent).
+
+ */
+export const useBackfillEcbFxRates = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillEcbFxRates>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof backfillEcbFxRates>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getBackfillEcbFxRatesMutationOptions(options));
 };
 
 /**
