@@ -41,6 +41,20 @@ function normalizeName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/**
+ * Parse the suppliers `tags` CSV column. Mirrors the helper in the Data
+ * Ingest page (`artifacts/command-center/src/pages/ingest.tsx`) so the
+ * streaming path accepts the same `|`/`;`/`,` delimited format the
+ * downloadable template documents.
+ */
+export function parseTagsCell(s: string | undefined): string[] {
+  if (!s) return [];
+  return s
+    .split(/[|;,]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 async function bulkInsert<T>(
   rows: T[],
   insertChunk: (chunk: T[]) => Promise<unknown>,
@@ -691,7 +705,7 @@ async function flushBatch(
         paymentTermsDays: r["paymentTermsDays"] ?? null,
         isStrategic: r["isStrategic"] === "true",
         isPreferred: r["isPreferred"] === "true",
-        tags: [] as string[],
+        tags: parseTagsCell(r["tags"]),
         sourceSystem: SOURCE,
         sourceExternalId: r["externalId"]!,
       }));
@@ -710,6 +724,7 @@ async function flushBatch(
             countryCode: sql`excluded.country_code`,
             isStrategic: sql`excluded.is_strategic`,
             isPreferred: sql`excluded.is_preferred`,
+            tags: sql`excluded.tags`,
             sourceSyncedAt: sql`now()`,
           },
         })
