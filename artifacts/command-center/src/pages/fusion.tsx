@@ -62,8 +62,10 @@ import {
   Search,
   Siren,
   Sparkles,
+  Shield,
   TrendingUp,
 } from "lucide-react";
+import { DefensePackPane } from "@/components/defense-pack-pane";
 
 const POLL_MS = 60_000;
 // War room polls more aggressively than the rest of the fusion center
@@ -78,7 +80,8 @@ type FusionTab =
   | "entity"
   | "heatmap"
   | "events"
-  | "coverage";
+  | "coverage"
+  | "defense";
 
 export default function Fusion() {
   // The fusion page accepts ?tab=… and ?cycleId=… deep-links from
@@ -92,7 +95,8 @@ export default function Fusion() {
     return t === "entity" ||
       t === "heatmap" ||
       t === "events" ||
-      t === "coverage"
+      t === "coverage" ||
+      t === "defense"
       ? t
       : "signals";
   }, [search]);
@@ -171,6 +175,9 @@ export default function Fusion() {
           <TabsTrigger value="coverage" data-testid="tab-coverage">
             <Compass className="w-4 h-4 mr-1" /> Coverage Gaps
           </TabsTrigger>
+          <TabsTrigger value="defense" data-testid="tab-defense-pack">
+            <Shield className="w-4 h-4 mr-1" /> Defense Pack
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="signals" className="mt-4">
@@ -194,6 +201,9 @@ export default function Fusion() {
         </TabsContent>
         <TabsContent value="coverage" className="mt-4">
           {tab === "coverage" && <CoverageGapsPane onOpenEntity={openEntity} />}
+        </TabsContent>
+        <TabsContent value="defense" className="mt-4">
+          {tab === "defense" && <DefensePackPane />}
         </TabsContent>
       </Tabs>
     </div>

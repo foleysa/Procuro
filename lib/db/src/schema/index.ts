@@ -20,3 +20,4 @@ export * from "./jobKindSettings";
 export * from "./entityResolutionCache";
 export * from "./watchedIssuers";
 export * from "./erpConnections";
+export * from "./defensePacks";

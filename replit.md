@@ -57,6 +57,15 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
     - **Auth UI:** Clerk-powered with `/sign-in` and `/sign-up` routes themed via `@clerk/themes/shadcn`. The fetch shim in `main.tsx` only adds `x-org-id` to same-origin `/api/*` requests so external Clerk requests aren't blocked by CORS preflight.
     - **Org Admin (`/admin`):** five-tab shell (Users, SSO, API keys, Tenant settings, Audit log) gated to `org_admin` / `platform_admin` via `useMyRole` hook (calls `/api/admin/whoami`). Admin endpoints intentionally live outside the OpenAPI spec — consumed via the hand-rolled `lib/admin-client.ts` wrapper.
 
+- **Defense Pack v1 (`/fusion?tab=defense`):**
+    - Gemini 2.5 Flash–generated, citation-verified procurement memos. Buyer fills the Defense Pack Builder (supplier, scope = material/category/contract line, position, length, free-text note) and the server returns a buyer-ready memo + frozen Evidence Room snapshot.
+    - Pipeline (server-side): assemble evidence pool from `market_signals` (T1/T2 only for citations, T3 narrative-only for standard/analyst tenants, T4 never) → sanitise buyer-typed text against prompt-injection vectors (`lib/defense-pack/sanitize.ts`: role-switch tokens, instruction-override phrasing, URL-as-instruction, base64 blobs, length cap) → call Gemini 2.5 Flash via `@workspace/integrations-gemini-ai` with structured-output schema → verify every claim's `signalId`+tier+value-tolerance against the snapshot (`lib/defense-pack/verify.ts`, default rel 1% / abs 0.01) → render PDF with pdfkit (`lib/defense-pack/pdf.ts`).
+    - Insufficient-evidence path: if any cited section has zero verified claims, status flips to `insufficient_evidence` with a human-readable reason; the UI shows a warning banner instead of the memo.
+    - Cost guardrails: per-tenant cap of 50 packs/UTC-day; estimated USD cost stored as `numeric(10,5)` per pack from input/output token counts.
+    - Persistence: `defense_packs` (sections + frozen `evidence_snapshot` jsonb), `defense_pack_outcomes` (feedback). Permalink == pack id (`dpk_*`).
+    - Routes (`/api/defense-packs/...`): `GET /` list, `POST /` generate, `GET /:id`, `GET /:id/pdf` PDF download, `POST /:id/feedback`.
+    - Tests: `defense-pack-sanitize.test.ts`, `defense-pack-verify.test.ts` (pure-function unit tests, no DB).
+
 - **Contracts UI + renewal alerts:**
     - `/contracts` list with cursor pagination, status / supplier / category / currency / owner filters, and a `?view=calendar` toggle that renders the next 12 months on a colour-coded grid.
     - `/contracts/:id` detail page surfaces header KPIs, an inline edit form (owner / internalNotes / renewalTargetDate / renewalTargetAction), linked opportunities (via `inputs.contractId`), an FX-trend card filtered to the contract's billing-currency pair, a market-signals (PPI) card, disclosure-policy-aware citations, contracted items, and an activity timeline backed by `contract_audit_log` (one row per changed field, written transactionally inside PATCH).

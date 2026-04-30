@@ -3906,3 +3906,325 @@ export const GetSystemCleanupStatusResponse = zod.object({
       ),
   }),
 });
+
+/**
+ * Returns the most recent Defense Packs created in the tenant,
+newest first. Pack `sections` and `evidenceSnapshot` are
+omitted from list rows for payload size — fetch
+`/defense-packs/{id}` for the full memo + frozen evidence.
+
+ * @summary List recent Defense Packs for the active tenant
+ */
+export const listDefensePacksQueryLimitDefault = 25;
+export const listDefensePacksQueryLimitMax = 100;
+
+export const ListDefensePacksQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listDefensePacksQueryLimitMax)
+    .default(listDefensePacksQueryLimitDefault),
+});
+
+export const ListDefensePacksHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListDefensePacksResponse = zod.object({
+  items: zod.array(
+    zod
+      .object({
+        id: zod.string(),
+        orgId: zod.string(),
+        target: zod
+          .object({
+            supplierId: zod.string(),
+            supplierName: zod.string(),
+            contractId: zod.string().nullish(),
+            lineItem: zod.string().nullish(),
+            categoryCode: zod.string().nullish(),
+            materialCode: zod.string().nullish(),
+          })
+          .describe(
+            'What the Defense Pack is defending or attacking. At least one\nof `contractId+lineItem`, `categoryCode`, or `materialCode`\nmust be provided so the evidence pool can be scoped beyond\n\"every signal that ever mentioned this supplier\".\n',
+          ),
+        position: zod.enum([
+          "defend_against_increase",
+          "attack_for_decrease",
+          "justify_index_relink",
+        ]),
+        length: zod.enum(["exec_one_pager", "three_page_brief", "full_pack"]),
+        status: zod.enum([
+          "generating",
+          "ready",
+          "insufficient_evidence",
+          "failed",
+        ]),
+        statusReason: zod.string().nullish(),
+        disclosurePolicy: zod
+          .enum(["conservative", "standard", "analyst"])
+          .describe(
+            "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+          ),
+        model: zod.string().nullish(),
+        inputTokens: zod.number().nullish(),
+        outputTokens: zod.number().nullish(),
+        estimatedCostUsd: zod.number().nullish(),
+        generatedBy: zod.string(),
+        permalink: zod.string(),
+        generatedAt: zod.coerce.date().nullish(),
+        createdAt: zod.coerce.date(),
+        verifiedClaimCount: zod.number().optional(),
+        evidencePoolSize: zod.number().optional(),
+      })
+      .describe(
+        "Listing-row view of a Defense Pack. Sections + evidenceSnapshot\nare excluded for payload size.\n",
+      ),
+  ),
+});
+
+/**
+ * Synchronously generates a buyer-ready procurement memo backed
+by Gemini 2.5 Flash. The pipeline:
+
+  1. Assembles a frozen evidence pool from the tenant's recent
+     T1/T2 `marketSignalsTable` rows that match the target.
+  2. Calls Gemini with a sanitised prompt (prompt-injection
+     defences applied to all user-supplied text).
+  3. Verifies every emitted claim against the evidence
+     snapshot — claims that fail are dropped.
+  4. Regenerates ONCE if a section ends up without any
+     verified claims.
+
+The pack is persisted with the frozen evidence snapshot. When
+the evidence pool is too thin to back the memo, returns a
+pack with `status='insufficient_evidence'` and a human-readable
+`statusReason`.
+
+Per-tenant cap: 50 packs per UTC day. Exceeding the cap returns
+HTTP 429.
+
+ * @summary Generate a Defense Pack
+ */
+export const CreateDefensePackHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const createDefensePackBodyPositionNoteMax = 2000;
+
+export const CreateDefensePackBody = zod.object({
+  target: zod
+    .object({
+      supplierId: zod.string(),
+      supplierName: zod.string(),
+      contractId: zod.string().nullish(),
+      lineItem: zod.string().nullish(),
+      categoryCode: zod.string().nullish(),
+      materialCode: zod.string().nullish(),
+    })
+    .describe(
+      'What the Defense Pack is defending or attacking. At least one\nof `contractId+lineItem`, `categoryCode`, or `materialCode`\nmust be provided so the evidence pool can be scoped beyond\n\"every signal that ever mentioned this supplier\".\n',
+    ),
+  position: zod.enum([
+    "defend_against_increase",
+    "attack_for_decrease",
+    "justify_index_relink",
+  ]),
+  length: zod.enum(["exec_one_pager", "three_page_brief", "full_pack"]),
+  positionNote: zod
+    .string()
+    .max(createDefensePackBodyPositionNoteMax)
+    .optional()
+    .describe(
+      'Free-text buyer note describing the negotiation context\n(e.g. \"supplier wants 8% increase effective Q1, citing\nsteel cost\"). Sanitised server-side before being added to\nthe LLM prompt.\n',
+    ),
+});
+
+/**
+ * Returns the pack with the full `sections` array and the frozen
+`evidenceSnapshot` so the Evidence Room view replays the
+cited signals exactly as they were at generation time, even
+after the live values move.
+
+ * @summary Read a Defense Pack (frozen view + Evidence Room)
+ */
+export const GetDefensePackParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetDefensePackHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetDefensePackResponse = zod
+  .object({
+    id: zod.string(),
+    orgId: zod.string(),
+    target: zod
+      .object({
+        supplierId: zod.string(),
+        supplierName: zod.string(),
+        contractId: zod.string().nullish(),
+        lineItem: zod.string().nullish(),
+        categoryCode: zod.string().nullish(),
+        materialCode: zod.string().nullish(),
+      })
+      .describe(
+        'What the Defense Pack is defending or attacking. At least one\nof `contractId+lineItem`, `categoryCode`, or `materialCode`\nmust be provided so the evidence pool can be scoped beyond\n\"every signal that ever mentioned this supplier\".\n',
+      ),
+    position: zod.enum([
+      "defend_against_increase",
+      "attack_for_decrease",
+      "justify_index_relink",
+    ]),
+    length: zod.enum(["exec_one_pager", "three_page_brief", "full_pack"]),
+    status: zod.enum([
+      "generating",
+      "ready",
+      "insufficient_evidence",
+      "failed",
+    ]),
+    statusReason: zod.string().nullish(),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .describe(
+        "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+    model: zod.string().nullish(),
+    inputTokens: zod.number().nullish(),
+    outputTokens: zod.number().nullish(),
+    estimatedCostUsd: zod.number().nullish(),
+    generatedBy: zod.string(),
+    permalink: zod.string(),
+    generatedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    verifiedClaimCount: zod.number().optional(),
+    evidencePoolSize: zod.number().optional(),
+  })
+  .describe(
+    "Listing-row view of a Defense Pack. Sections + evidenceSnapshot\nare excluded for payload size.\n",
+  )
+  .and(
+    zod.object({
+      sections: zod.array(
+        zod.object({
+          key: zod.enum([
+            "position",
+            "market_context",
+            "cost_drivers",
+            "comparable_benchmarks",
+            "recommended_counter_position",
+            "walk_away_considerations",
+            "proprietary_signal_context",
+          ]),
+          title: zod.string(),
+          narrative: zod.string(),
+          claims: zod.array(
+            zod
+              .object({
+                text: zod.string(),
+                signalId: zod.string(),
+                valueQuoted: zod.string(),
+              })
+              .describe(
+                "One LLM-emitted claim, verified to point at a real signal in\nthe frozen evidence snapshot. The verifier drops claims whose\ncited `valueQuoted` disagrees with the snapshot value beyond\nthe rounding tolerance.\n",
+              ),
+          ),
+        }),
+      ),
+      evidenceSnapshot: zod.array(
+        zod
+          .object({
+            signalId: zod.string(),
+            collectorId: zod.string(),
+            collectorName: zod.string(),
+            signalType: zod.string(),
+            tier: zod.enum(["T1", "T2", "T3", "T4"]),
+            scope: zod
+              .object({
+                materialCode: zod.string().nullish(),
+                categoryCode: zod.string().nullish(),
+                supplierName: zod.string().nullish(),
+                laneKey: zod.string().nullish(),
+                sku: zod.string().nullish(),
+              })
+              .optional(),
+            value: zod.number(),
+            unit: zod.string(),
+            currency: zod.string(),
+            observedAt: zod.coerce.date(),
+            sourceUrl: zod.string(),
+            posture: zod.string(),
+          })
+          .describe(
+            "One row of the frozen evidence pool the LLM was given. The\nEvidence Room view renders this list verbatim, even after the\nlive `marketSignalsTable` rows move.\n",
+          ),
+      ),
+    }),
+  );
+
+/**
+ * @summary Render a Defense Pack as PDF
+ */
+export const GetDefensePackPdfParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetDefensePackPdfHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * Records whether the pack was used in a real negotiation and
+what the outcome was. Feeds the future Learn-loop backtester.
+
+ * @summary Capture buyer feedback on a Defense Pack
+ */
+export const SubmitDefensePackFeedbackParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const SubmitDefensePackFeedbackHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const submitDefensePackFeedbackBodyCommentMax = 2000;
+
+export const SubmitDefensePackFeedbackBody = zod.object({
+  used: zod.enum(["yes", "no", "unknown"]),
+  outcomeCategory: zod
+    .enum([
+      "supplier_held_price",
+      "supplier_reduced_price",
+      "deferred",
+      "deal_lost",
+      "other",
+    ])
+    .optional(),
+  comment: zod.string().max(submitDefensePackFeedbackBodyCommentMax).optional(),
+});

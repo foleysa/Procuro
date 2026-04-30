@@ -46,6 +46,12 @@ tags:
     description: Contracts directory + renewal calendar
   - name: watched-issuers
     description: Tenant-curated list of corporate filers to poll (SEC EDGAR, UK Companies House)
+  - name: defense-packs
+    description: |
+      Gemini-backed, citation-verified procurement memos for buyer
+      negotiations. Every cited claim is traced back to a frozen
+      `marketSignalsTable` row at generation time so the Evidence Room
+      replay matches what the buyer took into the conversation.
 
 paths:
   /healthz:
@@ -1927,6 +1933,155 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SystemCleanupRunAccepted"
+
+  /defense-packs:
+    get:
+      operationId: listDefensePacks
+      tags: [defense-packs]
+      summary: List recent Defense Packs for the active tenant
+      description: |
+        Returns the most recent Defense Packs created in the tenant,
+        newest first. Pack `sections` and `evidenceSnapshot` are
+        omitted from list rows for payload size — fetch
+        `/defense-packs/{id}` for the full memo + frozen evidence.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Recent Defense Packs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefensePackListResponse"
+    post:
+      operationId: createDefensePack
+      tags: [defense-packs]
+      summary: Generate a Defense Pack
+      description: |
+        Synchronously generates a buyer-ready procurement memo backed
+        by Gemini 2.5 Flash. The pipeline:
+
+          1. Assembles a frozen evidence pool from the tenant's recent
+             T1/T2 `marketSignalsTable` rows that match the target.
+          2. Calls Gemini with a sanitised prompt (prompt-injection
+             defences applied to all user-supplied text).
+          3. Verifies every emitted claim against the evidence
+             snapshot — claims that fail are dropped.
+          4. Regenerates ONCE if a section ends up without any
+             verified claims.
+
+        The pack is persisted with the frozen evidence snapshot. When
+        the evidence pool is too thin to back the memo, returns a
+        pack with `status='insufficient_evidence'` and a human-readable
+        `statusReason`.
+
+        Per-tenant cap: 50 packs per UTC day. Exceeding the cap returns
+        HTTP 429.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDefensePackRequest"
+      responses:
+        "201":
+          description: Generated pack (success or insufficient_evidence).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefensePack"
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Per-tenant daily cap exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /defense-packs/{id}:
+    get:
+      operationId: getDefensePack
+      tags: [defense-packs]
+      summary: Read a Defense Pack (frozen view + Evidence Room)
+      description: |
+        Returns the pack with the full `sections` array and the frozen
+        `evidenceSnapshot` so the Evidence Room view replays the
+        cited signals exactly as they were at generation time, even
+        after the live values move.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Defense Pack with frozen evidence snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefensePack"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /defense-packs/{id}/pdf:
+    get:
+      operationId: getDefensePackPdf
+      tags: [defense-packs]
+      summary: Render a Defense Pack as PDF
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Pack is not in `ready` status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /defense-packs/{id}/feedback:
+    post:
+      operationId: submitDefensePackFeedback
+      tags: [defense-packs]
+      summary: Capture buyer feedback on a Defense Pack
+      description: |
+        Records whether the pack was used in a real negotiation and
+        what the outcome was. Feeds the future Learn-loop backtester.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitDefensePackFeedbackRequest"
+      responses:
+        "201":
+          description: Feedback captured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DefensePackOutcome"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 components:
   parameters:
@@ -4151,3 +4306,245 @@ components:
             Optional supplier ID to link this issuer to. Must belong to
             the active tenant; the server returns 400 otherwise.
         notes: { type: string, maxLength: 2000 }
+
+    DefensePackTarget:
+      type: object
+      required: [supplierId, supplierName]
+      description: |
+        What the Defense Pack is defending or attacking. At least one
+        of `contractId+lineItem`, `categoryCode`, or `materialCode`
+        must be provided so the evidence pool can be scoped beyond
+        "every signal that ever mentioned this supplier".
+      properties:
+        supplierId: { type: string }
+        supplierName: { type: string }
+        contractId: { type: string, nullable: true }
+        lineItem: { type: string, nullable: true }
+        categoryCode: { type: string, nullable: true }
+        materialCode: { type: string, nullable: true }
+
+    DefensePackPosition:
+      type: string
+      enum:
+        - defend_against_increase
+        - attack_for_decrease
+        - justify_index_relink
+
+    DefensePackLength:
+      type: string
+      enum:
+        - exec_one_pager
+        - three_page_brief
+        - full_pack
+
+    DefensePackStatus:
+      type: string
+      enum:
+        - generating
+        - ready
+        - insufficient_evidence
+        - failed
+
+    DefensePackClaim:
+      type: object
+      required: [text, signalId, valueQuoted]
+      description: |
+        One LLM-emitted claim, verified to point at a real signal in
+        the frozen evidence snapshot. The verifier drops claims whose
+        cited `valueQuoted` disagrees with the snapshot value beyond
+        the rounding tolerance.
+      properties:
+        text: { type: string }
+        signalId: { type: string }
+        valueQuoted: { type: string }
+
+    DefensePackSection:
+      type: object
+      required: [key, title, narrative, claims]
+      properties:
+        key:
+          type: string
+          enum:
+            - position
+            - market_context
+            - cost_drivers
+            - comparable_benchmarks
+            - recommended_counter_position
+            - walk_away_considerations
+            - proprietary_signal_context
+        title: { type: string }
+        narrative: { type: string }
+        claims:
+          type: array
+          items:
+            $ref: "#/components/schemas/DefensePackClaim"
+
+    DefensePackEvidenceSnapshotItem:
+      type: object
+      required:
+        [
+          signalId,
+          collectorId,
+          collectorName,
+          signalType,
+          tier,
+          value,
+          unit,
+          currency,
+          observedAt,
+          sourceUrl,
+          posture,
+        ]
+      description: |
+        One row of the frozen evidence pool the LLM was given. The
+        Evidence Room view renders this list verbatim, even after the
+        live `marketSignalsTable` rows move.
+      properties:
+        signalId: { type: string }
+        collectorId: { type: string }
+        collectorName: { type: string }
+        signalType: { type: string }
+        tier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        scope:
+          type: object
+          properties:
+            materialCode: { type: string, nullable: true }
+            categoryCode: { type: string, nullable: true }
+            supplierName: { type: string, nullable: true }
+            laneKey: { type: string, nullable: true }
+            sku: { type: string, nullable: true }
+        value: { type: number }
+        unit: { type: string }
+        currency: { type: string }
+        observedAt: { type: string, format: date-time }
+        sourceUrl: { type: string }
+        posture: { type: string }
+
+    DefensePackSummary:
+      type: object
+      required:
+        [
+          id,
+          orgId,
+          target,
+          position,
+          length,
+          status,
+          disclosurePolicy,
+          permalink,
+          generatedBy,
+          createdAt,
+        ]
+      description: |
+        Listing-row view of a Defense Pack. Sections + evidenceSnapshot
+        are excluded for payload size.
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        target:
+          $ref: "#/components/schemas/DefensePackTarget"
+        position:
+          $ref: "#/components/schemas/DefensePackPosition"
+        length:
+          $ref: "#/components/schemas/DefensePackLength"
+        status:
+          $ref: "#/components/schemas/DefensePackStatus"
+        statusReason: { type: string, nullable: true }
+        disclosurePolicy:
+          $ref: "#/components/schemas/DisclosurePolicy"
+        model: { type: string, nullable: true }
+        inputTokens: { type: integer, nullable: true }
+        outputTokens: { type: integer, nullable: true }
+        estimatedCostUsd: { type: number, nullable: true }
+        generatedBy: { type: string }
+        permalink: { type: string }
+        generatedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        verifiedClaimCount: { type: integer }
+        evidencePoolSize: { type: integer }
+
+    DefensePack:
+      allOf:
+        - $ref: "#/components/schemas/DefensePackSummary"
+        - type: object
+          required: [sections, evidenceSnapshot]
+          properties:
+            sections:
+              type: array
+              items:
+                $ref: "#/components/schemas/DefensePackSection"
+            evidenceSnapshot:
+              type: array
+              items:
+                $ref: "#/components/schemas/DefensePackEvidenceSnapshotItem"
+
+    DefensePackListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DefensePackSummary"
+
+    CreateDefensePackRequest:
+      type: object
+      required: [target, position, length]
+      properties:
+        target:
+          $ref: "#/components/schemas/DefensePackTarget"
+        position:
+          $ref: "#/components/schemas/DefensePackPosition"
+        length:
+          $ref: "#/components/schemas/DefensePackLength"
+        positionNote:
+          type: string
+          maxLength: 2000
+          description: |
+            Free-text buyer note describing the negotiation context
+            (e.g. "supplier wants 8% increase effective Q1, citing
+            steel cost"). Sanitised server-side before being added to
+            the LLM prompt.
+
+    DefensePackOutcomeUsed:
+      type: string
+      enum: [yes, no, unknown]
+
+    DefensePackOutcomeCategory:
+      type: string
+      enum:
+        - supplier_held_price
+        - supplier_reduced_price
+        - deferred
+        - deal_lost
+        - other
+
+    DefensePackOutcome:
+      type: object
+      required: [id, packId, used, submittedBy, createdAt]
+      properties:
+        id: { type: string }
+        packId: { type: string }
+        used:
+          $ref: "#/components/schemas/DefensePackOutcomeUsed"
+        outcomeCategory:
+          allOf:
+            - $ref: "#/components/schemas/DefensePackOutcomeCategory"
+          nullable: true
+        comment: { type: string, nullable: true }
+        submittedBy: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    SubmitDefensePackFeedbackRequest:
+      type: object
+      required: [used]
+      properties:
+        used:
+          $ref: "#/components/schemas/DefensePackOutcomeUsed"
+        outcomeCategory:
+          $ref: "#/components/schemas/DefensePackOutcomeCategory"
+        comment:
+          type: string
+          maxLength: 2000

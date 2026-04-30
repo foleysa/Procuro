@@ -2309,6 +2309,209 @@ the active tenant; the server returns 400 otherwise.
 }
 
 /**
+ * What the Defense Pack is defending or attacking. At least one
+of `contractId+lineItem`, `categoryCode`, or `materialCode`
+must be provided so the evidence pool can be scoped beyond
+"every signal that ever mentioned this supplier".
+
+ */
+export interface DefensePackTarget {
+  supplierId: string;
+  supplierName: string;
+  contractId?: string | null;
+  lineItem?: string | null;
+  categoryCode?: string | null;
+  materialCode?: string | null;
+}
+
+export type DefensePackPosition =
+  (typeof DefensePackPosition)[keyof typeof DefensePackPosition];
+
+export const DefensePackPosition = {
+  defend_against_increase: "defend_against_increase",
+  attack_for_decrease: "attack_for_decrease",
+  justify_index_relink: "justify_index_relink",
+} as const;
+
+export type DefensePackLength =
+  (typeof DefensePackLength)[keyof typeof DefensePackLength];
+
+export const DefensePackLength = {
+  exec_one_pager: "exec_one_pager",
+  three_page_brief: "three_page_brief",
+  full_pack: "full_pack",
+} as const;
+
+export type DefensePackStatus =
+  (typeof DefensePackStatus)[keyof typeof DefensePackStatus];
+
+export const DefensePackStatus = {
+  generating: "generating",
+  ready: "ready",
+  insufficient_evidence: "insufficient_evidence",
+  failed: "failed",
+} as const;
+
+/**
+ * One LLM-emitted claim, verified to point at a real signal in
+the frozen evidence snapshot. The verifier drops claims whose
+cited `valueQuoted` disagrees with the snapshot value beyond
+the rounding tolerance.
+
+ */
+export interface DefensePackClaim {
+  text: string;
+  signalId: string;
+  valueQuoted: string;
+}
+
+export type DefensePackSectionKey =
+  (typeof DefensePackSectionKey)[keyof typeof DefensePackSectionKey];
+
+export const DefensePackSectionKey = {
+  position: "position",
+  market_context: "market_context",
+  cost_drivers: "cost_drivers",
+  comparable_benchmarks: "comparable_benchmarks",
+  recommended_counter_position: "recommended_counter_position",
+  walk_away_considerations: "walk_away_considerations",
+  proprietary_signal_context: "proprietary_signal_context",
+} as const;
+
+export interface DefensePackSection {
+  key: DefensePackSectionKey;
+  title: string;
+  narrative: string;
+  claims: DefensePackClaim[];
+}
+
+export type DefensePackEvidenceSnapshotItemTier =
+  (typeof DefensePackEvidenceSnapshotItemTier)[keyof typeof DefensePackEvidenceSnapshotItemTier];
+
+export const DefensePackEvidenceSnapshotItemTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type DefensePackEvidenceSnapshotItemScope = {
+  materialCode?: string | null;
+  categoryCode?: string | null;
+  supplierName?: string | null;
+  laneKey?: string | null;
+  sku?: string | null;
+};
+
+/**
+ * One row of the frozen evidence pool the LLM was given. The
+Evidence Room view renders this list verbatim, even after the
+live `marketSignalsTable` rows move.
+
+ */
+export interface DefensePackEvidenceSnapshotItem {
+  signalId: string;
+  collectorId: string;
+  collectorName: string;
+  signalType: string;
+  tier: DefensePackEvidenceSnapshotItemTier;
+  scope?: DefensePackEvidenceSnapshotItemScope;
+  value: number;
+  unit: string;
+  currency: string;
+  observedAt: string;
+  sourceUrl: string;
+  posture: string;
+}
+
+/**
+ * Listing-row view of a Defense Pack. Sections + evidenceSnapshot
+are excluded for payload size.
+
+ */
+export interface DefensePackSummary {
+  id: string;
+  orgId: string;
+  target: DefensePackTarget;
+  position: DefensePackPosition;
+  length: DefensePackLength;
+  status: DefensePackStatus;
+  statusReason?: string | null;
+  disclosurePolicy: DisclosurePolicy;
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCostUsd?: number | null;
+  generatedBy: string;
+  permalink: string;
+  generatedAt?: string | null;
+  createdAt: string;
+  verifiedClaimCount?: number;
+  evidencePoolSize?: number;
+}
+
+export type DefensePack = DefensePackSummary & {
+  sections: DefensePackSection[];
+  evidenceSnapshot: DefensePackEvidenceSnapshotItem[];
+};
+
+export interface DefensePackListResponse {
+  items: DefensePackSummary[];
+}
+
+export interface CreateDefensePackRequest {
+  target: DefensePackTarget;
+  position: DefensePackPosition;
+  length: DefensePackLength;
+  /**
+   * Free-text buyer note describing the negotiation context
+(e.g. "supplier wants 8% increase effective Q1, citing
+steel cost"). Sanitised server-side before being added to
+the LLM prompt.
+
+   * @maxLength 2000
+   */
+  positionNote?: string;
+}
+
+export type DefensePackOutcomeUsed =
+  (typeof DefensePackOutcomeUsed)[keyof typeof DefensePackOutcomeUsed];
+
+export const DefensePackOutcomeUsed = {
+  yes: "yes",
+  no: "no",
+  unknown: "unknown",
+} as const;
+
+export type DefensePackOutcomeCategory =
+  (typeof DefensePackOutcomeCategory)[keyof typeof DefensePackOutcomeCategory];
+
+export const DefensePackOutcomeCategory = {
+  supplier_held_price: "supplier_held_price",
+  supplier_reduced_price: "supplier_reduced_price",
+  deferred: "deferred",
+  deal_lost: "deal_lost",
+  other: "other",
+} as const;
+
+export interface DefensePackOutcome {
+  id: string;
+  packId: string;
+  used: DefensePackOutcomeUsed;
+  outcomeCategory?: DefensePackOutcomeCategory | null;
+  comment?: string | null;
+  submittedBy: string;
+  createdAt: string;
+}
+
+export interface SubmitDefensePackFeedbackRequest {
+  used: DefensePackOutcomeUsed;
+  outcomeCategory?: DefensePackOutcomeCategory;
+  /** @maxLength 2000 */
+  comment?: string;
+}
+
+/**
  * Not found
  */
 export type NotFoundResponse = ErrorResponse;
@@ -2646,4 +2849,12 @@ export const ListContractsStatus = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
+};
+
+export type ListDefensePacksParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
 };

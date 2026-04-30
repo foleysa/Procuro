@@ -40,10 +40,14 @@ import type {
   CollectorRunResult,
   ContractDetail,
   ContractListResponse,
+  CreateDefensePackRequest,
   CreateErpConnectionRequest,
   CsvIngestRequest,
   Cycle,
   CycleDetail,
+  DefensePack,
+  DefensePackListResponse,
+  DefensePackOutcome,
   ErpAdapterListResponse,
   ErpConnectionListResponse,
   ErpConnectionResponse,
@@ -74,6 +78,7 @@ import type {
   ListCollectorSourceHealthParams,
   ListContractsParams,
   ListDataSources200,
+  ListDefensePacksParams,
   ListIntelligenceEventsParams,
   ListIntelligenceSignalsParams,
   ListJobsParams,
@@ -99,6 +104,7 @@ import type {
   RunCycleResponse,
   RunNextCycleParams,
   SpendOverview,
+  SubmitDefensePackFeedbackRequest,
   SupplierIntelligenceResponse,
   SupplierListResponse,
   SyncResultResponse,
@@ -6641,4 +6647,485 @@ export const useRunSystemCleanup = <
   TContext
 > => {
   return useMutation(getRunSystemCleanupMutationOptions(options));
+};
+
+/**
+ * Returns the most recent Defense Packs created in the tenant,
+newest first. Pack `sections` and `evidenceSnapshot` are
+omitted from list rows for payload size — fetch
+`/defense-packs/{id}` for the full memo + frozen evidence.
+
+ * @summary List recent Defense Packs for the active tenant
+ */
+export const getListDefensePacksUrl = (params?: ListDefensePacksParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/defense-packs?${stringifiedParams}`
+    : `/api/defense-packs`;
+};
+
+export const listDefensePacks = async (
+  params?: ListDefensePacksParams,
+  options?: RequestInit,
+): Promise<DefensePackListResponse> => {
+  return customFetch<DefensePackListResponse>(getListDefensePacksUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDefensePacksQueryKey = (
+  params?: ListDefensePacksParams,
+) => {
+  return [`/api/defense-packs`, ...(params ? [params] : [])] as const;
+};
+
+export const getListDefensePacksQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDefensePacks>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDefensePacksParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDefensePacks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListDefensePacksQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDefensePacks>>
+  > = ({ signal }) => listDefensePacks(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDefensePacks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDefensePacksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDefensePacks>>
+>;
+export type ListDefensePacksQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List recent Defense Packs for the active tenant
+ */
+
+export function useListDefensePacks<
+  TData = Awaited<ReturnType<typeof listDefensePacks>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDefensePacksParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDefensePacks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDefensePacksQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Synchronously generates a buyer-ready procurement memo backed
+by Gemini 2.5 Flash. The pipeline:
+
+  1. Assembles a frozen evidence pool from the tenant's recent
+     T1/T2 `marketSignalsTable` rows that match the target.
+  2. Calls Gemini with a sanitised prompt (prompt-injection
+     defences applied to all user-supplied text).
+  3. Verifies every emitted claim against the evidence
+     snapshot — claims that fail are dropped.
+  4. Regenerates ONCE if a section ends up without any
+     verified claims.
+
+The pack is persisted with the frozen evidence snapshot. When
+the evidence pool is too thin to back the memo, returns a
+pack with `status='insufficient_evidence'` and a human-readable
+`statusReason`.
+
+Per-tenant cap: 50 packs per UTC day. Exceeding the cap returns
+HTTP 429.
+
+ * @summary Generate a Defense Pack
+ */
+export const getCreateDefensePackUrl = () => {
+  return `/api/defense-packs`;
+};
+
+export const createDefensePack = async (
+  createDefensePackRequest: CreateDefensePackRequest,
+  options?: RequestInit,
+): Promise<DefensePack> => {
+  return customFetch<DefensePack>(getCreateDefensePackUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createDefensePackRequest),
+  });
+};
+
+export const getCreateDefensePackMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createDefensePack>>,
+    TError,
+    { data: BodyType<CreateDefensePackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createDefensePack>>,
+  TError,
+  { data: BodyType<CreateDefensePackRequest> },
+  TContext
+> => {
+  const mutationKey = ["createDefensePack"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createDefensePack>>,
+    { data: BodyType<CreateDefensePackRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createDefensePack(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateDefensePackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createDefensePack>>
+>;
+export type CreateDefensePackMutationBody = BodyType<CreateDefensePackRequest>;
+export type CreateDefensePackMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Generate a Defense Pack
+ */
+export const useCreateDefensePack = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createDefensePack>>,
+    TError,
+    { data: BodyType<CreateDefensePackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createDefensePack>>,
+  TError,
+  { data: BodyType<CreateDefensePackRequest> },
+  TContext
+> => {
+  return useMutation(getCreateDefensePackMutationOptions(options));
+};
+
+/**
+ * Returns the pack with the full `sections` array and the frozen
+`evidenceSnapshot` so the Evidence Room view replays the
+cited signals exactly as they were at generation time, even
+after the live values move.
+
+ * @summary Read a Defense Pack (frozen view + Evidence Room)
+ */
+export const getGetDefensePackUrl = (id: string) => {
+  return `/api/defense-packs/${id}`;
+};
+
+export const getDefensePack = async (
+  id: string,
+  options?: RequestInit,
+): Promise<DefensePack> => {
+  return customFetch<DefensePack>(getGetDefensePackUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDefensePackQueryKey = (id: string) => {
+  return [`/api/defense-packs/${id}`] as const;
+};
+
+export const getGetDefensePackQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDefensePack>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDefensePack>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDefensePackQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDefensePack>>> = ({
+    signal,
+  }) => getDefensePack(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDefensePack>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDefensePackQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDefensePack>>
+>;
+export type GetDefensePackQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Read a Defense Pack (frozen view + Evidence Room)
+ */
+
+export function useGetDefensePack<
+  TData = Awaited<ReturnType<typeof getDefensePack>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDefensePack>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDefensePackQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Render a Defense Pack as PDF
+ */
+export const getGetDefensePackPdfUrl = (id: string) => {
+  return `/api/defense-packs/${id}/pdf`;
+};
+
+export const getDefensePackPdf = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getGetDefensePackPdfUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDefensePackPdfQueryKey = (id: string) => {
+  return [`/api/defense-packs/${id}/pdf`] as const;
+};
+
+export const getGetDefensePackPdfQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDefensePackPdf>>,
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDefensePackPdf>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDefensePackPdfQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDefensePackPdf>>
+  > = ({ signal }) => getDefensePackPdf(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDefensePackPdf>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDefensePackPdfQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDefensePackPdf>>
+>;
+export type GetDefensePackPdfQueryError = ErrorType<
+  NotFoundResponse | ErrorResponse
+>;
+
+/**
+ * @summary Render a Defense Pack as PDF
+ */
+
+export function useGetDefensePackPdf<
+  TData = Awaited<ReturnType<typeof getDefensePackPdf>>,
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDefensePackPdf>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDefensePackPdfQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Records whether the pack was used in a real negotiation and
+what the outcome was. Feeds the future Learn-loop backtester.
+
+ * @summary Capture buyer feedback on a Defense Pack
+ */
+export const getSubmitDefensePackFeedbackUrl = (id: string) => {
+  return `/api/defense-packs/${id}/feedback`;
+};
+
+export const submitDefensePackFeedback = async (
+  id: string,
+  submitDefensePackFeedbackRequest: SubmitDefensePackFeedbackRequest,
+  options?: RequestInit,
+): Promise<DefensePackOutcome> => {
+  return customFetch<DefensePackOutcome>(getSubmitDefensePackFeedbackUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(submitDefensePackFeedbackRequest),
+  });
+};
+
+export const getSubmitDefensePackFeedbackMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitDefensePackFeedback>>,
+    TError,
+    { id: string; data: BodyType<SubmitDefensePackFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitDefensePackFeedback>>,
+  TError,
+  { id: string; data: BodyType<SubmitDefensePackFeedbackRequest> },
+  TContext
+> => {
+  const mutationKey = ["submitDefensePackFeedback"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitDefensePackFeedback>>,
+    { id: string; data: BodyType<SubmitDefensePackFeedbackRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return submitDefensePackFeedback(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitDefensePackFeedbackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitDefensePackFeedback>>
+>;
+export type SubmitDefensePackFeedbackMutationBody =
+  BodyType<SubmitDefensePackFeedbackRequest>;
+export type SubmitDefensePackFeedbackMutationError =
+  ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Capture buyer feedback on a Defense Pack
+ */
+export const useSubmitDefensePackFeedback = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitDefensePackFeedback>>,
+    TError,
+    { id: string; data: BodyType<SubmitDefensePackFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof submitDefensePackFeedback>>,
+  TError,
+  { id: string; data: BodyType<SubmitDefensePackFeedbackRequest> },
+  TContext
+> => {
+  return useMutation(getSubmitDefensePackFeedbackMutationOptions(options));
 };

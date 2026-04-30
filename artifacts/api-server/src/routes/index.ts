@@ -23,6 +23,7 @@ import adminTenantRouter from "./admin-tenant";
 import scimRouter from "./scim";
 import contractsRouter from "./contracts";
 import systemRouter from "./system";
+import defensePacksRouter from "./defense-packs";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(adminTenantRouter);
 router.use(scimRouter);
 router.use(contractsRouter);
 router.use(systemRouter);
+router.use(defensePacksRouter);
 
 export default router;
