@@ -1,0 +1,13 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts"],
+  "references": [
+    { "path": "../../../lib/db" },
+    { "path": "../../../lib/api-zod" }
+  ]
+}
