@@ -5,6 +5,7 @@ import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import {
   csvSourceAdapter,
   streamCsvEntity,
+  CsvIngestAbortedError,
   type CsvPayload,
   type CsvEntity,
   type StreamCsvProgress,
@@ -244,8 +245,9 @@ function runMultipartIngest(args: {
   orgId: string;
   entity: CsvEntity;
   onProgress: StreamCsvArgsOnProgress;
+  signal: AbortSignal;
 }): Promise<Awaited<ReturnType<typeof streamCsvEntity>>> {
-  const { req, orgId, entity, onProgress } = args;
+  const { req, orgId, entity, onProgress, signal } = args;
   return new Promise((resolve, reject) => {
     let busboy: ReturnType<typeof Busboy>;
     try {
@@ -286,7 +288,13 @@ function runMultipartIngest(args: {
         req.destroy();
       });
 
-      streamCsvEntity({ orgId, entity, input: fileStream, onProgress }).then(
+      streamCsvEntity({
+        orgId,
+        entity,
+        input: fileStream,
+        onProgress,
+        signal,
+      }).then(
         (r) => {
           if (limitTriggered) {
             reject(
@@ -344,8 +352,29 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
     return;
   }
 
+  // Tie the lifecycle of the streaming ingest to the HTTP request: when the
+  // browser calls `xhr.abort()` Express fires `req.on("aborted")` and we
+  // trip this controller, which is forwarded into `streamCsvEntity` so it
+  // stops flushing batches to the database mid-file.
+  const abortController = new AbortController();
   req.on("aborted", () => {
-    req.log.warn({ entity, orgId }, "Streaming CSV upload aborted by client");
+    req.log.warn(
+      { entity, orgId },
+      "Streaming CSV upload aborted by client; cancelling ingest",
+    );
+    abortController.abort();
+  });
+  // `close` fires for both normal end and unexpected client disconnects;
+  // the latter doesn't always emit `aborted` (e.g. underlying socket reset),
+  // so trip the controller here too if the response never fully wrote out.
+  res.on("close", () => {
+    if (!res.writableEnded && !abortController.signal.aborted) {
+      req.log.warn(
+        { entity, orgId },
+        "Streaming CSV response closed before completion; cancelling ingest",
+      );
+      abortController.abort();
+    }
   });
 
   // -- Begin NDJSON streaming response. ------------------------------------
@@ -377,7 +406,13 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
   try {
     let result: Awaited<ReturnType<typeof streamCsvEntity>>;
     if (isMultipart(req)) {
-      result = await runMultipartIngest({ req, orgId, entity, onProgress });
+      result = await runMultipartIngest({
+        req,
+        orgId,
+        entity,
+        onProgress,
+        signal: abortController.signal,
+      });
     } else {
       // Raw text/csv path — defense-in-depth byte counter and pipe req directly.
       let exceeded = false;
@@ -388,7 +423,13 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
           "Raw CSV upload exceeded byte limit; destroying request",
         );
       });
-      result = await streamCsvEntity({ orgId, entity, input: req, onProgress });
+      result = await streamCsvEntity({
+        orgId,
+        entity,
+        input: req,
+        onProgress,
+        signal: abortController.signal,
+      });
       if (exceeded) {
         throw new Error(
           `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
@@ -397,15 +438,38 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
     }
     writeEvent({ type: "result", ...result });
   } catch (err) {
-    const msg = (err as Error).message;
-    req.log.error(
-      { err: msg, entity, orgId },
-      "Streaming CSV ingest failed",
-    );
-    writeEvent({
-      type: "error",
-      error: `CSV stream ingest failed: ${msg}`,
-    });
+    if (err instanceof CsvIngestAbortedError) {
+      // Client cancelled the upload. The response socket is almost certainly
+      // already torn down (the abort was triggered by the request itself
+      // ending), so this `writeEvent` will usually be a no-op via the
+      // `res.writableEnded` guard. Logging at info-level keeps cancellations
+      // out of error dashboards.
+      req.log.info(
+        {
+          entity,
+          orgId,
+          rowsParsed: err.rowsParsed,
+          rowsInserted: err.rowsInserted,
+        },
+        "Streaming CSV ingest cancelled by client",
+      );
+      writeEvent({
+        type: "cancelled",
+        entity,
+        rowsParsed: err.rowsParsed,
+        rowsInserted: err.rowsInserted,
+      });
+    } else {
+      const msg = (err as Error).message;
+      req.log.error(
+        { err: msg, entity, orgId },
+        "Streaming CSV ingest failed",
+      );
+      writeEvent({
+        type: "error",
+        error: `CSV stream ingest failed: ${msg}`,
+      });
+    }
   } finally {
     if (!res.writableEnded) res.end();
   }

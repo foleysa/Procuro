@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { StreamCsvCancelledEvent } from "./streamCsvCancelledEvent";
 import type { StreamCsvErrorEvent } from "./streamCsvErrorEvent";
 import type { StreamCsvProgressEvent } from "./streamCsvProgressEvent";
 import type { StreamCsvResultEvent } from "./streamCsvResultEvent";
@@ -23,4 +24,5 @@ Use the `type` field to discriminate.
 export type StreamCsvEvent =
   | StreamCsvProgressEvent
   | StreamCsvResultEvent
-  | StreamCsvErrorEvent;
+  | StreamCsvErrorEvent
+  | StreamCsvCancelledEvent;

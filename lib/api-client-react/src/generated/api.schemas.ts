@@ -477,6 +477,43 @@ export interface StreamCsvErrorEvent {
   error: string;
 }
 
+export type StreamCsvCancelledEventType =
+  (typeof StreamCsvCancelledEventType)[keyof typeof StreamCsvCancelledEventType];
+
+export const StreamCsvCancelledEventType = {
+  cancelled: "cancelled",
+} as const;
+
+export type StreamCsvCancelledEventEntity =
+  (typeof StreamCsvCancelledEventEntity)[keyof typeof StreamCsvCancelledEventEntity];
+
+export const StreamCsvCancelledEventEntity = {
+  suppliers: "suppliers",
+  categories: "categories",
+  items: "items",
+  purchase_orders: "purchase_orders",
+  po_lines: "po_lines",
+  invoices: "invoices",
+  payments: "payments",
+  shipments: "shipments",
+} as const;
+
+/**
+ * Terminal cancellation event emitted exactly once when the client
+cancels the upload mid-flight (typically via `xhr.abort()`). The
+server detects the abort, stops flushing further batches to the
+database, and reports the partial counts that *did* commit.
+Distinct from `error` so clients can render a "Cancelled" state
+instead of a failure. The HTTP status remains 200.
+
+ */
+export interface StreamCsvCancelledEvent {
+  type: StreamCsvCancelledEventType;
+  entity: StreamCsvCancelledEventEntity;
+  rowsParsed: number;
+  rowsInserted: number;
+}
+
 /**
  * One NDJSON line emitted by `POST /ingest/csv-stream`.
 Use the `type` field to discriminate.
@@ -485,7 +522,8 @@ Use the `type` field to discriminate.
 export type StreamCsvEvent =
   | StreamCsvProgressEvent
   | StreamCsvResultEvent
-  | StreamCsvErrorEvent;
+  | StreamCsvErrorEvent
+  | StreamCsvCancelledEvent;
 
 export type CsvIngestRequestSuppliersItem = { [key: string]: unknown };
 

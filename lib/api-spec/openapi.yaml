@@ -1390,6 +1390,34 @@ components:
         error:
           type: string
 
+    StreamCsvCancelledEvent:
+      type: object
+      description: |
+        Terminal cancellation event emitted exactly once when the client
+        cancels the upload mid-flight (typically via `xhr.abort()`). The
+        server detects the abort, stops flushing further batches to the
+        database, and reports the partial counts that *did* commit.
+        Distinct from `error` so clients can render a "Cancelled" state
+        instead of a failure. The HTTP status remains 200.
+      required: [type, entity, rowsParsed, rowsInserted]
+      properties:
+        type:
+          type: string
+          enum: [cancelled]
+        entity:
+          type: string
+          enum:
+            - suppliers
+            - categories
+            - items
+            - purchase_orders
+            - po_lines
+            - invoices
+            - payments
+            - shipments
+        rowsParsed: { type: integer }
+        rowsInserted: { type: integer }
+
     StreamCsvEvent:
       description: |
         One NDJSON line emitted by `POST /ingest/csv-stream`.
@@ -1398,12 +1426,14 @@ components:
         - $ref: "#/components/schemas/StreamCsvProgressEvent"
         - $ref: "#/components/schemas/StreamCsvResultEvent"
         - $ref: "#/components/schemas/StreamCsvErrorEvent"
+        - $ref: "#/components/schemas/StreamCsvCancelledEvent"
       discriminator:
         propertyName: type
         mapping:
           progress: "#/components/schemas/StreamCsvProgressEvent"
           result: "#/components/schemas/StreamCsvResultEvent"
           error: "#/components/schemas/StreamCsvErrorEvent"
+          cancelled: "#/components/schemas/StreamCsvCancelledEvent"
 
     CsvIngestRequest:
       type: object

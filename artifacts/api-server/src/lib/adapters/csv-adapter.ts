@@ -607,6 +607,26 @@ export interface StreamCsvProgress {
   rowsInserted: number;
 }
 
+/**
+ * Thrown by `streamCsvEntity` when the caller-supplied `AbortSignal` fires
+ * mid-ingest (typically because the HTTP client cancelled the upload via
+ * `xhr.abort()` and the route propagated the abort through to the adapter).
+ *
+ * Distinguishable from generic parse/DB errors so the `/ingest/csv-stream`
+ * route can avoid logging cancellations as failures, and so callers can
+ * tell a deliberate cancel apart from an unexpected crash.
+ */
+export class CsvIngestAbortedError extends Error {
+  constructor(
+    message = "CSV ingest cancelled by client",
+    public readonly rowsParsed = 0,
+    public readonly rowsInserted = 0,
+  ) {
+    super(message);
+    this.name = "CsvIngestAbortedError";
+  }
+}
+
 interface StreamCsvArgs {
   orgId: string;
   entity: CsvEntity;
@@ -621,6 +641,15 @@ interface StreamCsvArgs {
    * not abort the ingest (progress reporting is best-effort).
    */
   onProgress?: (progress: StreamCsvProgress) => void | Promise<void>;
+  /**
+   * Optional AbortSignal. When fired, the parser stream is destroyed, no
+   * further batches are flushed to the database, and the function rejects
+   * with `CsvIngestAbortedError` (carrying the parsed/inserted totals at
+   * the moment of cancellation). Wired up by the `/ingest/csv-stream`
+   * route so a client-side `xhr.abort()` actually short-circuits inserts
+   * instead of letting the server keep writing to a dead socket.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -646,6 +675,25 @@ export async function streamCsvEntity(
     }),
   );
 
+  // Wire the optional AbortSignal: when fired, destroy both the parser and
+  // the upstream input so the `for await` loop bails out and no further
+  // batches are queued.
+  const onAbort = (): void => {
+    parser.destroy(new CsvIngestAbortedError());
+    args.input.destroy();
+  };
+  if (args.signal) {
+    if (args.signal.aborted) {
+      // Cancelled before we even started; bail out before touching the DB.
+      throw new CsvIngestAbortedError(
+        "CSV ingest cancelled by client",
+        rowsParsed,
+        rowsInserted,
+      );
+    }
+    args.signal.addEventListener("abort", onAbort, { once: true });
+  }
+
   const reportProgress = async (): Promise<void> => {
     if (!args.onProgress) return;
     try {
@@ -669,22 +717,89 @@ export async function streamCsvEntity(
 
   try {
     for await (const row of parser) {
+      // Cancellation check between rows. The `parser.destroy(...)` above
+      // will also surface the abort as a thrown error from the iterator on
+      // the next tick, but checking inline keeps the abort fast even if
+      // the parser has buffered rows ahead of us.
+      if (args.signal?.aborted) {
+        throw new CsvIngestAbortedError(
+          "CSV ingest cancelled by client",
+          rowsParsed,
+          rowsInserted,
+        );
+      }
       buffer.push(row as Record<string, string>);
       rowsParsed++;
       if (buffer.length >= batchSize) {
         // Pause backpressure: pause underlying stream while we flush.
         args.input.pause();
+        // Re-check before the (potentially expensive) DB insert so an
+        // abort that fires while we're queueing doesn't waste a write.
+        if (args.signal?.aborted) {
+          throw new CsvIngestAbortedError(
+            "CSV ingest cancelled by client",
+            rowsParsed,
+            rowsInserted,
+          );
+        }
         await flush();
         args.input.resume();
       }
     }
+    if (args.signal?.aborted) {
+      throw new CsvIngestAbortedError(
+        "CSV ingest cancelled by client",
+        rowsParsed,
+        rowsInserted,
+      );
+    }
     await flush();
   } catch (err) {
+    if (err instanceof CsvIngestAbortedError) {
+      // Promote the live counters into the thrown error so route logs and
+      // tests can see how far we got before bailing.
+      const aborted = new CsvIngestAbortedError(
+        err.message,
+        rowsParsed,
+        rowsInserted,
+      );
+      logger.info(
+        {
+          entity: args.entity,
+          rowsParsed,
+          rowsInserted,
+        },
+        "CSV stream cancelled by client; halting further inserts",
+      );
+      throw aborted;
+    }
+    // The parser surfacing our injected `CsvIngestAbortedError` via the
+    // `parser.destroy(err)` path can also arrive wrapped, so detect by
+    // signal state as a fallback.
+    if (args.signal?.aborted) {
+      logger.info(
+        {
+          entity: args.entity,
+          rowsParsed,
+          rowsInserted,
+        },
+        "CSV stream cancelled by client; halting further inserts",
+      );
+      throw new CsvIngestAbortedError(
+        "CSV ingest cancelled by client",
+        rowsParsed,
+        rowsInserted,
+      );
+    }
     logger.error(
       { entity: args.entity, rowsParsed, err: (err as Error).message },
       "CSV stream parse failed",
     );
     throw err;
+  } finally {
+    if (args.signal) {
+      args.signal.removeEventListener("abort", onAbort);
+    }
   }
 
   return {

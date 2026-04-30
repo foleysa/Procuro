@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Papa from "papaparse";
 import JSZip from "jszip";
@@ -764,7 +764,27 @@ export interface ServerProgress {
 type StreamCsvEvent =
   | { type: "progress"; rowsParsed: number; rowsInserted: number }
   | ({ type: "result" } & StreamCsvResult)
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | {
+      type: "cancelled";
+      entity: IngestCsvStreamEntity;
+      rowsParsed: number;
+      rowsInserted: number;
+    };
+
+/**
+ * Marker error thrown when the user cancels an in-flight streaming upload
+ * via the per-entity Cancel button (which calls `controller.abort()` on
+ * the `AbortSignal` passed to `uploadCsvStream`). Distinguishable from a
+ * generic "Upload aborted" so the page can show a "Cancelled" badge
+ * instead of surfacing the cancellation as a top-level error.
+ */
+class UploadCancelledError extends Error {
+  constructor() {
+    super("Upload cancelled by user");
+    this.name = "UploadCancelledError";
+  }
+}
 
 /**
  * Stream-upload a single File to `/api/ingest/csv-stream` using XHR so we get
@@ -783,17 +803,43 @@ type StreamCsvEvent =
  * Sends `multipart/form-data` with a `file` part, matching the OpenAPI
  * contract. Content-Type is left unset so the browser fills in the
  * `multipart/form-data; boundary=...` automatically.
+ *
+ * If `signal` is provided, aborting it calls `xhr.abort()`, which closes
+ * the request body. The server detects this via `req.on("aborted")`,
+ * trips its own AbortController, and short-circuits further DB inserts.
+ * The returned promise rejects with `UploadCancelledError` so callers
+ * can render a "Cancelled" state instead of treating it as a real error.
  */
 function uploadCsvStream(args: {
   file: File;
   entity: IngestCsvStreamEntity;
+  signal?: AbortSignal;
   onUploadProgress?: (p: UploadProgress) => void;
   onServerProgress?: (p: ServerProgress) => void;
 }): Promise<StreamCsvResult> {
   return new Promise((resolve, reject) => {
+    if (args.signal?.aborted) {
+      reject(new UploadCancelledError());
+      return;
+    }
     const url = getIngestCsvStreamUrl({ entity: args.entity });
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url, true);
+    let userCancelled = false;
+    const onAbort = (): void => {
+      userCancelled = true;
+      try {
+        xhr.abort();
+      } catch {
+        /* ignore */
+      }
+    };
+    if (args.signal) {
+      args.signal.addEventListener("abort", onAbort, { once: true });
+    }
+    const cleanup = (): void => {
+      if (args.signal) args.signal.removeEventListener("abort", onAbort);
+    };
     // Default responseType ("") gives us incremental access to responseText
     // on each `progress` event — required for NDJSON streaming.
     const orgId = localStorage.getItem("activeOrgId") ?? "";
@@ -809,6 +855,10 @@ function uploadCsvStream(args: {
     let processedChars = 0;
     let finalResult: StreamCsvResult | null = null;
     let serverError: string | null = null;
+    let cancelledEvent: {
+      rowsParsed: number;
+      rowsInserted: number;
+    } | null = null;
 
     const drainResponseText = (): void => {
       const text = xhr.responseText;
@@ -846,6 +896,20 @@ function uploadCsvStream(args: {
           });
         } else if (evt.type === "error") {
           serverError = evt.error;
+        } else if (evt.type === "cancelled") {
+          // Server acknowledged the cancellation. The page treats either
+          // path (server `cancelled` event or local xhr.onabort) as a
+          // user-driven cancel — see the UploadCancelledError handling
+          // below. The event also surfaces the partial counts so callers
+          // can report "X rows ingested before cancel" if they want.
+          cancelledEvent = {
+            rowsParsed: evt.rowsParsed,
+            rowsInserted: evt.rowsInserted,
+          };
+          args.onServerProgress?.({
+            rowsParsed: evt.rowsParsed,
+            rowsInserted: evt.rowsInserted,
+          });
         }
       }
     };
@@ -853,12 +917,15 @@ function uploadCsvStream(args: {
     xhr.onprogress = () => drainResponseText();
 
     xhr.onload = () => {
+      cleanup();
       // The HTTP layer succeeded for any 2xx; pre-flight failures (entity
       // validation, oversized Content-Length) still come back as 4xx with a
       // conventional `{ error }` JSON body.
       if (xhr.status >= 200 && xhr.status < 300) {
         drainResponseText();
-        if (serverError) {
+        if (cancelledEvent) {
+          reject(new UploadCancelledError());
+        } else if (serverError) {
           reject(new Error(serverError));
         } else if (finalResult) {
           resolve(finalResult);
@@ -878,8 +945,21 @@ function uploadCsvStream(args: {
       }
       reject(new Error(errMsg));
     };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.onerror = () => {
+      cleanup();
+      // Network errors after a user cancel still take the abort path, but
+      // some browsers fire `error` instead of `abort` for an in-flight
+      // upload that gets torn down — treat that as a cancel too.
+      if (userCancelled) {
+        reject(new UploadCancelledError());
+      } else {
+        reject(new Error("Network error during upload"));
+      }
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new UploadCancelledError());
+    };
     const fd = new FormData();
     fd.append("file", args.file);
     xhr.send(fd);
@@ -912,7 +992,26 @@ export default function Ingest() {
   const [serverProgress, setServerProgress] = useState<
     Partial<Record<EntityKey, ServerProgress>>
   >({});
+  // Tracks per-entity cancellation. Set when the user clicks "Cancel" on a
+  // streaming row (or the server emits a `cancelled` NDJSON event); used by
+  // EntityRow to swap the progress bar for a "Cancelled" badge instead of
+  // leaving the row in a half-finished state.
+  const [cancelled, setCancelled] = useState<
+    Partial<Record<EntityKey, boolean>>
+  >({});
+  // Per-entity in-flight flag for streaming uploads. Drives whether the
+  // Cancel button is offered for that specific row — checking the global
+  // `isStreaming` would also light up Cancel on rows that have already
+  // finished while another upload is still in progress (a clickable but
+  // no-op button), which is misleading.
+  const [inFlight, setInFlight] = useState<
+    Partial<Record<EntityKey, boolean>>
+  >({});
   const [isStreaming, setIsStreaming] = useState(false);
+  // Per-entity AbortController for in-flight streaming uploads. A ref (not
+  // state) because we don't need to re-render when controllers come and go;
+  // the Cancel button just needs synchronous access to call `.abort()`.
+  const streamControllers = useRef<Map<EntityKey, AbortController>>(new Map());
 
   const ingestM = useIngestCsvBatch();
 
@@ -921,6 +1020,8 @@ export default function Ingest() {
     setApiError(null);
     setStreamProgress({});
     setServerProgress({});
+    setCancelled({});
+    setInFlight({});
     if (!file) {
       const next = { ...parsed };
       delete next[entity.key];
@@ -948,6 +1049,31 @@ export default function Ingest() {
       delete n[key];
       return n;
     });
+    setCancelled((prev) => {
+      const n = { ...prev };
+      delete n[key];
+      return n;
+    });
+    setInFlight((prev) => {
+      const n = { ...prev };
+      delete n[key];
+      return n;
+    });
+  };
+
+  /**
+   * Cancel an in-flight streaming upload for a single entity. Triggers the
+   * `AbortSignal` we passed into `uploadCsvStream`, which calls
+   * `xhr.abort()`. The browser closes the request body, the server's
+   * `req.on("aborted")` listener trips its `AbortController`, and
+   * `streamCsvEntity` short-circuits before flushing further batches.
+   * The entity row updates to "Cancelled" via the `cancelled` state below.
+   */
+  const cancelEntity = (key: EntityKey) => {
+    const ctrl = streamControllers.current.get(key);
+    if (!ctrl || ctrl.signal.aborted) return;
+    ctrl.abort();
+    setCancelled((prev) => ({ ...prev, [key]: true }));
   };
 
   const totalRows = useMemo(
@@ -992,6 +1118,9 @@ export default function Ingest() {
     setApiError(null);
     setStreamProgress({});
     setServerProgress({});
+    setCancelled({});
+    setInFlight({});
+    streamControllers.current.clear();
 
     // 1. Aggregate non-streaming entities into a single JSON ingest call.
     const jsonPayload: CsvIngestRequest = {};
@@ -1022,6 +1151,7 @@ export default function Ingest() {
       recordsDeleted: 0,
       durationMs: 0,
     };
+    const cancelledKeys: EntityKey[] = [];
 
     try {
       const tasks: Array<Promise<unknown>> = [];
@@ -1047,35 +1177,92 @@ export default function Ingest() {
         );
       }
 
+      // Mark every streaming entity as in-flight up front so EntityRow
+      // shows the Cancel button from the moment "Run Import" is clicked.
+      // We clear each entity's flag in `.finally()` below so a row that
+      // finishes (or errors / cancels) early stops offering Cancel even
+      // while sibling uploads keep running.
+      setInFlight((prev) => {
+        const n = { ...prev };
+        for (const s of streamingEntries) n[s.key] = true;
+        return n;
+      });
+
       for (const s of streamingEntries) {
+        // One controller per streaming entity so the user can cancel any
+        // single in-flight upload independently while the rest continue.
+        const controller = new AbortController();
+        streamControllers.current.set(s.key, controller);
         tasks.push(
           uploadCsvStream({
             file: s.file,
             entity: s.streamEntity,
+            signal: controller.signal,
             onUploadProgress: (p) =>
               setStreamProgress((prev) => ({ ...prev, [s.key]: p })),
             onServerProgress: (p) =>
               setServerProgress((prev) => ({ ...prev, [s.key]: p })),
-          }).then((r) => {
-            aggregate.recordsProcessed += r.rowsParsed;
-            aggregate.recordsCreated += r.rowsInserted;
-            aggregate.durationMs += r.durationMs;
-          }),
+          })
+            .then((r) => {
+              aggregate.recordsProcessed += r.rowsParsed;
+              aggregate.recordsCreated += r.rowsInserted;
+              aggregate.durationMs += r.durationMs;
+            })
+            .catch((err: unknown) => {
+              // A user cancel is not a failure: mark the row, but let the
+              // remaining uploads (and the JSON path) finish on their own.
+              // Anything else is rethrown and surfaces via the `catch`
+              // below as an `apiError` alert + destructive toast.
+              if (err instanceof UploadCancelledError) {
+                cancelledKeys.push(s.key);
+                setCancelled((prev) => ({ ...prev, [s.key]: true }));
+                return;
+              }
+              throw err;
+            })
+            .finally(() => {
+              streamControllers.current.delete(s.key);
+              setInFlight((prev) => {
+                const n = { ...prev };
+                delete n[s.key];
+                return n;
+              });
+            }),
         );
       }
 
       await Promise.all(tasks);
 
-      setResult(aggregate);
-      toast({
-        title: "Import complete",
-        description: `${aggregate.recordsCreated.toLocaleString()} records imported${
-          streamingEntries.length > 0
-            ? ` (${streamingEntries.length} streamed)`
-            : ""
-        }`,
-      });
-      qc.invalidateQueries();
+      // If everything got cancelled and nothing succeeded, don't show the
+      // "Import complete" alert — the cancelled badges per row are enough.
+      const hadAnyWork = jsonHasContent || cancelledKeys.length < streamingEntries.length;
+      if (hadAnyWork) {
+        setResult(aggregate);
+        const successfulStreams =
+          streamingEntries.length - cancelledKeys.length;
+        const cancelledNote =
+          cancelledKeys.length > 0
+            ? `, ${cancelledKeys.length} cancelled`
+            : "";
+        toast({
+          title:
+            cancelledKeys.length === streamingEntries.length &&
+            !jsonHasContent
+              ? "Import cancelled"
+              : "Import complete",
+          description: `${aggregate.recordsCreated.toLocaleString()} records imported${
+            successfulStreams > 0
+              ? ` (${successfulStreams} streamed${cancelledNote})`
+              : cancelledNote
+          }`,
+        });
+        qc.invalidateQueries();
+      } else {
+        toast({
+          title: "Import cancelled",
+          description: "All uploads were cancelled.",
+        });
+      }
     } catch (e) {
       const msg = String((e as Error).message ?? e);
       setApiError(msg);
@@ -1096,6 +1283,11 @@ export default function Ingest() {
       });
     } finally {
       setIsStreaming(false);
+      streamControllers.current.clear();
+      // Defensive: any per-entity flags should already have been cleared
+      // by their `.finally()` blocks, but on a thrown task the loop may
+      // have exited early without scheduling some cleanups.
+      setInFlight({});
     }
   };
 
@@ -1180,8 +1372,11 @@ export default function Ingest() {
                 progress={streamProgress[e.key]}
                 serverProgress={serverProgress[e.key]}
                 isUploading={isPending}
+                inFlight={!!inFlight[e.key]}
+                cancelled={!!cancelled[e.key]}
                 onPick={(f) => onPickFile(e, f)}
                 onClear={() => clearEntity(e.key)}
+                onCancel={() => cancelEntity(e.key)}
               />
             ))}
           </div>
@@ -1235,16 +1430,22 @@ function EntityRow({
   progress,
   serverProgress,
   isUploading,
+  inFlight,
+  cancelled,
   onPick,
   onClear,
+  onCancel,
 }: {
   entity: EntityDef;
   parsed?: ParsedFile;
   progress?: UploadProgress;
   serverProgress?: ServerProgress;
   isUploading: boolean;
+  inFlight: boolean;
+  cancelled: boolean;
   onPick: (f: File | null) => void;
   onClear: () => void;
+  onCancel: () => void;
 }) {
   const hasError = parsed && (parsed.missingRequired.length > 0 || parsed.parseError);
   const ok = parsed && !hasError && (parsed.streaming || (parsed.rows && parsed.rows.length > 0));
@@ -1260,6 +1461,11 @@ function EntityRow({
       : 0;
   const uploadComplete =
     !!progress && progress.total > 0 && progress.loaded >= progress.total;
+  // Cancel is offered only when *this* entity actually has an in-flight
+  // upload (per-entity flag, not the global `isUploading` — that would
+  // light up Cancel on rows that have already finished while a sibling
+  // is still streaming, producing a clickable but no-op button).
+  const canCancel = inFlight && !!parsed?.streaming && !cancelled && !hasError;
 
   return (
     <div
@@ -1292,21 +1498,43 @@ function EntityRow({
             {hasError && (
               <Badge variant="destructive">Invalid</Badge>
             )}
+            {cancelled && (
+              <Badge
+                variant="outline"
+                data-testid={`badge-cancelled-${entity.key}`}
+              >
+                Cancelled
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {entity.description}
           </p>
         </div>
-        {parsed && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClear}
-            data-testid={`btn-clear-${entity.key}`}
-          >
-            <X className="w-4 h-4" />
-          </Button>
-        )}
+        <div className="flex items-center gap-1">
+          {canCancel && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCancel}
+              data-testid={`btn-cancel-${entity.key}`}
+              className="gap-1"
+            >
+              <X className="w-3.5 h-3.5" />
+              Cancel
+            </Button>
+          )}
+          {parsed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClear}
+              data-testid={`btn-clear-${entity.key}`}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="text-xs text-muted-foreground">
