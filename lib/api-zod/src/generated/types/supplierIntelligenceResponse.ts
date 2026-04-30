@@ -11,6 +11,8 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { BillingCurrencyConfidence } from "./billingCurrencyConfidence";
+import type { BillingCurrencySource } from "./billingCurrencySource";
 import type { SupplierIntelligenceResponseCountsByType } from "./supplierIntelligenceResponseCountsByType";
 import type { SupplierIntelligenceResponseResolvedMatchType } from "./supplierIntelligenceResponseResolvedMatchType";
 import type { SupplierIntelligenceSignal } from "./supplierIntelligenceSignal";
@@ -19,6 +21,14 @@ export interface SupplierIntelligenceResponse {
   supplierId: string;
   supplierName: string;
   countryCode?: string | null;
+  /** ISO 4217 billing currency for this supplier (uppercase 3
+letters). Null when no signal was strong enough to set
+one — downstream FX logic then falls back to the org base
+currency.
+ */
+  billingCurrency?: string | null;
+  billingCurrencySource?: BillingCurrencySource | null;
+  billingCurrencyConfidence?: BillingCurrencyConfidence | null;
   /** Canonical entity uid the resolver returned for this supplier —
 null when neither identifier nor BQ-name match was found, in
 which case only the `supplier_name` fallback contributed

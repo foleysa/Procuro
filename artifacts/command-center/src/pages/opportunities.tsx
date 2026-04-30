@@ -147,7 +147,36 @@ export default function Opportunities() {
   );
 }
 
-function OppRow({ opp }: { opp: Opportunity }) {
+/**
+ * Pull the supplier billing-currency code (ISO 4217) out of an FX
+ * exposure title. The title is generated server-side as
+ * `FX exposure: {supplier_name} ({CCC}) — ±X.XX% in {BASE} cost vs {PAIR}`
+ * (see `artifacts/api-server/src/lib/levers/fx-exposure.ts`), so the
+ * first `(XXX)` group is always the billing currency. Returns `null`
+ * for any other shape (defensive for older drafts).
+ */
+export function parseFxBillingCurrency(title: string): string | null {
+  const m = /\(([A-Z]{3})\)/.exec(title);
+  return m ? m[1] : null;
+}
+
+/**
+ * Detect whether an FX-exposure title represents an *adverse* move for
+ * the buyer (cost goes up). Adverse moves render with a leading `+`
+ * after the em-dash; favorable moves render with `-`. A flat `0.00%`
+ * is treated as non-adverse.
+ */
+export function isFxAdverseFromTitle(title: string): boolean {
+  // The cost-change percent is the first `+`/`-` after `— `.
+  const m = /—\s*([+-])\d/.exec(title);
+  return m?.[1] === "+";
+}
+
+export function OppRow({ opp }: { opp: Opportunity }) {
+  const isFx = opp.leverId === LeverId.supplier_fx_exposure;
+  const fxCurrency = isFx ? parseFxBillingCurrency(opp.title) : null;
+  const fxAdverse = isFx ? isFxAdverseFromTitle(opp.title) : false;
+
   return (
     <Link
       href={`/opportunities/${opp.id}`}
@@ -156,8 +185,28 @@ function OppRow({ opp }: { opp: Opportunity }) {
     >
       <div className="flex-1 min-w-0">
         <div className="font-medium truncate">{opp.title}</div>
-        <div className="text-xs text-muted-foreground truncate mt-0.5">
-          {opp.supplierName ?? opp.categoryName ?? "—"}
+        <div className="text-xs text-muted-foreground truncate mt-0.5 flex items-center gap-2">
+          {fxCurrency && (
+            <>
+              <Badge
+                variant="outline"
+                className="font-mono tabular-nums"
+                data-testid={`fx-currency-${opp.id}`}
+              >
+                {fxCurrency}
+              </Badge>
+              <Badge
+                variant={fxAdverse ? "destructive" : "secondary"}
+                data-testid={`fx-direction-${opp.id}`}
+              >
+                {fxAdverse ? "Adverse" : "Favorable"}
+              </Badge>
+              <span className="text-muted-foreground/60">·</span>
+            </>
+          )}
+          <span className="truncate">
+            {opp.supplierName ?? opp.categoryName ?? "—"}
+          </span>
         </div>
       </div>
       <div className="flex items-center gap-3 ml-4">

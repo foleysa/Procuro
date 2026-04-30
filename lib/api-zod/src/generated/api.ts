@@ -268,6 +268,32 @@ export const GetSupplierIntelligenceResponse = zod.object({
   supplierId: zod.string(),
   supplierName: zod.string(),
   countryCode: zod.string().nullish(),
+  billingCurrency: zod
+    .string()
+    .nullish()
+    .describe(
+      "ISO 4217 billing currency for this supplier (uppercase 3\nletters). Null when no signal was strong enough to set\none — downstream FX logic then falls back to the org base\ncurrency.\n",
+    ),
+  billingCurrencySource: zod
+    .enum([
+      "provided",
+      "country",
+      "country_dollarized",
+      "invoice_iso",
+      "invoice_symbol",
+      "backfill_invoice",
+      "manual_override",
+    ])
+    .describe(
+      "How `billingCurrency` was determined. `provided` = supplied\nexplicitly on the supplier feed; `country` = single-currency\ncountry auto-detect; `country_dollarized` = de-facto dollarized\n\/ multi-currency country (low confidence, not auto-applied at\ningest); `invoice_iso` \/ `invoice_symbol` = scanned at ingest\nfrom an `invoiceSample` field on the supplier row;\n`backfill_invoice` = scanned post-PO-ingest from PO line\ndescriptions; `manual_override` = set by an operator via\n`POST \/suppliers\/{id}\/billing-currency`.\n",
+    )
+    .nullish(),
+  billingCurrencyConfidence: zod
+    .enum(["high", "medium", "low"])
+    .describe(
+      "Confidence level for the resolved billing currency. `provided`\nand `manual_override` sources are always `high`. `country` and\n`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`\n(symbols like `$` are ambiguous). `country_dollarized` is\n`low` (advisory only — operator confirmation expected).\n",
+    )
+    .nullish(),
   resolvedEntityUid: zod
     .string()
     .nullable()
@@ -344,6 +370,66 @@ export const GetSupplierIntelligenceResponse = zod.object({
 });
 
 /**
+ * Persists a `manual_override` for `suppliers.billing_currency`.
+Used by the Supplier 360 page when the auto-detected value is
+wrong, or to confirm a low/medium-confidence detection.
+
+Subsequent CSV re-uploads that omit the `billingCurrency`
+column will NOT clobber the override (the upsert uses
+`coalesce(excluded.billing_currency, ...)` to preserve it).
+
+ * @summary Manually override a supplier's billing currency
+ */
+export const OverrideSupplierBillingCurrencyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const OverrideSupplierBillingCurrencyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const overrideSupplierBillingCurrencyBodyBillingCurrencyMin = 3;
+export const overrideSupplierBillingCurrencyBodyBillingCurrencyMax = 3;
+
+export const OverrideSupplierBillingCurrencyBody = zod.object({
+  billingCurrency: zod
+    .string()
+    .min(overrideSupplierBillingCurrencyBodyBillingCurrencyMin)
+    .max(overrideSupplierBillingCurrencyBodyBillingCurrencyMax)
+    .describe(
+      "ISO 4217 currency code (3 letters, will be uppercased\nserver-side). Example: `EUR`.\n",
+    ),
+});
+
+export const OverrideSupplierBillingCurrencyResponse = zod.object({
+  id: zod.string(),
+  billingCurrency: zod.string(),
+  billingCurrencySource: zod
+    .enum([
+      "provided",
+      "country",
+      "country_dollarized",
+      "invoice_iso",
+      "invoice_symbol",
+      "backfill_invoice",
+      "manual_override",
+    ])
+    .describe(
+      "How `billingCurrency` was determined. `provided` = supplied\nexplicitly on the supplier feed; `country` = single-currency\ncountry auto-detect; `country_dollarized` = de-facto dollarized\n\/ multi-currency country (low confidence, not auto-applied at\ningest); `invoice_iso` \/ `invoice_symbol` = scanned at ingest\nfrom an `invoiceSample` field on the supplier row;\n`backfill_invoice` = scanned post-PO-ingest from PO line\ndescriptions; `manual_override` = set by an operator via\n`POST \/suppliers\/{id}\/billing-currency`.\n",
+    ),
+  billingCurrencyConfidence: zod
+    .enum(["high", "medium", "low"])
+    .describe(
+      "Confidence level for the resolved billing currency. `provided`\nand `manual_override` sources are always `high`. `country` and\n`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`\n(symbols like `$` are ambiguous). `country_dollarized` is\n`low` (advisory only — operator confirmation expected).\n",
+    ),
+});
+
+/**
  * @summary List opportunities, optionally filtered
  */
 export const listOpportunitiesQueryLimitDefault = 100;
@@ -372,6 +458,7 @@ export const ListOpportunitiesQueryParams = zod.object({
       "supplier_consolidation",
       "contract_renegotiation_trigger",
       "supplier_fx_exposure",
+      "material_index_arbitrage",
     ])
     .optional(),
   cycleId: zod.coerce.string().optional(),
@@ -409,6 +496,7 @@ export const ListOpportunitiesResponse = zod.object({
         "supplier_consolidation",
         "contract_renegotiation_trigger",
         "supplier_fx_exposure",
+        "material_index_arbitrage",
       ]),
       tier: zod.number(),
       status: zod.enum([
@@ -485,6 +573,7 @@ export const GetOpportunityResponse = zod
       "supplier_consolidation",
       "contract_renegotiation_trigger",
       "supplier_fx_exposure",
+      "material_index_arbitrage",
     ]),
     tier: zod.number(),
     status: zod.enum([
@@ -619,6 +708,7 @@ export const ApproveOpportunityResponse = zod.object({
     "supplier_consolidation",
     "contract_renegotiation_trigger",
     "supplier_fx_exposure",
+    "material_index_arbitrage",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -705,6 +795,7 @@ export const RejectOpportunityResponse = zod.object({
     "supplier_consolidation",
     "contract_renegotiation_trigger",
     "supplier_fx_exposure",
+    "material_index_arbitrage",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -777,6 +868,7 @@ export const ExecuteOpportunityResponse = zod.object({
     "supplier_consolidation",
     "contract_renegotiation_trigger",
     "supplier_fx_exposure",
+    "material_index_arbitrage",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -854,6 +946,7 @@ export const RealizeOpportunityResponse = zod.object({
     "supplier_consolidation",
     "contract_renegotiation_trigger",
     "supplier_fx_exposure",
+    "material_index_arbitrage",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -1029,6 +1122,7 @@ export const RunNextCycleResponse = zod.object({
           "supplier_consolidation",
           "contract_renegotiation_trigger",
           "supplier_fx_exposure",
+          "material_index_arbitrage",
         ]),
         prevProjectionMultiplier: zod.number(),
         newProjectionMultiplier: zod.number(),
@@ -1067,6 +1161,7 @@ export const ListLearnedPriorsResponseItem = zod.object({
     "supplier_consolidation",
     "contract_renegotiation_trigger",
     "supplier_fx_exposure",
+    "material_index_arbitrage",
   ]),
   projectionMultiplier: zod.number(),
   confidenceWeight: zod.number(),
@@ -3328,6 +3423,7 @@ export const GetBillingSummaryResponse = zod.object({
         "supplier_consolidation",
         "contract_renegotiation_trigger",
         "supplier_fx_exposure",
+        "material_index_arbitrage",
       ]),
       realizedUsd: zod.number(),
       projectedUsd: zod.number().optional(),

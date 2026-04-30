@@ -13,12 +13,98 @@ import {
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { newId } from "../ids";
+import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
+import { resolveBillingCurrency } from "../suppliers/billing-currency-resolver";
 import type {
   IsCancelledFn,
   SyncProgress,
   SyncResult,
 } from "./source-adapter";
+
+/**
+ * Auto-detect a supplier's billing currency on ingest when the upstream
+ * feed didn't supply one. Mirrors the helper in `csv-adapter.ts` so
+ * both the structured-payload path (CSV bulk + live ERP) and the
+ * per-entity streaming CSV path apply the same resolution order.
+ *
+ * Resolution order at ingest:
+ *   1. Operator-provided value wins (high, source=`provided`).
+ *   2. Else if the row carries an `invoiceSample` (free-form invoice
+ *      text — line description, "Total: £1,234.56", an invoice
+ *      number with embedded ISO code, etc.) the resolver's
+ *      invoice-pattern path fires (ISO → high; symbol → medium).
+ *   3. Else if `countryCode` maps to a single-currency country,
+ *      auto-apply that (high, source=`country`).
+ *   4. Else: leave null. Low-confidence hits (multi-currency or
+ *      dollarized economies) are NOT auto-applied here — they're
+ *      picked up later by `backfillSupplierBillingCurrency` (PO line
+ *      descriptions) or via the `manual_override` Supplier 360
+ *      endpoint.
+ */
+export interface IngestBillingCurrencyDecision {
+  billingCurrency: string | null;
+  billingCurrencySource:
+    | "provided"
+    | "country"
+    | "invoice_iso"
+    | "invoice_symbol"
+    | null;
+  billingCurrencyConfidence: "high" | "medium" | "low" | null;
+}
+
+function autoDetectBillingCurrency(
+  explicit: string | null | undefined,
+  countryCode: string | null | undefined,
+  invoiceSample: string | null | undefined,
+  supplierExternalId: string,
+): IngestBillingCurrencyDecision {
+  const trimmed = explicit?.trim();
+  if (trimmed && trimmed.length >= 3) {
+    return {
+      billingCurrency: trimmed.toUpperCase(),
+      billingCurrencySource: "provided",
+      billingCurrencyConfidence: "high",
+    };
+  }
+  const samples =
+    invoiceSample && invoiceSample.trim() ? [invoiceSample] : [];
+  const resolved = resolveBillingCurrency({
+    countryCode,
+    invoiceSamples: samples,
+  });
+  if (!resolved) {
+    return {
+      billingCurrency: null,
+      billingCurrencySource: null,
+      billingCurrencyConfidence: null,
+    };
+  }
+  if (resolved.confidence === "high" || resolved.confidence === "medium") {
+    const source =
+      resolved.source === "country"
+        ? "country"
+        : resolved.source === "invoice_iso"
+          ? "invoice_iso"
+          : "invoice_symbol";
+    return {
+      billingCurrency: resolved.currency,
+      billingCurrencySource: source,
+      billingCurrencyConfidence: resolved.confidence,
+    };
+  }
+  // Low confidence — log and leave it for the post-PO backfill or a
+  // manual override.
+  logger.info(
+    { supplierExternalId, countryCode, resolved },
+    "supplier billing currency auto-detect skipped (low confidence)",
+  );
+  return {
+    billingCurrency: null,
+    billingCurrencySource: null,
+    billingCurrencyConfidence: null,
+  };
+}
 
 /**
  * Shared structured-payload writer used by both the CSV bulk path and
@@ -62,6 +148,14 @@ export interface IngestPayload {
     name: string;
     countryCode?: string;
     billingCurrency?: string;
+    /**
+     * Optional invoice text snippet (line description, "Total: £1,234.56",
+     * an invoice number with embedded ISO code). When present and
+     * `billingCurrency` is empty, the ingest writer runs the
+     * invoice-pattern path on the resolver — symbols → medium
+     * confidence, ISO codes → high confidence.
+     */
+    invoiceSample?: string;
     paymentTermsDays?: string;
     isStrategic?: boolean;
     isPreferred?: boolean;
@@ -240,20 +334,30 @@ export async function writeIngestPayload(
   // 2. Suppliers.
   const supplierMap = new Map<string, string>();
   if (payload.suppliers?.length) {
-    const rows = payload.suppliers.map((s) => ({
-      id: newId("sup"),
-      orgId,
-      name: s.name,
-      normalizedName: normalizeName(s.name),
-      countryCode: s.countryCode ?? null,
-      billingCurrency: s.billingCurrency ?? null,
-      paymentTermsDays: s.paymentTermsDays ?? null,
-      isStrategic: s.isStrategic ?? false,
-      isPreferred: s.isPreferred ?? false,
-      tags: s.tags ?? [],
-      sourceSystem,
-      sourceExternalId: s.externalId,
-    }));
+    const rows = payload.suppliers.map((s) => {
+      const decision = autoDetectBillingCurrency(
+        s.billingCurrency,
+        s.countryCode,
+        s.invoiceSample,
+        s.externalId,
+      );
+      return {
+        id: newId("sup"),
+        orgId,
+        name: s.name,
+        normalizedName: normalizeName(s.name),
+        countryCode: s.countryCode ?? null,
+        billingCurrency: decision.billingCurrency,
+        billingCurrencySource: decision.billingCurrencySource,
+        billingCurrencyConfidence: decision.billingCurrencyConfidence,
+        paymentTermsDays: s.paymentTermsDays ?? null,
+        isStrategic: s.isStrategic ?? false,
+        isPreferred: s.isPreferred ?? false,
+        tags: s.tags ?? [],
+        sourceSystem,
+        sourceExternalId: s.externalId,
+      };
+    });
     await bulkC(rows, async (chunk) => {
       const inserted = await db
         .insert(suppliersTable)
@@ -268,7 +372,13 @@ export async function writeIngestPayload(
             name: sql`excluded.name`,
             normalizedName: sql`excluded.normalized_name`,
             countryCode: sql`excluded.country_code`,
-            billingCurrency: sql`excluded.billing_currency`,
+            // Only overwrite billing_currency / source / confidence on
+            // re-ingest if the inbound row carries a non-null value.
+            // This protects a `manual_override` from being clobbered by
+            // a re-upload that didn't include the column.
+            billingCurrency: sql`coalesce(excluded.billing_currency, ${suppliersTable.billingCurrency})`,
+            billingCurrencySource: sql`coalesce(excluded.billing_currency_source, ${suppliersTable.billingCurrencySource})`,
+            billingCurrencyConfidence: sql`coalesce(excluded.billing_currency_confidence, ${suppliersTable.billingCurrencyConfidence})`,
             isStrategic: sql`excluded.is_strategic`,
             isPreferred: sql`excluded.is_preferred`,
             tags: sql`excluded.tags`,

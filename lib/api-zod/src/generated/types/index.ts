@@ -14,6 +14,10 @@ must supply it. All list endpoints return only rows owned by that org.
 
 export * from "./addWatchedIssuerRequest";
 export * from "./approveOpportunityRequest";
+export * from "./billingCurrencyConfidence";
+export * from "./billingCurrencyOverrideRequest";
+export * from "./billingCurrencyOverrideResponse";
+export * from "./billingCurrencySource";
 export * from "./billingSummary";
 export * from "./billingSummaryByLeverItem";
 export * from "./broadcastCollectorPosturePreview";
@@ -214,6 +218,7 @@ export * from "./opportunityListResponse";
 export * from "./opportunityStatus";
 export * from "./org";
 export * from "./orgIdHeaderParameter";
+export * from "./overrideSupplierBillingCurrency400";
 export * from "./patchCollectorPostureRequest";
 export * from "./patchCollectorRequest";
 export * from "./patchCollectorRequestStatus";

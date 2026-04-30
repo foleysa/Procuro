@@ -16,6 +16,7 @@ import {
   type MockErpConfig,
 } from "../lib/adapters/mock-erp-adapter";
 import { enqueueJob } from "../lib/jobs/queue";
+import { backfillSupplierBillingCurrency } from "../lib/suppliers/backfill-billing-currency";
 import {
   sanitizeDbErrorMessage,
   errorLogContext,
@@ -431,6 +432,20 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
       if (exceeded) {
         throw new Error(
           `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
+        );
+      }
+    }
+    // Streaming path is per-entity; the supplier CSV is uploaded
+    // before the poLines CSV in the standard flow, so we trigger
+    // the invoice-pattern backfill once poLines have landed. See
+    // `artifacts/api-server/src/lib/suppliers/backfill-billing-currency.ts`.
+    if (entity === "po_lines") {
+      try {
+        await backfillSupplierBillingCurrency(orgId);
+      } catch (err) {
+        req.log.warn(
+          { err, orgId },
+          "supplier billing-currency backfill failed (non-fatal)",
         );
       }
     }

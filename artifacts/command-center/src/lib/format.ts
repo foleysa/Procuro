@@ -65,6 +65,7 @@ export const LEVER_DESCRIPTIONS: Record<string, string> = {
   raw_material_hedging: "Raw Material Hedging",
   supplier_fx_exposure: "Supplier FX Exposure",
   dual_sourcing: "Dual Sourcing",
+  material_index_arbitrage: "Material PPI Arbitrage",
   services_rate_card_benchmark: "Services Rate-Card Benchmark",
   sow_to_msa_conversion: "SOW → MSA Conversion",
   outcome_based_contract: "Outcome-Based Contract",

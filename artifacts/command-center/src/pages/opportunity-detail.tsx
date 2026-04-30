@@ -43,6 +43,9 @@ import {
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
+import type { TenantPolicy } from "@workspace/intelligence/contracts";
+import type { InsightSource, OpportunityDetail } from "@workspace/api-client-react";
+import { TrendingDown, TrendingUp, MinusCircle } from "lucide-react";
 
 export default function OpportunityDetail() {
   const { id } = useParams<{ id: string }>();
@@ -151,6 +154,8 @@ export default function OpportunityDetail() {
           />
         </CardContent>
       </Card>
+
+      <CpiPushbackBlock opp={opp} policy={policy} />
 
       <Card>
         <CardHeader><CardTitle>Recommended action</CardTitle></CardHeader>
@@ -337,5 +342,126 @@ function Kpi({ label, value }: { label: string; value: string }) {
       </div>
       <div className="text-xl font-bold mt-1 tabular-nums">{value}</div>
     </div>
+  );
+}
+
+/**
+ * Shape of `inputs.cpiPushback` persisted by the
+ * contract_renegotiation_trigger lever. Mirrors `CpiPushbackContext`
+ * server-side; we re-declare narrowly here because `inputs` is typed
+ * as an opaque JSON map by the OpenAPI contract.
+ */
+interface PersistedCpiPushback {
+  cpiScopeCode: string;
+  cpiMovePct: number;
+  supplierAskPct: number;
+  spreadPct: number;
+  verdict: "support" | "pushback" | "cpi_decline";
+  summary: string;
+  lookbackDays: number;
+  source?: InsightSource | null;
+}
+
+function isPersistedCpiPushback(v: unknown): v is PersistedCpiPushback {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.cpiScopeCode === "string" &&
+    typeof o.cpiMovePct === "number" &&
+    typeof o.supplierAskPct === "number" &&
+    typeof o.spreadPct === "number" &&
+    typeof o.summary === "string" &&
+    typeof o.lookbackDays === "number" &&
+    (o.verdict === "support" ||
+      o.verdict === "pushback" ||
+      o.verdict === "cpi_decline")
+  );
+}
+
+const VERDICT_LABEL: Record<PersistedCpiPushback["verdict"], string> = {
+  support: "CPI supports the ask",
+  pushback: "Pushback defensible",
+  cpi_decline: "CPI declined — strong pushback",
+};
+
+export function CpiPushbackBlock({
+  opp,
+  policy,
+}: {
+  opp: OpportunityDetail;
+  policy: TenantPolicy;
+}) {
+  // Only contract_renegotiation_trigger persists cpiPushback today,
+  // but we don't gate by leverId — the input shape is the contract.
+  const raw = opp.inputs?.cpiPushback;
+  if (!isPersistedCpiPushback(raw)) return null;
+
+  const Icon =
+    raw.verdict === "cpi_decline"
+      ? TrendingDown
+      : raw.verdict === "pushback"
+        ? MinusCircle
+        : TrendingUp;
+  const tone =
+    raw.verdict === "support"
+      ? "text-muted-foreground"
+      : raw.verdict === "cpi_decline"
+        ? "text-emerald-700"
+        : "text-amber-700";
+
+  // Citation: the lever already pushed `raw.source` into `opp.sources`,
+  // but render it inline here too so the CPI numbers carry their own
+  // disclosure-tier provenance directly under the figures.
+  const cpiSources = raw.source ? [raw.source] : [];
+
+  const fmtPct = (n: number) =>
+    `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+
+  return (
+    <Card data-testid="card-cpi-pushback">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Icon className={`w-5 h-5 ${tone}`} />
+          CPI pushback —{" "}
+          <span data-testid="text-cpi-scope-code">{raw.cpiScopeCode}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Kpi
+            label="CPI move"
+            value={fmtPct(raw.cpiMovePct)}
+          />
+          <Kpi
+            label="Supplier ask"
+            value={fmtPct(raw.supplierAskPct)}
+          />
+          <Kpi
+            label="Spread"
+            value={fmtPct(raw.spreadPct)}
+          />
+          <Kpi
+            label="Lookback"
+            value={`${raw.lookbackDays}d`}
+          />
+        </div>
+        <div
+          className={`text-sm font-medium ${tone}`}
+          data-testid="text-cpi-verdict"
+          data-verdict={raw.verdict}
+        >
+          {VERDICT_LABEL[raw.verdict]}
+        </div>
+        <div
+          className="text-sm whitespace-pre-line"
+          data-testid="text-cpi-summary"
+        >
+          {raw.summary}
+        </div>
+        {cpiSources.length > 0 && (
+          <InsightCitations sources={cpiSources} policy={policy} />
+        )}
+      </CardContent>
+    </Card>
   );
 }

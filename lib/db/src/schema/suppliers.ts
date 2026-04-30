@@ -26,6 +26,24 @@ export const suppliersTable = pgTable(
      * USD/<billingCurrency> (or base/<billingCurrency>) pair.
      */
     billingCurrency: text("billing_currency"),
+    /**
+     * How `billingCurrency` was determined — one of:
+     *   `provided`           — operator supplied the value on the supplier CSV
+     *   `country`            — auto-detected from `countryCode`
+     *   `invoice_iso`        — auto-detected from a 3-letter ISO token in an invoice sample
+     *   `invoice_symbol`     — auto-detected from a currency symbol in an invoice sample
+     *   `backfill_invoice`   — auto-detected later from PO line descriptions (backfill)
+     *   `manual_override`    — set via the Supplier 360 override endpoint
+     * Null when `billingCurrency` is null. See
+     * `artifacts/api-server/src/lib/suppliers/billing-currency-resolver.ts`.
+     */
+    billingCurrencySource: text("billing_currency_source"),
+    /**
+     * Confidence rating for the auto-detected `billingCurrency`: `high`,
+     * `medium`, or `low`. `provided` and `manual_override` sources are
+     * treated as `high`. Null when `billingCurrency` is null.
+     */
+    billingCurrencyConfidence: text("billing_currency_confidence"),
     paymentTermsDays: text("payment_terms_days"),
     isStrategic: boolean("is_strategic").notNull().default(false),
     isPreferred: boolean("is_preferred").notNull().default(false),

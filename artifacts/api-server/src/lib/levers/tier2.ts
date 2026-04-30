@@ -8,6 +8,7 @@ import {
 import { getCollector } from "../intelligence/runtime";
 import { collectorContract } from "../intelligence/collector";
 import { buildInsightSource, type InsightSource } from "../insight-sources";
+import { computeCpiPushback } from "./cpi-pushback";
 
 const dollars = (n: number) => Math.round(n * 100) / 100;
 
@@ -115,10 +116,13 @@ export const contractRenegotiationTriggerLever: LeverAnalyzer = {
              c.supplier_id,
              s.name AS supplier_name,
              c.end_date,
+             c.category_id,
+             cat.code AS category_code,
              c.annual_baseline_usd::numeric AS baseline,
              COALESCE(ca.actual_12mo_spend, 0) AS actual_12mo
       FROM contracts c
       JOIN suppliers s ON s.id = c.supplier_id
+      LEFT JOIN categories cat ON cat.id = c.category_id
       LEFT JOIN contract_actuals ca ON ca.contract_id = c.id
       WHERE c.org_id = ${orgId}
         AND c.status = 'active'
@@ -138,6 +142,8 @@ export const contractRenegotiationTriggerLever: LeverAnalyzer = {
       supplier_id: string;
       supplier_name: string;
       end_date: string;
+      category_id: string | null;
+      category_code: string | null;
       baseline: string;
       actual_12mo: string;
     }>) {
@@ -155,21 +161,61 @@ export const contractRenegotiationTriggerLever: LeverAnalyzer = {
       // Conservative: 5% on actual.
       const savings = actual * 0.05;
       if (savings < 1000) continue;
+
+      // CPI pushback (#68): when the supplier's actual spend has run
+      // ahead of baseline (a proxy for an implied price ask), look up
+      // the relevant BLS CPI sub-series for the contract's category
+      // and append a defensible pushback summary if there is one.
+      // Skipped for "expiring only" rows — there's no implied ask to
+      // anchor against, and skipped silently when the category has no
+      // CPI mapping (most direct-materials categories).
+      let cpiPushback = null;
+      let augmentedRationale = `Contract ${r.contract_number} (${r.title}) — baseline $${baseline.toFixed(0)}, actual 12-mo $${actual.toFixed(0)}, end date ${new Date(r.end_date).toISOString().slice(0, 10)}. Triggers: ${triggers.join(", ")}.`;
+      let augmentedAction = `Open renewal negotiation now with volume leverage; secure tier breakpoint that captures next-12mo trajectory.`;
+      const sources: InsightSource[] = [];
+
+      if (overran && baseline > 0 && r.category_code) {
+        const supplierAskPct = ((actual - baseline) / baseline) * 100;
+        cpiPushback = await computeCpiPushback({
+          orgId,
+          categoryCode: r.category_code,
+          supplierAskPct,
+        });
+        if (cpiPushback) {
+          augmentedRationale = `${augmentedRationale} ${cpiPushback.summary}`;
+          if (cpiPushback.verdict !== "support") {
+            augmentedAction = `Open renegotiation citing the BLS ${cpiPushback.cpiScopeCode} CPI move (${cpiPushback.cpiMovePct >= 0 ? "+" : ""}${cpiPushback.cpiMovePct.toFixed(1)}% over the last ${cpiPushback.lookbackDays} days) — push back on rate inflation above CPI and target a tier breakpoint that captures next-12mo trajectory.`;
+          }
+          if (cpiPushback.source) {
+            sources.push(cpiPushback.source);
+          }
+        }
+      }
+
       drafts.push({
         leverId: "contract_renegotiation_trigger",
         title: `Renegotiate ${r.contract_number} with ${r.supplier_name} (${triggers.join("; ")})`,
-        rationale: `Contract ${r.contract_number} (${r.title}) — baseline $${baseline.toFixed(0)}, actual 12-mo $${actual.toFixed(0)}, end date ${new Date(r.end_date).toISOString().slice(0, 10)}. Triggers: ${triggers.join(", ")}.`,
-        recommendedAction: `Open renewal negotiation now with volume leverage; secure tier breakpoint that captures next-12mo trajectory.`,
+        rationale: augmentedRationale,
+        recommendedAction: augmentedAction,
         supplierId: r.supplier_id,
+        categoryId: r.category_id,
         rawProjectedSavingsUsd: dollars(savings),
         inputs: {
           contractId: r.contract_id,
           supplierId: r.supplier_id,
+          categoryId: r.category_id,
+          categoryCode: r.category_code,
           baselineUsd: baseline,
           actual12moUsd: actual,
           endDate: r.end_date,
           triggers,
           assumedSavingsPct: 5,
+          cpiPushback,
+          // Persisted on the opportunity's `inputs` JSON so the API
+          // server can lift them back out at read time without
+          // re-querying the underlying market_signals — same shape
+          // as the FX-exposure and spot-vs-contract levers.
+          sources,
         },
       });
     }

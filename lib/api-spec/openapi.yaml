@@ -188,6 +188,46 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /suppliers/{id}/billing-currency:
+    post:
+      operationId: overrideSupplierBillingCurrency
+      tags: [suppliers]
+      summary: Manually override a supplier's billing currency
+      description: |
+        Persists a `manual_override` for `suppliers.billing_currency`.
+        Used by the Supplier 360 page when the auto-detected value is
+        wrong, or to confirm a low/medium-confidence detection.
+
+        Subsequent CSV re-uploads that omit the `billingCurrency`
+        column will NOT clobber the override (the upsert uses
+        `coalesce(excluded.billing_currency, ...)` to preserve it).
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCurrencyOverrideRequest"
+      responses:
+        "200":
+          description: Updated billing-currency state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCurrencyOverrideResponse"
+        "400":
+          description: Invalid billing currency
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /opportunities:
     get:
       operationId: listOpportunities
@@ -2206,6 +2246,7 @@ components:
         - supplier_consolidation
         - contract_renegotiation_trigger
         - supplier_fx_exposure
+        - material_index_arbitrage
 
     RejectionReasonCode:
       type: string
@@ -2403,6 +2444,61 @@ components:
             magnitude). May be null when the signal carries no useful
             sub-headline.
 
+    BillingCurrencySource:
+      type: string
+      enum:
+        - provided
+        - country
+        - country_dollarized
+        - invoice_iso
+        - invoice_symbol
+        - backfill_invoice
+        - manual_override
+      description: |
+        How `billingCurrency` was determined. `provided` = supplied
+        explicitly on the supplier feed; `country` = single-currency
+        country auto-detect; `country_dollarized` = de-facto dollarized
+        / multi-currency country (low confidence, not auto-applied at
+        ingest); `invoice_iso` / `invoice_symbol` = scanned at ingest
+        from an `invoiceSample` field on the supplier row;
+        `backfill_invoice` = scanned post-PO-ingest from PO line
+        descriptions; `manual_override` = set by an operator via
+        `POST /suppliers/{id}/billing-currency`.
+
+    BillingCurrencyConfidence:
+      type: string
+      enum: [high, medium, low]
+      description: |
+        Confidence level for the resolved billing currency. `provided`
+        and `manual_override` sources are always `high`. `country` and
+        `invoice_iso` resolve to `high`. `invoice_symbol` is `medium`
+        (symbols like `$` are ambiguous). `country_dollarized` is
+        `low` (advisory only — operator confirmation expected).
+
+    BillingCurrencyOverrideRequest:
+      type: object
+      required: [billingCurrency]
+      properties:
+        billingCurrency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          description: |
+            ISO 4217 currency code (3 letters, will be uppercased
+            server-side). Example: `EUR`.
+
+    BillingCurrencyOverrideResponse:
+      type: object
+      required:
+        [id, billingCurrency, billingCurrencySource, billingCurrencyConfidence]
+      properties:
+        id: { type: string }
+        billingCurrency: { type: string }
+        billingCurrencySource:
+          $ref: "#/components/schemas/BillingCurrencySource"
+        billingCurrencyConfidence:
+          $ref: "#/components/schemas/BillingCurrencyConfidence"
+
     SupplierIntelligenceResponse:
       type: object
       required:
@@ -2411,6 +2507,20 @@ components:
         supplierId: { type: string }
         supplierName: { type: string }
         countryCode: { type: string, nullable: true }
+        billingCurrency:
+          type: string
+          nullable: true
+          description: |
+            ISO 4217 billing currency for this supplier (uppercase 3
+            letters). Null when no signal was strong enough to set
+            one — downstream FX logic then falls back to the org base
+            currency.
+        billingCurrencySource:
+          allOf: [{ $ref: "#/components/schemas/BillingCurrencySource" }]
+          nullable: true
+        billingCurrencyConfidence:
+          allOf: [{ $ref: "#/components/schemas/BillingCurrencyConfidence" }]
+          nullable: true
         resolvedEntityUid:
           type: string
           nullable: true

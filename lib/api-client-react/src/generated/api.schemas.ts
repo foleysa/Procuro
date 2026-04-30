@@ -97,6 +97,7 @@ export const LeverId = {
   supplier_consolidation: "supplier_consolidation",
   contract_renegotiation_trigger: "contract_renegotiation_trigger",
   supplier_fx_exposure: "supplier_fx_exposure",
+  material_index_arbitrage: "material_index_arbitrage",
 } as const;
 
 export type RejectionReasonCode =
@@ -264,6 +265,66 @@ sub-headline.
   detail?: string | null;
 }
 
+/**
+ * How `billingCurrency` was determined. `provided` = supplied
+explicitly on the supplier feed; `country` = single-currency
+country auto-detect; `country_dollarized` = de-facto dollarized
+/ multi-currency country (low confidence, not auto-applied at
+ingest); `invoice_iso` / `invoice_symbol` = scanned at ingest
+from an `invoiceSample` field on the supplier row;
+`backfill_invoice` = scanned post-PO-ingest from PO line
+descriptions; `manual_override` = set by an operator via
+`POST /suppliers/{id}/billing-currency`.
+
+ */
+export type BillingCurrencySource =
+  (typeof BillingCurrencySource)[keyof typeof BillingCurrencySource];
+
+export const BillingCurrencySource = {
+  provided: "provided",
+  country: "country",
+  country_dollarized: "country_dollarized",
+  invoice_iso: "invoice_iso",
+  invoice_symbol: "invoice_symbol",
+  backfill_invoice: "backfill_invoice",
+  manual_override: "manual_override",
+} as const;
+
+/**
+ * Confidence level for the resolved billing currency. `provided`
+and `manual_override` sources are always `high`. `country` and
+`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`
+(symbols like `$` are ambiguous). `country_dollarized` is
+`low` (advisory only — operator confirmation expected).
+
+ */
+export type BillingCurrencyConfidence =
+  (typeof BillingCurrencyConfidence)[keyof typeof BillingCurrencyConfidence];
+
+export const BillingCurrencyConfidence = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export interface BillingCurrencyOverrideRequest {
+  /**
+   * ISO 4217 currency code (3 letters, will be uppercased
+server-side). Example: `EUR`.
+
+   * @minLength 3
+   * @maxLength 3
+   */
+  billingCurrency: string;
+}
+
+export interface BillingCurrencyOverrideResponse {
+  id: string;
+  billingCurrency: string;
+  billingCurrencySource: BillingCurrencySource;
+  billingCurrencyConfidence: BillingCurrencyConfidence;
+}
+
 export type SupplierIntelligenceResponseResolvedMatchType =
   | (typeof SupplierIntelligenceResponseResolvedMatchType)[keyof typeof SupplierIntelligenceResponseResolvedMatchType]
   | null;
@@ -289,6 +350,14 @@ export interface SupplierIntelligenceResponse {
   supplierId: string;
   supplierName: string;
   countryCode?: string | null;
+  /** ISO 4217 billing currency for this supplier (uppercase 3
+letters). Null when no signal was strong enough to set
+one — downstream FX logic then falls back to the org base
+currency.
+ */
+  billingCurrency?: string | null;
+  billingCurrencySource?: BillingCurrencySource | null;
+  billingCurrencyConfidence?: BillingCurrencyConfidence | null;
   /** Canonical entity uid the resolver returned for this supplier —
 null when neither identifier nor BQ-name match was found, in
 which case only the `supplier_name` fallback contributed
@@ -2533,6 +2602,10 @@ export type ListSuppliersParams = {
    */
   limit?: number;
   cursor?: string;
+};
+
+export type OverrideSupplierBillingCurrency400 = {
+  error?: string;
 };
 
 export type ListOpportunitiesParams = {

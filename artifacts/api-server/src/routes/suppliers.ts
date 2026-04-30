@@ -76,6 +76,9 @@ router.get(
         id: suppliersTable.id,
         name: suppliersTable.name,
         countryCode: suppliersTable.countryCode,
+        billingCurrency: suppliersTable.billingCurrency,
+        billingCurrencySource: suppliersTable.billingCurrencySource,
+        billingCurrencyConfidence: suppliersTable.billingCurrencyConfidence,
       })
       .from(suppliersTable)
       .where(
@@ -169,12 +172,74 @@ router.get(
       supplierId: supplier.id,
       supplierName: supplier.name,
       countryCode: supplier.countryCode,
+      // Billing-currency surface for the Supplier 360 header card.
+      // `source` is one of `provided | country | invoice_iso |
+      // invoice_symbol | backfill_invoice | manual_override` (see
+      // `lib/db/src/schema/suppliers.ts`); `confidence` is `high |
+      // medium | low`. Both are null when `billingCurrency` itself
+      // is null.
+      billingCurrency: supplier.billingCurrency,
+      billingCurrencySource: supplier.billingCurrencySource,
+      billingCurrencyConfidence: supplier.billingCurrencyConfidence,
       resolvedEntityUid,
       resolvedMatchType,
       countsByType,
       totalCount: items.length,
       items,
     });
+  },
+);
+
+/**
+ * Manual override for `suppliers.billing_currency`. Operators hit this
+ * from the Supplier 360 page when the auto-detected value is wrong (or
+ * when a low/medium confidence row needs human confirmation).
+ *
+ * The override is persisted with `source = 'manual_override'` and
+ * `confidence = 'high'`. The ingest re-upsert logic uses `coalesce` on
+ * the inbound `excluded.billing_currency` so a subsequent CSV upload
+ * that omits the column will NOT clobber the override.
+ *
+ * Body:
+ *   { billingCurrency: string }   // ISO 4217, 3 letters, will be uppercased
+ */
+router.post(
+  "/suppliers/:id/billing-currency",
+  tenantMiddleware,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const supplierId = String(req.params.id);
+    const raw = (req.body as { billingCurrency?: unknown } | null | undefined)
+      ?.billingCurrency;
+    if (typeof raw !== "string" || !/^[A-Za-z]{3}$/.test(raw.trim())) {
+      res.status(400).json({
+        error:
+          "billingCurrency must be a 3-letter ISO 4217 code (e.g. 'EUR')",
+      });
+      return;
+    }
+    const currency = raw.trim().toUpperCase();
+    const [updated] = await db
+      .update(suppliersTable)
+      .set({
+        billingCurrency: currency,
+        billingCurrencySource: "manual_override",
+        billingCurrencyConfidence: "high",
+      })
+      .where(
+        and(eq(suppliersTable.orgId, orgId), eq(suppliersTable.id, supplierId)),
+      )
+      .returning({
+        id: suppliersTable.id,
+        billingCurrency: suppliersTable.billingCurrency,
+        billingCurrencySource: suppliersTable.billingCurrencySource,
+        billingCurrencyConfidence: suppliersTable.billingCurrencyConfidence,
+      });
+    if (!updated) {
+      res.status(404).json({ error: "Supplier not found" });
+      return;
+    }
+    res.json(updated);
   },
 );
 

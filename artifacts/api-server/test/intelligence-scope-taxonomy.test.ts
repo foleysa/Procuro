@@ -21,8 +21,10 @@ import {
   FRED_CATEGORY_SCOPE_CODES,
   FRED_MATERIAL_SCOPE_CODES,
   FRED_SERIES_CATALOG,
+  MATERIAL_TO_CATEGORY_CODES,
   fredScopeForSeriesId,
   fredSeriesForScopeCode,
+  materialCodeForCategoryCode,
 } from "../src/lib/intelligence/scope-taxonomy";
 
 describe("FRED_SERIES_CATALOG", () => {
@@ -107,5 +109,52 @@ describe("FRED_SERIES_CATALOG", () => {
     assert.equal(scope?.kind, "material");
     assert.equal(scope?.code, "IRON_STEEL");
     assert.equal(fredScopeForSeriesId("DOES_NOT_EXIST"), undefined);
+  });
+});
+
+describe("MATERIAL_TO_CATEGORY_CODES (#62 mapping)", () => {
+  it("covers every canonical material code", () => {
+    for (const code of CANONICAL_MATERIAL_CODES) {
+      const aliases = MATERIAL_TO_CATEGORY_CODES[code];
+      assert.ok(aliases, `${code} missing from MATERIAL_TO_CATEGORY_CODES`);
+      assert.ok(aliases.length > 0, `${code} has no aliases`);
+      // The canonical code itself must be a self-alias so a tenant
+      // category whose code is already canonical lights up.
+      assert.ok(
+        aliases.includes(code),
+        `${code} aliases must include the canonical code itself`,
+      );
+    }
+  });
+
+  it("pins the requested material aliases (#62 spec)", () => {
+    const pins: Record<string, string[]> = {
+      IRON_STEEL: ["STEEL", "REBAR"],
+      PLASTIC_RESINS: ["RESIN", "POLYETHYLENE", "PVC"],
+      LUMBER: ["LUMBER", "PLYWOOD"],
+      FUELS_AND_POWER: ["FUEL", "DIESEL"],
+      NONFERROUS_METALS: ["COPPER", "ALUMINUM"],
+    };
+    for (const [material, expectedAliases] of Object.entries(pins)) {
+      const aliases = MATERIAL_TO_CATEGORY_CODES[
+        material as keyof typeof MATERIAL_TO_CATEGORY_CODES
+      ];
+      for (const a of expectedAliases) {
+        assert.ok(
+          aliases.includes(a),
+          `${material} aliases should include ${a} (#62 spec)`,
+        );
+      }
+    }
+  });
+
+  it("materialCodeForCategoryCode is case-insensitive and tolerant of whitespace", () => {
+    assert.equal(materialCodeForCategoryCode("steel"), "IRON_STEEL");
+    assert.equal(materialCodeForCategoryCode("  copper  "), "NONFERROUS_METALS");
+    assert.equal(materialCodeForCategoryCode("PVC"), "PLASTIC_RESINS");
+    assert.equal(materialCodeForCategoryCode("DIESEL"), "FUELS_AND_POWER");
+    assert.equal(materialCodeForCategoryCode("UNKNOWN_CODE"), null);
+    assert.equal(materialCodeForCategoryCode(""), null);
+    assert.equal(materialCodeForCategoryCode(null), null);
   });
 });

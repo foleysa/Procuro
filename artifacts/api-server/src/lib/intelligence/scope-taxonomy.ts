@@ -227,3 +227,145 @@ export function fredSeriesForScopeCode(
 ): readonly FredSeriesEntry[] {
   return FRED_SERIES_CATALOG.filter((e) => e.scope.code === code);
 }
+
+/**
+ * Material → tenant category-code aliases.
+ *
+ * The `spot_vs_contract` lever matches signals to tenant categories on
+ * the **service-side** PCU codes (FREIGHT_TRUCKING_TL etc.) where the
+ * FRED scope code is identical to a canonical tenant category code.
+ *
+ * The `material_index_arbitrage` lever (#62) instead matches tenant
+ * categories that *consume a raw material* whose PPI we track. Tenant
+ * categories don't reliably encode the raw input in their `code`, so we
+ * keep a curated mapping here from each FRED material scope to the set
+ * of tenant category-code aliases that procurement teams commonly use
+ * for that input. Match is case-insensitive equality on `category.code`.
+ *
+ * Adding a new material → category alias
+ * --------------------------------------
+ *   1. Add an entry below for the canonical material code.
+ *   2. Pin it in `test/scope-taxonomy.test.ts` so a typo fails CI.
+ *   3. (Optional) extend the FRED catalog if a more specific PPI series
+ *      exists for the alias.
+ *
+ * Coverage notes
+ * --------------
+ *   - Copper and aluminum do not have dedicated FRED catalog entries
+ *     (yet); their PPI rolls up into `NONFERROUS_METALS` (WPU102). We
+ *     still surface tenant category aliases here so the lever fires on
+ *     copper/aluminum spend; if a more specific series is added later
+ *     the aliases automatically migrate.
+ *   - "FUEL" and "DIESEL" intentionally map to FUELS_AND_POWER rather
+ *     than CRUDE_PETROLEUM — the buyer is paying refined-fuel rack
+ *     prices, not Brent.
+ */
+export const MATERIAL_TO_CATEGORY_CODES: Readonly<
+  Record<CanonicalMaterialCode, readonly string[]>
+> = {
+  IRON_STEEL: [
+    "IRON_STEEL",
+    "STEEL",
+    "STEEL_PLATE",
+    "STEEL_COIL",
+    "HOT_ROLLED_STEEL",
+    "COLD_ROLLED_STEEL",
+    "GALVANIZED_STEEL",
+    "REBAR",
+    "STRUCTURAL_STEEL",
+  ],
+  STEEL_MILL_PRODUCTS: [
+    "STEEL_MILL_PRODUCTS",
+    "STEEL_TUBE",
+    "STEEL_PIPE",
+    "STEEL_BAR",
+    "STEEL_WIRE",
+  ],
+  NONFERROUS_METALS: [
+    "NONFERROUS_METALS",
+    "COPPER",
+    "COPPER_WIRE",
+    "COPPER_TUBE",
+    "ALUMINUM",
+    "ALUMINUM_SHEET",
+    "ALUMINUM_EXTRUSION",
+    "BRASS",
+    "ZINC",
+    "NICKEL",
+    "TIN",
+  ],
+  INDUSTRIAL_CHEMICALS: [
+    "INDUSTRIAL_CHEMICALS",
+    "CHEMICALS",
+    "ADHESIVES",
+    "SOLVENTS",
+    "COATINGS",
+  ],
+  PLASTIC_RESINS: [
+    "PLASTIC_RESINS",
+    "RESIN",
+    "PLASTIC_RESIN",
+    "POLYETHYLENE",
+    "POLYPROPYLENE",
+    "PVC",
+    "ABS",
+    "POLYSTYRENE",
+    "PET_RESIN",
+    "NYLON",
+  ],
+  LUMBER: [
+    "LUMBER",
+    "WOOD",
+    "PLYWOOD",
+    "OSB",
+    "DIMENSIONAL_LUMBER",
+    "HARDWOOD",
+    "SOFTWOOD",
+  ],
+  PULP_PAPER: [
+    "PULP_PAPER",
+    "PAPER",
+    "CORRUGATED",
+    "CARDBOARD",
+    "PACKAGING_PAPER",
+    "PRINTING_PAPER",
+  ],
+  CRUDE_PETROLEUM: ["CRUDE_PETROLEUM", "CRUDE_OIL"],
+  NATURAL_GAS_INDUSTRIAL: [
+    "NATURAL_GAS_INDUSTRIAL",
+    "NATURAL_GAS",
+    "INDUSTRIAL_GAS",
+  ],
+  FUELS_AND_POWER: [
+    "FUELS_AND_POWER",
+    "FUEL",
+    "DIESEL",
+    "GASOLINE",
+    "JET_FUEL",
+    "ELECTRICITY",
+    "POWER",
+  ],
+};
+
+/**
+ * Reverse lookup: given a tenant `category.code`, return the canonical
+ * material code (if any) it maps to. Used by analyzers that scan a
+ * tenant's category list and want to attach the right PPI series.
+ *
+ * Returns `null` when the code is not a known material alias. Match is
+ * case-insensitive on `code`.
+ */
+export function materialCodeForCategoryCode(
+  categoryCode: string | null | undefined,
+): CanonicalMaterialCode | null {
+  if (!categoryCode) return null;
+  const upper = categoryCode.trim().toUpperCase();
+  for (const [material, aliases] of Object.entries(
+    MATERIAL_TO_CATEGORY_CODES,
+  )) {
+    if (aliases.includes(upper)) {
+      return material as CanonicalMaterialCode;
+    }
+  }
+  return null;
+}

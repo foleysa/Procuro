@@ -25,6 +25,8 @@ import type {
 import type {
   AddWatchedIssuerRequest,
   ApproveOpportunityRequest,
+  BillingCurrencyOverrideRequest,
+  BillingCurrencyOverrideResponse,
   BillingSummary,
   BroadcastCollectorPosturePreview,
   BroadcastCollectorPostureRequest,
@@ -94,6 +96,7 @@ import type {
   OpportunityDetail,
   OpportunityListResponse,
   Org,
+  OverrideSupplierBillingCurrency400,
   PatchCollectorPostureRequest,
   PatchCollectorRequest,
   PatchContractRequest,
@@ -689,6 +692,109 @@ export function useGetSupplierIntelligence<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Persists a `manual_override` for `suppliers.billing_currency`.
+Used by the Supplier 360 page when the auto-detected value is
+wrong, or to confirm a low/medium-confidence detection.
+
+Subsequent CSV re-uploads that omit the `billingCurrency`
+column will NOT clobber the override (the upsert uses
+`coalesce(excluded.billing_currency, ...)` to preserve it).
+
+ * @summary Manually override a supplier's billing currency
+ */
+export const getOverrideSupplierBillingCurrencyUrl = (id: string) => {
+  return `/api/suppliers/${id}/billing-currency`;
+};
+
+export const overrideSupplierBillingCurrency = async (
+  id: string,
+  billingCurrencyOverrideRequest: BillingCurrencyOverrideRequest,
+  options?: RequestInit,
+): Promise<BillingCurrencyOverrideResponse> => {
+  return customFetch<BillingCurrencyOverrideResponse>(
+    getOverrideSupplierBillingCurrencyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(billingCurrencyOverrideRequest),
+    },
+  );
+};
+
+export const getOverrideSupplierBillingCurrencyMutationOptions = <
+  TError = ErrorType<OverrideSupplierBillingCurrency400 | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>,
+    TError,
+    { id: string; data: BodyType<BillingCurrencyOverrideRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>,
+  TError,
+  { id: string; data: BodyType<BillingCurrencyOverrideRequest> },
+  TContext
+> => {
+  const mutationKey = ["overrideSupplierBillingCurrency"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>,
+    { id: string; data: BodyType<BillingCurrencyOverrideRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return overrideSupplierBillingCurrency(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OverrideSupplierBillingCurrencyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>
+>;
+export type OverrideSupplierBillingCurrencyMutationBody =
+  BodyType<BillingCurrencyOverrideRequest>;
+export type OverrideSupplierBillingCurrencyMutationError = ErrorType<
+  OverrideSupplierBillingCurrency400 | NotFoundResponse
+>;
+
+/**
+ * @summary Manually override a supplier's billing currency
+ */
+export const useOverrideSupplierBillingCurrency = <
+  TError = ErrorType<OverrideSupplierBillingCurrency400 | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>,
+    TError,
+    { id: string; data: BodyType<BillingCurrencyOverrideRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof overrideSupplierBillingCurrency>>,
+  TError,
+  { id: string; data: BodyType<BillingCurrencyOverrideRequest> },
+  TContext
+> => {
+  return useMutation(
+    getOverrideSupplierBillingCurrencyMutationOptions(options),
+  );
+};
 
 /**
  * @summary List opportunities, optionally filtered
