@@ -23,6 +23,8 @@
  */
 
 import { z } from "zod";
+import { db, watchedIssuersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import {
   buildSignalDraftSchema,
   defaultStableSignalKey,
@@ -40,6 +42,12 @@ export const COMPANIES_HOUSE_COLLECTOR_ID = "companies-house";
 
 const CH_BASE_URL = "https://api.company-information.service.gov.uk";
 
+/**
+ * Seed company numbers — kept short so a fresh install with no tenant
+ * curation still emits some `corporate_filing` drafts. Tenants curate
+ * their own list via `watched_issuers` / POST /watched-issuers; once
+ * any row exists the seed is bypassed (`getActiveCompaniesHouseNumbers`).
+ */
 export const COMPANIES_HOUSE_DEFAULT_NUMBERS: readonly string[] = [
   "00006245", // BP P.L.C.
   "02099500", // Vodafone Group Plc
@@ -50,6 +58,66 @@ export const COMPANIES_HOUSE_DEFAULT_NUMBERS: readonly string[] = [
   "00345700", // GlaxoSmithKline plc
   "01777777", // National Grid plc
 ];
+
+/**
+ * Companies House numbers are 8 chars zero-padded. Tenants paste
+ * "6245" or "00006245"; either should normalise to the canonical
+ * 8-char form so we don't end up with two `watched_issuers` rows for
+ * the same company.
+ */
+export function normaliseCompaniesHouseNumber(input: string): string {
+  // Allow alpha prefixes like "SC" (Scottish), "NI" (Northern Ireland) —
+  // they're significant and not numeric. Pad numeric-only inputs.
+  const trimmed = input.trim().toUpperCase();
+  if (/^\d+$/.test(trimmed)) return trimmed.padStart(8, "0");
+  return trimmed;
+}
+
+/**
+ * Return distinct, normalised company numbers across every tenant's
+ * watch list. Two tenants tracking the same number cost us only one
+ * upstream pull.
+ */
+export async function loadWatchedCompaniesHouseNumbers(): Promise<string[]> {
+  const rows = await db
+    .select({ identifier: watchedIssuersTable.identifier })
+    .from(watchedIssuersTable)
+    .where(eq(watchedIssuersTable.source, "companies_house"));
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const n = normaliseCompaniesHouseNumber(r.identifier);
+    if (n) seen.add(n);
+  }
+  return Array.from(seen);
+}
+
+/**
+ * Resolve the number list the collector should poll on this tick.
+ *
+ * Resolution order:
+ *   1. Explicit `override` (admin backfill targeting specific numbers).
+ *   2. Tenant-curated rows from `watched_issuers` (source='companies_house').
+ *   3. `COMPANIES_HOUSE_DEFAULT_NUMBERS` seed — only when (2) is empty.
+ */
+export async function getActiveCompaniesHouseNumbers(
+  override?: readonly string[],
+): Promise<string[]> {
+  const normaliseList = (xs: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const x of xs) {
+      const n = normaliseCompaniesHouseNumber(x);
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+    return out;
+  };
+  if (override && override.length > 0) return normaliseList(override);
+  const watched = await loadWatchedCompaniesHouseNumbers();
+  if (watched.length > 0) return watched;
+  return normaliseList(COMPANIES_HOUSE_DEFAULT_NUMBERS);
+}
 
 export const FILING_CATEGORY_CODES: Record<string, number> = {
   accounts: 1,
@@ -273,7 +341,13 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
-    for (const number of COMPANIES_HOUSE_DEFAULT_NUMBERS) {
+    const numbers = await getActiveCompaniesHouseNumbers();
+    if (numbers.length === 0) {
+      throw new Error(
+        "companies-house: no company numbers configured. Add tenant rows via POST /watched-issuers or restore COMPANIES_HOUSE_DEFAULT_NUMBERS.",
+      );
+    }
+    for (const number of numbers) {
       try {
         const r = await pullCompany(number, apiKey);
         for (const x of r.drafts) drafts.push(x);
@@ -286,12 +360,9 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
         );
       }
     }
-    if (
-      drafts.length === 0 &&
-      failures.length === COMPANIES_HOUSE_DEFAULT_NUMBERS.length
-    ) {
+    if (drafts.length === 0 && failures.length === numbers.length) {
       throw new Error(
-        `companies-house: all ${COMPANIES_HOUSE_DEFAULT_NUMBERS.length} companies failed. Sample: ${failures.slice(0, 2).join("; ")}`,
+        `companies-house: all ${numbers.length} companies failed. Sample: ${failures.slice(0, 2).join("; ")}`,
       );
     }
     const enriched = await attachChEntityUids(drafts);
@@ -308,7 +379,9 @@ export async function fetchCompaniesHouseBackfillDrafts(opts?: {
 }> {
   const apiKey = process.env["COMPANIES_HOUSE_API_KEY"];
   if (!apiKey) throw new Error("COMPANIES_HOUSE_API_KEY is not set");
-  const numbers = opts?.numbers ?? COMPANIES_HOUSE_DEFAULT_NUMBERS;
+  // Same resolution rule as the live collector: explicit override beats
+  // tenant rows, which beat the seed list.
+  const numbers = await getActiveCompaniesHouseNumbers(opts?.numbers);
   const drafts: MarketSignalDraft[] = [];
   const failed: Array<{ number: string; error: string }> = [];
   for (const number of numbers) {

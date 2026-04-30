@@ -28,6 +28,8 @@
  */
 
 import { z } from "zod";
+import { db, watchedIssuersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import {
   buildSignalDraftSchema,
   defaultStableSignalKey,
@@ -44,10 +46,7 @@ import { resolveDraftEntities } from "./_entity-resolver";
 export const SEC_EDGAR_COLLECTOR_ID = "sec-edgar";
 
 /**
- * Curated CIK list — kept small and obvious so the collector is useful
- * out of the box. Tenants can layer their own supplier CIKs via the
- * Foundation entity resolver (we'll union those in once supplier-side
- * CIK enrichment is wired up — see follow-up task).
+ * Issuer reference for the SEC EDGAR poll list.
  *
  * Each entry has a CIK (zero-padded to 10 chars at request time), the
  * issuer name we use as `scope_supplier_name`, and the LEI when
@@ -62,6 +61,17 @@ export interface SecIssuerRef {
   ticker?: string;
 }
 
+/**
+ * Seed issuers — kept small and obvious so the collector still produces
+ * useful out-of-the-box drafts on a fresh install where no tenant has
+ * curated their `watched_issuers` list yet. Once tenants add their own
+ * supplier CIKs (via POST /watched-issuers), the active poll list is
+ * the union of every tenant's watch list (de-duped on CIK) and the
+ * seed array is no longer used.
+ *
+ * Exported for the per-collector parser test, which constructs an
+ * `SecIssuerRef` directly.
+ */
 export const SEC_EDGAR_DEFAULT_ISSUERS: readonly SecIssuerRef[] = [
   { cik: "0000320193", name: "Apple Inc.", lei: "HWUPKR0MPOU8FGXBT394", ticker: "AAPL" },
   { cik: "0000789019", name: "Microsoft Corporation", lei: "INR2EJN1ERAN0W5ZP974", ticker: "MSFT" },
@@ -72,6 +82,73 @@ export const SEC_EDGAR_DEFAULT_ISSUERS: readonly SecIssuerRef[] = [
   { cik: "0000040533", name: "General Mills Inc.", ticker: "GIS" },
   { cik: "0000732717", name: "AT&T Inc.", ticker: "T" },
 ];
+
+/**
+ * De-dupe a list of issuer refs on padded CIK. The FIRST occurrence
+ * wins so callers can stack a "preferred" source (e.g. tenant rows
+ * carrying LEI / ticker enrichment) before the fallback seed.
+ */
+export function dedupeSecIssuers(
+  issuers: readonly SecIssuerRef[],
+): SecIssuerRef[] {
+  const seen = new Set<string>();
+  const out: SecIssuerRef[] = [];
+  for (const i of issuers) {
+    const key = padCik(i.cik);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(i);
+  }
+  return out;
+}
+
+/**
+ * Load every tenant's watched SEC issuers and de-dupe on CIK. Two
+ * tenants watching the same CIK still cost us only one upstream
+ * fetch — the resulting `corporate_filing` signals are platform-wide
+ * (org_id = NULL), so every opted-in tenant sees them.
+ *
+ * Returns an empty array (not the seed) so callers can decide
+ * whether to fall back. We keep the seed-fallback decision in one
+ * place (`getActiveSecIssuers`).
+ */
+export async function loadWatchedSecIssuers(): Promise<SecIssuerRef[]> {
+  const rows = await db
+    .select({
+      identifier: watchedIssuersTable.identifier,
+      name: watchedIssuersTable.name,
+      lei: watchedIssuersTable.lei,
+      ticker: watchedIssuersTable.ticker,
+    })
+    .from(watchedIssuersTable)
+    .where(eq(watchedIssuersTable.source, "sec_edgar"));
+  const refs: SecIssuerRef[] = rows.map((r) => ({
+    cik: r.identifier,
+    name: r.name,
+    ...(r.lei ? { lei: r.lei } : {}),
+    ...(r.ticker ? { ticker: r.ticker } : {}),
+  }));
+  return dedupeSecIssuers(refs);
+}
+
+/**
+ * Resolve the issuer list the collector should poll on this tick.
+ *
+ * Resolution order:
+ *   1. Explicit `override` (e.g. an admin backfill targeting a
+ *      specific issuer). Used as-is, deduped.
+ *   2. Tenant-curated rows from `watched_issuers` (source='sec_edgar').
+ *   3. Seed list (`SEC_EDGAR_DEFAULT_ISSUERS`) — only when (2) is
+ *      empty. This keeps a fresh install from being silent.
+ */
+export async function getActiveSecIssuers(
+  override?: readonly SecIssuerRef[],
+): Promise<SecIssuerRef[]> {
+  if (override && override.length > 0) return dedupeSecIssuers(override);
+  const watched = await loadWatchedSecIssuers();
+  if (watched.length > 0) return watched;
+  return dedupeSecIssuers(SEC_EDGAR_DEFAULT_ISSUERS);
+}
 
 /**
  * Tracked filing forms with their numeric code (used as the signal
@@ -301,7 +378,8 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
-    for (const issuer of SEC_EDGAR_DEFAULT_ISSUERS) {
+    const issuers = await getActiveSecIssuers();
+    for (const issuer of issuers) {
       try {
         const r = await fetchSubmissions(issuer.cik, userAgent);
         rawPayloads.push({
@@ -324,13 +402,17 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
       }
     }
     // Same partial-outage rule as FRED: if every issuer failed, the
-    // run is genuinely broken — surface it.
-    if (
-      drafts.length === 0 &&
-      failures.length === SEC_EDGAR_DEFAULT_ISSUERS.length
-    ) {
+    // run is genuinely broken — surface it. Empty issuer lists are
+    // also a hard fail so misconfigured tenants don't silently
+    // skip the run.
+    if (issuers.length === 0) {
       throw new Error(
-        `SEC EDGAR collector: all ${SEC_EDGAR_DEFAULT_ISSUERS.length} issuers failed. Sample: ${failures.slice(0, 3).join("; ")}`,
+        "SEC EDGAR collector: no issuers configured. Add tenant rows via POST /watched-issuers or restore SEC_EDGAR_DEFAULT_ISSUERS.",
+      );
+    }
+    if (drafts.length === 0 && failures.length === issuers.length) {
+      throw new Error(
+        `SEC EDGAR collector: all ${issuers.length} issuers failed. Sample: ${failures.slice(0, 3).join("; ")}`,
       );
     }
     const enriched = await attachEntityUids(drafts);
@@ -352,7 +434,11 @@ export async function fetchEdgarBackfillDrafts(opts?: {
   failedIssuers: Array<{ cik: string; error: string }>;
 }> {
   const userAgent = buildEdgarUserAgent();
-  const issuers = opts?.issuers ?? SEC_EDGAR_DEFAULT_ISSUERS;
+  // Same resolution as the live collector: explicit override > tenant
+  // rows > seed list. Lets `runSecEdgarBackfill({ issuers: [...] })`
+  // target a single CIK while a no-arg backfill still sweeps whatever
+  // tenants have curated.
+  const issuers = await getActiveSecIssuers(opts?.issuers);
   const drafts: MarketSignalDraft[] = [];
   const failedIssuers: Array<{ cik: string; error: string }> = [];
   for (const issuer of issuers) {

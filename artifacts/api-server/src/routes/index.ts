@@ -11,6 +11,7 @@ import marketSignalsRouter from "./market-signals";
 import jobsRouter from "./jobs";
 import ingestRouter from "./ingest";
 import billingRouter from "./billing";
+import watchedIssuersRouter from "./watched-issuers";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(marketSignalsRouter);
 router.use(jobsRouter);
 router.use(ingestRouter);
 router.use(billingRouter);
+router.use(watchedIssuersRouter);
 
 export default router;
