@@ -33,8 +33,11 @@ import type {
   CsvIngestRequest,
   Cycle,
   CycleDetail,
+  ErrorResponse,
   HealthStatus,
   IngestCsvBatchParams,
+  IngestCsvStreamBodyOne,
+  IngestCsvStreamParams,
   IngestMockErpParams,
   Job,
   JobAccepted,
@@ -58,6 +61,7 @@ import type {
   RunCycleResponse,
   RunNextCycleParams,
   SpendOverview,
+  StreamCsvResult,
   SupplierListResponse,
   SyncResultResponse,
 } from "./api.schemas";
@@ -2350,6 +2354,158 @@ export const useIngestCsvBatch = <
   TContext
 > => {
   return useMutation(getIngestCsvBatchMutationOptions(options));
+};
+
+/**
+ * Streams a single-entity CSV file directly into the database without
+buffering it in memory. Use for very large files (millions of rows)
+that cannot fit in a JSON request body. Memory stays bounded
+regardless of file size.
+
+The endpoint accepts either:
+  * `multipart/form-data` with a single file part named `file`
+    (preferred — what the generated client and browser uploads use), or
+  * `text/csv` raw body (convenient for `curl --data-binary` and back-compat).
+
+Hard limit: 1 GB per upload.
+
+ * @summary Stream a single-entity CSV file (bounded-memory ingest)
+ */
+export const getIngestCsvStreamUrl = (params: IngestCsvStreamParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ingest/csv-stream?${stringifiedParams}`
+    : `/api/ingest/csv-stream`;
+};
+
+export const ingestCsvStream = async (
+  ingestCsvStreamBody: IngestCsvStreamBodyOne | Blob,
+  params: IngestCsvStreamParams,
+  options?: RequestInit,
+): Promise<StreamCsvResult> => {
+  // Patched by lib/api-spec/scripts/patch-codegen.mjs.
+  // orval emits `JSON.stringify` for binary/multipart bodies, which would
+  // serialize a Blob/File to "{}" and silently upload an empty file. We
+  // instead pick the right BodyInit based on the input shape, matching the
+  // two transports the server route supports (multipart/form-data with a
+  // `file` part, or a raw `text/csv` body).
+  let body: BodyInit;
+  let inferredContentType: string | undefined;
+  if (typeof Blob !== "undefined" && ingestCsvStreamBody instanceof Blob) {
+    body = ingestCsvStreamBody;
+    inferredContentType = "text/csv";
+  } else {
+    const fd = new FormData();
+    fd.append("file", (ingestCsvStreamBody as IngestCsvStreamBodyOne).file);
+    body = fd;
+    // Intentionally leave Content-Type unset — the browser/runtime sets
+    // `multipart/form-data; boundary=...` automatically.
+  }
+
+  const headers = new Headers((options as RequestInit | undefined)?.headers);
+  if (inferredContentType && !headers.has("content-type")) {
+    headers.set("content-type", inferredContentType);
+  }
+
+  return customFetch<StreamCsvResult>(getIngestCsvStreamUrl(params), {
+    ...options,
+    method: "POST",
+    headers,
+    body,
+  });
+};
+
+export const getIngestCsvStreamMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestCsvStream>>,
+    TError,
+    {
+      data: BodyType<IngestCsvStreamBodyOne | Blob>;
+      params: IngestCsvStreamParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestCsvStream>>,
+  TError,
+  {
+    data: BodyType<IngestCsvStreamBodyOne | Blob>;
+    params: IngestCsvStreamParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["ingestCsvStream"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestCsvStream>>,
+    {
+      data: BodyType<IngestCsvStreamBodyOne | Blob>;
+      params: IngestCsvStreamParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return ingestCsvStream(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestCsvStreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestCsvStream>>
+>;
+export type IngestCsvStreamMutationBody = BodyType<
+  IngestCsvStreamBodyOne | Blob
+>;
+export type IngestCsvStreamMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Stream a single-entity CSV file (bounded-memory ingest)
+ */
+export const useIngestCsvStream = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestCsvStream>>,
+    TError,
+    {
+      data: BodyType<IngestCsvStreamBodyOne | Blob>;
+      params: IngestCsvStreamParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ingestCsvStream>>,
+  TError,
+  {
+    data: BodyType<IngestCsvStreamBodyOne | Blob>;
+    params: IngestCsvStreamParams;
+  },
+  TContext
+> => {
+  return useMutation(getIngestCsvStreamMutationOptions(options));
 };
 
 /**

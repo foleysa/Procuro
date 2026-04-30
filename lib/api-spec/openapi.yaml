@@ -578,6 +578,76 @@ paths:
               schema:
                 $ref: "#/components/schemas/JobAccepted"
 
+  /ingest/csv-stream:
+    post:
+      operationId: ingestCsvStream
+      tags: [ingest]
+      summary: Stream a single-entity CSV file (bounded-memory ingest)
+      description: |
+        Streams a single-entity CSV file directly into the database without
+        buffering it in memory. Use for very large files (millions of rows)
+        that cannot fit in a JSON request body. Memory stays bounded
+        regardless of file size.
+
+        The endpoint accepts either:
+          * `multipart/form-data` with a single file part named `file`
+            (preferred — what the generated client and browser uploads use), or
+          * `text/csv` raw body (convenient for `curl --data-binary` and back-compat).
+
+        Hard limit: 1 GB per upload.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: entity
+          required: true
+          description: Which entity the CSV rows describe.
+          schema:
+            type: string
+            enum:
+              - suppliers
+              - categories
+              - items
+              - purchase_orders
+              - po_lines
+              - invoices
+              - payments
+              - shipments
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The CSV file to stream-ingest.
+          text/csv:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Stream ingest result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamCsvResult"
+        "400":
+          description: Invalid entity or stream parse error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Upload exceeds the 1 GB per-request size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /ingest/mock-erp:
     post:
       operationId: ingestMockErp
@@ -1100,6 +1170,25 @@ components:
         recordsUpdated: { type: integer }
         recordsDeleted: { type: integer }
         cursor: { type: string, nullable: true }
+        durationMs: { type: integer }
+
+    StreamCsvResult:
+      type: object
+      required: [entity, rowsParsed, rowsInserted, durationMs]
+      properties:
+        entity:
+          type: string
+          enum:
+            - suppliers
+            - categories
+            - items
+            - purchase_orders
+            - po_lines
+            - invoices
+            - payments
+            - shipments
+        rowsParsed: { type: integer }
+        rowsInserted: { type: integer }
         durationMs: { type: integer }
 
     CsvIngestRequest:

@@ -1201,6 +1201,65 @@ export const IngestCsvBatchResponse = zod.object({
 });
 
 /**
+ * Streams a single-entity CSV file directly into the database without
+buffering it in memory. Use for very large files (millions of rows)
+that cannot fit in a JSON request body. Memory stays bounded
+regardless of file size.
+
+The endpoint accepts either:
+  * `multipart/form-data` with a single file part named `file`
+    (preferred — what the generated client and browser uploads use), or
+  * `text/csv` raw body (convenient for `curl --data-binary` and back-compat).
+
+Hard limit: 1 GB per upload.
+
+ * @summary Stream a single-entity CSV file (bounded-memory ingest)
+ */
+export const IngestCsvStreamQueryParams = zod.object({
+  entity: zod
+    .enum([
+      "suppliers",
+      "categories",
+      "items",
+      "purchase_orders",
+      "po_lines",
+      "invoices",
+      "payments",
+      "shipments",
+    ])
+    .describe("Which entity the CSV rows describe."),
+});
+
+export const IngestCsvStreamHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const IngestCsvStreamBody = zod.object({
+  file: zod.instanceof(File).describe("The CSV file to stream-ingest."),
+});
+
+export const IngestCsvStreamResponse = zod.object({
+  entity: zod.enum([
+    "suppliers",
+    "categories",
+    "items",
+    "purchase_orders",
+    "po_lines",
+    "invoices",
+    "payments",
+    "shipments",
+  ]),
+  rowsParsed: zod.number(),
+  rowsInserted: zod.number(),
+  durationMs: zod.number(),
+});
+
+/**
  * @summary Run the Mock ERP adapter (proves the abstraction)
  */
 export const ingestMockErpQueryAsyncDefault = false;

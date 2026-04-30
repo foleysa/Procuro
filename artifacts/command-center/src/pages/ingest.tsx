@@ -4,6 +4,9 @@ import Papa from "papaparse";
 import {
   useIngestCsvBatch,
   type CsvIngestRequest,
+  type StreamCsvResult,
+  type IngestCsvStreamEntity,
+  getIngestCsvStreamUrl,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { Progress } from "@/components/ui/progress";
 import {
   Upload,
   FileSpreadsheet,
@@ -20,6 +24,7 @@ import {
   X,
   Database,
   Download,
+  Zap,
 } from "lucide-react";
 
 type EntityKey =
@@ -28,6 +33,7 @@ type EntityKey =
   | "items"
   | "contracts"
   | "purchaseOrders"
+  | "purchaseOrderLines"
   | "invoices"
   | "payments"
   | "shipments";
@@ -46,6 +52,51 @@ interface EntityDef {
   examples: Record<string, string>[];
   /** Convert CSV rows for this entity to the JSON payload shape. */
   toPayload: (rows: Record<string, string>[]) => unknown[];
+}
+
+/**
+ * Files larger than this are uploaded via the streaming endpoint
+ * (`POST /api/ingest/csv-stream`) instead of being parsed in the browser
+ * and shipped as a JSON payload. Browser-side `Papa.parse` of multi-million
+ * row CSVs causes OOM and JSON request body limits would reject them anyway.
+ */
+const STREAM_THRESHOLD_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Map a page-level entity to the streaming endpoint's entity name. Some page
+ * entities (`contracts`, `purchaseOrders`) are header+children grouped JSON
+ * and don't have a 1:1 streamable shape, so they always use the JSON path.
+ */
+const STREAM_ENTITY_FOR: Record<EntityKey, IngestCsvStreamEntity | null> = {
+  categories: "categories",
+  suppliers: "suppliers",
+  items: "items",
+  contracts: null,
+  purchaseOrders: null,
+  // `purchaseOrderLines` always streams; the grouped `purchaseOrders` entity
+  // above stays JSON-only because the page joins headers + lines client-side.
+  purchaseOrderLines: "po_lines",
+  invoices: "invoices",
+  payments: "payments",
+  shipments: "shipments",
+};
+
+/**
+ * Entities that *only* support the streaming path. They have no JSON ingest
+ * shape because the grouped/header-aware version is handled by sibling
+ * entities (e.g. `purchaseOrders` carries headers + grouped lines for small
+ * uploads; `purchaseOrderLines` is the row-by-row streaming flavor for the
+ * millions-of-lines case).
+ */
+const STREAM_ONLY: ReadonlySet<EntityKey> = new Set<EntityKey>([
+  "purchaseOrderLines",
+]);
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 // --- helpers -----------------------------------------------------------
@@ -510,47 +561,108 @@ const ENTITIES: EntityDef[] = [
         shipDate: r["shipDate"],
       })),
   },
+  {
+    // Streaming-only entity: row-by-row PO lines for the millions-of-lines
+    // case. The grouped `purchaseOrders` entity above is JSON-only; for very
+    // large PO datasets, upload a (small) PO header file via that entity
+    // first, then upload the (very large) line-item file here.
+    key: "purchaseOrderLines",
+    label: "Purchase Order Lines (large)",
+    description:
+      "Streaming-only. Use for multi-million-row PO line files; upload the matching PO headers via Purchase Orders first.",
+    required: ["externalId", "poExternalId", "sku", "qty", "unitPriceUsd"],
+    optional: [
+      "lineNumber",
+      "description",
+      "categoryExternalId",
+      "categoryCode",
+      "spendClass",
+      "uom",
+      "orderDate",
+    ],
+    // Streaming-only entities never go through the JSON ingest path; this
+    // payload mapper is unused but kept for type symmetry with EntityDef.
+    toPayload: () => [],
+    examples: [
+      {
+        externalId: "POL-1001",
+        poExternalId: "PO-1001",
+        sku: "SKU-100",
+        qty: "10",
+        unitPriceUsd: "12.50",
+        lineNumber: "1",
+        description: "Widget A",
+        categoryExternalId: "CAT-100",
+        categoryCode: "OFF",
+        spendClass: "indirect",
+        uom: "EA",
+        orderDate: "2024-01-15",
+      },
+    ],
+  },
 ];
 
 // --- per-entity parsed state ------------------------------------------
 
 interface ParsedFile {
+  file: File;
   fileName: string;
-  rows: Record<string, string>[];
+  fileSize: number;
+  /** Only set when the file was fully parsed (small files). */
+  rows: Record<string, string>[] | null;
   headers: string[];
   missingRequired: string[];
+  /** True when the file will be uploaded via the streaming endpoint. */
+  streaming: boolean;
   parseError?: string;
 }
 
-async function parseCsvFile(file: File): Promise<ParsedFile> {
+async function parseHeadersOnly(file: File): Promise<{
+  headers: string[];
+  parseError?: string;
+}> {
+  return new Promise((resolve) => {
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim(),
+      preview: 1,
+      complete: (results) => {
+        resolve({
+          headers: results.meta.fields ?? [],
+          parseError:
+            results.errors.length > 0 ? results.errors[0]?.message : undefined,
+        });
+      },
+      error: (err: Error) => {
+        resolve({ headers: [], parseError: err.message });
+      },
+    });
+  });
+}
+
+async function parseCsvFileFully(file: File): Promise<{
+  rows: Record<string, string>[];
+  headers: string[];
+  parseError?: string;
+}> {
   return new Promise((resolve) => {
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
       complete: (results) => {
-        const headers = results.meta.fields ?? [];
         resolve({
-          fileName: file.name,
           rows: results.data.filter(
             (r) => Object.keys(r).length > 0,
           ) as Record<string, string>[],
-          headers,
-          missingRequired: [],
+          headers: results.meta.fields ?? [],
           parseError:
-            results.errors.length > 0
-              ? results.errors[0]?.message
-              : undefined,
+            results.errors.length > 0 ? results.errors[0]?.message : undefined,
         });
       },
       error: (err: Error) => {
-        resolve({
-          fileName: file.name,
-          rows: [],
-          headers: [],
-          missingRequired: [],
-          parseError: err.message,
-        });
+        resolve({ rows: [], headers: [], parseError: err.message });
       },
     });
   });
@@ -573,6 +685,96 @@ function downloadEntityTemplate(entity: EntityDef) {
   URL.revokeObjectURL(url);
 }
 
+async function parseCsvFile(
+  file: File,
+  entityKey: EntityKey,
+): Promise<ParsedFile> {
+  const canStream = STREAM_ENTITY_FOR[entityKey] !== null;
+  // Stream-only entities always stream; size-flexible entities stream only
+  // when the file exceeds STREAM_THRESHOLD_BYTES.
+  const shouldStream =
+    canStream &&
+    (STREAM_ONLY.has(entityKey) || file.size > STREAM_THRESHOLD_BYTES);
+
+  if (shouldStream) {
+    const { headers, parseError } = await parseHeadersOnly(file);
+    return {
+      file,
+      fileName: file.name,
+      fileSize: file.size,
+      rows: null,
+      headers,
+      missingRequired: [],
+      streaming: true,
+      parseError,
+    };
+  }
+
+  const { rows, headers, parseError } = await parseCsvFileFully(file);
+  return {
+    file,
+    fileName: file.name,
+    fileSize: file.size,
+    rows,
+    headers,
+    missingRequired: [],
+    streaming: false,
+    parseError,
+  };
+}
+
+interface UploadProgress {
+  loaded: number;
+  total: number;
+}
+
+/**
+ * Stream-upload a single File to `/api/ingest/csv-stream` using XHR so we get
+ * upload progress events (the orval-generated `ingestCsvStream` uses fetch
+ * which has no upload progress in browsers).
+ *
+ * Sends `multipart/form-data` with a `file` part, matching the OpenAPI
+ * contract. Content-Type is left unset so the browser fills in the
+ * `multipart/form-data; boundary=...` automatically.
+ */
+function uploadCsvStream(args: {
+  file: File;
+  entity: IngestCsvStreamEntity;
+  onProgress?: (p: UploadProgress) => void;
+}): Promise<StreamCsvResult> {
+  return new Promise((resolve, reject) => {
+    const url = getIngestCsvStreamUrl({ entity: args.entity });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.responseType = "json";
+    const orgId = localStorage.getItem("activeOrgId") ?? "";
+    if (orgId) xhr.setRequestHeader("x-org-id", orgId);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && args.onProgress) {
+        args.onProgress({ loaded: e.loaded, total: e.total });
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as StreamCsvResult);
+        return;
+      }
+      const errMsg =
+        (xhr.response &&
+          typeof xhr.response === "object" &&
+          (xhr.response as { error?: string }).error) ||
+        (typeof xhr.response === "string" ? xhr.response : null) ||
+        `HTTP ${xhr.status} ${xhr.statusText}`;
+      reject(new Error(errMsg));
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+    const fd = new FormData();
+    fd.append("file", args.file);
+    xhr.send(fd);
+  });
+}
+
 interface SuccessResult {
   recordsProcessed: number;
   recordsCreated: number;
@@ -589,45 +791,24 @@ export default function Ingest() {
   );
   const [result, setResult] = useState<SuccessResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [streamProgress, setStreamProgress] = useState<
+    Partial<Record<EntityKey, UploadProgress>>
+  >({});
+  const [isStreaming, setIsStreaming] = useState(false);
 
-  const ingestM = useIngestCsvBatch({
-    mutation: {
-      onSuccess: (resp: unknown) => {
-        if (
-          resp &&
-          typeof resp === "object" &&
-          "recordsProcessed" in resp
-        ) {
-          const r = resp as SuccessResult;
-          setResult(r);
-          toast({
-            title: "Import complete",
-            description: `${r.recordsCreated} records imported in ${r.durationMs}ms`,
-          });
-          qc.invalidateQueries();
-        }
-      },
-      onError: (e: Error) => {
-        setApiError(String(e.message ?? e));
-        toast({
-          title: "Import failed",
-          description: String(e.message ?? e),
-          variant: "destructive",
-        });
-      },
-    },
-  });
+  const ingestM = useIngestCsvBatch();
 
   const onPickFile = async (entity: EntityDef, file: File | null) => {
     setResult(null);
     setApiError(null);
+    setStreamProgress({});
     if (!file) {
       const next = { ...parsed };
       delete next[entity.key];
       setParsed(next);
       return;
     }
-    const p = await parseCsvFile(file);
+    const p = await parseCsvFile(file, entity.key);
     const missing = entity.required.filter((c) => !p.headers.includes(c));
     setParsed({ ...parsed, [entity.key]: { ...p, missingRequired: missing } });
   };
@@ -638,12 +819,26 @@ export default function Ingest() {
     setParsed(next);
     setResult(null);
     setApiError(null);
+    setStreamProgress((prev) => {
+      const n = { ...prev };
+      delete n[key];
+      return n;
+    });
   };
 
   const totalRows = useMemo(
     () =>
       Object.values(parsed).reduce(
-        (acc, p) => acc + (p?.rows.length ?? 0),
+        (acc, p) => acc + (p?.rows?.length ?? 0),
+        0,
+      ),
+    [parsed],
+  );
+
+  const totalStreamingBytes = useMemo(
+    () =>
+      Object.values(parsed).reduce(
+        (acc, p) => acc + (p?.streaming ? p.fileSize : 0),
         0,
       ),
     [parsed],
@@ -658,19 +853,113 @@ export default function Ingest() {
   );
 
   const selectedCount = Object.keys(parsed).length;
+  const isPending = ingestM.isPending || isStreaming;
 
-  const onRun = () => {
+  const hasWork = useMemo(
+    () =>
+      Object.values(parsed).some(
+        (p) => p && (p.streaming || (p.rows && p.rows.length > 0)),
+      ),
+    [parsed],
+  );
+
+  const onRun = async () => {
     setResult(null);
     setApiError(null);
-    const payload: CsvIngestRequest = {};
+    setStreamProgress({});
+
+    // 1. Aggregate non-streaming entities into a single JSON ingest call.
+    const jsonPayload: CsvIngestRequest = {};
+    let jsonHasContent = false;
     for (const e of ENTITIES) {
       const p = parsed[e.key];
-      if (!p || p.rows.length === 0) continue;
+      if (!p || p.streaming || !p.rows || p.rows.length === 0) continue;
       const out = e.toPayload(p.rows) as Array<{ [k: string]: unknown }>;
-      // Assign with index signature; CsvIngestRequest tolerates loose objects.
-      (payload as Record<string, unknown>)[e.key] = out;
+      (jsonPayload as Record<string, unknown>)[e.key] = out;
+      jsonHasContent = true;
     }
-    ingestM.mutate({ data: payload });
+
+    // 2. Run streaming uploads in parallel with the JSON ingest call.
+    const streamingEntries = ENTITIES.flatMap((e) => {
+      const p = parsed[e.key];
+      if (!p || !p.streaming) return [];
+      const streamEntity = STREAM_ENTITY_FOR[e.key];
+      if (!streamEntity) return [];
+      return [{ key: e.key, file: p.file, streamEntity }];
+    });
+
+    setIsStreaming(streamingEntries.length > 0);
+
+    const aggregate: SuccessResult = {
+      recordsProcessed: 0,
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      recordsDeleted: 0,
+      durationMs: 0,
+    };
+
+    try {
+      const tasks: Array<Promise<unknown>> = [];
+
+      if (jsonHasContent) {
+        tasks.push(
+          ingestM
+            .mutateAsync({ data: jsonPayload })
+            .then((resp: unknown) => {
+              if (
+                resp &&
+                typeof resp === "object" &&
+                "recordsProcessed" in resp
+              ) {
+                const r = resp as SuccessResult;
+                aggregate.recordsProcessed += r.recordsProcessed;
+                aggregate.recordsCreated += r.recordsCreated;
+                aggregate.recordsUpdated += r.recordsUpdated;
+                aggregate.recordsDeleted += r.recordsDeleted ?? 0;
+                aggregate.durationMs += r.durationMs;
+              }
+            }),
+        );
+      }
+
+      for (const s of streamingEntries) {
+        tasks.push(
+          uploadCsvStream({
+            file: s.file,
+            entity: s.streamEntity,
+            onProgress: (p) =>
+              setStreamProgress((prev) => ({ ...prev, [s.key]: p })),
+          }).then((r) => {
+            aggregate.recordsProcessed += r.rowsParsed;
+            aggregate.recordsCreated += r.rowsInserted;
+            aggregate.durationMs += r.durationMs;
+          }),
+        );
+      }
+
+      await Promise.all(tasks);
+
+      setResult(aggregate);
+      toast({
+        title: "Import complete",
+        description: `${aggregate.recordsCreated.toLocaleString()} records imported${
+          streamingEntries.length > 0
+            ? ` (${streamingEntries.length} streamed)`
+            : ""
+        }`,
+      });
+      qc.invalidateQueries();
+    } catch (e) {
+      const msg = String((e as Error).message ?? e);
+      setApiError(msg);
+      toast({
+        title: "Import failed",
+        description: msg,
+        variant: "destructive",
+      });
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   return (
@@ -721,6 +1010,12 @@ export default function Ingest() {
             <span className="text-sm font-normal text-muted-foreground">
               {selectedCount} file{selectedCount === 1 ? "" : "s"} ·{" "}
               {totalRows.toLocaleString()} rows
+              {totalStreamingBytes > 0 && (
+                <>
+                  {" "}
+                  · {formatBytes(totalStreamingBytes)} streaming
+                </>
+              )}
             </span>
           </CardTitle>
         </CardHeader>
@@ -731,6 +1026,8 @@ export default function Ingest() {
                 key={e.key}
                 entity={e}
                 parsed={parsed[e.key]}
+                progress={streamProgress[e.key]}
+                isUploading={isPending}
                 onPick={(f) => onPickFile(e, f)}
                 onClear={() => clearEntity(e.key)}
               />
@@ -748,23 +1045,30 @@ export default function Ingest() {
         <Button
           data-testid="btn-run-import"
           onClick={onRun}
-          disabled={
-            ingestM.isPending ||
-            selectedCount === 0 ||
-            hasErrors ||
-            totalRows === 0
-          }
+          disabled={isPending || selectedCount === 0 || hasErrors || !hasWork}
           size="lg"
         >
-          {ingestM.isPending ? (
+          {isPending ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Importing {totalRows.toLocaleString()} rows…
+              {isStreaming
+                ? `Uploading ${formatBytes(totalStreamingBytes)}…`
+                : `Importing ${totalRows.toLocaleString()} rows…`}
             </>
           ) : (
             <>
               <Upload className="w-4 h-4 mr-2" />
-              Import {totalRows.toLocaleString()} rows
+              Import{" "}
+              {totalRows > 0 ? `${totalRows.toLocaleString()} rows` : ""}
+              {totalStreamingBytes > 0 && (
+                <>
+                  {totalRows > 0 ? " + " : ""}
+                  {formatBytes(totalStreamingBytes)} large file
+                  {Object.values(parsed).filter((p) => p?.streaming).length === 1
+                    ? ""
+                    : "s"}
+                </>
+              )}
             </>
           )}
         </Button>
@@ -776,16 +1080,30 @@ export default function Ingest() {
 function EntityRow({
   entity,
   parsed,
+  progress,
+  isUploading,
   onPick,
   onClear,
 }: {
   entity: EntityDef;
   parsed?: ParsedFile;
+  progress?: UploadProgress;
+  isUploading: boolean;
   onPick: (f: File | null) => void;
   onClear: () => void;
 }) {
   const hasError = parsed && (parsed.missingRequired.length > 0 || parsed.parseError);
-  const ok = parsed && !hasError && parsed.rows.length > 0;
+  const ok = parsed && !hasError && (parsed.streaming || (parsed.rows && parsed.rows.length > 0));
+  const supportsStream = STREAM_ENTITY_FOR[entity.key] !== null;
+  const oversized =
+    parsed &&
+    !parsed.streaming &&
+    !supportsStream &&
+    parsed.fileSize > STREAM_THRESHOLD_BYTES;
+  const progressPct =
+    progress && progress.total > 0
+      ? Math.round((progress.loaded / progress.total) * 100)
+      : 0;
 
   return (
     <div
@@ -797,12 +1115,22 @@ function EntityRow({
           <div className="flex items-center gap-2 flex-wrap">
             <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
             <span className="font-semibold">{entity.label}</span>
-            {ok && (
+            {ok && parsed.rows && (
               <Badge
                 variant="default"
                 data-testid={`badge-rows-${entity.key}`}
               >
                 {parsed.rows.length.toLocaleString()} rows
+              </Badge>
+            )}
+            {ok && parsed.streaming && (
+              <Badge
+                variant="secondary"
+                data-testid={`badge-streaming-${entity.key}`}
+                className="gap-1"
+              >
+                <Zap className="w-3 h-3" />
+                Streaming · {formatBytes(parsed.fileSize)}
               </Badge>
             )}
             {hasError && (
@@ -884,9 +1212,35 @@ function EntityRow({
         </Alert>
       )}
 
+      {oversized && (
+        <Alert className="py-2">
+          <Zap className="w-4 h-4" />
+          <AlertDescription className="text-xs">
+            Large file ({formatBytes(parsed.fileSize)}). This entity does not
+            support streaming and may fail. Split the file or import smaller
+            batches.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {parsed?.streaming && isUploading && (
+        <div
+          className="space-y-1"
+          data-testid={`stream-progress-${entity.key}`}
+        >
+          <Progress value={progressPct} />
+          <div className="text-[11px] text-muted-foreground tabular-nums">
+            {progress
+              ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)} · ${progressPct}%`
+              : "Uploading…"}
+          </div>
+        </div>
+      )}
+
       {parsed && (
         <div className="text-xs text-muted-foreground">
           <span className="font-medium">{parsed.fileName}</span> ·{" "}
+          {formatBytes(parsed.fileSize)} ·{" "}
           {parsed.headers.length} column{parsed.headers.length === 1 ? "" : "s"}
         </div>
       )}

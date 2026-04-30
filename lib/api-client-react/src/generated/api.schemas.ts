@@ -372,6 +372,27 @@ export interface SyncResultResponse {
   durationMs: number;
 }
 
+export type StreamCsvResultEntity =
+  (typeof StreamCsvResultEntity)[keyof typeof StreamCsvResultEntity];
+
+export const StreamCsvResultEntity = {
+  suppliers: "suppliers",
+  categories: "categories",
+  items: "items",
+  purchase_orders: "purchase_orders",
+  po_lines: "po_lines",
+  invoices: "invoices",
+  payments: "payments",
+  shipments: "shipments",
+} as const;
+
+export interface StreamCsvResult {
+  entity: StreamCsvResultEntity;
+  rowsParsed: number;
+  rowsInserted: number;
+  durationMs: number;
+}
+
 export type CsvIngestRequestSuppliersItem = { [key: string]: unknown };
 
 export type CsvIngestRequestCategoriesItem = { [key: string]: unknown };
@@ -626,6 +647,32 @@ export const ListJobsStatus = {
 
 export type IngestCsvBatchParams = {
   async?: boolean;
+};
+
+export type IngestCsvStreamParams = {
+  /**
+   * Which entity the CSV rows describe.
+   */
+  entity: IngestCsvStreamEntity;
+};
+
+export type IngestCsvStreamEntity =
+  (typeof IngestCsvStreamEntity)[keyof typeof IngestCsvStreamEntity];
+
+export const IngestCsvStreamEntity = {
+  suppliers: "suppliers",
+  categories: "categories",
+  items: "items",
+  purchase_orders: "purchase_orders",
+  po_lines: "po_lines",
+  invoices: "invoices",
+  payments: "payments",
+  shipments: "shipments",
+} as const;
+
+export type IngestCsvStreamBodyOne = {
+  /** The CSV file to stream-ingest. */
+  file: Blob;
 };
 
 export type IngestMockErpParams = {

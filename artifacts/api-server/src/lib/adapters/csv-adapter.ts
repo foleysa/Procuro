@@ -742,14 +742,80 @@ async function flushBatch(
       return out.length;
     }
     case "invoices": {
+      // Support both the streaming-native shape (`supplierId`/`poId` = real DB
+      // ids) AND the page CSV shape (`supplierExternalId`/`poExternalId` =
+      // source ids that need to be looked up). The page validator enforces the
+      // external-id columns, so most real uploads go through the lookup path.
+      const supExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["supplierExternalId"])
+            .filter((x): x is string => Boolean(x)),
+        ),
+      );
+      const poExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["poExternalId"])
+            .filter((x): x is string => Boolean(x)),
+        ),
+      );
+      const supLookup = new Map<string, string>();
+      const poLookup = new Map<string, string>();
+      if (supExtIds.length > 0) {
+        const supRows = await db
+          .select({
+            id: suppliersTable.id,
+            ext: suppliersTable.sourceExternalId,
+          })
+          .from(suppliersTable)
+          .where(
+            and(
+              eq(suppliersTable.orgId, orgId),
+              eq(suppliersTable.sourceSystem, SOURCE),
+              inArray(suppliersTable.sourceExternalId, supExtIds),
+            ),
+          );
+        for (const r of supRows) if (r.ext) supLookup.set(r.ext, r.id);
+      }
+      if (poExtIds.length > 0) {
+        const poRows = await db
+          .select({
+            id: purchaseOrdersTable.id,
+            ext: purchaseOrdersTable.sourceExternalId,
+          })
+          .from(purchaseOrdersTable)
+          .where(
+            and(
+              eq(purchaseOrdersTable.orgId, orgId),
+              eq(purchaseOrdersTable.sourceSystem, SOURCE),
+              inArray(purchaseOrdersTable.sourceExternalId, poExtIds),
+            ),
+          );
+        for (const r of poRows) if (r.ext) poLookup.set(r.ext, r.id);
+      }
       const v = rows
-        .filter((r) => r["supplierId"] && r["amountUsd"] && r["invoiceDate"])
-        .map((r) => ({
+        .map((r) => {
+          const supplierId =
+            r["supplierId"] ||
+            (r["supplierExternalId"]
+              ? supLookup.get(r["supplierExternalId"])
+              : undefined);
+          const poId =
+            r["poId"] ||
+            (r["poExternalId"] ? poLookup.get(r["poExternalId"]) : undefined);
+          return { r, supplierId, poId };
+        })
+        .filter(
+          (x) =>
+            x.supplierId && x.r["amountUsd"] && x.r["invoiceDate"] && x.r["externalId"],
+        )
+        .map(({ r, supplierId, poId }) => ({
           id: newId("inv"),
           orgId,
           invoiceNumber: r["invoiceNumber"]!,
-          supplierId: r["supplierId"]!,
-          poId: r["poId"] || null,
+          supplierId: supplierId!,
+          poId: poId ?? null,
           invoiceDate: new Date(r["invoiceDate"]!),
           amountUsd: Number(r["amountUsd"]!).toFixed(2),
           status:
@@ -761,10 +827,11 @@ async function flushBatch(
               | "void") ?? "received",
           dedupKey:
             r["dedupKey"] ??
-            `${r["supplierId"]!}|${Number(r["amountUsd"]!).toFixed(2)}|${r["invoiceDate"]!.slice(0, 10)}`,
+            `${supplierId}|${Number(r["amountUsd"]!).toFixed(2)}|${r["invoiceDate"]!.slice(0, 10)}`,
           sourceSystem: SOURCE,
           sourceExternalId: r["externalId"]!,
         }));
+      if (v.length === 0) return 0;
       const out = await db
         .insert(invoicesTable)
         .values(v)

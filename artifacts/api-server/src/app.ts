@@ -27,7 +27,7 @@ app.use(
 );
 app.use(cors());
 // Skip body parsers for the streaming CSV ingest path so it can read the raw req.
-const SKIP_BODY = "/api/ingest/csv-stream/";
+const SKIP_BODY = "/api/ingest/csv-stream";
 // Ingest endpoints accept larger payloads than the default but are still capped
 // to prevent a single tenant from forcing unbounded memory and CPU use on the
 // shared API process. All other routes get a tighter 1 MB limit.
