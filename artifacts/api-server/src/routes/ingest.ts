@@ -15,6 +15,10 @@ import {
   type MockErpConfig,
 } from "../lib/adapters/mock-erp-adapter";
 import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import {
+  sanitizeDbErrorMessage,
+  errorLogContext,
+} from "../lib/sanitize-db-error";
 
 const STREAM_CSV_ENTITIES: ReadonlySet<CsvEntity> = new Set([
   "suppliers",
@@ -83,7 +87,11 @@ router.post("/ingest/csv", tenantMiddleware, async (req, res) => {
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
-    throw err;
+    req.log.error(
+      { err, ...errorLogContext(err), orgId, route: "/ingest/csv" },
+      "CSV ingest failed",
+    );
+    res.status(500).json({ error: sanitizeDbErrorMessage(err) });
   }
 });
 
@@ -138,7 +146,11 @@ router.post("/ingest/mock-erp", tenantMiddleware, async (req, res) => {
       res.status(err.statusCode).json({ error: err.message });
       return;
     }
-    throw err;
+    req.log.error(
+      { err, ...errorLogContext(err), orgId, route: "/ingest/mock-erp" },
+      "Mock ERP ingest failed",
+    );
+    res.status(500).json({ error: sanitizeDbErrorMessage(err) });
   }
 });
 
@@ -460,14 +472,13 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
         rowsInserted: err.rowsInserted,
       });
     } else {
-      const msg = (err as Error).message;
       req.log.error(
-        { err: msg, entity, orgId },
+        { err, ...errorLogContext(err), entity, orgId },
         "Streaming CSV ingest failed",
       );
       writeEvent({
         type: "error",
-        error: `CSV stream ingest failed: ${msg}`,
+        error: `CSV stream ingest failed: ${sanitizeDbErrorMessage(err)}`,
       });
     }
   } finally {
