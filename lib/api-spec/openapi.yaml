@@ -857,7 +857,16 @@ paths:
           name: scopeMaterialCode
           description: |
             Filter by scope material code. For FX rates this is the currency
-            pair (e.g. `EUR/USD`, `USD/JPY`).
+            pair (e.g. `EUR/USD`, `USD/JPY`). For BLS / FRED commodity PPI
+            sub-series this is the canonical material code (e.g. `STEEL`,
+            `LUMBER`).
+          schema: { type: string }
+        - in: query
+          name: scopeCategoryCode
+          description: |
+            Filter by scope category code. Used for category-scoped
+            economic-index sub-series (CPI, ECI, freight PPI, etc.) — e.g.
+            `FOOD_AT_HOME`, `LABOR_TOTAL_COMP`, `FREIGHT`.
           schema: { type: string }
         - in: query
           name: observedAfter
@@ -1920,6 +1929,7 @@ components:
         collectorId: { type: string, nullable: true }
         signalType: { type: string }
         scopeMaterialCode: { type: string, nullable: true }
+        scopeCategoryCode: { type: string, nullable: true }
         scopeCategoryId: { type: string, nullable: true }
         scopeSupplierId: { type: string, nullable: true }
         value: { type: number }

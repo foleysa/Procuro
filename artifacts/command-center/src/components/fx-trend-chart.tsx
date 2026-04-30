@@ -18,6 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2, LineChart as LineChartIcon, History } from "lucide-react";
 import { formatDate } from "@/lib/format";
+import {
+  SeriesDeltaCallouts,
+  type SeriesDeltaInput,
+} from "./series-delta-callouts";
 
 type ChartMode = "indexed" | "absolute";
 
@@ -151,6 +155,40 @@ export function FxTrendChart({
     );
   }, [queries, pairs, mode]);
 
+  // Compute first/last raw values per active pair for the delta callouts.
+  // We always work off raw values (not the indexed view) so the percentage
+  // shown matches the underlying market move regardless of which display
+  // mode is selected.
+  const deltas = useMemo<SeriesDeltaInput[]>(() => {
+    return pairs
+      .filter((p) => activePairs.has(p))
+      .map((pair, idx): SeriesDeltaInput => {
+        const i = pairs.indexOf(pair);
+        const data = queries[i]?.data ?? [];
+        const first = data[0];
+        const last = data[data.length - 1];
+        return {
+          label: pair,
+          color: PAIR_COLORS[idx % PAIR_COLORS.length]!,
+          first: first ? first.value : null,
+          last: last ? last.value : null,
+          firstAt: first ? first.observedAt : null,
+          lastAt: last ? last.observedAt : null,
+        };
+      });
+  }, [pairs, queries, activePairs]);
+
+  const windowLabel = useMemo(() => {
+    const visible = deltas
+      .map((d) => (d.firstAt ? new Date(d.firstAt).getTime() : null))
+      .filter((v): v is number => v !== null);
+    if (visible.length === 0) return "5y";
+    const earliest = Math.min(...visible);
+    const days = Math.round((Date.now() - earliest) / ONE_DAY_MS);
+    if (days >= 365) return `${(days / 365).toFixed(1)}y`;
+    return `${days}d`;
+  }, [deltas]);
+
   const togglePair = (pair: string) => {
     setActivePairs((prev) => {
       const next = new Set(prev);
@@ -257,7 +295,13 @@ export function FxTrendChart({
             </div>
           </div>
         ) : (
-          <div className="h-80 w-full" data-testid="fx-trend-chart-canvas">
+          <>
+            <SeriesDeltaCallouts
+              series={deltas}
+              windowLabel={windowLabel}
+              data-testid="fx-trend-deltas"
+            />
+            <div className="h-80 w-full" data-testid="fx-trend-chart-canvas">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={chartData}
@@ -328,7 +372,8 @@ export function FxTrendChart({
                 })}
               </LineChart>
             </ResponsiveContainer>
-          </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

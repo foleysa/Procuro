@@ -27,10 +27,19 @@ export type ListMarketSignalsParams = {
   signalType?: string;
   /**
  * Filter by scope material code. For FX rates this is the currency
-pair (e.g. `EUR/USD`, `USD/JPY`).
+pair (e.g. `EUR/USD`, `USD/JPY`). For BLS / FRED commodity PPI
+sub-series this is the canonical material code (e.g. `STEEL`,
+`LUMBER`).
 
  */
   scopeMaterialCode?: string;
+  /**
+ * Filter by scope category code. Used for category-scoped
+economic-index sub-series (CPI, ECI, freight PPI, etc.) — e.g.
+`FOOD_AT_HOME`, `LABOR_TOTAL_COMP`, `FREIGHT`.
+
+ */
+  scopeCategoryCode?: string;
   /**
  * Lower bound (inclusive) on `observedAt`. ISO-8601 datetime.
 

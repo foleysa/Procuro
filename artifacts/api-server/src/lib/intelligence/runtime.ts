@@ -6,7 +6,7 @@ import {
   marketSignalSchemaDriftTable,
   type CollectorRow,
 } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   collectorContractSchema,
   isIntelligenceEnabled,
@@ -26,7 +26,8 @@ import {
 } from "./collector";
 import {
   ECB_FX_RATES_COLLECTOR_ID,
-  fetchEcbBackfillDrafts,
+  fetchEcbBackfillDraftsWithMeta,
+  headEcbHistoricalFeed,
 } from "./collectors/ecb-fx-rates";
 import {
   FRED_ECONOMIC_INDEX_COLLECTOR_ID,
@@ -779,9 +780,54 @@ export async function runEcbFxRatesBackfill(
     );
   }
 
+  // Cheap HEAD probe: ECB's historical archive ships static cache headers,
+  // so we can short-circuit the full XML fetch + ~7000-day fan-out + dedupe
+  // pass when neither header has advanced past the previous successful
+  // run's watermark. `force` bypasses the check (admin override / tests).
+  // If HEAD itself fails (network, upstream HEAD disabled), fall through
+  // to the full fetch — we never silently skip on an inconclusive probe.
+  if (!opts.force) {
+    const watermark = await readEcbBackfillWatermark(collectorId);
+    if (watermark) {
+      try {
+        const head = await headEcbHistoricalFeed();
+        const etagMatches =
+          watermark.etag !== null && head.etag !== null && head.etag === watermark.etag;
+        const lastModifiedMatches =
+          watermark.lastModified !== null &&
+          head.lastModified !== null &&
+          head.lastModified === watermark.lastModified;
+        if (etagMatches || lastModifiedMatches) {
+          await audit(collectorId, "backfill_skipped_unchanged", {
+            archiveEtag: head.etag,
+            archiveLastModified: head.lastModified,
+            watermarkEtag: watermark.etag,
+            watermarkLastModified: watermark.lastModified,
+          });
+          logger.info(
+            { collectorId, etag: head.etag, lastModified: head.lastModified },
+            "ECB FX backfill skipped: archive unchanged since last watermark",
+          );
+          return {
+            collectorId,
+            daysWritten: 0,
+            signalsInserted: 0,
+            signalsSkipped: 0,
+            durationMs: Date.now() - start,
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          { err, collectorId },
+          "ECB historical feed HEAD probe failed; falling through to full fetch",
+        );
+      }
+    }
+  }
+
   await audit(collectorId, "backfill_started");
   try {
-    const drafts = await fetchEcbBackfillDrafts();
+    const { drafts, lastModified, etag } = await fetchEcbBackfillDraftsWithMeta();
     const days = new Set(
       drafts.map((d) => d.observedAt.toISOString().slice(0, 10)),
     ).size;
@@ -793,14 +839,20 @@ export async function runEcbFxRatesBackfill(
       signalsSkipped: skipped,
       durationMs: Date.now() - start,
     };
+    // Watermark is stamped into the success audit row; the next run's HEAD
+    // probe reads it back via `readEcbBackfillWatermark` to decide whether
+    // to short-circuit. Always written on success even when both headers
+    // are null so the audit trail is uniform.
     await audit(collectorId, "backfill_succeeded", {
       days,
       inserted,
       skipped,
       drafts: drafts.length,
+      archiveLastModified: lastModified,
+      archiveEtag: etag,
     });
     logger.info(
-      { collectorId, days, inserted, skipped },
+      { collectorId, days, inserted, skipped, lastModified, etag },
       "ECB FX backfill completed",
     );
     return result;
@@ -809,6 +861,46 @@ export async function runEcbFxRatesBackfill(
     await audit(collectorId, "backfill_failed", {}, e.message);
     throw e;
   }
+}
+
+/**
+ * Look up the most recent successful ECB backfill audit row and return
+ * the archive Last-Modified / ETag headers we stamped at the time. These
+ * are the watermark the next run's HEAD probe compares against.
+ *
+ * Returns `null` if no prior success exists (first run) or if the prior
+ * success row predates this watermark feature (no header fields in
+ * metadata) — in either case the caller will fall through to the full
+ * fetch so we never accidentally skip on missing state.
+ */
+async function readEcbBackfillWatermark(
+  collectorId: string,
+): Promise<{ lastModified: string | null; etag: string | null } | null> {
+  const [row] = await db
+    .select()
+    .from(collectorAuditLogTable)
+    .where(
+      and(
+        eq(collectorAuditLogTable.collectorId, collectorId),
+        eq(collectorAuditLogTable.event, "backfill_succeeded"),
+      ),
+    )
+    .orderBy(desc(collectorAuditLogTable.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  const hasEtag = "archiveEtag" in meta;
+  const hasLastModified = "archiveLastModified" in meta;
+  if (!hasEtag && !hasLastModified) return null;
+  const etag =
+    typeof meta["archiveEtag"] === "string"
+      ? (meta["archiveEtag"] as string)
+      : null;
+  const lastModified =
+    typeof meta["archiveLastModified"] === "string"
+      ? (meta["archiveLastModified"] as string)
+      : null;
+  return { etag, lastModified };
 }
 
 /**
@@ -1192,7 +1284,6 @@ export async function listCollectorAudit(
   collectorId: string,
   limit = 100,
 ): Promise<Array<typeof collectorAuditLogTable.$inferSelect>> {
-  const { desc } = await import("drizzle-orm");
   return await db
     .select()
     .from(collectorAuditLogTable)

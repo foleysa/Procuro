@@ -46,12 +46,12 @@ import type {
   MarketSignalDraft,
 } from "../collector";
 
-const BLS_API_URL =
+export const BLS_API_URL =
   "https://api.bls.gov/publicAPI/v2/timeseries/data/";
 
 const SERIES_PAGE_BASE = "https://data.bls.gov/timeseries/";
 
-interface SeriesRef {
+export interface BlsSeriesRef {
   seriesId: string;
   label: string;
   /** Set exactly one of scopeCategoryCode / scopeMaterialCode where it maps cleanly. */
@@ -76,7 +76,7 @@ interface SeriesRef {
  * series past 25 will require splitting into multiple POSTs or requiring
  * an API key.
  */
-const SERIES: SeriesRef[] = [
+export const BLS_SERIES: readonly BlsSeriesRef[] = [
   // --- PPI commodity sub-series (monthly, WPU = PPI commodity not seasonally adjusted) ---
   {
     seriesId: "WPU101",
@@ -288,7 +288,7 @@ const SERIES: SeriesRef[] = [
   },
 ];
 
-interface BlsObservation {
+export interface BlsObservation {
   year: string;
   period: string;
   periodName: string;
@@ -296,12 +296,12 @@ interface BlsObservation {
   footnotes?: Array<{ code?: string; text?: string }>;
 }
 
-interface BlsSeriesResult {
+export interface BlsSeriesResult {
   seriesID: string;
   data?: BlsObservation[];
 }
 
-interface BlsResponse {
+export interface BlsResponse {
   status?: string;
   message?: string[];
   Results?: { series?: BlsSeriesResult[] };
@@ -315,7 +315,7 @@ interface BlsResponse {
  *  - "S01" / "S02" → Jun 30 / Dec 31
  * Returns null if the period code is unrecognized.
  */
-function periodEndUtc(year: string, period: string): Date | null {
+export function periodEndUtc(year: string, period: string): Date | null {
   const y = Number(year);
   if (!Number.isInteger(y) || y < 1900 || y > 2100) return null;
 
@@ -340,19 +340,50 @@ function periodEndUtc(year: string, period: string): Date | null {
   return null;
 }
 
-/** Pick the most recent observation by (year, period). */
-function pickLatest(
-  data: BlsObservation[],
-): { obs: BlsObservation; observedAt: Date } | null {
-  let best: { obs: BlsObservation; observedAt: Date } | null = null;
-  for (const obs of data) {
-    const observedAt = periodEndUtc(obs.year, obs.period);
-    if (!observedAt) continue;
-    if (!best || observedAt.getTime() > best.observedAt.getTime()) {
-      best = { obs, observedAt };
-    }
-  }
-  return best;
+/**
+ * Build one `economic_index` MarketSignalDraft for a single BLS observation.
+ *
+ * Shared between the live collector (which emits every observation in the
+ * 2-year window so the trend-chart UI has history to plot) and the test
+ * fixtures so re-runs of the collector against the same upstream snapshot
+ * are idempotent on `(collector_id, signalType, scope_*, observed_at)`.
+ *
+ * Returns `null` for observations with an unrecognized period code or a
+ * non-numeric value rather than emitting NaN signals.
+ */
+export function buildBlsDraftForObservation(
+  ref: BlsSeriesRef,
+  obs: BlsObservation,
+  opts: { tier: "authenticated" | "unauthenticated" },
+): MarketSignalDraft | null {
+  const observedAt = periodEndUtc(obs.year, obs.period);
+  if (!observedAt) return null;
+  const value = Number(obs.value);
+  if (!Number.isFinite(value)) return null;
+
+  const draft: MarketSignalDraft = {
+    signalType: "economic_index",
+    value: +value.toFixed(4),
+    unit: ref.unit,
+    currency: "USD",
+    observedAt,
+    sourceUrl: `${SERIES_PAGE_BASE}${ref.seriesId}`,
+    confidence: 0.9,
+    metadata: {
+      seriesId: ref.seriesId,
+      label: ref.label,
+      baseYear: ref.baseYear,
+      periodicity: ref.periodicity,
+      period: obs.period,
+      periodName: obs.periodName,
+      year: obs.year,
+      tier: opts.tier,
+      source: "bls.gov",
+    },
+  };
+  if (ref.scopeCategoryCode) draft.scopeCategoryCode = ref.scopeCategoryCode;
+  if (ref.scopeMaterialCode) draft.scopeMaterialCode = ref.scopeMaterialCode;
+  return draft;
 }
 
 async function recordWarning(
@@ -435,7 +466,7 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
     // for both monthly PPI and quarterly ECI releases (which can lag by months).
     const startYear = endYear - 2;
 
-    const seriesIds = SERIES.map((s) => s.seriesId);
+    const seriesIds = BLS_SERIES.map((s) => s.seriesId);
 
     const body: Record<string, unknown> = {
       seriesid: seriesIds,
@@ -466,66 +497,67 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
       throw new Error(`BLS API status=${json.status}: ${msg}`);
     }
 
-    const seriesById = new Map<string, BlsSeriesResult>();
-    for (const s of json.Results?.series ?? []) {
-      seriesById.set(s.seriesID, s);
-    }
-
-    const drafts: MarketSignalDraft[] = [];
-    for (const ref of SERIES) {
-      const result = seriesById.get(ref.seriesId);
-      if (!result || !result.data || result.data.length === 0) {
-        await recordWarning(
-          this.id,
-          `BLS returned no data for series ${ref.seriesId}`,
-          { seriesId: ref.seriesId },
-        );
-        continue;
-      }
-      const latest = pickLatest(result.data);
-      if (!latest) {
-        await recordWarning(
-          this.id,
-          `BLS series ${ref.seriesId} returned data but no parseable period`,
-          { seriesId: ref.seriesId },
-        );
-        continue;
-      }
-      const value = Number(latest.obs.value);
-      if (!Number.isFinite(value)) {
-        await recordWarning(
-          this.id,
-          `BLS series ${ref.seriesId} returned non-numeric value '${latest.obs.value}'`,
-          { seriesId: ref.seriesId, raw: latest.obs.value },
-        );
-        continue;
-      }
-
-      const draft: MarketSignalDraft = {
-        signalType: "economic_index",
-        value: +value.toFixed(4),
-        unit: ref.unit,
-        currency: "USD",
-        observedAt: latest.observedAt,
-        sourceUrl: `${SERIES_PAGE_BASE}${ref.seriesId}`,
-        confidence: 0.9,
-        metadata: {
-          seriesId: ref.seriesId,
-          label: ref.label,
-          baseYear: ref.baseYear,
-          periodicity: ref.periodicity,
-          period: latest.obs.period,
-          periodName: latest.obs.periodName,
-          year: latest.obs.year,
-          tier: apiKey ? "authenticated" : "unauthenticated",
-          source: "bls.gov",
-        },
-      };
-      if (ref.scopeCategoryCode) draft.scopeCategoryCode = ref.scopeCategoryCode;
-      if (ref.scopeMaterialCode) draft.scopeMaterialCode = ref.scopeMaterialCode;
-      drafts.push(draft);
-    }
-
-    return drafts;
+    const tier = apiKey ? "authenticated" : "unauthenticated";
+    return buildBlsDraftsFromResponse(json, BLS_SERIES, {
+      tier,
+      onMissing: async (seriesId, reason) => {
+        await recordWarning(this.id, reason, { seriesId });
+      },
+    });
   },
 };
+
+/**
+ * Fan a BLS API response out into one MarketSignalDraft per (series ×
+ * observation) in the curated `series` registry. Emitting the full window
+ * (rather than just the latest observation) is what gives the
+ * trend-chart UI history to plot — re-runs are safe because the runtime
+ * dedupe collides on `(collectorId, signalType, scope_*, observedAt)`.
+ *
+ * `onMissing` lets the caller record an audit warning per series that the
+ * upstream payload didn't include — used by the live collector to flag
+ * silent BLS removals, and pinned by the series-list guardrail test to
+ * fail loudly if any curated id stops resolving.
+ */
+export async function buildBlsDraftsFromResponse(
+  response: BlsResponse,
+  series: readonly BlsSeriesRef[],
+  opts: {
+    tier: "authenticated" | "unauthenticated";
+    onMissing?: (seriesId: string, reason: string) => Promise<void> | void;
+  },
+): Promise<MarketSignalDraft[]> {
+  const seriesById = new Map<string, BlsSeriesResult>();
+  for (const s of response.Results?.series ?? []) {
+    seriesById.set(s.seriesID, s);
+  }
+
+  const drafts: MarketSignalDraft[] = [];
+  for (const ref of series) {
+    const result = seriesById.get(ref.seriesId);
+    if (!result || !result.data || result.data.length === 0) {
+      if (opts.onMissing) {
+        await opts.onMissing(
+          ref.seriesId,
+          `BLS returned no data for series ${ref.seriesId}`,
+        );
+      }
+      continue;
+    }
+    let parsedAny = false;
+    for (const obs of result.data) {
+      const draft = buildBlsDraftForObservation(ref, obs, { tier: opts.tier });
+      if (draft) {
+        drafts.push(draft);
+        parsedAny = true;
+      }
+    }
+    if (!parsedAny && opts.onMissing) {
+      await opts.onMissing(
+        ref.seriesId,
+        `BLS series ${ref.seriesId} returned data but no rows were parseable`,
+      );
+    }
+  }
+  return drafts;
+}

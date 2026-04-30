@@ -17,6 +17,7 @@ export interface MarketSignal {
   collectorId?: string | null;
   signalType: string;
   scopeMaterialCode?: string | null;
+  scopeCategoryCode?: string | null;
   scopeCategoryId?: string | null;
   scopeSupplierId?: string | null;
   value: number;

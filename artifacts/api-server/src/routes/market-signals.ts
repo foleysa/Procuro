@@ -46,6 +46,13 @@ router.get("/market-signals", tenantMiddleware, async (req, res) => {
     );
   }
 
+  const scopeCategoryCode = req.query.scopeCategoryCode;
+  if (typeof scopeCategoryCode === "string" && scopeCategoryCode.length > 0) {
+    conditions.push(
+      eq(marketSignalsTable.scopeCategoryCode, scopeCategoryCode),
+    );
+  }
+
   const observedAfter = parseDateParam(req.query.observedAfter);
   if (observedAfter) {
     conditions.push(gte(marketSignalsTable.observedAt, observedAfter));
@@ -74,6 +81,7 @@ router.get("/market-signals", tenantMiddleware, async (req, res) => {
       collectorId: r.collectorId,
       signalType: r.signalType,
       scopeMaterialCode: r.scopeMaterialCode,
+      scopeCategoryCode: r.scopeCategoryCode,
       scopeCategoryId: null,
       scopeSupplierId: null,
       value: Number(r.value),

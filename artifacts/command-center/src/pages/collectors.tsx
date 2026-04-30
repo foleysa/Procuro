@@ -63,6 +63,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { FxTrendChart } from "@/components/fx-trend-chart";
+import { BlsTrendChart } from "@/components/bls-trend-chart";
 
 const ECB_FX_RATES_COLLECTOR_ID = "ecb-fx-rates";
 const FRED_ECONOMIC_INDEX_COLLECTOR_ID = "fred-economic-index";
@@ -523,6 +524,8 @@ function RegistryTab({ tier }: { tier: TierMode }) {
       </Card>
 
       <FxTrendChart />
+
+      <BlsTrendChart />
 
       <Card>
         <CardHeader>

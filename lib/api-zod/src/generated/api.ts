@@ -1793,7 +1793,13 @@ export const ListMarketSignalsQueryParams = zod.object({
     .string()
     .optional()
     .describe(
-      "Filter by scope material code. For FX rates this is the currency\npair (e.g. `EUR\/USD`, `USD\/JPY`).\n",
+      "Filter by scope material code. For FX rates this is the currency\npair (e.g. `EUR\/USD`, `USD\/JPY`). For BLS \/ FRED commodity PPI\nsub-series this is the canonical material code (e.g. `STEEL`,\n`LUMBER`).\n",
+    ),
+  scopeCategoryCode: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter by scope category code. Used for category-scoped\neconomic-index sub-series (CPI, ECI, freight PPI, etc.) — e.g.\n`FOOD_AT_HOME`, `LABOR_TOTAL_COMP`, `FREIGHT`.\n",
     ),
   observedAfter: zod
     .date()
@@ -1825,6 +1831,7 @@ export const ListMarketSignalsResponseItem = zod.object({
   collectorId: zod.string().nullish(),
   signalType: zod.string(),
   scopeMaterialCode: zod.string().nullish(),
+  scopeCategoryCode: zod.string().nullish(),
   scopeCategoryId: zod.string().nullish(),
   scopeSupplierId: zod.string().nullish(),
   value: zod.number(),

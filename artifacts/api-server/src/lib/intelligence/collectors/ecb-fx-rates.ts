@@ -170,7 +170,11 @@ async function fetchEcbFeed(): Promise<string> {
   return await res.text();
 }
 
-async function fetchEcbHistoricalFeed(): Promise<string> {
+async function fetchEcbHistoricalFeed(): Promise<{
+  xml: string;
+  lastModified: string | null;
+  etag: string | null;
+}> {
   const res = await fetch(ECB_HISTORICAL_FEED_URL, {
     headers: { Accept: "application/xml, text/xml, */*" },
   });
@@ -179,7 +183,40 @@ async function fetchEcbHistoricalFeed(): Promise<string> {
       `ECB historical feed fetch failed: ${res.status} ${res.statusText}`,
     );
   }
-  return await res.text();
+  return {
+    xml: await res.text(),
+    lastModified: res.headers.get("last-modified"),
+    etag: res.headers.get("etag"),
+  };
+}
+
+/**
+ * Cheap HEAD probe of the ECB historical archive. Used by the backfill
+ * runtime to short-circuit when neither `Last-Modified` nor `ETag` has
+ * advanced since the previous successful run's watermark — avoiding the
+ * full XML fetch + ~7000-day fan-out + ~80k row dedupe pass on every call.
+ *
+ * Returns `null` for either header if the upstream omits it; callers
+ * should treat "no headers and no prior watermark" as "must fetch the
+ * full body" so we never silently skip a real refresh.
+ */
+export async function headEcbHistoricalFeed(): Promise<{
+  lastModified: string | null;
+  etag: string | null;
+}> {
+  const res = await fetch(ECB_HISTORICAL_FEED_URL, {
+    method: "HEAD",
+    headers: { Accept: "application/xml, text/xml, */*" },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `ECB historical feed HEAD failed: ${res.status} ${res.statusText}`,
+    );
+  }
+  return {
+    lastModified: res.headers.get("last-modified"),
+    etag: res.headers.get("etag"),
+  };
 }
 
 /**
@@ -282,9 +319,24 @@ export function buildEcbBackfillDrafts(feeds: EcbFeed[]): MarketSignalDraft[] {
  * tested by stubbing `fetch`.
  */
 export async function fetchEcbBackfillDrafts(): Promise<MarketSignalDraft[]> {
-  const xml = await fetchEcbHistoricalFeed();
+  const { drafts } = await fetchEcbBackfillDraftsWithMeta();
+  return drafts;
+}
+
+/**
+ * Same as `fetchEcbBackfillDrafts` but also returns the upstream
+ * `Last-Modified` and `ETag` headers from the historical archive so the
+ * caller can persist them as a watermark and short-circuit subsequent
+ * runs with a cheap HEAD when nothing has advanced.
+ */
+export async function fetchEcbBackfillDraftsWithMeta(): Promise<{
+  drafts: MarketSignalDraft[];
+  lastModified: string | null;
+  etag: string | null;
+}> {
+  const { xml, lastModified, etag } = await fetchEcbHistoricalFeed();
   const feeds = parseEcbHistoricalFeed(xml);
-  return buildEcbBackfillDrafts(feeds);
+  return { drafts: buildEcbBackfillDrafts(feeds), lastModified, etag };
 }
 
 /**
