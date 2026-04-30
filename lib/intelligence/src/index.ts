@@ -56,3 +56,14 @@ export {
   computeStableSignalKey,
   type StableSignalKeyParts,
 } from "./signalKey/index.js";
+export {
+  RISK_DIMENSIONS,
+  scoreDimension,
+  scoreAllDimensions,
+  scoreBand,
+  type RiskDimension,
+  type ScoringSignal,
+  type ScoringOptions,
+  type ScoreContribution,
+  type ScoreResult,
+} from "./scoring/composite.js";

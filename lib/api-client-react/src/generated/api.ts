@@ -50,11 +50,18 @@ import type {
   ErrorResponse,
   GetCollectorCost200,
   GetCollectorCostParams,
+  GetIntelligenceCoverageGapsParams,
+  GetIntelligenceRiskHeatmapParams,
   HealthStatus,
   IngestCsvBatchParams,
   IngestCsvStreamBodyOne,
   IngestCsvStreamParams,
   IngestMockErpParams,
+  IntelligenceCoverageGapsResponse,
+  IntelligenceEntity360Response,
+  IntelligenceEventStreamResponse,
+  IntelligenceRiskHeatmapResponse,
+  IntelligenceSignalListResponse,
   Job,
   JobAccepted,
   JobCancelled,
@@ -67,6 +74,8 @@ import type {
   ListCollectorSourceHealthParams,
   ListContractsParams,
   ListDataSources200,
+  ListIntelligenceEventsParams,
+  ListIntelligenceSignalsParams,
   ListJobsParams,
   ListMarketSignalsParams,
   ListOpportunitiesParams,
@@ -5121,6 +5130,576 @@ export const useIngestMockErp = <
 > => {
   return useMutation(getIngestMockErpMutationOptions(options));
 };
+
+/**
+ * Returns market_signals filtered by the active tenant and the
+tenant's `disclosurePolicy`. T3/T4 signals are stripped before
+the wire for non-analyst policies. Optional facet filters narrow
+by signal-type, supplier, country, time window and free-text
+search over scope columns.
+
+ * @summary Tenant-scoped signal browser
+ */
+export const getListIntelligenceSignalsUrl = (
+  params?: ListIntelligenceSignalsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/intelligence/signals?${stringifiedParams}`
+    : `/api/intelligence/signals`;
+};
+
+export const listIntelligenceSignals = async (
+  params?: ListIntelligenceSignalsParams,
+  options?: RequestInit,
+): Promise<IntelligenceSignalListResponse> => {
+  return customFetch<IntelligenceSignalListResponse>(
+    getListIntelligenceSignalsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListIntelligenceSignalsQueryKey = (
+  params?: ListIntelligenceSignalsParams,
+) => {
+  return [`/api/intelligence/signals`, ...(params ? [params] : [])] as const;
+};
+
+export const getListIntelligenceSignalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listIntelligenceSignals>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIntelligenceSignalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIntelligenceSignals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListIntelligenceSignalsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listIntelligenceSignals>>
+  > = ({ signal }) =>
+    listIntelligenceSignals(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listIntelligenceSignals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListIntelligenceSignalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listIntelligenceSignals>>
+>;
+export type ListIntelligenceSignalsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Tenant-scoped signal browser
+ */
+
+export function useListIntelligenceSignals<
+  TData = Awaited<ReturnType<typeof listIntelligenceSignals>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIntelligenceSignalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIntelligenceSignals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListIntelligenceSignalsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Identifies an entity by `kind` and `id`. `kind` ∈ {`supplier`,
+`material`, `category`, `lane`, `contract`, `site`}.
+
+- `supplier`/`contract`: `id` is the database UUID.
+- `material`: `id` is the SKU code.
+- `category`: `id` is the category code.
+- `lane`: `id` is the ISO-2 country code (or any lane key).
+- `site`: `id` is `<supplierId>` (v1 supplier-as-site proxy);
+  response is enriched with the supplier's HQ coordinates and
+  biased toward facility-level / climate / hazard signals.
+
+ * @summary Entity 360 — recent signals + composite risk for one entity
+ */
+export const getGetIntelligenceEntity360Url = (
+  kind: "supplier" | "material" | "category" | "lane" | "contract" | "site",
+  id: string,
+) => {
+  return `/api/intelligence/entity/${kind}/${id}`;
+};
+
+export const getIntelligenceEntity360 = async (
+  kind: "supplier" | "material" | "category" | "lane" | "contract" | "site",
+  id: string,
+  options?: RequestInit,
+): Promise<IntelligenceEntity360Response> => {
+  return customFetch<IntelligenceEntity360Response>(
+    getGetIntelligenceEntity360Url(kind, id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetIntelligenceEntity360QueryKey = (
+  kind: "supplier" | "material" | "category" | "lane" | "contract" | "site",
+  id: string,
+) => {
+  return [`/api/intelligence/entity/${kind}/${id}`] as const;
+};
+
+export const getGetIntelligenceEntity360QueryOptions = <
+  TData = Awaited<ReturnType<typeof getIntelligenceEntity360>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  kind: "supplier" | "material" | "category" | "lane" | "contract" | "site",
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceEntity360>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetIntelligenceEntity360QueryKey(kind, id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getIntelligenceEntity360>>
+  > = ({ signal }) =>
+    getIntelligenceEntity360(kind, id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(kind && id),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getIntelligenceEntity360>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetIntelligenceEntity360QueryResult = NonNullable<
+  Awaited<ReturnType<typeof getIntelligenceEntity360>>
+>;
+export type GetIntelligenceEntity360QueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Entity 360 — recent signals + composite risk for one entity
+ */
+
+export function useGetIntelligenceEntity360<
+  TData = Awaited<ReturnType<typeof getIntelligenceEntity360>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  kind: "supplier" | "material" | "category" | "lane" | "contract" | "site",
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceEntity360>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetIntelligenceEntity360QueryOptions(
+    kind,
+    id,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Composite risk scores per country across the six risk dimensions
+(geo, financial, cyber, esg, climate, sanctions). The aggregator
+groups signals by `scope_lane_key` (country) and runs the
+documented composite scorer; tooltips include the top-3
+contributing signals for each cell so the UI can show the
+"why" with disclosure-tier badges.
+
+ * @summary Tenant risk heatmap by country and dimension
+ */
+export const getGetIntelligenceRiskHeatmapUrl = (
+  params?: GetIntelligenceRiskHeatmapParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/intelligence/risk/heatmap?${stringifiedParams}`
+    : `/api/intelligence/risk/heatmap`;
+};
+
+export const getIntelligenceRiskHeatmap = async (
+  params?: GetIntelligenceRiskHeatmapParams,
+  options?: RequestInit,
+): Promise<IntelligenceRiskHeatmapResponse> => {
+  return customFetch<IntelligenceRiskHeatmapResponse>(
+    getGetIntelligenceRiskHeatmapUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetIntelligenceRiskHeatmapQueryKey = (
+  params?: GetIntelligenceRiskHeatmapParams,
+) => {
+  return [
+    `/api/intelligence/risk/heatmap`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetIntelligenceRiskHeatmapQueryOptions = <
+  TData = Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetIntelligenceRiskHeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetIntelligenceRiskHeatmapQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>
+  > = ({ signal }) =>
+    getIntelligenceRiskHeatmap(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetIntelligenceRiskHeatmapQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>
+>;
+export type GetIntelligenceRiskHeatmapQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Tenant risk heatmap by country and dimension
+ */
+
+export function useGetIntelligenceRiskHeatmap<
+  TData = Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetIntelligenceRiskHeatmapParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceRiskHeatmap>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetIntelligenceRiskHeatmapQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Risk events suitable for the War Room map / live feed.
+Currently sourced from:
+  - `event_geocoded` (GDELT global event firehose)
+  - `natural_hazard` (USGS / NOAA / NASA EONET / GDACS)
+  - `sanctions_match` (OFAC / EU / UN / OpenSanctions hits)
+  - `corporate_filing` (SEC EDGAR / Companies House material
+    filings) — only high-severity rows surface in the war room
+    (`severityMin` ≥ 0.7 by default).
+Each item includes an optional `impactPath` propagating the event
+down to tenant spend: event → site → supplier → contract →
+category → spend.
+
+ * @summary War-room event stream with geocoordinates and impact paths
+ */
+export const getListIntelligenceEventsUrl = (
+  params?: ListIntelligenceEventsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/intelligence/events?${stringifiedParams}`
+    : `/api/intelligence/events`;
+};
+
+export const listIntelligenceEvents = async (
+  params?: ListIntelligenceEventsParams,
+  options?: RequestInit,
+): Promise<IntelligenceEventStreamResponse> => {
+  return customFetch<IntelligenceEventStreamResponse>(
+    getListIntelligenceEventsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListIntelligenceEventsQueryKey = (
+  params?: ListIntelligenceEventsParams,
+) => {
+  return [`/api/intelligence/events`, ...(params ? [params] : [])] as const;
+};
+
+export const getListIntelligenceEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listIntelligenceEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIntelligenceEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIntelligenceEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListIntelligenceEventsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listIntelligenceEvents>>
+  > = ({ signal }) =>
+    listIntelligenceEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listIntelligenceEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListIntelligenceEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listIntelligenceEvents>>
+>;
+export type ListIntelligenceEventsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary War-room event stream with geocoordinates and impact paths
+ */
+
+export function useListIntelligenceEvents<
+  TData = Awaited<ReturnType<typeof listIntelligenceEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListIntelligenceEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listIntelligenceEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListIntelligenceEventsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Categories and suppliers ranked by recent spend with little or
+no signal coverage in the last `lookbackDays`. Helps analysts
+find "blind spots" — high-value scopes the collectors aren't
+watching yet.
+
+ * @summary Spend-weighted coverage gaps
+ */
+export const getGetIntelligenceCoverageGapsUrl = (
+  params?: GetIntelligenceCoverageGapsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/intelligence/coverage-gaps?${stringifiedParams}`
+    : `/api/intelligence/coverage-gaps`;
+};
+
+export const getIntelligenceCoverageGaps = async (
+  params?: GetIntelligenceCoverageGapsParams,
+  options?: RequestInit,
+): Promise<IntelligenceCoverageGapsResponse> => {
+  return customFetch<IntelligenceCoverageGapsResponse>(
+    getGetIntelligenceCoverageGapsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetIntelligenceCoverageGapsQueryKey = (
+  params?: GetIntelligenceCoverageGapsParams,
+) => {
+  return [
+    `/api/intelligence/coverage-gaps`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetIntelligenceCoverageGapsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetIntelligenceCoverageGapsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetIntelligenceCoverageGapsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>
+  > = ({ signal }) =>
+    getIntelligenceCoverageGaps(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetIntelligenceCoverageGapsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>
+>;
+export type GetIntelligenceCoverageGapsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Spend-weighted coverage gaps
+ */
+
+export function useGetIntelligenceCoverageGaps<
+  TData = Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetIntelligenceCoverageGapsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getIntelligenceCoverageGaps>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetIntelligenceCoverageGapsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Realized savings + success-fee summary

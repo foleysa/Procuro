@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListCycles,
@@ -13,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDateTime, leverLabel } from "@/lib/format";
-import { Activity, Play, Loader2, Eye, Compass, GitBranch, Zap, GraduationCap } from "lucide-react";
+import { Activity, Play, Loader2, Eye, Compass, GitBranch, Zap, GraduationCap, Radar } from "lucide-react";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
 
@@ -246,6 +247,25 @@ function CycleDetailCard({ cycleId }: { cycleId?: string }) {
             variant="card"
           />
         )}
+        <div className="flex flex-wrap gap-3 text-xs">
+          <Link
+            href="/fusion"
+            data-testid="link-fusion"
+            className="inline-flex items-center gap-1 text-primary hover:underline"
+          >
+            <Radar className="w-3.5 h-3.5" />
+            Open Intelligence Fusion Center →
+          </Link>
+          <Link
+            href={`/fusion?tab=events&cycleId=${encodeURIComponent(cycleId)}`}
+            data-testid="link-fusion-cycle-events"
+            className="inline-flex items-center gap-1 text-primary hover:underline"
+            title="Open the war-room event stream filtered to this cycle's window"
+          >
+            <Radar className="w-3.5 h-3.5" />
+            View war-room events for this cycle →
+          </Link>
+        </div>
         {learn?.priorDeltas && learn.priorDeltas.length > 0 && (
           <div>
             <div className="font-semibold mb-1 flex items-center gap-2"><GraduationCap className="w-4 h-4" /> Learn — prior deltas</div>

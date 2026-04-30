@@ -30,6 +30,12 @@ tags:
     description: External-intelligence collector registry
   - name: market-signals
     description: External market signals
+  - name: intelligence
+    description: |
+      Tenant-scoped Intelligence Fusion Center endpoints. All routes
+      filter by the active tenant and respect the tenant's
+      `disclosurePolicy` server-side: T3/T4 signals are stripped before
+      the wire for non-analyst policies.
   - name: jobs
     description: Async job runner
   - name: ingest
@@ -1479,6 +1485,185 @@ paths:
               schema:
                 $ref: "#/components/schemas/JobAccepted"
 
+  /intelligence/signals:
+    get:
+      operationId: listIntelligenceSignals
+      tags: [intelligence]
+      summary: Tenant-scoped signal browser
+      description: |
+        Returns market_signals filtered by the active tenant and the
+        tenant's `disclosurePolicy`. T3/T4 signals are stripped before
+        the wire for non-analyst policies. Optional facet filters narrow
+        by signal-type, supplier, country, time window and free-text
+        search over scope columns.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: signalType
+          schema: { type: string }
+        - in: query
+          name: supplierId
+          schema: { type: string }
+        - in: query
+          name: country
+          schema: { type: string }
+          description: ISO-3166 alpha-2 country code (matches scope_lane_key).
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Free-text search over supplier / material / lane scope columns.
+        - in: query
+          name: since
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Filtered signal list with citations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceSignalListResponse"
+
+  /intelligence/entity/{kind}/{id}:
+    get:
+      operationId: getIntelligenceEntity360
+      tags: [intelligence]
+      summary: Entity 360 — recent signals + composite risk for one entity
+      description: |
+        Identifies an entity by `kind` and `id`. `kind` ∈ {`supplier`,
+        `material`, `category`, `lane`, `contract`, `site`}.
+
+        - `supplier`/`contract`: `id` is the database UUID.
+        - `material`: `id` is the SKU code.
+        - `category`: `id` is the category code.
+        - `lane`: `id` is the ISO-2 country code (or any lane key).
+        - `site`: `id` is `<supplierId>` (v1 supplier-as-site proxy);
+          response is enriched with the supplier's HQ coordinates and
+          biased toward facility-level / climate / hazard signals.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [supplier, material, category, lane, contract, site]
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          example: "01HZ7..."
+      responses:
+        "200":
+          description: Entity profile, recent signals, and per-dimension risk scores.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceEntity360Response"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /intelligence/risk/heatmap:
+    get:
+      operationId: getIntelligenceRiskHeatmap
+      tags: [intelligence]
+      summary: Tenant risk heatmap by country and dimension
+      description: |
+        Composite risk scores per country across the six risk dimensions
+        (geo, financial, cyber, esg, climate, sanctions). The aggregator
+        groups signals by `scope_lane_key` (country) and runs the
+        documented composite scorer; tooltips include the top-3
+        contributing signals for each cell so the UI can show the
+        "why" with disclosure-tier badges.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: lookbackDays
+          schema: { type: integer, minimum: 1, maximum: 730, default: 90 }
+      responses:
+        "200":
+          description: Country × dimension matrix of composite scores.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceRiskHeatmapResponse"
+
+  /intelligence/events:
+    get:
+      operationId: listIntelligenceEvents
+      tags: [intelligence]
+      summary: War-room event stream with geocoordinates and impact paths
+      description: |
+        Risk events suitable for the War Room map / live feed.
+        Currently sourced from:
+          - `event_geocoded` (GDELT global event firehose)
+          - `natural_hazard` (USGS / NOAA / NASA EONET / GDACS)
+          - `sanctions_match` (OFAC / EU / UN / OpenSanctions hits)
+          - `corporate_filing` (SEC EDGAR / Companies House material
+            filings) — only high-severity rows surface in the war room
+            (`severityMin` ≥ 0.7 by default).
+        Each item includes an optional `impactPath` propagating the event
+        down to tenant spend: event → site → supplier → contract →
+        category → spend.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: hours
+          schema: { type: integer, minimum: 1, maximum: 720, default: 72 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: severityMin
+          schema: { type: number, minimum: 0, maximum: 1, default: 0.7 }
+          description: |
+            Minimum severity (0-1, sourced from the signal's confidence)
+            below which `corporate_filing` events are filtered out. Other
+            event types ignore this filter.
+        - in: query
+          name: cycleId
+          schema: { type: string }
+          description: |
+            Optional OODA cycle id used by the war-room cross-link to
+            preload the cycle's lookback window (`hours` is overridden
+            to span the cycle's start → now if cycle is in-flight, or
+            cycle.start → cycle.end if completed).
+      responses:
+        "200":
+          description: Recent geocoded events for the war-room view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceEventStreamResponse"
+
+  /intelligence/coverage-gaps:
+    get:
+      operationId: getIntelligenceCoverageGaps
+      tags: [intelligence]
+      summary: Spend-weighted coverage gaps
+      description: |
+        Categories and suppliers ranked by recent spend with little or
+        no signal coverage in the last `lookbackDays`. Helps analysts
+        find "blind spots" — high-value scopes the collectors aren't
+        watching yet.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: lookbackDays
+          schema: { type: integer, minimum: 1, maximum: 365, default: 90 }
+      responses:
+        "200":
+          description: Spend-weighted coverage gap list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntelligenceCoverageGapsResponse"
+
   /billing/summary:
     get:
       operationId: getBillingSummary
@@ -2573,6 +2758,317 @@ components:
           type: string
           nullable: true
           maxLength: 1000
+
+    IntelligenceSignal:
+      type: object
+      description: |
+        Signal Browser row. Includes the resolved scope label and a
+        single `InsightSource` citation per row so the renderer can
+        decide whether to surface it (T1/T2) or summarise it
+        (T3/T4) in conservative tenants.
+      required:
+        [
+          id,
+          signalType,
+          value,
+          observedAt,
+          tier,
+          scope,
+          source,
+        ]
+      properties:
+        id: { type: string }
+        signalType: { type: string }
+        value: { type: number }
+        unit: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        confidence: { type: number, nullable: true }
+        observedAt: { type: string, format: date-time }
+        sourceUrl: { type: string, nullable: true }
+        tier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        scope:
+          type: object
+          required: [kind, label]
+          properties:
+            kind:
+              type: string
+              enum: [material, category, supplier, sku, lane, none]
+            label: { type: string }
+            materialCode: { type: string, nullable: true }
+            categoryCode: { type: string, nullable: true }
+            supplierName: { type: string, nullable: true }
+            supplierId: { type: string, nullable: true }
+            laneKey: { type: string, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        source:
+          $ref: "#/components/schemas/InsightSource"
+
+    IntelligenceSignalListResponse:
+      type: object
+      required: [items, totalCount, policy, droppedByPolicy]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceSignal" }
+        nextCursor: { type: string, nullable: true }
+        totalCount:
+          type: integer
+          description: Total signals matching the filter (post-policy).
+        droppedByPolicy:
+          type: integer
+          description: |
+            How many T3/T4 signals were stripped from this response by
+            the active disclosure policy. Lets the UI tell analysts
+            "5 hidden" without leaking the rows themselves.
+        policy:
+          type: string
+          enum: [conservative, standard, analyst]
+
+    IntelligenceRiskScore:
+      type: object
+      required: [dimension, score, band, signalCount, topContributors]
+      properties:
+        dimension:
+          type: string
+          enum: [geo, financial, cyber, esg, climate, sanctions]
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        band:
+          type: string
+          enum: [low, moderate, elevated, high]
+        signalCount: { type: integer }
+        topContributors:
+          type: array
+          items:
+            type: object
+            required: [signalId, signalType, tier, weighted, observedAt]
+            properties:
+              signalId: { type: string }
+              signalType: { type: string }
+              tier:
+                type: string
+                enum: [T1, T2, T3, T4]
+              collectorId: { type: string, nullable: true }
+              collectorName: { type: string, nullable: true }
+              weighted: { type: number }
+              observedAt: { type: string, format: date-time }
+
+    IntelligenceEntity360Response:
+      type: object
+      required: [kind, id, label, signals, risk, policy]
+      properties:
+        kind:
+          type: string
+          enum: [supplier, material, category, lane, contract, site]
+        id: { type: string }
+        label: { type: string }
+        country: { type: string, nullable: true }
+        recentSpend:
+          type: number
+          nullable: true
+          description: Spend in the lookback window in tenant currency.
+        risk:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceRiskScore" }
+        signals:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceSignal" }
+        policy:
+          type: string
+          enum: [conservative, standard, analyst]
+        droppedByPolicy: { type: integer }
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            Kind-specific enrichment payload. Examples:
+            - `contract`: { contractNumber, title, status, supplierId,
+              supplierName, categoryCode, startDate, endDate,
+              annualBaselineUsd }
+            - `site`: { supplierId, supplierName, lat, lng, country,
+              proxiedAs: "supplier" }
+
+    IntelligenceRiskHeatmapCell:
+      type: object
+      required: [country, dimension, score, band, signalCount]
+      properties:
+        country: { type: string }
+        dimension:
+          type: string
+          enum: [geo, financial, cyber, esg, climate, sanctions]
+        score: { type: integer, minimum: 0, maximum: 100 }
+        band:
+          type: string
+          enum: [low, moderate, elevated, high]
+        signalCount: { type: integer }
+        topContributors:
+          type: array
+          items:
+            type: object
+            required: [signalId, signalType, tier, weighted, observedAt]
+            properties:
+              signalId: { type: string }
+              signalType: { type: string }
+              tier:
+                type: string
+                enum: [T1, T2, T3, T4]
+              collectorName: { type: string, nullable: true }
+              weighted: { type: number }
+              observedAt: { type: string, format: date-time }
+
+    IntelligenceRiskHeatmapResponse:
+      type: object
+      required: [dimensions, countries, cells, generatedAt, policy]
+      properties:
+        dimensions:
+          type: array
+          items: { type: string }
+        countries:
+          type: array
+          items: { type: string }
+        cells:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceRiskHeatmapCell" }
+        sites:
+          type: array
+          description: |
+            Site-level risk points used by the map view. v1 emits one
+            point per supplier (supplier-as-site proxy) located at the
+            supplier's headquarters country centroid; future versions
+            will read from a dedicated `sites` table. `riskScore` is the
+            max composite score for the site across all dimensions for
+            the active disclosure policy.
+          items:
+            type: object
+            required: [siteId, label, country, riskScore, signalCount]
+            properties:
+              siteId: { type: string }
+              supplierId: { type: string, nullable: true }
+              label: { type: string }
+              country: { type: string }
+              lat: { type: number, nullable: true }
+              lng: { type: number, nullable: true }
+              riskScore: { type: integer, minimum: 0, maximum: 100 }
+              band:
+                type: string
+                enum: [low, moderate, elevated, high]
+              signalCount: { type: integer }
+              recentSpend: { type: number, nullable: true }
+        generatedAt: { type: string, format: date-time }
+        policy:
+          type: string
+          enum: [conservative, standard, analyst]
+
+    IntelligenceEvent:
+      type: object
+      required: [id, signalType, observedAt, tier, source]
+      properties:
+        id: { type: string }
+        signalType: { type: string }
+        observedAt: { type: string, format: date-time }
+        title: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        lat: { type: number, nullable: true }
+        lng: { type: number, nullable: true }
+        severity: { type: number, nullable: true }
+        actor: { type: string, nullable: true }
+        eventCode: { type: string, nullable: true }
+        tier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        source:
+          $ref: "#/components/schemas/InsightSource"
+        impactPath:
+          type: array
+          nullable: true
+          description: |
+            Propagation chain from the event down to tenant spend:
+            event → site → supplier → contract → category → spend.
+            Each step is a typed link the UI can render as a breadcrumb
+            and use to deep-link into Entity 360. Exposure is the spend
+            amount (USD, lookback window) attached to the leaf when known.
+          items:
+            type: object
+            required: [step, kind, label]
+            properties:
+              step:
+                type: string
+                enum: [event, site, supplier, contract, category, spend]
+              kind:
+                type: string
+                description: |
+                  Entity-360-compatible kind for this link, or `spend`
+                  for the terminal node.
+                enum: [event, site, supplier, contract, category, spend]
+              id: { type: string, nullable: true }
+              label: { type: string }
+              exposureUsd: { type: number, nullable: true }
+
+    IntelligenceEventStreamResponse:
+      type: object
+      required: [items, generatedAt, policy, droppedByPolicy]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceEvent" }
+        generatedAt: { type: string, format: date-time }
+        policy:
+          type: string
+          enum: [conservative, standard, analyst]
+        droppedByPolicy: { type: integer }
+
+    IntelligenceCoverageGap:
+      type: object
+      required: [scopeKind, scopeLabel, recentSpend, signalCount, severity]
+      properties:
+        scopeKind:
+          type: string
+          enum: [supplier, category, material]
+        scopeId: { type: string, nullable: true }
+        scopeLabel: { type: string }
+        scopeCode: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        recentSpend:
+          type: number
+          description: Spend in tenant currency over the lookback window.
+        signalCount:
+          type: integer
+          description: Number of signals attached to this scope in the window.
+        lastSignalAt:
+          type: string
+          format: date-time
+          nullable: true
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          description: |
+            Coverage gap severity bucket. Critical = high spend + zero
+            signals; low = high signal coverage already.
+        recommendedCollectors:
+          type: array
+          description: |
+            Collector ids the operator should consider enabling to close
+            this gap (heuristic — based on `scopeKinds` of catalogued
+            collectors).
+          items: { type: string }
+
+    IntelligenceCoverageGapsResponse:
+      type: object
+      required: [items, lookbackDays, generatedAt]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IntelligenceCoverageGap" }
+        lookbackDays: { type: integer }
+        generatedAt: { type: string, format: date-time }
 
     Job:
       type: object

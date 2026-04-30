@@ -20,6 +20,7 @@ import Contracts from "./pages/contracts";
 import ContractDetail from "./pages/contract-detail";
 import Approvals from "./pages/approvals";
 import Ooda from "./pages/ooda";
+import Fusion from "./pages/fusion";
 import Results from "./pages/results";
 import Playbook from "./pages/playbook";
 import Collectors from "./pages/collectors";
@@ -181,6 +182,7 @@ function AppRoutes() {
             <Route path="/contracts/:id" component={ContractDetail} />
             <Route path="/approvals" component={Approvals} />
             <Route path="/ooda" component={Ooda} />
+            <Route path="/fusion" component={Fusion} />
             <Route path="/results" component={Results} />
             <Route path="/playbook" component={Playbook} />
             <Route path="/collectors" component={Collectors} />

@@ -2640,6 +2640,556 @@ export const IngestMockErpResponse = zod.object({
 });
 
 /**
+ * Returns market_signals filtered by the active tenant and the
+tenant's `disclosurePolicy`. T3/T4 signals are stripped before
+the wire for non-analyst policies. Optional facet filters narrow
+by signal-type, supplier, country, time window and free-text
+search over scope columns.
+
+ * @summary Tenant-scoped signal browser
+ */
+export const listIntelligenceSignalsQueryLimitDefault = 100;
+export const listIntelligenceSignalsQueryLimitMax = 500;
+
+export const ListIntelligenceSignalsQueryParams = zod.object({
+  signalType: zod.coerce.string().optional(),
+  supplierId: zod.coerce.string().optional(),
+  country: zod.coerce
+    .string()
+    .optional()
+    .describe("ISO-3166 alpha-2 country code (matches scope_lane_key)."),
+  q: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Free-text search over supplier \/ material \/ lane scope columns.",
+    ),
+  since: zod.date().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listIntelligenceSignalsQueryLimitMax)
+    .default(listIntelligenceSignalsQueryLimitDefault),
+  cursor: zod.coerce.string().optional(),
+});
+
+export const ListIntelligenceSignalsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListIntelligenceSignalsResponse = zod.object({
+  items: zod.array(
+    zod
+      .object({
+        id: zod.string(),
+        signalType: zod.string(),
+        value: zod.number(),
+        unit: zod.string().nullish(),
+        currency: zod.string().nullish(),
+        confidence: zod.number().nullish(),
+        observedAt: zod.coerce.date(),
+        sourceUrl: zod.string().nullish(),
+        tier: zod.enum(["T1", "T2", "T3", "T4"]),
+        scope: zod.object({
+          kind: zod.enum([
+            "material",
+            "category",
+            "supplier",
+            "sku",
+            "lane",
+            "none",
+          ]),
+          label: zod.string(),
+          materialCode: zod.string().nullish(),
+          categoryCode: zod.string().nullish(),
+          supplierName: zod.string().nullish(),
+          supplierId: zod.string().nullish(),
+          laneKey: zod.string().nullish(),
+        }),
+        metadata: zod.record(zod.string(), zod.unknown()).nullish(),
+        source: zod
+          .object({
+            collectorId: zod.string(),
+            collectorName: zod.string(),
+            sourceUrl: zod.string(),
+            observedAt: zod.coerce.date(),
+            contract: zod.object({
+              postureClass: zod.enum([
+                "public_api",
+                "tos_restricted",
+                "gray_hat",
+              ]),
+              disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+              jurisdiction: zod.string(),
+              retentionDays: zod.number(),
+              tenantOptInDefault: zod.boolean(),
+            }),
+          })
+          .describe(
+            "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+          ),
+      })
+      .describe(
+        "Signal Browser row. Includes the resolved scope label and a\nsingle `InsightSource` citation per row so the renderer can\ndecide whether to surface it (T1\/T2) or summarise it\n(T3\/T4) in conservative tenants.\n",
+      ),
+  ),
+  nextCursor: zod.string().nullish(),
+  totalCount: zod
+    .number()
+    .describe("Total signals matching the filter (post-policy)."),
+  droppedByPolicy: zod
+    .number()
+    .describe(
+      'How many T3\/T4 signals were stripped from this response by\nthe active disclosure policy. Lets the UI tell analysts\n\"5 hidden\" without leaking the rows themselves.\n',
+    ),
+  policy: zod.enum(["conservative", "standard", "analyst"]),
+});
+
+/**
+ * Identifies an entity by `kind` and `id`. `kind` ∈ {`supplier`,
+`material`, `category`, `lane`, `contract`, `site`}.
+
+- `supplier`/`contract`: `id` is the database UUID.
+- `material`: `id` is the SKU code.
+- `category`: `id` is the category code.
+- `lane`: `id` is the ISO-2 country code (or any lane key).
+- `site`: `id` is `<supplierId>` (v1 supplier-as-site proxy);
+  response is enriched with the supplier's HQ coordinates and
+  biased toward facility-level / climate / hazard signals.
+
+ * @summary Entity 360 — recent signals + composite risk for one entity
+ */
+export const GetIntelligenceEntity360Params = zod.object({
+  kind: zod.enum([
+    "supplier",
+    "material",
+    "category",
+    "lane",
+    "contract",
+    "site",
+  ]),
+  id: zod.coerce.string(),
+});
+
+export const GetIntelligenceEntity360Header = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const getIntelligenceEntity360ResponseRiskItemScoreMin = 0;
+export const getIntelligenceEntity360ResponseRiskItemScoreMax = 100;
+
+export const GetIntelligenceEntity360Response = zod.object({
+  kind: zod.enum([
+    "supplier",
+    "material",
+    "category",
+    "lane",
+    "contract",
+    "site",
+  ]),
+  id: zod.string(),
+  label: zod.string(),
+  country: zod.string().nullish(),
+  recentSpend: zod
+    .number()
+    .nullish()
+    .describe("Spend in the lookback window in tenant currency."),
+  risk: zod.array(
+    zod.object({
+      dimension: zod.enum([
+        "geo",
+        "financial",
+        "cyber",
+        "esg",
+        "climate",
+        "sanctions",
+      ]),
+      score: zod
+        .number()
+        .min(getIntelligenceEntity360ResponseRiskItemScoreMin)
+        .max(getIntelligenceEntity360ResponseRiskItemScoreMax),
+      band: zod.enum(["low", "moderate", "elevated", "high"]),
+      signalCount: zod.number(),
+      topContributors: zod.array(
+        zod.object({
+          signalId: zod.string(),
+          signalType: zod.string(),
+          tier: zod.enum(["T1", "T2", "T3", "T4"]),
+          collectorId: zod.string().nullish(),
+          collectorName: zod.string().nullish(),
+          weighted: zod.number(),
+          observedAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  ),
+  signals: zod.array(
+    zod
+      .object({
+        id: zod.string(),
+        signalType: zod.string(),
+        value: zod.number(),
+        unit: zod.string().nullish(),
+        currency: zod.string().nullish(),
+        confidence: zod.number().nullish(),
+        observedAt: zod.coerce.date(),
+        sourceUrl: zod.string().nullish(),
+        tier: zod.enum(["T1", "T2", "T3", "T4"]),
+        scope: zod.object({
+          kind: zod.enum([
+            "material",
+            "category",
+            "supplier",
+            "sku",
+            "lane",
+            "none",
+          ]),
+          label: zod.string(),
+          materialCode: zod.string().nullish(),
+          categoryCode: zod.string().nullish(),
+          supplierName: zod.string().nullish(),
+          supplierId: zod.string().nullish(),
+          laneKey: zod.string().nullish(),
+        }),
+        metadata: zod.record(zod.string(), zod.unknown()).nullish(),
+        source: zod
+          .object({
+            collectorId: zod.string(),
+            collectorName: zod.string(),
+            sourceUrl: zod.string(),
+            observedAt: zod.coerce.date(),
+            contract: zod.object({
+              postureClass: zod.enum([
+                "public_api",
+                "tos_restricted",
+                "gray_hat",
+              ]),
+              disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+              jurisdiction: zod.string(),
+              retentionDays: zod.number(),
+              tenantOptInDefault: zod.boolean(),
+            }),
+          })
+          .describe(
+            "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+          ),
+      })
+      .describe(
+        "Signal Browser row. Includes the resolved scope label and a\nsingle `InsightSource` citation per row so the renderer can\ndecide whether to surface it (T1\/T2) or summarise it\n(T3\/T4) in conservative tenants.\n",
+      ),
+  ),
+  policy: zod.enum(["conservative", "standard", "analyst"]),
+  droppedByPolicy: zod.number().optional(),
+  details: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      'Kind-specific enrichment payload. Examples:\n- `contract`: { contractNumber, title, status, supplierId,\n  supplierName, categoryCode, startDate, endDate,\n  annualBaselineUsd }\n- `site`: { supplierId, supplierName, lat, lng, country,\n  proxiedAs: \"supplier\" }\n',
+    ),
+});
+
+/**
+ * Composite risk scores per country across the six risk dimensions
+(geo, financial, cyber, esg, climate, sanctions). The aggregator
+groups signals by `scope_lane_key` (country) and runs the
+documented composite scorer; tooltips include the top-3
+contributing signals for each cell so the UI can show the
+"why" with disclosure-tier badges.
+
+ * @summary Tenant risk heatmap by country and dimension
+ */
+export const getIntelligenceRiskHeatmapQueryLookbackDaysDefault = 90;
+export const getIntelligenceRiskHeatmapQueryLookbackDaysMax = 730;
+
+export const GetIntelligenceRiskHeatmapQueryParams = zod.object({
+  lookbackDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getIntelligenceRiskHeatmapQueryLookbackDaysMax)
+    .default(getIntelligenceRiskHeatmapQueryLookbackDaysDefault),
+});
+
+export const GetIntelligenceRiskHeatmapHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const getIntelligenceRiskHeatmapResponseCellsItemScoreMin = 0;
+export const getIntelligenceRiskHeatmapResponseCellsItemScoreMax = 100;
+
+export const getIntelligenceRiskHeatmapResponseSitesItemRiskScoreMin = 0;
+export const getIntelligenceRiskHeatmapResponseSitesItemRiskScoreMax = 100;
+
+export const GetIntelligenceRiskHeatmapResponse = zod.object({
+  dimensions: zod.array(zod.string()),
+  countries: zod.array(zod.string()),
+  cells: zod.array(
+    zod.object({
+      country: zod.string(),
+      dimension: zod.enum([
+        "geo",
+        "financial",
+        "cyber",
+        "esg",
+        "climate",
+        "sanctions",
+      ]),
+      score: zod
+        .number()
+        .min(getIntelligenceRiskHeatmapResponseCellsItemScoreMin)
+        .max(getIntelligenceRiskHeatmapResponseCellsItemScoreMax),
+      band: zod.enum(["low", "moderate", "elevated", "high"]),
+      signalCount: zod.number(),
+      topContributors: zod
+        .array(
+          zod.object({
+            signalId: zod.string(),
+            signalType: zod.string(),
+            tier: zod.enum(["T1", "T2", "T3", "T4"]),
+            collectorName: zod.string().nullish(),
+            weighted: zod.number(),
+            observedAt: zod.coerce.date(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+  sites: zod
+    .array(
+      zod.object({
+        siteId: zod.string(),
+        supplierId: zod.string().nullish(),
+        label: zod.string(),
+        country: zod.string(),
+        lat: zod.number().nullish(),
+        lng: zod.number().nullish(),
+        riskScore: zod
+          .number()
+          .min(getIntelligenceRiskHeatmapResponseSitesItemRiskScoreMin)
+          .max(getIntelligenceRiskHeatmapResponseSitesItemRiskScoreMax),
+        band: zod.enum(["low", "moderate", "elevated", "high"]).optional(),
+        signalCount: zod.number(),
+        recentSpend: zod.number().nullish(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Site-level risk points used by the map view. v1 emits one\npoint per supplier (supplier-as-site proxy) located at the\nsupplier's headquarters country centroid; future versions\nwill read from a dedicated `sites` table. `riskScore` is the\nmax composite score for the site across all dimensions for\nthe active disclosure policy.\n",
+    ),
+  generatedAt: zod.coerce.date(),
+  policy: zod.enum(["conservative", "standard", "analyst"]),
+});
+
+/**
+ * Risk events suitable for the War Room map / live feed.
+Currently sourced from:
+  - `event_geocoded` (GDELT global event firehose)
+  - `natural_hazard` (USGS / NOAA / NASA EONET / GDACS)
+  - `sanctions_match` (OFAC / EU / UN / OpenSanctions hits)
+  - `corporate_filing` (SEC EDGAR / Companies House material
+    filings) — only high-severity rows surface in the war room
+    (`severityMin` ≥ 0.7 by default).
+Each item includes an optional `impactPath` propagating the event
+down to tenant spend: event → site → supplier → contract →
+category → spend.
+
+ * @summary War-room event stream with geocoordinates and impact paths
+ */
+export const listIntelligenceEventsQueryHoursDefault = 72;
+export const listIntelligenceEventsQueryHoursMax = 720;
+
+export const listIntelligenceEventsQueryLimitDefault = 200;
+export const listIntelligenceEventsQueryLimitMax = 500;
+
+export const listIntelligenceEventsQuerySeverityMinDefault = 0.7;
+export const listIntelligenceEventsQuerySeverityMinMin = 0;
+export const listIntelligenceEventsQuerySeverityMinMax = 1;
+
+export const ListIntelligenceEventsQueryParams = zod.object({
+  hours: zod.coerce
+    .number()
+    .min(1)
+    .max(listIntelligenceEventsQueryHoursMax)
+    .default(listIntelligenceEventsQueryHoursDefault),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listIntelligenceEventsQueryLimitMax)
+    .default(listIntelligenceEventsQueryLimitDefault),
+  severityMin: zod.coerce
+    .number()
+    .min(listIntelligenceEventsQuerySeverityMinMin)
+    .max(listIntelligenceEventsQuerySeverityMinMax)
+    .default(listIntelligenceEventsQuerySeverityMinDefault)
+    .describe(
+      "Minimum severity (0-1, sourced from the signal's confidence)\nbelow which `corporate_filing` events are filtered out. Other\nevent types ignore this filter.\n",
+    ),
+  cycleId: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Optional OODA cycle id used by the war-room cross-link to\npreload the cycle's lookback window (`hours` is overridden\nto span the cycle's start → now if cycle is in-flight, or\ncycle.start → cycle.end if completed).\n",
+    ),
+});
+
+export const ListIntelligenceEventsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListIntelligenceEventsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      signalType: zod.string(),
+      observedAt: zod.coerce.date(),
+      title: zod.string().nullish(),
+      country: zod.string().nullish(),
+      lat: zod.number().nullish(),
+      lng: zod.number().nullish(),
+      severity: zod.number().nullish(),
+      actor: zod.string().nullish(),
+      eventCode: zod.string().nullish(),
+      tier: zod.enum(["T1", "T2", "T3", "T4"]),
+      source: zod
+        .object({
+          collectorId: zod.string(),
+          collectorName: zod.string(),
+          sourceUrl: zod.string(),
+          observedAt: zod.coerce.date(),
+          contract: zod.object({
+            postureClass: zod.enum([
+              "public_api",
+              "tos_restricted",
+              "gray_hat",
+            ]),
+            disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+            jurisdiction: zod.string(),
+            retentionDays: zod.number(),
+            tenantOptInDefault: zod.boolean(),
+          }),
+        })
+        .describe(
+          "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+        ),
+      impactPath: zod
+        .array(
+          zod.object({
+            step: zod.enum([
+              "event",
+              "site",
+              "supplier",
+              "contract",
+              "category",
+              "spend",
+            ]),
+            kind: zod
+              .enum([
+                "event",
+                "site",
+                "supplier",
+                "contract",
+                "category",
+                "spend",
+              ])
+              .describe(
+                "Entity-360-compatible kind for this link, or `spend`\nfor the terminal node.\n",
+              ),
+            id: zod.string().nullish(),
+            label: zod.string(),
+            exposureUsd: zod.number().nullish(),
+          }),
+        )
+        .nullish()
+        .describe(
+          "Propagation chain from the event down to tenant spend:\nevent → site → supplier → contract → category → spend.\nEach step is a typed link the UI can render as a breadcrumb\nand use to deep-link into Entity 360. Exposure is the spend\namount (USD, lookback window) attached to the leaf when known.\n",
+        ),
+    }),
+  ),
+  generatedAt: zod.coerce.date(),
+  policy: zod.enum(["conservative", "standard", "analyst"]),
+  droppedByPolicy: zod.number(),
+});
+
+/**
+ * Categories and suppliers ranked by recent spend with little or
+no signal coverage in the last `lookbackDays`. Helps analysts
+find "blind spots" — high-value scopes the collectors aren't
+watching yet.
+
+ * @summary Spend-weighted coverage gaps
+ */
+export const getIntelligenceCoverageGapsQueryLookbackDaysDefault = 90;
+export const getIntelligenceCoverageGapsQueryLookbackDaysMax = 365;
+
+export const GetIntelligenceCoverageGapsQueryParams = zod.object({
+  lookbackDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getIntelligenceCoverageGapsQueryLookbackDaysMax)
+    .default(getIntelligenceCoverageGapsQueryLookbackDaysDefault),
+});
+
+export const GetIntelligenceCoverageGapsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetIntelligenceCoverageGapsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      scopeKind: zod.enum(["supplier", "category", "material"]),
+      scopeId: zod.string().nullish(),
+      scopeLabel: zod.string(),
+      scopeCode: zod.string().nullish(),
+      country: zod.string().nullish(),
+      recentSpend: zod
+        .number()
+        .describe("Spend in tenant currency over the lookback window."),
+      signalCount: zod
+        .number()
+        .describe("Number of signals attached to this scope in the window."),
+      lastSignalAt: zod.coerce.date().nullish(),
+      severity: zod
+        .enum(["critical", "high", "medium", "low"])
+        .describe(
+          "Coverage gap severity bucket. Critical = high spend + zero\nsignals; low = high signal coverage already.\n",
+        ),
+      recommendedCollectors: zod
+        .array(zod.string())
+        .optional()
+        .describe(
+          "Collector ids the operator should consider enabling to close\nthis gap (heuristic — based on `scopeKinds` of catalogued\ncollectors).\n",
+        ),
+    }),
+  ),
+  lookbackDays: zod.number(),
+  generatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Realized savings + success-fee summary
  */
 export const GetBillingSummaryHeader = zod.object({

@@ -494,7 +494,13 @@ export default function Dashboard() {
                       : "No signals yet"
               }
               tone={recentSignals24h.length > 0 ? "green" : "muted"}
-              href="/collectors"
+              href="/fusion"
+            />
+            <PulseRow
+              icon={Radar}
+              label="Intelligence Fusion"
+              value="Signals · Entity 360 · Heatmap · Events · Coverage"
+              href="/fusion"
             />
             <PulseRow
               icon={BarChart3}

@@ -41,6 +41,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/contracts", label: "Contracts", icon: FileText },
     { href: "/approvals", label: "Approvals", icon: CheckSquare },
     { href: "/ooda", label: "OODA Wheel", icon: Activity },
+    { href: "/fusion", label: "Intelligence Fusion", icon: Radar },
     { href: "/results", label: "Results & Billing", icon: TrendingUp },
     { href: "/playbook", label: "Playbook", icon: BookOpen },
     { href: "/collectors", label: "Collector Workbench", icon: Radar },

@@ -769,6 +769,439 @@ export interface PatchContractRequest {
   renewalTargetAction?: string | null;
 }
 
+export type IntelligenceSignalTier =
+  (typeof IntelligenceSignalTier)[keyof typeof IntelligenceSignalTier];
+
+export const IntelligenceSignalTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type IntelligenceSignalScopeKind =
+  (typeof IntelligenceSignalScopeKind)[keyof typeof IntelligenceSignalScopeKind];
+
+export const IntelligenceSignalScopeKind = {
+  material: "material",
+  category: "category",
+  supplier: "supplier",
+  sku: "sku",
+  lane: "lane",
+  none: "none",
+} as const;
+
+export type IntelligenceSignalScope = {
+  kind: IntelligenceSignalScopeKind;
+  label: string;
+  materialCode?: string | null;
+  categoryCode?: string | null;
+  supplierName?: string | null;
+  supplierId?: string | null;
+  laneKey?: string | null;
+};
+
+export type IntelligenceSignalMetadata = { [key: string]: unknown } | null;
+
+/**
+ * Signal Browser row. Includes the resolved scope label and a
+single `InsightSource` citation per row so the renderer can
+decide whether to surface it (T1/T2) or summarise it
+(T3/T4) in conservative tenants.
+
+ */
+export interface IntelligenceSignal {
+  id: string;
+  signalType: string;
+  value: number;
+  unit?: string | null;
+  currency?: string | null;
+  confidence?: number | null;
+  observedAt: string;
+  sourceUrl?: string | null;
+  tier: IntelligenceSignalTier;
+  scope: IntelligenceSignalScope;
+  metadata?: IntelligenceSignalMetadata;
+  source: InsightSource;
+}
+
+export type IntelligenceSignalListResponsePolicy =
+  (typeof IntelligenceSignalListResponsePolicy)[keyof typeof IntelligenceSignalListResponsePolicy];
+
+export const IntelligenceSignalListResponsePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
+export interface IntelligenceSignalListResponse {
+  items: IntelligenceSignal[];
+  nextCursor?: string | null;
+  /** Total signals matching the filter (post-policy). */
+  totalCount: number;
+  /** How many T3/T4 signals were stripped from this response by
+the active disclosure policy. Lets the UI tell analysts
+"5 hidden" without leaking the rows themselves.
+ */
+  droppedByPolicy: number;
+  policy: IntelligenceSignalListResponsePolicy;
+}
+
+export type IntelligenceRiskScoreDimension =
+  (typeof IntelligenceRiskScoreDimension)[keyof typeof IntelligenceRiskScoreDimension];
+
+export const IntelligenceRiskScoreDimension = {
+  geo: "geo",
+  financial: "financial",
+  cyber: "cyber",
+  esg: "esg",
+  climate: "climate",
+  sanctions: "sanctions",
+} as const;
+
+export type IntelligenceRiskScoreBand =
+  (typeof IntelligenceRiskScoreBand)[keyof typeof IntelligenceRiskScoreBand];
+
+export const IntelligenceRiskScoreBand = {
+  low: "low",
+  moderate: "moderate",
+  elevated: "elevated",
+  high: "high",
+} as const;
+
+export type IntelligenceRiskScoreTopContributorsItemTier =
+  (typeof IntelligenceRiskScoreTopContributorsItemTier)[keyof typeof IntelligenceRiskScoreTopContributorsItemTier];
+
+export const IntelligenceRiskScoreTopContributorsItemTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type IntelligenceRiskScoreTopContributorsItem = {
+  signalId: string;
+  signalType: string;
+  tier: IntelligenceRiskScoreTopContributorsItemTier;
+  collectorId?: string | null;
+  collectorName?: string | null;
+  weighted: number;
+  observedAt: string;
+};
+
+export interface IntelligenceRiskScore {
+  dimension: IntelligenceRiskScoreDimension;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  score: number;
+  band: IntelligenceRiskScoreBand;
+  signalCount: number;
+  topContributors: IntelligenceRiskScoreTopContributorsItem[];
+}
+
+export type IntelligenceEntity360ResponseKind =
+  (typeof IntelligenceEntity360ResponseKind)[keyof typeof IntelligenceEntity360ResponseKind];
+
+export const IntelligenceEntity360ResponseKind = {
+  supplier: "supplier",
+  material: "material",
+  category: "category",
+  lane: "lane",
+  contract: "contract",
+  site: "site",
+} as const;
+
+export type IntelligenceEntity360ResponsePolicy =
+  (typeof IntelligenceEntity360ResponsePolicy)[keyof typeof IntelligenceEntity360ResponsePolicy];
+
+export const IntelligenceEntity360ResponsePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
+/**
+ * Kind-specific enrichment payload. Examples:
+- `contract`: { contractNumber, title, status, supplierId,
+  supplierName, categoryCode, startDate, endDate,
+  annualBaselineUsd }
+- `site`: { supplierId, supplierName, lat, lng, country,
+  proxiedAs: "supplier" }
+
+ */
+export type IntelligenceEntity360ResponseDetails = {
+  [key: string]: unknown;
+} | null;
+
+export interface IntelligenceEntity360Response {
+  kind: IntelligenceEntity360ResponseKind;
+  id: string;
+  label: string;
+  country?: string | null;
+  /** Spend in the lookback window in tenant currency. */
+  recentSpend?: number | null;
+  risk: IntelligenceRiskScore[];
+  signals: IntelligenceSignal[];
+  policy: IntelligenceEntity360ResponsePolicy;
+  droppedByPolicy?: number;
+  /** Kind-specific enrichment payload. Examples:
+- `contract`: { contractNumber, title, status, supplierId,
+  supplierName, categoryCode, startDate, endDate,
+  annualBaselineUsd }
+- `site`: { supplierId, supplierName, lat, lng, country,
+  proxiedAs: "supplier" }
+ */
+  details?: IntelligenceEntity360ResponseDetails;
+}
+
+export type IntelligenceRiskHeatmapCellDimension =
+  (typeof IntelligenceRiskHeatmapCellDimension)[keyof typeof IntelligenceRiskHeatmapCellDimension];
+
+export const IntelligenceRiskHeatmapCellDimension = {
+  geo: "geo",
+  financial: "financial",
+  cyber: "cyber",
+  esg: "esg",
+  climate: "climate",
+  sanctions: "sanctions",
+} as const;
+
+export type IntelligenceRiskHeatmapCellBand =
+  (typeof IntelligenceRiskHeatmapCellBand)[keyof typeof IntelligenceRiskHeatmapCellBand];
+
+export const IntelligenceRiskHeatmapCellBand = {
+  low: "low",
+  moderate: "moderate",
+  elevated: "elevated",
+  high: "high",
+} as const;
+
+export type IntelligenceRiskHeatmapCellTopContributorsItemTier =
+  (typeof IntelligenceRiskHeatmapCellTopContributorsItemTier)[keyof typeof IntelligenceRiskHeatmapCellTopContributorsItemTier];
+
+export const IntelligenceRiskHeatmapCellTopContributorsItemTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type IntelligenceRiskHeatmapCellTopContributorsItem = {
+  signalId: string;
+  signalType: string;
+  tier: IntelligenceRiskHeatmapCellTopContributorsItemTier;
+  collectorName?: string | null;
+  weighted: number;
+  observedAt: string;
+};
+
+export interface IntelligenceRiskHeatmapCell {
+  country: string;
+  dimension: IntelligenceRiskHeatmapCellDimension;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  score: number;
+  band: IntelligenceRiskHeatmapCellBand;
+  signalCount: number;
+  topContributors?: IntelligenceRiskHeatmapCellTopContributorsItem[];
+}
+
+export type IntelligenceRiskHeatmapResponseSitesItemBand =
+  (typeof IntelligenceRiskHeatmapResponseSitesItemBand)[keyof typeof IntelligenceRiskHeatmapResponseSitesItemBand];
+
+export const IntelligenceRiskHeatmapResponseSitesItemBand = {
+  low: "low",
+  moderate: "moderate",
+  elevated: "elevated",
+  high: "high",
+} as const;
+
+export type IntelligenceRiskHeatmapResponseSitesItem = {
+  siteId: string;
+  supplierId?: string | null;
+  label: string;
+  country: string;
+  lat?: number | null;
+  lng?: number | null;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  riskScore: number;
+  band?: IntelligenceRiskHeatmapResponseSitesItemBand;
+  signalCount: number;
+  recentSpend?: number | null;
+};
+
+export type IntelligenceRiskHeatmapResponsePolicy =
+  (typeof IntelligenceRiskHeatmapResponsePolicy)[keyof typeof IntelligenceRiskHeatmapResponsePolicy];
+
+export const IntelligenceRiskHeatmapResponsePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
+export interface IntelligenceRiskHeatmapResponse {
+  dimensions: string[];
+  countries: string[];
+  cells: IntelligenceRiskHeatmapCell[];
+  /** Site-level risk points used by the map view. v1 emits one
+point per supplier (supplier-as-site proxy) located at the
+supplier's headquarters country centroid; future versions
+will read from a dedicated `sites` table. `riskScore` is the
+max composite score for the site across all dimensions for
+the active disclosure policy.
+ */
+  sites?: IntelligenceRiskHeatmapResponseSitesItem[];
+  generatedAt: string;
+  policy: IntelligenceRiskHeatmapResponsePolicy;
+}
+
+export type IntelligenceEventTier =
+  (typeof IntelligenceEventTier)[keyof typeof IntelligenceEventTier];
+
+export const IntelligenceEventTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type IntelligenceEventImpactPathItemStep =
+  (typeof IntelligenceEventImpactPathItemStep)[keyof typeof IntelligenceEventImpactPathItemStep];
+
+export const IntelligenceEventImpactPathItemStep = {
+  event: "event",
+  site: "site",
+  supplier: "supplier",
+  contract: "contract",
+  category: "category",
+  spend: "spend",
+} as const;
+
+/**
+ * Entity-360-compatible kind for this link, or `spend`
+for the terminal node.
+
+ */
+export type IntelligenceEventImpactPathItemKind =
+  (typeof IntelligenceEventImpactPathItemKind)[keyof typeof IntelligenceEventImpactPathItemKind];
+
+export const IntelligenceEventImpactPathItemKind = {
+  event: "event",
+  site: "site",
+  supplier: "supplier",
+  contract: "contract",
+  category: "category",
+  spend: "spend",
+} as const;
+
+export type IntelligenceEventImpactPathItem = {
+  step: IntelligenceEventImpactPathItemStep;
+  /** Entity-360-compatible kind for this link, or `spend`
+for the terminal node.
+ */
+  kind: IntelligenceEventImpactPathItemKind;
+  id?: string | null;
+  label: string;
+  exposureUsd?: number | null;
+};
+
+export interface IntelligenceEvent {
+  id: string;
+  signalType: string;
+  observedAt: string;
+  title?: string | null;
+  country?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  severity?: number | null;
+  actor?: string | null;
+  eventCode?: string | null;
+  tier: IntelligenceEventTier;
+  source: InsightSource;
+  /** Propagation chain from the event down to tenant spend:
+event → site → supplier → contract → category → spend.
+Each step is a typed link the UI can render as a breadcrumb
+and use to deep-link into Entity 360. Exposure is the spend
+amount (USD, lookback window) attached to the leaf when known.
+ */
+  impactPath?: IntelligenceEventImpactPathItem[] | null;
+}
+
+export type IntelligenceEventStreamResponsePolicy =
+  (typeof IntelligenceEventStreamResponsePolicy)[keyof typeof IntelligenceEventStreamResponsePolicy];
+
+export const IntelligenceEventStreamResponsePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
+export interface IntelligenceEventStreamResponse {
+  items: IntelligenceEvent[];
+  generatedAt: string;
+  policy: IntelligenceEventStreamResponsePolicy;
+  droppedByPolicy: number;
+}
+
+export type IntelligenceCoverageGapScopeKind =
+  (typeof IntelligenceCoverageGapScopeKind)[keyof typeof IntelligenceCoverageGapScopeKind];
+
+export const IntelligenceCoverageGapScopeKind = {
+  supplier: "supplier",
+  category: "category",
+  material: "material",
+} as const;
+
+/**
+ * Coverage gap severity bucket. Critical = high spend + zero
+signals; low = high signal coverage already.
+
+ */
+export type IntelligenceCoverageGapSeverity =
+  (typeof IntelligenceCoverageGapSeverity)[keyof typeof IntelligenceCoverageGapSeverity];
+
+export const IntelligenceCoverageGapSeverity = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export interface IntelligenceCoverageGap {
+  scopeKind: IntelligenceCoverageGapScopeKind;
+  scopeId?: string | null;
+  scopeLabel: string;
+  scopeCode?: string | null;
+  country?: string | null;
+  /** Spend in tenant currency over the lookback window. */
+  recentSpend: number;
+  /** Number of signals attached to this scope in the window. */
+  signalCount: number;
+  lastSignalAt?: string | null;
+  /** Coverage gap severity bucket. Critical = high spend + zero
+signals; low = high signal coverage already.
+ */
+  severity: IntelligenceCoverageGapSeverity;
+  /** Collector ids the operator should consider enabling to close
+this gap (heuristic — based on `scopeKinds` of catalogued
+collectors).
+ */
+  recommendedCollectors?: string[];
+}
+
+export interface IntelligenceCoverageGapsResponse {
+  items: IntelligenceCoverageGap[];
+  lookbackDays: number;
+  generatedAt: string;
+}
+
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 
 export const JobStatus = {
@@ -2007,6 +2440,72 @@ export type IngestCsvStreamBodyOne = {
 
 export type IngestMockErpParams = {
   async?: boolean;
+};
+
+export type ListIntelligenceSignalsParams = {
+  signalType?: string;
+  supplierId?: string;
+  /**
+   * ISO-3166 alpha-2 country code (matches scope_lane_key).
+   */
+  country?: string;
+  /**
+   * Free-text search over supplier / material / lane scope columns.
+   */
+  q?: string;
+  since?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  cursor?: string;
+};
+
+export type GetIntelligenceRiskHeatmapParams = {
+  /**
+   * @minimum 1
+   * @maximum 730
+   */
+  lookbackDays?: number;
+};
+
+export type ListIntelligenceEventsParams = {
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  hours?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+ * Minimum severity (0-1, sourced from the signal's confidence)
+below which `corporate_filing` events are filtered out. Other
+event types ignore this filter.
+
+ * @minimum 0
+ * @maximum 1
+ */
+  severityMin?: number;
+  /**
+ * Optional OODA cycle id used by the war-room cross-link to
+preload the cycle's lookback window (`hours` is overridden
+to span the cycle's start → now if cycle is in-flight, or
+cycle.start → cycle.end if completed).
+
+ */
+  cycleId?: string;
+};
+
+export type GetIntelligenceCoverageGapsParams = {
+  /**
+   * @minimum 1
+   * @maximum 365
+   */
+  lookbackDays?: number;
 };
 
 export type ListContractsParams = {
