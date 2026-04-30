@@ -171,7 +171,11 @@ async function insertSignalsIdempotent(
     }
   }
 
-  let inserted = 0;
+  // Filter to just the new rows, deduping within the batch as well so a
+  // single backfill payload that accidentally contains the same
+  // (scope_material_code, observed_at) twice doesn't violate the implicit
+  // uniqueness we rely on.
+  const toInsert: Array<typeof marketSignalsTable.$inferInsert> = [];
   let skipped = 0;
   for (const d of drafts) {
     const k = `${d.scopeMaterialCode ?? ""}@${d.observedAt.toISOString()}`;
@@ -179,7 +183,8 @@ async function insertSignalsIdempotent(
       skipped++;
       continue;
     }
-    await db.insert(marketSignalsTable).values({
+    seen.add(k);
+    toInsert.push({
       id: newId("sig"),
       orgId: null,
       collectorId: collectorRow.id,
@@ -198,8 +203,17 @@ async function insertSignalsIdempotent(
       confidence: String(d.confidence ?? 0.7),
       metadata: d.metadata ?? {},
     });
-    seen.add(k);
-    inserted++;
+  }
+
+  // Bulk-insert in chunks to keep each round-trip's parameter count well
+  // under Postgres' 65535-parameter limit. The signal row has ~16 columns,
+  // so 500 rows × 16 ≈ 8k params per statement — comfortably safe.
+  const CHUNK_SIZE = 500;
+  let inserted = 0;
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+    await db.insert(marketSignalsTable).values(chunk);
+    inserted += chunk.length;
   }
   return { inserted, skipped };
 }
