@@ -280,7 +280,14 @@ test("streaming CSV ingest of a >10 MB file lands every row in Postgres", async 
   // `{ type: "progress", ... }` events emitted while the upload is in flight,
   // optionally a terminal `{ type: "error", ... }` event, and (on success) a
   // final `{ type: "result", entity, rowsParsed, rowsInserted, durationMs }`.
-  // Split on newlines, parse each non-empty line, and pick the final result.
+  // On this test database at least one progress event reliably fires before
+  // the upload completes, so a plain `JSON.parse(rawBody)` would throw
+  // "Unexpected non-whitespace character after JSON" even though the upload
+  // itself succeeded. Split on newlines, parse each non-empty line, and pick
+  // the final result. (The companion `csv-stream-large-entities.test.ts`
+  // shares an equivalent NDJSON helper at `./helpers/ndjson.ts`; this test
+  // inlines a stricter parser because it additionally asserts structural
+  // properties — no error event, and `result` is the terminal line.)
   type ProgressEvent = { type: "progress"; rowsParsed: number; rowsInserted: number };
   type ResultEvent = {
     type: "result";

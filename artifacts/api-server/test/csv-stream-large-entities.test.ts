@@ -66,6 +66,7 @@ import {
 import { and, eq, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import app from "../src/app";
+import { parseTerminalNdjsonEvent } from "./helpers/ndjson";
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
 const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
@@ -128,31 +129,6 @@ async function openAsBlob(filePath: string, type: string): Promise<Blob> {
     );
   }
   return fn(filePath, { type });
-}
-
-/**
- * The streaming endpoint replies with `application/x-ndjson`: zero or more
- * `{type:"progress",...}` lines followed by a single terminal event
- * (`{type:"result",...}` on success, `{type:"error",...}` on failure). Parse
- * the whole body and return the terminal event so subtests can assert on
- * row counts.
- */
-function parseTerminalNdjsonEvent(rawBody: string):
-  | { type: "result"; entity: string; rowsParsed: number; rowsInserted: number; durationMs: number }
-  | { type: "error"; error: string } {
-  const lines = rawBody.split("\n").filter((l) => l.trim().length > 0);
-  if (lines.length === 0) {
-    throw new Error(`Empty NDJSON response body`);
-  }
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const parsed = JSON.parse(lines[i]!) as { type?: string };
-    if (parsed.type === "result" || parsed.type === "error") {
-      return parsed as ReturnType<typeof parseTerminalNdjsonEvent>;
-    }
-  }
-  throw new Error(
-    `No terminal NDJSON event (result/error) found in response: ${rawBody.slice(0, 200)}`,
-  );
 }
 
 /**

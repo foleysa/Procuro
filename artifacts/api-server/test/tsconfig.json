@@ -3,7 +3,12 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "..",
-    "types": ["node"]
+    "types": ["node"],
+    // Tests use Array.prototype.findLast (ES2023). Node 20+ supports it
+    // natively at runtime; the lib upgrade is only needed for the type
+    // declaration. Scoped to tests so the production build still targets
+    // es2022.
+    "lib": ["es2023"]
   },
   "include": ["./**/*.ts", "../src/**/*.ts"],
   "references": [
