@@ -8,6 +8,7 @@ import {
   uniqueIndex,
   integer,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
 
 export const collectionPostureValues = [
@@ -178,6 +179,29 @@ export const marketSignalsTable = pgTable(
     index("market_signals_observed_at_idx").on(t.observedAt),
     index("market_signals_material_idx").on(t.scopeMaterialCode),
     index("market_signals_lane_idx").on(t.scopeLaneKey),
+    /**
+     * Natural-key uniqueness. A given collector should not produce two rows
+     * with the same scope + observation time on repeat runs — a re-run of a
+     * collector that sees the same upstream observation must be a no-op.
+     *
+     * Most signals only fill ONE of the `scope_*` columns and leave the
+     * rest NULL. By default Postgres treats every NULL pair as distinct,
+     * which would make the index useless for those rows. We can't use
+     * `NULLS NOT DISTINCT` (Postgres 15+ syntax not yet exposed by this
+     * drizzle-orm version), so we wrap each nullable scope column in
+     * `COALESCE(col, '')` — distinct empty-string sentinel — so two rows
+     * with NULL in the same column collide as expected.
+     */
+    uniqueIndex("market_signals_natural_key_uq").on(
+      t.collectorId,
+      t.signalType,
+      sql`COALESCE(${t.scopeCategoryCode}, '')`,
+      sql`COALESCE(${t.scopeSku}, '')`,
+      sql`COALESCE(${t.scopeMaterialCode}, '')`,
+      sql`COALESCE(${t.scopeSupplierName}, '')`,
+      sql`COALESCE(${t.scopeLaneKey}, '')`,
+      t.observedAt,
+    ),
   ],
 );
 

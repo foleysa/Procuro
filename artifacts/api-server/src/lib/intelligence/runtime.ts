@@ -4,9 +4,8 @@ import {
   collectorAuditLogTable,
   marketSignalsTable,
   type CollectorRow,
-  type MarketSignalType,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import type { IntelligenceCollector, MarketSignalDraft } from "./collector";
@@ -19,6 +18,110 @@ import {
   fetchFredBackfillDrafts,
   FRED_SERIES,
 } from "./collectors/fred-economic-index";
+
+/**
+ * Inference target matching the unique *index* defined in
+ * `lib/db/src/schema/marketSignals.ts`:
+ *
+ *   UNIQUE (collector_id, signal_type,
+ *           COALESCE(scope_category_code, ''),
+ *           COALESCE(scope_sku, ''),
+ *           COALESCE(scope_material_code, ''),
+ *           COALESCE(scope_supplier_name, ''),
+ *           COALESCE(scope_lane_key, ''),
+ *           observed_at)
+ *
+ * `uniqueIndex(...)` in drizzle creates a Postgres index, not a
+ * constraint — so `ON CONFLICT ON CONSTRAINT <name>` can't see it. The
+ * expression-list form below makes Postgres *infer* exactly this index
+ * (and only this index) for the conflict target. That's still much
+ * stricter than an unqualified `ON CONFLICT DO NOTHING`: a PK collision
+ * or any future unique index/constraint won't match this inference list,
+ * so they will fail loudly instead of being silently swallowed as a
+ * "duplicate".
+ */
+const NATURAL_KEY_ON_CONFLICT = sql`ON CONFLICT (
+  collector_id, signal_type,
+  COALESCE(scope_category_code, ''),
+  COALESCE(scope_sku, ''),
+  COALESCE(scope_material_code, ''),
+  COALESCE(scope_supplier_name, ''),
+  COALESCE(scope_lane_key, ''),
+  observed_at
+) DO NOTHING`;
+
+/**
+ * Coerce empty/whitespace strings to `null` for the nullable scope_* columns.
+ *
+ * The natural-key unique index uses `COALESCE(col, '')` so a `NULL` and an
+ * empty string in the same column collide. Without normalization, a
+ * collector that accidentally emitted `""` for a scope field would
+ * silently overwrite (or be overwritten by) an unscoped row from a
+ * different collector. Treating blank as null makes the dedupe contract
+ * unambiguous: blank means "no scope", same as `null`.
+ */
+function normalizeScope(v: string | undefined | null): string | null {
+  if (v === null || v === undefined) return null;
+  const trimmed = v.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * Build a parameterized `INSERT ... ON CONFLICT ON CONSTRAINT … DO NOTHING
+ * RETURNING id` for `market_signals`.
+ *
+ * Drizzle's typed `onConflictDoNothing({ target })` API in this version
+ * only accepts plain column references — it can't express the COALESCE
+ * expression list our index uses, and an unqualified
+ * `onConflictDoNothing()` would silence *any* unique-constraint violation
+ * (PK, future constraints), which is too forgiving. Targeting the index
+ * by name keeps the semantics tight and obvious.
+ */
+async function insertSignalsWithDedupe(
+  rows: Array<typeof marketSignalsTable.$inferInsert>,
+): Promise<{ inserted: number; duplicates: number }> {
+  if (rows.length === 0) return { inserted: 0, duplicates: 0 };
+
+  const valuesClause = sql.join(
+    rows.map(
+      (r) => sql`(
+        ${r.id},
+        ${r.orgId ?? null},
+        ${r.collectorId},
+        ${r.signalType},
+        ${r.scopeCategoryCode ?? null},
+        ${r.scopeSku ?? null},
+        ${r.scopeMaterialCode ?? null},
+        ${r.scopeSupplierName ?? null},
+        ${r.scopeLaneKey ?? null},
+        ${String(r.value)}::numeric,
+        ${r.unit},
+        ${r.currency ?? "USD"},
+        ${r.observedAt},
+        ${r.sourceUrl},
+        ${r.posture},
+        ${String(r.confidence ?? "0.7")}::numeric,
+        ${JSON.stringify(r.metadata ?? {})}::jsonb
+      )`,
+    ),
+    sql`, `,
+  );
+
+  const result = await db.execute<{ id: string }>(sql`
+    INSERT INTO ${marketSignalsTable}
+      (id, org_id, collector_id, signal_type,
+       scope_category_code, scope_sku, scope_material_code,
+       scope_supplier_name, scope_lane_key,
+       value, unit, currency,
+       observed_at, source_url, posture, confidence, metadata)
+    VALUES ${valuesClause}
+    ${NATURAL_KEY_ON_CONFLICT}
+    RETURNING id
+  `);
+
+  const inserted = result.rows.length;
+  return { inserted, duplicates: rows.length - inserted };
+}
 
 const registry = new Map<string, IntelligenceCollector>();
 
@@ -99,31 +202,35 @@ export async function runCollector(
   try {
     await audit(collectorId, "fetch_started");
     const drafts = await collector.collect({ since: null });
-    let inserted = 0;
-    for (const d of drafts) {
-      await db.insert(marketSignalsTable).values({
-        id: newId("sig"),
-        orgId: null,
-        collectorId,
-        signalType: d.signalType,
-        scopeCategoryCode: d.scopeCategoryCode ?? null,
-        scopeSku: d.scopeSku ?? null,
-        scopeMaterialCode: d.scopeMaterialCode ?? null,
-        scopeSupplierName: d.scopeSupplierName ?? null,
-        scopeLaneKey: d.scopeLaneKey ?? null,
-        value: String(d.value),
-        unit: d.unit,
-        currency: d.currency ?? "USD",
-        observedAt: d.observedAt,
-        sourceUrl: d.sourceUrl,
-        posture: reg.posture,
-        confidence: String(d.confidence ?? 0.7),
-        metadata: d.metadata ?? {},
-      });
-      inserted++;
-    }
-    await audit(collectorId, "fetch_succeeded", { inserted });
-    logger.info({ collectorId, inserted }, "Collector run completed");
+    const rows = drafts.map((d) => ({
+      id: newId("sig"),
+      orgId: null,
+      collectorId,
+      signalType: d.signalType,
+      scopeCategoryCode: normalizeScope(d.scopeCategoryCode),
+      scopeSku: normalizeScope(d.scopeSku),
+      scopeMaterialCode: normalizeScope(d.scopeMaterialCode),
+      scopeSupplierName: normalizeScope(d.scopeSupplierName),
+      scopeLaneKey: normalizeScope(d.scopeLaneKey),
+      value: String(d.value),
+      unit: d.unit,
+      currency: d.currency ?? "USD",
+      observedAt: d.observedAt,
+      sourceUrl: d.sourceUrl,
+      posture: reg.posture,
+      confidence: String(d.confidence ?? 0.7),
+      metadata: d.metadata ?? {},
+    }));
+    const { inserted, duplicates } = await insertSignalsWithDedupe(rows);
+    await audit(collectorId, "fetch_succeeded", {
+      inserted,
+      duplicates,
+      drafts: drafts.length,
+    });
+    logger.info(
+      { collectorId, inserted, duplicates, drafts: drafts.length },
+      "Collector run completed",
+    );
     return { signalsCollected: inserted, durationMs: Date.now() - start };
   } catch (err) {
     const e = err as Error;
@@ -173,16 +280,24 @@ function signalDedupeKey(args: {
 
 /**
  * Insert a batch of MarketSignalDrafts for a collector, skipping rows that
- * already exist for the same `(signal_type, scope_*, observed_at)` key.
+ * already exist on the natural-key unique index.
  *
- * Backfills anchor `observedAt` to a deterministic UTC timestamp (e.g. the
- * ECB run anchors to `YYYY-MM-DDT15:00:00Z`, the FRED run anchors to
- * `YYYY-MM-DDT00:00:00Z`) so a string-key dedupe is correct without a
- * schema migration.
- *
- * Existence is sampled once before the insert loop (filtered to this
- * collector + the `signalType`s present in the draft batch) to avoid N
- * round-trips.
+ * Used by the ECB and FRED historical backfills, which can produce
+ * thousands of rows spanning years. Two protections against duplicates
+ * apply:
+ *   1. **In-batch**: a `signalDedupeKey` Set collapses drafts that an
+ *      upstream feed accidentally repeats inside the same payload —
+ *      Postgres would otherwise reject the second occurrence within a
+ *      single INSERT statement ("command cannot affect row a second
+ *      time") even with ON CONFLICT DO NOTHING. The key spans every
+ *      column in the natural index so it's safe across signal types
+ *      (ECB's `fx_rate` and FRED's `economic_index` use different
+ *      scope columns).
+ *   2. **Across runs**: chunked inserts go through
+ *      `insertSignalsWithDedupe`, which targets the
+ *      `market_signals_natural_key_uq` index by expression-list
+ *      inference — already-persisted rows are silently skipped at the
+ *      database, so repeat backfills are atomic and race-free.
  */
 async function insertSignalsIdempotent(
   collectorRow: CollectorRow,
@@ -190,88 +305,39 @@ async function insertSignalsIdempotent(
 ): Promise<{ inserted: number; skipped: number }> {
   if (drafts.length === 0) return { inserted: 0, skipped: 0 };
 
-  // We could SELECT *only* for the signal types present in the drafts, but
-  // collectors emit a single signal_type today (fx_rate for ECB,
-  // economic_index for FRED). Filtering by collectorId + signalType
-  // narrows the scan to the relevant slice.
-  const signalTypes = Array.from(new Set(drafts.map((d) => d.signalType)));
-  const existing: Array<{
-    signalType: MarketSignalType;
-    scopeMaterialCode: string | null;
-    scopeCategoryCode: string | null;
-    scopeSku: string | null;
-    scopeSupplierName: string | null;
-    scopeLaneKey: string | null;
-    observedAt: Date | null;
-  }> = [];
-  for (const st of signalTypes) {
-    const rows = await db
-      .select({
-        signalType: marketSignalsTable.signalType,
-        scopeMaterialCode: marketSignalsTable.scopeMaterialCode,
-        scopeCategoryCode: marketSignalsTable.scopeCategoryCode,
-        scopeSku: marketSignalsTable.scopeSku,
-        scopeSupplierName: marketSignalsTable.scopeSupplierName,
-        scopeLaneKey: marketSignalsTable.scopeLaneKey,
-        observedAt: marketSignalsTable.observedAt,
-      })
-      .from(marketSignalsTable)
-      .where(
-        and(
-          eq(marketSignalsTable.collectorId, collectorRow.id),
-          eq(marketSignalsTable.signalType, st),
-        ),
-      );
-    existing.push(...rows);
-  }
-
-  const seen = new Set<string>();
-  for (const r of existing) {
-    if (!r.observedAt) continue;
-    seen.add(
-      signalDedupeKey({
-        signalType: r.signalType,
-        scopeMaterialCode: r.scopeMaterialCode,
-        scopeCategoryCode: r.scopeCategoryCode,
-        scopeSku: r.scopeSku,
-        scopeSupplierName: r.scopeSupplierName,
-        scopeLaneKey: r.scopeLaneKey,
-        observedAt: r.observedAt,
-      }),
-    );
-  }
-
-  // Filter to just the new rows, deduping within the batch as well so a
-  // single backfill payload that accidentally contains the same
-  // (scope_material_code, observed_at) twice doesn't violate the implicit
-  // uniqueness we rely on.
+  const seenInBatch = new Set<string>();
   const toInsert: Array<typeof marketSignalsTable.$inferInsert> = [];
-  let skipped = 0;
+  let inBatchSkipped = 0;
   for (const d of drafts) {
+    const scopeMaterialCode = normalizeScope(d.scopeMaterialCode);
+    const scopeCategoryCode = normalizeScope(d.scopeCategoryCode);
+    const scopeSku = normalizeScope(d.scopeSku);
+    const scopeSupplierName = normalizeScope(d.scopeSupplierName);
+    const scopeLaneKey = normalizeScope(d.scopeLaneKey);
     const k = signalDedupeKey({
       signalType: d.signalType,
-      scopeMaterialCode: d.scopeMaterialCode ?? null,
-      scopeCategoryCode: d.scopeCategoryCode ?? null,
-      scopeSku: d.scopeSku ?? null,
-      scopeSupplierName: d.scopeSupplierName ?? null,
-      scopeLaneKey: d.scopeLaneKey ?? null,
+      scopeMaterialCode,
+      scopeCategoryCode,
+      scopeSku,
+      scopeSupplierName,
+      scopeLaneKey,
       observedAt: d.observedAt,
     });
-    if (seen.has(k)) {
-      skipped++;
+    if (seenInBatch.has(k)) {
+      inBatchSkipped++;
       continue;
     }
-    seen.add(k);
+    seenInBatch.add(k);
     toInsert.push({
       id: newId("sig"),
       orgId: null,
       collectorId: collectorRow.id,
       signalType: d.signalType,
-      scopeCategoryCode: d.scopeCategoryCode ?? null,
-      scopeSku: d.scopeSku ?? null,
-      scopeMaterialCode: d.scopeMaterialCode ?? null,
-      scopeSupplierName: d.scopeSupplierName ?? null,
-      scopeLaneKey: d.scopeLaneKey ?? null,
+      scopeCategoryCode,
+      scopeSku,
+      scopeMaterialCode,
+      scopeSupplierName,
+      scopeLaneKey,
       value: String(d.value),
       unit: d.unit,
       currency: d.currency ?? "USD",
@@ -283,17 +349,19 @@ async function insertSignalsIdempotent(
     });
   }
 
-  // Bulk-insert in chunks to keep each round-trip's parameter count well
-  // under Postgres' 65535-parameter limit. The signal row has ~16 columns,
-  // so 500 rows × 16 ≈ 8k params per statement — comfortably safe.
+  // Chunked to keep each round-trip's parameter count well under
+  // Postgres' 65535-parameter limit. Signal row ≈ 17 columns, so
+  // 500 rows × 17 ≈ 8.5k params per statement — comfortably safe.
   const CHUNK_SIZE = 500;
   let inserted = 0;
+  let crossRunDuplicates = 0;
   for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
     const chunk = toInsert.slice(i, i + CHUNK_SIZE);
-    await db.insert(marketSignalsTable).values(chunk);
-    inserted += chunk.length;
+    const r = await insertSignalsWithDedupe(chunk);
+    inserted += r.inserted;
+    crossRunDuplicates += r.duplicates;
   }
-  return { inserted, skipped };
+  return { inserted, skipped: inBatchSkipped + crossRunDuplicates };
 }
 
 /**

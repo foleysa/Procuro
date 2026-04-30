@@ -63,6 +63,19 @@ function dayOfYear(d: Date): number {
   return Math.floor((d.getTime() - start) / 86_400_000);
 }
 
+/**
+ * Daily-close prices have one observation per UTC day, so we anchor
+ * `observedAt` to midnight UTC of "today". Without this, calling `new Date()`
+ * gives a fresh wall-clock timestamp on every run and the natural-key
+ * uniqueness on (collector_id, signal_type, scope_*, observed_at) can't
+ * collapse repeat runs.
+ */
+function startOfUtcDay(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+}
+
 export const publishedCommodityIndexCollector: IntelligenceCollector = {
   id: "published-commodity-index",
   name: "Published Commodity Index",
@@ -74,6 +87,7 @@ export const publishedCommodityIndexCollector: IntelligenceCollector = {
   defaultScheduleCron: "0 */6 * * *",
   async collect({ since: _since }): Promise<MarketSignalDraft[]> {
     const now = new Date();
+    const observedAt = startOfUtcDay(now);
     const doy = dayOfYear(now);
     return MATERIALS.map((m, idx) => ({
       signalType: "commodity_index" as const,
@@ -81,7 +95,7 @@ export const publishedCommodityIndexCollector: IntelligenceCollector = {
       value: dailyPrice(m.base, doy, idx * 11),
       unit: m.unit,
       currency: "USD",
-      observedAt: now,
+      observedAt,
       sourceUrl: m.feedUrl,
       confidence: 0.9,
       metadata: { feed: m.feed, basis: "daily_close" },

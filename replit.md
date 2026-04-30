@@ -20,6 +20,7 @@ pnpm monorepo delivering a **Procurement RaaS MVP**: connect to client ERPs, run
 - `pnpm --filter @workspace/api-spec run codegen` — regen API hooks from OpenAPI
 - `pnpm --filter @workspace/db run push-force` — push DB schema (dev only)
 - `pnpm --filter @workspace/scripts run seed` — re‑seed both demo tenants
+- `pnpm --filter @workspace/scripts run dedupe-market-signals` — collapse pre‑natural‑key duplicate `market_signals` rows; idempotent, safe to re‑run
 - Workflows: `artifacts/api-server: API Server`, `artifacts/command-center: web`
 
 ## Architecture

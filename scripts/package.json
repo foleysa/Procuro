@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "seed": "tsx ./src/seed.ts",
+    "dedupe-market-signals": "tsx ./src/dedupe-market-signals.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
