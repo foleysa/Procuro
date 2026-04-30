@@ -101,23 +101,19 @@ router.get("/collectors", tenantMiddleware, async (_req, res) => {
 });
 
 router.post("/collectors", requirePlatformAdmin, async (req, res) => {
-  const parsed = RegisterCollectorSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid body", details: parsed.error.issues });
-    return;
-  }
+  // Throw on invalid input and let the global error handler shape the
+  // 400 response (`{ error, details }`). See global-error-handler.ts.
+  const data = RegisterCollectorSchema.parse(req.body);
   const actor = req.actorEmail ?? "system@procuro.ai";
-  const row = await upsertCollectorRegistration({ ...parsed.data, actor });
+  const row = await upsertCollectorRegistration({ ...data, actor });
   res.status(201).json({ id: row.id, status: row.status });
 });
 
 router.patch("/collectors/:id", requirePlatformAdmin, async (req, res) => {
   const id = String(req.params.id);
-  const parsed = PatchCollectorSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid body", details: parsed.error.issues });
-    return;
-  }
+  // Throw on invalid input and let the global error handler shape the
+  // 400 response (`{ error, details }`). See global-error-handler.ts.
+  const data = PatchCollectorSchema.parse(req.body);
   const actor = req.actorEmail ?? "system@procuro.ai";
 
   const [current] = await db
@@ -130,21 +126,18 @@ router.patch("/collectors/:id", requirePlatformAdmin, async (req, res) => {
   }
 
   let updated = current;
-  if (parsed.data.status === "approved") {
+  if (data.status === "approved") {
     updated = (await approveCollector(id, actor)) ?? updated;
-  } else if (
-    parsed.data.status === "rejected" ||
-    parsed.data.status === "draft"
-  ) {
-    updated = (await disableCollector(id, actor, parsed.data.status)) ?? updated;
+  } else if (data.status === "rejected" || data.status === "draft") {
+    updated = (await disableCollector(id, actor, data.status)) ?? updated;
   }
-  if (typeof parsed.data.rateLimitRpm === "number") {
-    updated = (await setRateLimit(id, parsed.data.rateLimitRpm, actor)) ?? updated;
+  if (typeof data.rateLimitRpm === "number") {
+    updated = (await setRateLimit(id, data.rateLimitRpm, actor)) ?? updated;
   }
-  if (parsed.data.scheduleCron !== undefined) {
+  if (data.scheduleCron !== undefined) {
     const [row] = await db
       .update(collectorsTable)
-      .set({ scheduleCron: parsed.data.scheduleCron })
+      .set({ scheduleCron: data.scheduleCron })
       .where(eq(collectorsTable.id, id))
       .returning();
     if (row) updated = row;
@@ -152,7 +145,7 @@ router.patch("/collectors/:id", requirePlatformAdmin, async (req, res) => {
       id: `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
       collectorId: id,
       event: "schedule_set",
-      metadata: { actor, cron: parsed.data.scheduleCron },
+      metadata: { actor, cron: data.scheduleCron },
     });
   }
   res.json({ id: updated.id, status: updated.status, killSwitch: updated.killSwitch === 1, rateLimitRpm: updated.rateLimitRpm });
