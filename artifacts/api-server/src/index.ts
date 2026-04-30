@@ -9,6 +9,7 @@ import { ecbFxRatesCollector } from "./lib/intelligence/collectors/ecb-fx-rates"
 import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-economic-index";
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
 import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
+import { blsEconomicIndexCollector } from "./lib/intelligence/collectors/bls-economic-index";
 import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
@@ -47,6 +48,7 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   fredEconomicIndexCollector,
   eiaEnergyCollector,
   worldBankPinkSheetCollector,
+  blsEconomicIndexCollector,
 ];
 
 for (const c of COLLECTORS) {

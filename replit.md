@@ -32,6 +32,7 @@ Multi‑tenant: every domain row carries `tenant_id`, `source_system`, `source_e
 - CSV adapter (Phase 2). Mock ERP adapter (Phase 4).
 - `IntelligenceCollector` interface + `MarketSignal` shape + `CollectionPosture` enum (`public-api`, `published-data`, `respect-robots-crawl`, `aggressive-crawl`).
 - `publishedCommodityIndexCollector` registered out‑of‑the‑box.
+- `blsEconomicIndexCollector` (BLS PPI commodity sub‑series + ECI headline series → `economic_index` signals) registered out‑of‑the‑box. Posture `public-api`, daily schedule. Reads optional `BLS_API_KEY` env var; falls back to the unauthenticated tier (smaller daily quota) with an audit‑log warning when unset.
 
 ### `lib/analyzers` — Tier‑1 lever analyzers (shipped)
 1. `sku_price_benchmark`
