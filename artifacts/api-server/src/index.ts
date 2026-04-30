@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { registerCollector } from "./lib/intelligence/runtime";
 import { publishedCommodityIndexCollector } from "./lib/intelligence/collectors/published-commodity-index";
+import { ecbFxRatesCollector } from "./lib/intelligence/collectors/ecb-fx-rates";
 import {
   registerJobHandler,
   startWorker,
@@ -31,6 +32,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 // Register intelligence collectors
 registerCollector(publishedCommodityIndexCollector);
+registerCollector(ecbFxRatesCollector);
 
 // Register job handlers
 registerJobHandler("run_analysis_cycle", async (job) => {
