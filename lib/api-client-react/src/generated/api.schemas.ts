@@ -28,12 +28,30 @@ export interface ErrorResponse {
   details?: unknown;
 }
 
+/**
+ * Per-tenant insight-citation disclosure policy. Controls which
+intelligence-source tiers are surfaced when rendering an insight
+via the disclosure-tier renderer. `conservative` only shows T1+T2
+attributions, `standard` adds T3 (class label + confidence) and
+`analyst` shows full provenance for every tier including T4.
+
+ */
+export type DisclosurePolicy =
+  (typeof DisclosurePolicy)[keyof typeof DisclosurePolicy];
+
+export const DisclosurePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
 export interface Org {
   id: string;
   slug: string;
   name: string;
   /** Default contingency fee on realized savings */
   successFeePct?: number;
+  disclosurePolicy: DisclosurePolicy;
   createdAt: string;
 }
 
@@ -168,6 +186,49 @@ export interface Opportunity {
 
 export type OpportunityDetailInputs = { [key: string]: unknown };
 
+export type InsightSourceContractPostureClass =
+  (typeof InsightSourceContractPostureClass)[keyof typeof InsightSourceContractPostureClass];
+
+export const InsightSourceContractPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
+} as const;
+
+export type InsightSourceContractDisclosureTier =
+  (typeof InsightSourceContractDisclosureTier)[keyof typeof InsightSourceContractDisclosureTier];
+
+export const InsightSourceContractDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type InsightSourceContract = {
+  postureClass: InsightSourceContractPostureClass;
+  disclosureTier: InsightSourceContractDisclosureTier;
+  jurisdiction: string;
+  retentionDays: number;
+  tenantOptInDefault: boolean;
+};
+
+/**
+ * A single signal-source descriptor backing an insight. Mirrors the
+`SignalSource` shape consumed by the disclosure-tier renderer in
+`@workspace/intelligence/tier`. The `contract` block carries the
+collector's posture + disclosure metadata so the renderer can
+decide what (if anything) to surface to the user.
+
+ */
+export interface InsightSource {
+  collectorId: string;
+  collectorName: string;
+  sourceUrl: string;
+  observedAt: string;
+  contract: InsightSourceContract;
+}
+
 export type DecisionEventType =
   (typeof DecisionEventType)[keyof typeof DecisionEventType];
 
@@ -192,6 +253,13 @@ export interface Decision {
 
 export type OpportunityDetail = Opportunity & {
   inputs?: OpportunityDetailInputs;
+  /** Raw signal-source descriptors that backed this opportunity.
+The Command Center calls `renderInsight()` from
+`@workspace/intelligence/tier` on these and the active
+tenant's `disclosurePolicy` to derive a tier-appropriate
+citation list for display.
+ */
+  sources: InsightSource[];
   decisions?: Decision[];
 };
 
@@ -250,6 +318,13 @@ export type CycleDetail = Cycle & {
   decidePayload?: CycleDetailDecidePayload;
   actPayload?: CycleDetailActPayload;
   learnPayload?: CycleDetailLearnPayload;
+  /** De-duplicated union of every signal source backing the
+opportunities created in this cycle. The Command Center
+renders these through `renderInsight()` from
+`@workspace/intelligence/tier` to produce a cycle-level
+citation block respecting the tenant's `disclosurePolicy`.
+ */
+  sources: InsightSource[];
 };
 
 export interface PriorDelta {

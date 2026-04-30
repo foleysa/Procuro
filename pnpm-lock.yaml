@@ -242,6 +242,9 @@ importers:
       '@types/papaparse':
         specifier: ^5.5.2
         version: 5.5.2
+      '@workspace/intelligence':
+        specifier: workspace:*
+        version: link:../../lib/intelligence
       jszip:
         specifier: ^3.10.1
         version: 3.10.1

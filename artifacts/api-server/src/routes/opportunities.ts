@@ -13,6 +13,7 @@ import { and, eq, desc, sql, or, lt } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
+import { extractSourcesFromInputs } from "../lib/insight-sources";
 
 const router: IRouter = Router();
 
@@ -260,9 +261,11 @@ router.get("/opportunities/:id", tenantMiddleware, async (req, res) => {
     .from(decisionsTable)
     .where(eq(decisionsTable.opportunityId, id))
     .orderBy(desc(decisionsTable.createdAt));
+  const inputs = (row.opp.inputs ?? {}) as Record<string, unknown>;
   res.json({
     ...mapOpportunity(row),
-    inputs: row.opp.inputs ?? {},
+    inputs,
+    sources: extractSourcesFromInputs(inputs),
     decisions: decisions.map((d) => ({
       id: d.id,
       opportunityId: d.opportunityId,

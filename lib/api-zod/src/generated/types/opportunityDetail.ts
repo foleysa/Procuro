@@ -12,10 +12,18 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { Decision } from "./decision";
+import type { InsightSource } from "./insightSource";
 import type { Opportunity } from "./opportunity";
 import type { OpportunityDetailInputs } from "./opportunityDetailInputs";
 
 export type OpportunityDetail = Opportunity & {
   inputs?: OpportunityDetailInputs;
+  /** Raw signal-source descriptors that backed this opportunity.
+The Command Center calls `renderInsight()` from
+`@workspace/intelligence/tier` on these and the active
+tenant's `disclosurePolicy` to derive a tier-appropriate
+citation list for display.
+ */
+  sources: InsightSource[];
   decisions?: Decision[];
 };

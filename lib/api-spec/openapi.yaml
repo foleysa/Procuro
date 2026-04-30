@@ -965,7 +965,7 @@ components:
 
     Org:
       type: object
-      required: [id, slug, name, createdAt]
+      required: [id, slug, name, createdAt, disclosurePolicy]
       properties:
         id: { type: string }
         slug: { type: string }
@@ -973,7 +973,19 @@ components:
         successFeePct:
           type: number
           description: Default contingency fee on realized savings
+        disclosurePolicy:
+          $ref: "#/components/schemas/DisclosurePolicy"
         createdAt: { type: string, format: date-time }
+
+    DisclosurePolicy:
+      type: string
+      description: |
+        Per-tenant insight-citation disclosure policy. Controls which
+        intelligence-source tiers are surfaced when rendering an insight
+        via the disclosure-tier renderer. `conservative` only shows T1+T2
+        attributions, `standard` adds T3 (class label + confidence) and
+        `analyst` shows full provenance for every tier including T4.
+      enum: [conservative, standard, analyst]
 
     MeResponse:
       type: object
@@ -1154,14 +1166,60 @@ components:
       allOf:
         - $ref: "#/components/schemas/Opportunity"
         - type: object
+          required: [sources]
           properties:
             inputs:
               type: object
               additionalProperties: true
+            sources:
+              type: array
+              description: |
+                Raw signal-source descriptors that backed this opportunity.
+                The Command Center calls `renderInsight()` from
+                `@workspace/intelligence/tier` on these and the active
+                tenant's `disclosurePolicy` to derive a tier-appropriate
+                citation list for display.
+              items:
+                $ref: "#/components/schemas/InsightSource"
             decisions:
               type: array
               items:
                 $ref: "#/components/schemas/Decision"
+
+    InsightSource:
+      type: object
+      description: |
+        A single signal-source descriptor backing an insight. Mirrors the
+        `SignalSource` shape consumed by the disclosure-tier renderer in
+        `@workspace/intelligence/tier`. The `contract` block carries the
+        collector's posture + disclosure metadata so the renderer can
+        decide what (if anything) to surface to the user.
+      required: [collectorId, collectorName, sourceUrl, observedAt, contract]
+      properties:
+        collectorId: { type: string }
+        collectorName: { type: string }
+        sourceUrl: { type: string }
+        observedAt: { type: string, format: date-time }
+        contract:
+          type: object
+          required:
+            [
+              postureClass,
+              disclosureTier,
+              jurisdiction,
+              retentionDays,
+              tenantOptInDefault,
+            ]
+          properties:
+            postureClass:
+              type: string
+              enum: [public_api, tos_restricted, gray_hat]
+            disclosureTier:
+              type: string
+              enum: [T1, T2, T3, T4]
+            jurisdiction: { type: string }
+            retentionDays: { type: integer }
+            tenantOptInDefault: { type: boolean }
 
     OpportunityListResponse:
       type: object
@@ -1243,12 +1301,23 @@ components:
       allOf:
         - $ref: "#/components/schemas/Cycle"
         - type: object
+          required: [sources]
           properties:
             observePayload: { type: object, additionalProperties: true }
             orientPayload: { type: object, additionalProperties: true }
             decidePayload: { type: object, additionalProperties: true }
             actPayload: { type: object, additionalProperties: true }
             learnPayload: { type: object, additionalProperties: true }
+            sources:
+              type: array
+              description: |
+                De-duplicated union of every signal source backing the
+                opportunities created in this cycle. The Command Center
+                renders these through `renderInsight()` from
+                `@workspace/intelligence/tier` to produce a cycle-level
+                citation block respecting the tenant's `disclosurePolicy`.
+              items:
+                $ref: "#/components/schemas/InsightSource"
 
     RunCycleResponse:
       type: object

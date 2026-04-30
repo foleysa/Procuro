@@ -33,6 +33,8 @@ import {
 } from "@/lib/format";
 import { ArrowLeft, Check, X, Play, DollarSign, Loader2 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
+import { InsightCitations } from "@/components/insight-citations";
+import { usePolicy } from "@/lib/use-policy";
 
 export default function OpportunityDetail() {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +43,7 @@ export default function OpportunityDetail() {
   const { toast } = useToast();
 
   const { data: opp, isLoading } = useGetOpportunity(id);
+  const policy = usePolicy();
   const [rejectReason, setRejectReason] = useState<RejectionReasonCode>(
     RejectionReasonCode.savings_overstated,
   );
@@ -131,7 +134,14 @@ export default function OpportunityDetail() {
 
       <Card>
         <CardHeader><CardTitle>Rationale</CardTitle></CardHeader>
-        <CardContent className="text-sm whitespace-pre-line">{opp.rationale}</CardContent>
+        <CardContent className="text-sm whitespace-pre-line space-y-3">
+          <div>{opp.rationale}</div>
+          <InsightCitations
+            sources={opp.sources}
+            policy={policy}
+            aggregateConfidence={opp.confidence}
+          />
+        </CardContent>
       </Card>
 
       <Card>

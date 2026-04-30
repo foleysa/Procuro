@@ -11,14 +11,13 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
-import type { DisclosurePolicy } from "./disclosurePolicy";
 
-export interface Org {
-  id: string;
-  slug: string;
-  name: string;
-  /** Default contingency fee on realized savings */
-  successFeePct?: number;
-  disclosurePolicy: DisclosurePolicy;
-  createdAt: Date;
-}
+export type InsightSourceContractDisclosureTier =
+  (typeof InsightSourceContractDisclosureTier)[keyof typeof InsightSourceContractDisclosureTier];
+
+export const InsightSourceContractDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;

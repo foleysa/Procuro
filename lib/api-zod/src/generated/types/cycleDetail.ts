@@ -17,6 +17,7 @@ import type { CycleDetailDecidePayload } from "./cycleDetailDecidePayload";
 import type { CycleDetailLearnPayload } from "./cycleDetailLearnPayload";
 import type { CycleDetailObservePayload } from "./cycleDetailObservePayload";
 import type { CycleDetailOrientPayload } from "./cycleDetailOrientPayload";
+import type { InsightSource } from "./insightSource";
 
 export type CycleDetail = Cycle & {
   observePayload?: CycleDetailObservePayload;
@@ -24,4 +25,11 @@ export type CycleDetail = Cycle & {
   decidePayload?: CycleDetailDecidePayload;
   actPayload?: CycleDetailActPayload;
   learnPayload?: CycleDetailLearnPayload;
+  /** De-duplicated union of every signal source backing the
+opportunities created in this cycle. The Command Center
+renders these through `renderInsight()` from
+`@workspace/intelligence/tier` to produce a cycle-level
+citation block respecting the tenant's `disclosurePolicy`.
+ */
+  sources: InsightSource[];
 };

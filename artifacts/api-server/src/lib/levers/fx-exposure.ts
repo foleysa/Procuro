@@ -1,6 +1,9 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import type { LeverAnalyzer, OpportunityDraft } from "./types";
+import { getCollector } from "../intelligence/runtime";
+import { collectorContract } from "../intelligence/collector";
+import { buildInsightSource, type InsightSource } from "../insight-sources";
 
 /**
  * Lever — Supplier FX exposure.
@@ -97,6 +100,13 @@ interface FxEndpointRow {
   earliest_at: string;
   latest_at: string;
   observation_count: string;
+  /**
+   * Collector that produced the most recent observation in the window.
+   * Used to attribute the FX signal back to a registered intelligence
+   * collector (`@workspace/intelligence/contracts`) so the disclosure
+   * renderer can decide whether to surface it as a citation.
+   */
+  latest_collector_id: string;
 }
 
 export const supplierFxExposureLever: LeverAnalyzer = {
@@ -220,7 +230,8 @@ export const supplierFxExposureLever: LeverAnalyzer = {
                (ms.metadata->>'base') AS base,
                ms.currency            AS quote,
                ms.value::numeric      AS value,
-               ms.observed_at
+               ms.observed_at,
+               ms.collector_id        AS collector_id
         FROM market_signals ms
         WHERE ms.signal_type = 'fx_rate'
           AND ms.scope_material_code IS NOT NULL
@@ -235,7 +246,8 @@ export const supplierFxExposureLever: LeverAnalyzer = {
              (array_agg(value ORDER BY observed_at DESC))[1]::text AS latest_value,
              MIN(observed_at)::text AS earliest_at,
              MAX(observed_at)::text AS latest_at,
-             COUNT(*)::text         AS observation_count
+             COUNT(*)::text         AS observation_count,
+             (array_agg(collector_id ORDER BY observed_at DESC))[1] AS latest_collector_id
       FROM window_signals
       GROUP BY pair, base, quote
       HAVING COUNT(*) >= 2
@@ -297,6 +309,26 @@ export const supplierFxExposureLever: LeverAnalyzer = {
             ? `affected contracts: ${contracts.join(", ")}`
             : `${contracts.length} affected contracts (${contracts.slice(0, 3).join(", ")}, …)`;
 
+      // Build the disclosure-tier source descriptor for the FX
+      // observation that drove this opportunity. The collector lookup
+      // is in-memory (`getCollector`) and only succeeds for collectors
+      // registered at boot — if the registry doesn't recognise the id
+      // (e.g. a legacy row from a removed source) we omit the source
+      // rather than emit a partial citation.
+      const sources: InsightSource[] = [];
+      const collector = getCollector(fx.latest_collector_id);
+      if (collector) {
+        sources.push(
+          buildInsightSource({
+            collectorId: collector.id,
+            collectorName: collector.name,
+            sourceUrl: collector.sourceUrl,
+            observedAt: new Date(fx.latest_at),
+            contract: collectorContract(collector),
+          }),
+        );
+      }
+
       drafts.push({
         leverId: "supplier_fx_exposure",
         title: `FX exposure: ${row.supplier_name} (${row.billing_currency}) — ${costChangePct >= 0 ? "+" : ""}${costChangePct.toFixed(2)}% in ${row.base_currency} cost vs ${fx.pair}`,
@@ -326,6 +358,10 @@ export const supplierFxExposureLever: LeverAnalyzer = {
           thresholdPct,
           spend12moUsd: spend12mo,
           contractNumbers: contracts,
+          // Persisted on the opportunity's `inputs` JSON so the API
+          // server can lift them back out at read time without
+          // re-querying the underlying market_signals.
+          sources,
         },
       });
     }

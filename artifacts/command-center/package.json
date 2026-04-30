@@ -84,6 +84,7 @@
   },
   "dependencies": {
     "@types/papaparse": "^5.5.2",
+    "@workspace/intelligence": "workspace:*",
     "jszip": "^3.10.1",
     "papaparse": "^5.5.3"
   }

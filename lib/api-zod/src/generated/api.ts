@@ -32,6 +32,11 @@ export const ListOrgsResponseItem = zod.object({
     .number()
     .optional()
     .describe("Default contingency fee on realized savings"),
+  disclosurePolicy: zod
+    .enum(["conservative", "standard", "analyst"])
+    .describe(
+      "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+    ),
   createdAt: zod.coerce.date(),
 });
 export const ListOrgsResponse = zod.array(ListOrgsResponseItem);
@@ -57,6 +62,11 @@ export const GetMeResponse = zod.object({
       .number()
       .optional()
       .describe("Default contingency fee on realized savings"),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .describe(
+        "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
     createdAt: zod.coerce.date(),
   }),
   actorEmail: zod.string().optional(),
@@ -337,6 +347,33 @@ export const GetOpportunityResponse = zod
   .and(
     zod.object({
       inputs: zod.record(zod.string(), zod.unknown()).optional(),
+      sources: zod
+        .array(
+          zod
+            .object({
+              collectorId: zod.string(),
+              collectorName: zod.string(),
+              sourceUrl: zod.string(),
+              observedAt: zod.coerce.date(),
+              contract: zod.object({
+                postureClass: zod.enum([
+                  "public_api",
+                  "tos_restricted",
+                  "gray_hat",
+                ]),
+                disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+                jurisdiction: zod.string(),
+                retentionDays: zod.number(),
+                tenantOptInDefault: zod.boolean(),
+              }),
+            })
+            .describe(
+              "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+            ),
+        )
+        .describe(
+          "Raw signal-source descriptors that backed this opportunity.\nThe Command Center calls `renderInsight()` from\n`@workspace\/intelligence\/tier` on these and the active\ntenant's `disclosurePolicy` to derive a tier-appropriate\ncitation list for display.\n",
+        ),
       decisions: zod
         .array(
           zod.object({
@@ -737,6 +774,33 @@ export const GetCycleResponse = zod
       decidePayload: zod.record(zod.string(), zod.unknown()).optional(),
       actPayload: zod.record(zod.string(), zod.unknown()).optional(),
       learnPayload: zod.record(zod.string(), zod.unknown()).optional(),
+      sources: zod
+        .array(
+          zod
+            .object({
+              collectorId: zod.string(),
+              collectorName: zod.string(),
+              sourceUrl: zod.string(),
+              observedAt: zod.coerce.date(),
+              contract: zod.object({
+                postureClass: zod.enum([
+                  "public_api",
+                  "tos_restricted",
+                  "gray_hat",
+                ]),
+                disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+                jurisdiction: zod.string(),
+                retentionDays: zod.number(),
+                tenantOptInDefault: zod.boolean(),
+              }),
+            })
+            .describe(
+              "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+            ),
+        )
+        .describe(
+          "De-duplicated union of every signal source backing the\nopportunities created in this cycle. The Command Center\nrenders these through `renderInsight()` from\n`@workspace\/intelligence\/tier` to produce a cycle-level\ncitation block respecting the tenant's `disclosurePolicy`.\n",
+        ),
     }),
   );
 

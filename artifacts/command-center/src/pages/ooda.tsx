@@ -14,6 +14,8 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDateTime, leverLabel } from "@/lib/format";
 import { Activity, Play, Loader2, Eye, Compass, GitBranch, Zap, GraduationCap } from "lucide-react";
+import { InsightCitations } from "@/components/insight-citations";
+import { usePolicy } from "@/lib/use-policy";
 
 export default function Ooda() {
   const qc = useQueryClient();
@@ -171,6 +173,7 @@ function CycleDetailCard({ cycleId }: { cycleId?: string }) {
       queryKey: getGetCycleQueryKey(cycleId ?? "skip"),
     },
   });
+  const policy = usePolicy();
 
   if (!cycleId) {
     return (
@@ -236,6 +239,13 @@ function CycleDetailCard({ cycleId }: { cycleId?: string }) {
             {detail.opportunitiesCreated} opportunities · {formatUsd(detail.totalProjectedUsd, { compact: true })} projected
           </div>
         </div>
+        {detail.sources && detail.sources.length > 0 && (
+          <InsightCitations
+            sources={detail.sources}
+            policy={policy}
+            variant="card"
+          />
+        )}
         {learn?.priorDeltas && learn.priorDeltas.length > 0 && (
           <div>
             <div className="font-semibold mb-1 flex items-center gap-2"><GraduationCap className="w-4 h-4" /> Learn — prior deltas</div>

@@ -3,11 +3,16 @@ import {
   db,
   analysisCyclesTable,
   learnedPriorsTable,
+  opportunitiesTable,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { runAnalysisCycle } from "../lib/ooda/cycle";
 import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import {
+  dedupeSources,
+  extractSourcesFromInputs,
+} from "../lib/insight-sources";
 
 const router: IRouter = Router();
 
@@ -50,6 +55,23 @@ router.get("/cycles/:id", tenantMiddleware, async (req, res) => {
     res.status(404).json({ error: "Cycle not found" });
     return;
   }
+  // Aggregate citation sources from every opportunity created during
+  // this cycle. The cycle-level citation list lets the OODA panel show
+  // a single "backed by" footer instead of per-opportunity strips, so
+  // we de-duplicate by collector + URL and keep the most recent
+  // observation for each.
+  const cycleOpps = await db
+    .select({ inputs: opportunitiesTable.inputs })
+    .from(opportunitiesTable)
+    .where(
+      and(
+        eq(opportunitiesTable.orgId, orgId),
+        eq(opportunitiesTable.cycleId, c.id),
+      ),
+    );
+  const allSources = cycleOpps.flatMap((row) =>
+    extractSourcesFromInputs(row.inputs as Record<string, unknown> | null),
+  );
   res.json({
     ...mapCycle(c),
     observePayload: c.observePayload ?? {},
@@ -57,6 +79,7 @@ router.get("/cycles/:id", tenantMiddleware, async (req, res) => {
     decidePayload: c.decidePayload ?? {},
     actPayload: c.actPayload ?? {},
     learnPayload: c.learnPayload ?? {},
+    sources: dedupeSources(allSources),
   });
 });
 
