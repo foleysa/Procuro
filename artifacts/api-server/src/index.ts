@@ -24,6 +24,7 @@ import {
   startWorker,
   startJobPruner,
   startRenewalScanScheduler,
+  startAnalysisCycleScheduler,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
@@ -31,6 +32,7 @@ import {
   ingestMockErpHandler,
   pruneJobsHandler,
   runAnalysisCycleHandler,
+  runAnalysisCycleFanoutHandler,
   runCollectorHandler,
   syncErpConnectionHandler,
   runRenewalAlertScanHandler,
@@ -130,6 +132,7 @@ registerJobHandler("run_collector", runCollectorHandler);
 registerJobHandler("prune_jobs", pruneJobsHandler);
 registerJobHandler("sync_erp_connection", syncErpConnectionHandler);
 registerJobHandler("renewal_alert_scan", runRenewalAlertScanHandler);
+registerJobHandler("analysis_cycle_fanout", runAnalysisCycleFanoutHandler);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -146,9 +149,10 @@ app.listen(port, (err) => {
   startWorker(1500);
   startJobPruner();
   startRenewalScanScheduler();
+  startAnalysisCycleScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan schedulers started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle schedulers started",
   );
 
   void seedCollectorRegistry().then(

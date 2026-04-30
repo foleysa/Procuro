@@ -22,6 +22,7 @@ export const jobKindValues = [
   "ingest_csv",
   "ingest_mock_erp",
   "run_analysis_cycle",
+  "analysis_cycle_fanout",
   "run_collector",
   "sync_erp_connection",
   "prune_jobs",

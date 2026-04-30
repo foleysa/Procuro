@@ -44,6 +44,10 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // Daily renewal-alert scan does only DB work (no upstream API calls);
   // a transient retry budget of 3 mirrors the pruner.
   renewal_alert_scan: 3,
+  // System-scoped fan-out that enqueues a `run_analysis_cycle` job per
+  // tenant on each scheduler tick. Pure DB work — same retry budget as
+  // the renewal scan.
+  analysis_cycle_fanout: 3,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */
@@ -917,4 +921,203 @@ export function stopRenewalScanScheduler(): void {
   if (renewalScanHandle) clearInterval(renewalScanHandle);
   renewalScanHandle = null;
   renewalScanStarted = false;
+}
+
+// ─── Periodic OODA analysis-cycle scheduler ──────────────────────────────
+//
+// Same shape as the renewal-alert scheduler. The analysis cycle handler
+// is per-tenant (requires `org_id`), so on each tick we enqueue a single
+// system-scoped `analysis_cycle_fanout` job whose handler iterates every
+// org and enqueues one `run_analysis_cycle` job per tenant — keeping each
+// tenant's run individually visible/retryable on the System / Jobs page.
+
+const ANALYSIS_CYCLE_LOCK_KEY = 0x4f4f4441; // "OODA"
+const DEFAULT_ANALYSIS_CYCLE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+
+export async function ensureAnalysisCycleFanoutScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${ANALYSIS_CYCLE_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'analysis_cycle_fanout' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'analysis_cycle_fanout', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let analysisCycleStarted = false;
+let analysisCycleHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic OODA analysis-cycle scheduler. Enqueues an
+ * `analysis_cycle_fanout` job at boot, then again on a fixed interval
+ * (default 6h, overridable via `ANALYSIS_CYCLE_INTERVAL_MS`).
+ * Idempotent — calling twice has no effect.
+ */
+export function startAnalysisCycleScheduler(intervalMs?: number): void {
+  if (analysisCycleStarted) return;
+  analysisCycleStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "ANALYSIS_CYCLE_INTERVAL_MS",
+      DEFAULT_ANALYSIS_CYCLE_INTERVAL_MS,
+    );
+
+  void ensureAnalysisCycleFanoutScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial analysis_cycle_fanout",
+    );
+  });
+
+  analysisCycleHandle = setInterval(() => {
+    ensureAnalysisCycleFanoutScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled analysis_cycle_fanout",
+      );
+    });
+  }, ms);
+}
+
+export function stopAnalysisCycleScheduler(): void {
+  if (analysisCycleHandle) clearInterval(analysisCycleHandle);
+  analysisCycleHandle = null;
+  analysisCycleStarted = false;
+}
+
+/**
+ * Atomic per-tenant dedupe + enqueue for `run_analysis_cycle`, used by
+ * the analysis-cycle fan-out handler.
+ *
+ * Why a dedicated helper instead of just calling `enqueueJob`?
+ * `enqueueJob`'s quota check + INSERT runs under the per-org advisory
+ * lock keyed by `stringHash32(orgId)`. If the fan-out handler did a
+ * separate `SELECT ... status IN ('pending','running')` _outside_ that
+ * lock and then called `enqueueJob`, a concurrent operator clicking
+ * "Run now" (or another in-flight fan-out attempt) could enqueue
+ * between our SELECT and our INSERT — defeating the dedupe and producing
+ * duplicate cycles for the same tenant. Folding the in-flight check
+ * into the same advisory-lock-protected transaction closes that race.
+ *
+ * Return value:
+ *   - `{ enqueued: true, job }`  when a new cycle was enqueued.
+ *   - `{ enqueued: false, reason: "in_flight" }`  when a pending/running
+ *     `run_analysis_cycle` already exists for this org.
+ *   - `{ enqueued: false, reason: "quota_exceeded" }` when the per-org
+ *     pending+running quota is full.
+ */
+export async function ensureOrgAnalysisCycleScheduled(
+  orgId: string,
+  options: { payload?: Record<string, unknown> } = {},
+): Promise<
+  | { enqueued: true; job: JobRow }
+  | { enqueued: false; reason: "in_flight"; existingJobId: string }
+  | { enqueued: false; reason: "quota_exceeded" }
+> {
+  const jobId = newId("job");
+  const lockKey = stringHash32(orgId);
+  const maxAttempts = Math.max(
+    1,
+    Math.floor(await resolveMaxAttempts("run_analysis_cycle", orgId)),
+  );
+  const payload = options.payload ?? { source: "scheduler" };
+
+  let outcome:
+    | { enqueued: true }
+    | { enqueued: false; reason: "in_flight"; existingJobId: string }
+    | { enqueued: false; reason: "quota_exceeded" } = {
+    enqueued: false,
+    reason: "quota_exceeded",
+  };
+
+  await db.transaction(async (tx) => {
+    // Same per-org lock `enqueueJob` uses for its quota+INSERT, so this
+    // dedupe check, the quota check, and the INSERT all see a consistent
+    // snapshot — no concurrent enqueue (manual or scheduled) can slip in
+    // between them.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${lockKey})`,
+    );
+
+    // Order by enqueued_at so the oldest in-flight cycle wins. Callers
+    // that map this back to a UI status row (e.g. the manual "Run now"
+    // button on /cycles/run?async=true) get a stable id to poll, even
+    // if multiple `run_analysis_cycle` rows briefly coexist while the
+    // worker drains them.
+    const existing = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM jobs
+      WHERE org_id = ${orgId}
+        AND kind = 'run_analysis_cycle'
+        AND status IN ('pending', 'running')
+      ORDER BY enqueued_at ASC
+      LIMIT 1
+    `);
+    const firstRow = existing.rows[0];
+    if (firstRow) {
+      outcome = {
+        enqueued: false,
+        reason: "in_flight",
+        existingJobId: firstRow.id,
+      };
+      return;
+    }
+
+    const countResult = await tx.execute(sql`
+      SELECT COUNT(*) AS cnt FROM jobs
+      WHERE org_id = ${orgId} AND status IN ('pending', 'running')
+    `);
+    const rows = (countResult.rows ?? []) as Array<Record<string, unknown>>;
+    const current = Number(rows[0]?.cnt ?? 0);
+    if (current >= MAX_PENDING_JOBS_PER_ORG) {
+      outcome = { enqueued: false, reason: "quota_exceeded" };
+      return;
+    }
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status, max_attempts)
+      VALUES (
+        ${jobId},
+        'run_analysis_cycle',
+        ${orgId},
+        ${JSON.stringify(payload)}::jsonb,
+        'pending',
+        ${maxAttempts}
+      )
+    `);
+    outcome = { enqueued: true };
+  });
+
+  if (!outcome.enqueued) return outcome;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  if (!row) {
+    throw new Error("Failed to retrieve enqueued analysis-cycle job");
+  }
+  return { enqueued: true, job: row };
 }

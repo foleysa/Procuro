@@ -77,6 +77,7 @@ const KIND_LABEL: Record<string, string> = {
   run_analysis_cycle: "Analysis cycle",
   run_collector: "Collector run",
   sync_erp_connection: "ERP sync",
+  analysis_cycle_fanout: "Analysis cycle scheduler",
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -142,6 +143,8 @@ const KIND_DESCRIPTION: Record<string, string> = {
   run_analysis_cycle: "OODA analysis cycle execution",
   run_collector: "External market-signal collector run",
   sync_erp_connection: "Live ERP connection sync (Coupa, etc.)",
+  analysis_cycle_fanout:
+    "System scheduler — fans out one analysis cycle per tenant every 6h",
 };
 
 interface RetryBudgetRowProps {

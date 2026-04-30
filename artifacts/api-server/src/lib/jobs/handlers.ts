@@ -22,7 +22,11 @@ import { writeIngestPayload } from "../adapters/ingest-writer";
 import { getErpConnector } from "../connectors/erp-connector";
 import { decryptCredentials } from "../erp/crypto";
 import { runCollector } from "../intelligence/runtime";
-import { isJobCancelRequested, pruneOldJobs } from "./queue";
+import {
+  ensureOrgAnalysisCycleScheduled,
+  isJobCancelRequested,
+  pruneOldJobs,
+} from "./queue";
 import { UnrecoverableJobError } from "./queue";
 import { newId } from "../ids";
 import { readRenewalAlertDays } from "../contract-settings";
@@ -523,6 +527,72 @@ export async function runRenewalAlertScanHandler(
     orgsScanned,
     alertsInserted,
     contractsUpdated,
+    orgErrors,
+  };
+}
+
+/**
+ * System-scoped fan-out for the periodic OODA analysis-cycle scheduler.
+ *
+ * The `run_analysis_cycle` handler is per-tenant, so on each scheduler
+ * tick this fan-out enqueues one `run_analysis_cycle` job per org —
+ * keeping every tenant's run individually visible/retryable on the
+ * System / Jobs page.
+ *
+ * Per-tenant dedupe: if a tenant already has a pending or running
+ * cycle (whether from the previous tick or an operator pressing
+ * "Run now"), we skip them this tick rather than queueing a duplicate.
+ *
+ * One tenant's failure (e.g. quota exceeded) never poisons the whole
+ * fan-out — it gets recorded in `orgErrors` and the loop continues.
+ */
+export async function runAnalysisCycleFanoutHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const orgs = await db.select({ id: orgsTable.id }).from(orgsTable);
+
+  let orgsScanned = 0;
+  let cyclesEnqueued = 0;
+  let cyclesSkipped = 0;
+  const enqueuedJobIds: string[] = [];
+  const orgErrors: Array<{ orgId: string; error: string }> = [];
+
+  for (const org of orgs) {
+    orgsScanned += 1;
+    try {
+      // Atomic per-org dedupe + enqueue: the helper performs the
+      // in-flight check, the quota check, and the INSERT under the
+      // same per-org advisory lock that `enqueueJob` itself uses, so
+      // a concurrent "Run now" click cannot slip a duplicate cycle in
+      // between our SELECT and our INSERT.
+      const result = await ensureOrgAnalysisCycleScheduled(org.id);
+      if (result.enqueued) {
+        cyclesEnqueued += 1;
+        enqueuedJobIds.push(result.job.id);
+      } else if (result.reason === "in_flight") {
+        // Already a pending/running cycle (previous tick still working
+        // or operator just kicked one off) — skip silently this tick.
+        cyclesSkipped += 1;
+      } else {
+        // quota_exceeded — record so operators see why a tenant got
+        // skipped, but keep the loop going for the rest of the orgs.
+        orgErrors.push({ orgId: org.id, error: "quota_exceeded" });
+      }
+    } catch (err) {
+      // Transient DB blip etc. — record and keep going so other
+      // tenants still get their cycle.
+      orgErrors.push({
+        orgId: org.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return {
+    orgsScanned,
+    cyclesEnqueued,
+    cyclesSkipped,
+    enqueuedJobIds,
     orgErrors,
   };
 }

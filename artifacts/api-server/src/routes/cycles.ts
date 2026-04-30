@@ -9,7 +9,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { runAnalysisCycle } from "../lib/ooda/cycle";
-import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import { ensureOrgAnalysisCycleScheduled } from "../lib/jobs/queue";
 import {
   dedupeSources,
   extractSourcesFromInputs,
@@ -97,22 +97,33 @@ router.post("/cycles/run", tenantMiddleware, requirePermission("ingest:write"), 
   const isAsync =
     req.query["async"] === "true" || req.query["async"] === "1";
 
-  try {
-    if (isAsync) {
-      const job = await enqueueJob({
-        kind: "run_analysis_cycle",
-        orgId,
-        payload: { triggeredBy },
+  if (isAsync) {
+    // Route through the same race-safe dedupe helper the periodic
+    // `analysis_cycle_fanout` handler uses, so a manual "Run now"
+    // click overlapping a scheduled fan-out (or a double-click) can
+    // never produce two pending `run_analysis_cycle` rows for one org.
+    // When dedupe hits, we return the already-in-flight job's id so
+    // the UI can poll it just like a freshly-enqueued one.
+    const result = await ensureOrgAnalysisCycleScheduled(orgId, {
+      payload: { triggeredBy, source: "manual" },
+    });
+    if (result.enqueued) {
+      res.status(202).json({ jobId: result.job.id, status: result.job.status });
+      return;
+    }
+    if (result.reason === "in_flight") {
+      res.status(202).json({
+        jobId: result.existingJobId,
+        status: "in_flight",
+        deduped: true,
       });
-      res.status(202).json({ jobId: job.id, status: job.status });
       return;
     }
-  } catch (err) {
-    if (err instanceof JobQuotaExceededError) {
-      res.status(err.statusCode).json({ error: err.message });
-      return;
-    }
-    throw err;
+    // quota_exceeded
+    res.status(429).json({
+      error: "Per-tenant pending+running job quota exceeded",
+    });
+    return;
   }
 
   const result = await runAnalysisCycle({ orgId, triggeredBy });

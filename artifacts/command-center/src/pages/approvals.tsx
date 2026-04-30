@@ -118,7 +118,7 @@ export default function Approvals() {
         <Pipeline
           title="Proposed"
           status="proposed"
-          emptyMsg="Nothing proposed. Run a new cycle from the OODA Wheel."
+          emptyMsg="Nothing proposed. The next analysis cycle runs automatically every 6h."
           accent="text-yellow-700 dark:text-yellow-400"
         />
         <Pipeline
