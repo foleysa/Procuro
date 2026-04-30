@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import {
   useListIntelligenceSignals,
@@ -45,6 +45,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { InsightCitations } from "@/components/insight-citations";
+import { RiskHeatmapMap } from "@/components/risk-heatmap-map";
 import { usePolicy } from "@/lib/use-policy";
 import { formatUsd, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -102,6 +103,14 @@ export default function Fusion() {
   }, [search]);
   const [tab, setTab] = useState<FusionTab>(initialTab);
   const [activeEntityRef, setActiveEntityRef] = useState<string | null>(null);
+  // Pre-filter applied to the Signal Browser when the user clicks a
+  // country on the Risk Heatmap map. We bump a nonce alongside the
+  // value so back-to-back clicks on the same country still trigger
+  // the child to sync (otherwise React would skip the prop update).
+  const [signalsCountryPrefill, setSignalsCountryPrefill] = useState<{
+    country: string;
+    nonce: number;
+  } | null>(null);
   const policy = usePolicy();
   const cycleId = useMemo(
     () => new URLSearchParams(search).get("cycleId"),
@@ -122,6 +131,13 @@ export default function Fusion() {
   const openEntity = (ref: string) => {
     setActiveEntityRef(ref);
     setTab("entity");
+  };
+  const openSignalsForCountry = (countryIso2: string) => {
+    setSignalsCountryPrefill((prev) => ({
+      country: countryIso2.toUpperCase(),
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+    setTab("signals");
   };
 
   return (
@@ -181,7 +197,12 @@ export default function Fusion() {
         </TabsList>
 
         <TabsContent value="signals" className="mt-4">
-          {tab === "signals" && <SignalBrowserPane onOpenEntity={openEntity} />}
+          {tab === "signals" && (
+            <SignalBrowserPane
+              onOpenEntity={openEntity}
+              countryPrefill={signalsCountryPrefill}
+            />
+          )}
         </TabsContent>
         <TabsContent value="entity" className="mt-4">
           {tab === "entity" && (
@@ -192,7 +213,12 @@ export default function Fusion() {
           )}
         </TabsContent>
         <TabsContent value="heatmap" className="mt-4">
-          {tab === "heatmap" && <HeatmapPane onOpenEntity={openEntity} />}
+          {tab === "heatmap" && (
+            <HeatmapPane
+              onOpenEntity={openEntity}
+              onOpenSignalsForCountry={openSignalsForCountry}
+            />
+          )}
         </TabsContent>
         <TabsContent value="events" className="mt-4">
           {tab === "events" && (
@@ -216,13 +242,26 @@ export default function Fusion() {
 
 function SignalBrowserPane({
   onOpenEntity,
+  countryPrefill,
 }: {
   onOpenEntity: (ref: string) => void;
+  countryPrefill?: { country: string; nonce: number } | null;
 }) {
   const policy = usePolicy();
   const [signalType, setSignalType] = useState<string>("__all__");
-  const [country, setCountry] = useState<string>("");
+  const [country, setCountry] = useState<string>(
+    () => countryPrefill?.country ?? "",
+  );
   const [q, setQ] = useState<string>("");
+
+  // When the user clicks a country on the Risk Heatmap map, the
+  // parent updates `countryPrefill` (with a nonce so back-to-back
+  // clicks on the same country still re-trigger this effect). Mirror
+  // it into local state so the input shows the value and the query
+  // refetches.
+  useEffect(() => {
+    if (countryPrefill) setCountry(countryPrefill.country);
+  }, [countryPrefill?.nonce, countryPrefill?.country]);
 
   const params = useMemo(() => {
     const out: {
@@ -886,13 +925,21 @@ function RiskScoreCard({ score }: { score: IntelligenceRiskScore }) {
 }
 
 // =====================================================================
-// Pane: Risk Heatmap (grid table fallback — Maplibre is post-v1)
+// Pane: Risk Heatmap
 // =====================================================================
+// We render an interactive Maplibre world map with country-level
+// choropleth shading by default. Each country's color comes from its
+// highest-band dimension across the window so regional concentrations
+// jump out at a glance. The original grid table is still available
+// (toggle, or automatic fallback if the map can't initialize) since
+// it's the only view that surfaces the per-dimension breakdown.
 
 function HeatmapPane({
   onOpenEntity,
+  onOpenSignalsForCountry,
 }: {
   onOpenEntity: (ref: string) => void;
+  onOpenSignalsForCountry: (countryIso2: string) => void;
 }) {
   const heatmapParams = { lookbackDays: 90 };
   const { data, isLoading } = useGetIntelligenceRiskHeatmap(heatmapParams, {
@@ -909,18 +956,61 @@ function HeatmapPane({
   }, [data?.cells]);
 
   const sites = data?.sites ?? [];
+  const cells = data?.cells ?? [];
+
+  // `view` controls what's primarily shown. When the map fails to
+  // initialize we force-flip to "grid" and remember why so we can
+  // surface a hint to the user instead of a blank pane.
+  const [view, setView] = useState<"map" | "grid">("map");
+  const [mapError, setMapError] = useState<string | null>(null);
+  const handleMapUnavailable = useCallback((reason: string) => {
+    setMapError(reason);
+    setView("grid");
+  }, []);
 
   return (
     <div className="space-y-4"><Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 justify-between">
+        <CardTitle className="flex items-center gap-2 justify-between flex-wrap">
           <span className="flex items-center gap-2">
             <Globe2 className="w-5 h-5" /> Geo × dimension risk heatmap
           </span>
-          <span className="text-xs text-muted-foreground font-normal">
-            {data
-              ? `${data.countries.length} countries · ${data.dimensions.length} dimensions · ${data.policy} policy`
-              : null}
+          <span className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground font-normal">
+              {data
+                ? `${data.countries.length} countries · ${data.dimensions.length} dimensions · ${data.policy} policy`
+                : null}
+            </span>
+            {!mapError && (
+              <div className="flex rounded-md border overflow-hidden text-xs">
+                <button
+                  type="button"
+                  onClick={() => setView("map")}
+                  className={cn(
+                    "px-2 py-1",
+                    view === "map"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card hover:bg-accent",
+                  )}
+                  data-testid="heatmap-view-map"
+                >
+                  Map
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView("grid")}
+                  className={cn(
+                    "px-2 py-1 border-l",
+                    view === "grid"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card hover:bg-accent",
+                  )}
+                  data-testid="heatmap-view-grid"
+                >
+                  Grid
+                </button>
+              </div>
+            )}
           </span>
         </CardTitle>
       </CardHeader>
@@ -933,43 +1023,74 @@ function HeatmapPane({
             populate this view.
           </p>
         )}
-        {!isLoading && data && data.countries.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="text-sm border-collapse w-full">
-              <thead>
-                <tr>
-                  <th className="text-left p-2 text-xs text-muted-foreground sticky left-0 bg-card">
-                    Country
-                  </th>
-                  {data.dimensions.map((d) => (
-                    <th
-                      key={d}
-                      className="text-left p-2 text-xs text-muted-foreground uppercase"
-                    >
-                      {d}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.countries.map((c) => (
-                  <tr key={c} className="border-t">
-                    <td className="p-2 font-mono sticky left-0 bg-card">
-                      {c}
-                    </td>
-                    {data.dimensions.map((d) => {
-                      const cell = cellMap.get(`${c}::${d}`);
-                      return (
-                        <td key={d} className="p-1">
-                          {cell ? <HeatmapCell cell={cell} /> : <EmptyCell />}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {!isLoading && data && data.countries.length > 0 && view === "map" && (
+          <div className="space-y-2">
+            <RiskHeatmapMap
+              cells={cells}
+              onCountryClick={onOpenSignalsForCountry}
+              onMapUnavailable={handleMapUnavailable}
+            />
+            <p className="text-xs text-muted-foreground">
+              Click a country to open the Signal Browser pre-filtered to it.
+              Each country is shaded by its highest-band dimension over the
+              last 90 days. Switch to Grid for the per-dimension breakdown.
+            </p>
           </div>
+        )}
+        {!isLoading && data && data.countries.length > 0 && view === "grid" && (
+          <>
+            {mapError && (
+              <p
+                className="text-xs text-amber-600 dark:text-amber-400 mb-2"
+                data-testid="heatmap-map-fallback-notice"
+              >
+                Live world map unavailable — falling back to grid view.
+              </p>
+            )}
+            <div className="overflow-x-auto">
+              <table className="text-sm border-collapse w-full">
+                <thead>
+                  <tr>
+                    <th className="text-left p-2 text-xs text-muted-foreground sticky left-0 bg-card">
+                      Country
+                    </th>
+                    {data.dimensions.map((d) => (
+                      <th
+                        key={d}
+                        className="text-left p-2 text-xs text-muted-foreground uppercase"
+                      >
+                        {d}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.countries.map((c) => (
+                    <tr key={c} className="border-t">
+                      <td className="p-2 font-mono sticky left-0 bg-card">
+                        <button
+                          type="button"
+                          onClick={() => onOpenSignalsForCountry(c)}
+                          className="hover:underline"
+                          data-testid={`heatmap-country-${c}`}
+                        >
+                          {c}
+                        </button>
+                      </td>
+                      {data.dimensions.map((d) => {
+                        const cell = cellMap.get(`${c}::${d}`);
+                        return (
+                          <td key={d} className="p-1">
+                            {cell ? <HeatmapCell cell={cell} /> : <EmptyCell />}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
