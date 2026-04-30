@@ -132,18 +132,32 @@ export async function captureFunnelSnapshot(
   const t0 = Date.now();
   let stage = "init";
   try {
-    stage = "signals";
-    const signalsStages = await captureSignalsStages(inputs);
+    // Independent DB-bound stages run concurrently — none of them
+    // depend on each other's results, so issuing them serially just
+    // burns wall-clock on round-trips. Each promise tags the failing
+    // stage on its error so recordSnapshotFailure still sees which
+    // query blew up.
+    stage = "parallel_db_queries";
+    const [signalsStages, cohortStages, calibration] = await Promise.all([
+      captureSignalsStages(inputs).catch((err: unknown) => {
+        tagStage(err, "signals");
+        throw err;
+      }),
+      captureCohortStages(inputs).catch((err: unknown) => {
+        tagStage(err, "cohorts");
+        throw err;
+      }),
+      computeCalibration(inputs.orgId).catch((err: unknown) => {
+        tagStage(err, "calibration");
+        throw err;
+      }),
+    ]);
     stage = "drafts";
     const draftsStages = captureDraftsStages(inputs);
     stage = "persisted";
     const persistedStage = capturePersistedStage(inputs);
-    stage = "cohorts";
-    const cohortStages = await captureCohortStages(inputs);
     stage = "priors";
     const priorsStage = capturePriorsStage(inputs);
-    stage = "calibration";
-    const calibration = await computeCalibration(inputs.orgId);
     stage = "cohorts_drilldown";
     const cohortDrilldown = buildCohortDrilldown(inputs);
 
@@ -202,9 +216,24 @@ export async function captureFunnelSnapshot(
 
     return { snapshotId, failed: false };
   } catch (err) {
-    await recordSnapshotFailure(inputs, err, stage);
+    const taggedStage = readStageTag(err) ?? stage;
+    await recordSnapshotFailure(inputs, err, taggedStage);
     return { snapshotId: null, failed: true };
   }
+}
+
+/** Stage-tag plumbing for the parallel-query block above. */
+const STAGE_TAG = Symbol.for("funnel.snapshot.stage");
+function tagStage(err: unknown, stage: string): void {
+  if (err && typeof err === "object") {
+    (err as Record<symbol, string>)[STAGE_TAG] = stage;
+  }
+}
+function readStageTag(err: unknown): string | undefined {
+  if (err && typeof err === "object") {
+    return (err as Record<symbol, string>)[STAGE_TAG];
+  }
+  return undefined;
 }
 
 /** Stages 1, 2, 3 — derived from analyze results. */
@@ -360,53 +389,63 @@ function capturePersistedStage(
 async function captureCohortStages(
   inputs: CycleSnapshotInputs,
 ): Promise<Record<string, StagePayload>> {
-  const out: Record<string, StagePayload> = {};
   const now = new Date();
-  for (const window of COHORT_WINDOWS) {
-    const days = parseInt(window, 10);
-    const since = new Date(now.getTime() - days * 86400_000);
-    // Pull all decisions that happened since `since` and join to opps so
-    // we know which lever each cohort entry belongs to. The cohort is
-    // "decisions in this window for opps persisted in this window".
-    const rows = await db
-      .select({
-        oppId: opportunitiesTable.id,
-        leverId: opportunitiesTable.leverId,
-        createdAt: opportunitiesTable.createdAt,
-        eventType: decisionsTable.eventType,
-        realized: decisionsTable.realizedSavingsUsd,
-      })
-      .from(decisionsTable)
-      .innerJoin(
-        opportunitiesTable,
-        eq(decisionsTable.opportunityId, opportunitiesTable.id),
-      )
-      .where(
-        and(
-          eq(opportunitiesTable.orgId, inputs.orgId),
-          gte(decisionsTable.createdAt, since),
-        ),
-      );
+  // Each cohort window is an independent join — fan them out concurrently
+  // so the snapshot's cohort cost is bound by the slowest window, not the
+  // sum of all three.
+  const perWindow = await Promise.all(
+    COHORT_WINDOWS.map(async (window) => {
+      const days = parseInt(window, 10);
+      const since = new Date(now.getTime() - days * 86400_000);
+      // Pull all decisions that happened since `since` and join to opps so
+      // we know which lever each cohort entry belongs to. The cohort is
+      // "decisions in this window for opps persisted in this window".
+      const rows = await db
+        .select({
+          oppId: opportunitiesTable.id,
+          leverId: opportunitiesTable.leverId,
+          createdAt: opportunitiesTable.createdAt,
+          eventType: decisionsTable.eventType,
+          realized: decisionsTable.realizedSavingsUsd,
+        })
+        .from(decisionsTable)
+        .innerJoin(
+          opportunitiesTable,
+          eq(decisionsTable.opportunityId, opportunitiesTable.id),
+        )
+        .where(
+          and(
+            eq(opportunitiesTable.orgId, inputs.orgId),
+            gte(decisionsTable.createdAt, since),
+          ),
+        );
 
-    const byEvent: Record<
-      string,
-      { count: number; byLever: Record<string, number>; ids: Set<string>; realized: number }
-    > = {
-      approve: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
-      execute: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
-      realize: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
-    };
-    for (const r of rows) {
-      const bucket = byEvent[r.eventType as keyof typeof byEvent];
-      if (!bucket) continue;
-      bucket.count += 1;
-      bucket.byLever[r.leverId] = (bucket.byLever[r.leverId] ?? 0) + 1;
-      bucket.ids.add(r.oppId);
-      if (r.eventType === "realize" && r.realized) {
-        bucket.realized += Number(r.realized);
+      const byEvent: Record<
+        string,
+        { count: number; byLever: Record<string, number>; ids: Set<string>; realized: number }
+      > = {
+        approve: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
+        execute: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
+        realize: { count: 0, byLever: {}, ids: new Set(), realized: 0 },
+      };
+      for (const r of rows) {
+        const bucket = byEvent[r.eventType as keyof typeof byEvent];
+        if (!bucket) continue;
+        bucket.count += 1;
+        bucket.byLever[r.leverId] = (bucket.byLever[r.leverId] ?? 0) + 1;
+        bucket.ids.add(r.oppId);
+        if (r.eventType === "realize" && r.realized) {
+          bucket.realized += Number(r.realized);
+        }
       }
-    }
+      return { window, byEvent };
+    }),
+  );
 
+  // Re-assemble in the original COHORT_WINDOWS order so the resulting
+  // map's key order matches the pre-parallel implementation.
+  const out: Record<string, StagePayload> = {};
+  for (const { window, byEvent } of perWindow) {
     out[`opps_approved_${window}`] = stageFromBucket(
       byEvent["approve"]!,
       STAGE_SAMPLE_CAPS.opps_approved,
@@ -505,47 +544,58 @@ function buildCohortDrilldown(
 async function computeCalibration(
   orgId: string,
 ): Promise<Record<string, unknown>> {
-  const out: Record<string, unknown> = {};
-  for (const window of ["30d", "90d"] as const) {
-    const days = parseInt(window, 10);
-    const since = new Date(Date.now() - days * 86400_000);
-    const rows = await db
-      .select({
-        leverId: opportunitiesTable.leverId,
-        rawProjected: opportunitiesTable.rawProjectedSavingsUsd,
-        projected: opportunitiesTable.projectedSavingsUsd,
-        realized: decisionsTable.realizedSavingsUsd,
-      })
-      .from(decisionsTable)
-      .innerJoin(
-        opportunitiesTable,
-        eq(decisionsTable.opportunityId, opportunitiesTable.id),
-      )
-      .where(
-        and(
-          eq(opportunitiesTable.orgId, orgId),
-          eq(decisionsTable.eventType, "realize"),
-          gte(decisionsTable.createdAt, since),
-        ),
-      );
+  const windows = ["30d", "90d"] as const;
+  // The two calibration windows are independent joins — fan them out in
+  // parallel so the slower one bounds the cost rather than their sum.
+  const perWindow = await Promise.all(
+    windows.map(async (window) => {
+      const days = parseInt(window, 10);
+      const since = new Date(Date.now() - days * 86400_000);
+      const rows = await db
+        .select({
+          leverId: opportunitiesTable.leverId,
+          rawProjected: opportunitiesTable.rawProjectedSavingsUsd,
+          projected: opportunitiesTable.projectedSavingsUsd,
+          realized: decisionsTable.realizedSavingsUsd,
+        })
+        .from(decisionsTable)
+        .innerJoin(
+          opportunitiesTable,
+          eq(decisionsTable.opportunityId, opportunitiesTable.id),
+        )
+        .where(
+          and(
+            eq(opportunitiesTable.orgId, orgId),
+            eq(decisionsTable.eventType, "realize"),
+            gte(decisionsTable.createdAt, since),
+          ),
+        );
 
-    const byLever = new Map<
-      string,
-      Array<{ raw: number; rescaled: number; realized: number }>
-    >();
-    for (const r of rows) {
-      if (r.realized == null) continue;
-      const realized = Number(r.realized);
-      const raw = Number(r.rawProjected);
-      const rescaled = Number(r.projected);
-      if (!isFinite(realized) || !isFinite(raw) || !isFinite(rescaled)) {
-        continue;
+      const byLever = new Map<
+        string,
+        Array<{ raw: number; rescaled: number; realized: number }>
+      >();
+      for (const r of rows) {
+        if (r.realized == null) continue;
+        const realized = Number(r.realized);
+        const raw = Number(r.rawProjected);
+        const rescaled = Number(r.projected);
+        if (!isFinite(realized) || !isFinite(raw) || !isFinite(rescaled)) {
+          continue;
+        }
+        const arr = byLever.get(r.leverId) ?? [];
+        arr.push({ raw, rescaled, realized });
+        byLever.set(r.leverId, arr);
       }
-      const arr = byLever.get(r.leverId) ?? [];
-      arr.push({ raw, rescaled, realized });
-      byLever.set(r.leverId, arr);
-    }
+      return { window, byLever };
+    }),
+  );
 
+  // Re-assemble in the original window order so the output payload
+  // matches the pre-parallel implementation byte-for-byte (30d entries
+  // before 90d entries when iterating Object.entries).
+  const out: Record<string, unknown> = {};
+  for (const { window, byLever } of perWindow) {
     for (const [leverId, samples] of byLever) {
       const rawErrs = samples
         .map((s) => Math.abs(s.raw - s.realized))
@@ -568,10 +618,9 @@ async function computeCalibration(
       } else if (improvementUsd < -CALIBRATION_HELP_USD) {
         verdict = "hurting";
       }
-      // Only the most recent window per lever wins. We process 30d
-      // first then 90d; later writes overwrite earlier — so the final
-      // payload is the longer window where present, falling back to
-      // 30d. To keep both, we namespace by window.
+      // We namespace by window so 30d and 90d coexist in the output;
+      // ordering is deterministic because we re-emit windows in the
+      // declared order above.
       const key = `${leverId}:${window}`;
       out[key] = {
         leverId,
