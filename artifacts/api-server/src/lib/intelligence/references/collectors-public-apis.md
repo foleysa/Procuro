@@ -122,6 +122,41 @@ filing-category code in `value` via `FILING_CATEGORY_CODES`).
 - **Backfill:** `POST /collectors/companies-house/backfill`
   - body: `{ "numbers": ["00006245", "02099500"] }`.
 
+## Issuer-list resolution & seed fallback (`sec-edgar`, `companies-house`)
+
+Both issuer-driven collectors (`sec-edgar`, `companies-house`) resolve
+their poll list once per tick from three inputs, in this strict order:
+
+1. **`override`** — an explicit list passed by the caller (e.g. an
+   admin backfill targeting a single CIK / company number).
+2. **Tenant rows** — every row in `watched_issuers` for the matching
+   `source` (`sec_edgar` / `companies_house`), de-duped on
+   identifier. Two tenants tracking the same issuer cost one fetch.
+3. **Seed list** — `SEC_EDGAR_DEFAULT_ISSUERS` /
+   `COMPANIES_HOUSE_DEFAULT_NUMBERS`. Only used when the tenant set
+   above is empty, so a fresh install still emits `corporate_filing`
+   drafts out of the box.
+
+The resolution is exclusive: as soon as any tenant row exists for a
+source, the seed is dropped — we don't merge them. This is the right
+default for production but it's a sharp edge: forgetting to migrate the
+seed list looks identical to "tenants opted out of those issuers".
+
+To make the transition explicit, every tick logs:
+
+- An **INFO** line per call site:
+  `"SEC EDGAR: polling N issuer(s) (source=tenant|seed|override)"`
+  with `{ collectorId, listSource, issuerCount, callSite }`.
+- A one-shot **WARN** the first time the resolved source changes
+  (e.g. `seed → tenant` after a tenant adds their first row, or
+  `tenant → seed` if every tenant row is removed). Operators should
+  alert on `listSource` transitions to catch silent migrations.
+
+Implemented in `resolveActiveSecIssuers` /
+`resolveActiveCompaniesHouseNumbers`; the back-compat
+`getActiveSecIssuers` / `getActiveCompaniesHouseNumbers` functions
+still return just the array for callers that don't need the source.
+
 ## Environment variables
 
 | Variable                     | Required by         | Purpose                                                       |

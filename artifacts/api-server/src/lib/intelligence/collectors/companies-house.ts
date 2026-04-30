@@ -91,32 +91,115 @@ export async function loadWatchedCompaniesHouseNumbers(): Promise<string[]> {
   return Array.from(seen);
 }
 
+/** Where the active number list came from on a given resolution call. */
+export type CompaniesHouseNumberSource = "override" | "tenant" | "seed";
+
+export interface ResolvedCompaniesHouseNumbers {
+  source: CompaniesHouseNumberSource;
+  numbers: string[];
+}
+
+function normaliseCompaniesHouseNumberList(xs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of xs) {
+    const n = normaliseCompaniesHouseNumber(x);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
 /**
- * Resolve the number list the collector should poll on this tick.
+ * Resolve the number list the collector should poll on this tick AND
+ * report which input it came from.
  *
  * Resolution order:
  *   1. Explicit `override` (admin backfill targeting specific numbers).
  *   2. Tenant-curated rows from `watched_issuers` (source='companies_house').
  *   3. `COMPANIES_HOUSE_DEFAULT_NUMBERS` seed — only when (2) is empty.
+ *
+ * The `source` label lets the collector log which list it resolved on
+ * each tick and emit a one-shot transition warning when a tenant adds
+ * its first watched issuer (seed → tenant) or removes the last one
+ * (tenant → seed) — see `logResolvedCompaniesHouseNumbers`.
+ */
+export async function resolveActiveCompaniesHouseNumbers(
+  override?: readonly string[],
+): Promise<ResolvedCompaniesHouseNumbers> {
+  if (override && override.length > 0) {
+    return { source: "override", numbers: normaliseCompaniesHouseNumberList(override) };
+  }
+  const watched = await loadWatchedCompaniesHouseNumbers();
+  if (watched.length > 0) return { source: "tenant", numbers: watched };
+  return {
+    source: "seed",
+    numbers: normaliseCompaniesHouseNumberList(COMPANIES_HOUSE_DEFAULT_NUMBERS),
+  };
+}
+
+/**
+ * Back-compat shim: callers that only need the number array still get
+ * the same shape. Internal collector code should prefer
+ * `resolveActiveCompaniesHouseNumbers` so it can also log / alert on
+ * the source.
  */
 export async function getActiveCompaniesHouseNumbers(
   override?: readonly string[],
 ): Promise<string[]> {
-  const normaliseList = (xs: readonly string[]): string[] => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const x of xs) {
-      const n = normaliseCompaniesHouseNumber(x);
-      if (!n || seen.has(n)) continue;
-      seen.add(n);
-      out.push(n);
-    }
-    return out;
-  };
-  if (override && override.length > 0) return normaliseList(override);
-  const watched = await loadWatchedCompaniesHouseNumbers();
-  if (watched.length > 0) return watched;
-  return normaliseList(COMPANIES_HOUSE_DEFAULT_NUMBERS);
+  return (await resolveActiveCompaniesHouseNumbers(override)).numbers;
+}
+
+/**
+ * Module-scoped memory of the last resolved source so we can detect
+ * the seed → tenant (and tenant → seed) transition and emit a single
+ * warning per process when it happens. Keyed by call-site label so
+ * the live collector and the backfill helper don't shout over each
+ * other.
+ */
+const lastChNumbersSource = new Map<string, CompaniesHouseNumberSource>();
+
+/**
+ * Emit a one-line INFO per tick describing which list resolved and
+ * how many numbers we will poll, plus a one-shot WARN whenever the
+ * source transitions (seed → tenant, tenant → seed). Operators rely
+ * on the transition warning to notice "the seed silently stopped
+ * being polled because a tenant just added their first row" without
+ * tailing every tick.
+ */
+export function logResolvedCompaniesHouseNumbers(
+  resolved: ResolvedCompaniesHouseNumbers,
+  callSite: "collect" | "backfill",
+): void {
+  logger.info(
+    {
+      collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
+      listSource: resolved.source,
+      numberCount: resolved.numbers.length,
+      callSite,
+    },
+    `Companies House: polling ${resolved.numbers.length} company number(s) (source=${resolved.source})`,
+  );
+  const previous = lastChNumbersSource.get(callSite);
+  if (previous && previous !== resolved.source) {
+    logger.warn(
+      {
+        collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
+        previousSource: previous,
+        listSource: resolved.source,
+        numberCount: resolved.numbers.length,
+        callSite,
+      },
+      `Companies House: number-list source transitioned ${previous} → ${resolved.source}`,
+    );
+  }
+  lastChNumbersSource.set(callSite, resolved.source);
+}
+
+/** Test-only: reset the transition memory between cases. */
+export function _resetCompaniesHouseSourceMemoryForTests(): void {
+  lastChNumbersSource.clear();
 }
 
 export const FILING_CATEGORY_CODES: Record<string, number> = {
@@ -341,7 +424,9 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
-    const numbers = await getActiveCompaniesHouseNumbers();
+    const resolved = await resolveActiveCompaniesHouseNumbers();
+    logResolvedCompaniesHouseNumbers(resolved, "collect");
+    const numbers = resolved.numbers;
     if (numbers.length === 0) {
       throw new Error(
         "companies-house: no company numbers configured. Add tenant rows via POST /watched-issuers or restore COMPANIES_HOUSE_DEFAULT_NUMBERS.",
@@ -381,7 +466,9 @@ export async function fetchCompaniesHouseBackfillDrafts(opts?: {
   if (!apiKey) throw new Error("COMPANIES_HOUSE_API_KEY is not set");
   // Same resolution rule as the live collector: explicit override beats
   // tenant rows, which beat the seed list.
-  const numbers = await getActiveCompaniesHouseNumbers(opts?.numbers);
+  const resolved = await resolveActiveCompaniesHouseNumbers(opts?.numbers);
+  logResolvedCompaniesHouseNumbers(resolved, "backfill");
+  const numbers = resolved.numbers;
   const drafts: MarketSignalDraft[] = [];
   const failed: Array<{ number: string; error: string }> = [];
   for (const number of numbers) {

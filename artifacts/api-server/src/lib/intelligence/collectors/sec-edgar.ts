@@ -131,8 +131,17 @@ export async function loadWatchedSecIssuers(): Promise<SecIssuerRef[]> {
   return dedupeSecIssuers(refs);
 }
 
+/** Where the active issuer list came from on a given resolution call. */
+export type SecIssuerListSource = "override" | "tenant" | "seed";
+
+export interface ResolvedSecIssuerList {
+  source: SecIssuerListSource;
+  issuers: SecIssuerRef[];
+}
+
 /**
- * Resolve the issuer list the collector should poll on this tick.
+ * Resolve the issuer list the collector should poll on this tick AND
+ * report which input it came from.
  *
  * Resolution order:
  *   1. Explicit `override` (e.g. an admin backfill targeting a
@@ -140,14 +149,83 @@ export async function loadWatchedSecIssuers(): Promise<SecIssuerRef[]> {
  *   2. Tenant-curated rows from `watched_issuers` (source='sec_edgar').
  *   3. Seed list (`SEC_EDGAR_DEFAULT_ISSUERS`) — only when (2) is
  *      empty. This keeps a fresh install from being silent.
+ *
+ * The `source` label lets the collector log which list it resolved on
+ * each tick and emit a one-shot transition warning when a tenant adds
+ * its first watched issuer (seed → tenant) or removes the last one
+ * (tenant → seed) — see `logResolvedSecIssuers`.
+ */
+export async function resolveActiveSecIssuers(
+  override?: readonly SecIssuerRef[],
+): Promise<ResolvedSecIssuerList> {
+  if (override && override.length > 0) {
+    return { source: "override", issuers: dedupeSecIssuers(override) };
+  }
+  const watched = await loadWatchedSecIssuers();
+  if (watched.length > 0) return { source: "tenant", issuers: watched };
+  return { source: "seed", issuers: dedupeSecIssuers(SEC_EDGAR_DEFAULT_ISSUERS) };
+}
+
+/**
+ * Back-compat shim: callers that only need the issuer array still get
+ * the same shape. Internal collector code should prefer
+ * `resolveActiveSecIssuers` so it can also log / alert on the source.
  */
 export async function getActiveSecIssuers(
   override?: readonly SecIssuerRef[],
 ): Promise<SecIssuerRef[]> {
-  if (override && override.length > 0) return dedupeSecIssuers(override);
-  const watched = await loadWatchedSecIssuers();
-  if (watched.length > 0) return watched;
-  return dedupeSecIssuers(SEC_EDGAR_DEFAULT_ISSUERS);
+  return (await resolveActiveSecIssuers(override)).issuers;
+}
+
+/**
+ * Module-scoped memory of the last resolved source so we can detect
+ * the seed → tenant (and tenant → seed) transition and emit a single
+ * warning per process when it happens. Keyed by call-site label so
+ * the live collector and the backfill helper don't shout over each
+ * other.
+ */
+const lastSecIssuerSource = new Map<string, SecIssuerListSource>();
+
+/**
+ * Emit a one-line INFO per tick describing which list resolved and
+ * how many issuers we will poll, plus a one-shot WARN whenever the
+ * source transitions (seed → tenant, tenant → seed). Operators rely
+ * on the transition warning to notice "the seed silently stopped
+ * being polled because a tenant just added their first row" without
+ * tailing every tick.
+ */
+export function logResolvedSecIssuers(
+  resolved: ResolvedSecIssuerList,
+  callSite: "collect" | "backfill",
+): void {
+  logger.info(
+    {
+      collectorId: SEC_EDGAR_COLLECTOR_ID,
+      listSource: resolved.source,
+      issuerCount: resolved.issuers.length,
+      callSite,
+    },
+    `SEC EDGAR: polling ${resolved.issuers.length} issuer(s) (source=${resolved.source})`,
+  );
+  const previous = lastSecIssuerSource.get(callSite);
+  if (previous && previous !== resolved.source) {
+    logger.warn(
+      {
+        collectorId: SEC_EDGAR_COLLECTOR_ID,
+        previousSource: previous,
+        listSource: resolved.source,
+        issuerCount: resolved.issuers.length,
+        callSite,
+      },
+      `SEC EDGAR: issuer-list source transitioned ${previous} → ${resolved.source}`,
+    );
+  }
+  lastSecIssuerSource.set(callSite, resolved.source);
+}
+
+/** Test-only: reset the transition memory between cases. */
+export function _resetSecIssuerSourceMemoryForTests(): void {
+  lastSecIssuerSource.clear();
 }
 
 /**
@@ -378,7 +456,9 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
-    const issuers = await getActiveSecIssuers();
+    const resolved = await resolveActiveSecIssuers();
+    logResolvedSecIssuers(resolved, "collect");
+    const issuers = resolved.issuers;
     for (const issuer of issuers) {
       try {
         const r = await fetchSubmissions(issuer.cik, userAgent);
@@ -438,7 +518,9 @@ export async function fetchEdgarBackfillDrafts(opts?: {
   // rows > seed list. Lets `runSecEdgarBackfill({ issuers: [...] })`
   // target a single CIK while a no-arg backfill still sweeps whatever
   // tenants have curated.
-  const issuers = await getActiveSecIssuers(opts?.issuers);
+  const resolved = await resolveActiveSecIssuers(opts?.issuers);
+  logResolvedSecIssuers(resolved, "backfill");
+  const issuers = resolved.issuers;
   const drafts: MarketSignalDraft[] = [];
   const failedIssuers: Array<{ cik: string; error: string }> = [];
   for (const issuer of issuers) {
