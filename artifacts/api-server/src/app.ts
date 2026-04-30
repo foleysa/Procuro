@@ -1,15 +1,9 @@
-import express, {
-  type Express,
-  type ErrorRequestHandler,
-} from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import {
-  sanitizeDbErrorMessage,
-  errorLogContext,
-} from "./lib/sanitize-db-error";
+import { globalErrorHandler } from "./lib/global-error-handler";
 
 const app: Express = express();
 
@@ -58,40 +52,6 @@ app.use((req, res, next) => {
 
 app.use("/api", router);
 
-/**
- * Global error-handling middleware.
- *
- * Express's default error handler renders the error stack into the response
- * in non-production environments, and that stack can include the failing
- * SQL statement and bound parameter values for any `pg` / Drizzle error
- * that bubbles up uncaught from a route. Task #17 sanitized the CSV import
- * paths but every other route (suppliers, opportunities, jobs, market
- * signals, ...) still relied on Express's default — meaning the same data
- * leak applied project-wide.
- *
- * This middleware catches anything a route forwards to `next(err)` (or, for
- * async route handlers in Express 5, anything they reject with) and:
- *   1. logs the full original error server-side via `req.log.error` so
- *      operators retain SQL / bound params / stack for debugging, and
- *   2. returns a sanitized `{ error }` JSON body to the client containing
- *      only a short, identifier-level summary — never SQL, parameter
- *      values, `detail`/`hint` text, or a stack trace.
- */
-const globalErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
-  // If the response is already partway out the door (e.g. a streaming
-  // handler that called `res.write`), delegate to Express's default
-  // handler so it can close the connection. We can't safely overwrite
-  // headers or body at this point.
-  if (res.headersSent) {
-    next(err);
-    return;
-  }
-  req.log.error(
-    { err, ...errorLogContext(err), route: req.path },
-    "Unhandled route error",
-  );
-  res.status(500).json({ error: sanitizeDbErrorMessage(err) });
-};
 app.use(globalErrorHandler);
 
 export default app;

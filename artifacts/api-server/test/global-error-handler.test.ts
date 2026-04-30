@@ -27,35 +27,27 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express, {
   Router,
-  type ErrorRequestHandler,
   type Express,
   type Request,
   type Response,
   type NextFunction,
 } from "express";
-import {
-  sanitizeDbErrorMessage,
-  errorLogContext,
-} from "../src/lib/sanitize-db-error";
+import { z } from "zod";
+import { globalErrorHandler } from "../src/lib/global-error-handler";
+import { JobQuotaExceededError } from "../src/lib/jobs/queue";
 
 /**
- * Mirrors the global error handler registered in `src/app.ts`. We
- * rebuild it here (rather than booting the full app, which requires a
- * database) so tests are hermetic. If the production handler diverges
- * from this shape, update both — the assertions below would catch a
- * regression in the contract (status, JSON shape, no SQL leakage).
+ * Tests import the real `globalErrorHandler` from `src/lib/` (rather
+ * than re-implementing it) so the production middleware and the
+ * middleware under test cannot drift apart. The handler does not touch
+ * the database — it inspects the thrown value and writes a JSON
+ * response — so booting it in tests is hermetic.
+ *
+ * Routes that need a `req.log` (the 500 branch logs via Pino) attach a
+ * tiny no-op logger in `buildApp` below; the 4xx branches deliberately
+ * skip logging so the test suite doesn't depend on a real logger for
+ * the validation-error cases.
  */
-const globalErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
-  if (res.headersSent) {
-    next(err);
-    return;
-  }
-  // The real handler logs via `req.log.error`; tests don't attach a
-  // logger so we just exercise the sanitizer call to mirror the prod
-  // code path's reads of the error.
-  void errorLogContext(err);
-  res.status(500).json({ error: sanitizeDbErrorMessage(err) });
-};
 
 interface PgLeakError extends Error {
   code?: string;
@@ -82,6 +74,16 @@ function makePgError(): PgLeakError {
 function buildApp(register: (r: Router) => void): Express {
   const app = express();
   app.use(express.json());
+  // The 500 branch of the real handler calls `req.log.error(...)`. In
+  // production that field is attached by `pino-http`; here we attach a
+  // no-op logger so the handler runs without standing up a full logger
+  // (and without pino spamming stdout during the test run).
+  app.use((req, _res, next) => {
+    (req as Request & { log: { error: () => void } }).log = {
+      error: () => undefined,
+    };
+    next();
+  });
   const router = Router();
   register(router);
   app.use("/api", router);
@@ -180,6 +182,73 @@ test("async route rejection is sanitized to 500 JSON (Express 5 auto-forward)", 
   const json = JSON.parse(res.body) as { error: string };
   assert.equal(typeof json.error, "string");
   assertNoSqlLeak(res.body);
+});
+
+test("ZodError from request validation maps to 400 with issues, not 500", async () => {
+  // The previous global handler treated every uncaught throw as a 500,
+  // which made request-validation failures (a client problem) look like
+  // server crashes — bloating error dashboards and giving clients a
+  // misleading status code. Routes that throw a ZodError from a
+  // generated request schema must now surface as 400.
+  const PostBodySchema = z.object({
+    name: z.string().min(1),
+    count: z.number().int().min(1),
+  });
+  const app = buildApp((r) => {
+    r.post("/widgets", (req) => {
+      // Throw, do not return a response — verifies the handler picks up
+      // ZodError that bubbles up via Express 5's async-error auto-forward.
+      PostBodySchema.parse(req.body);
+    });
+  });
+  const res = await withServer(app, async (base) => {
+    const r = await fetch(`${base}/api/widgets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "", count: -1 }),
+    });
+    return { status: r.status, body: await r.text() };
+  });
+  assert.equal(res.status, 400, "ZodError must be reported as 400, not 500");
+  const json = JSON.parse(res.body) as {
+    error: string;
+    details: Array<{ path: Array<string | number>; message: string }>;
+  };
+  assert.equal(typeof json.error, "string");
+  assert.ok(Array.isArray(json.details), "details must be the issues array");
+  assert.ok(
+    json.details.some((d) => d.path.includes("name")),
+    "details must reference the failing field",
+  );
+  // The full unsanitized SQL leak fragments must of course not appear
+  // even on the 400 path — the response body is built from the issues
+  // array only.
+  assertNoSqlLeak(res.body);
+});
+
+test("JobQuotaExceededError maps to its declared statusCode (429)", async () => {
+  // The ingest routes used to special-case this error in a per-route
+  // try/catch. The global handler now owns the mapping so routes can
+  // simply throw — verifies clients still get 429 (not 500) and the
+  // human-readable message survives.
+  const orgId = "00000000-0000-0000-0000-000000000042";
+  const app = buildApp((r) => {
+    r.post("/ingest/csv", () => {
+      throw new JobQuotaExceededError(orgId);
+    });
+  });
+  const res = await withServer(app, async (base) => {
+    const r = await fetch(`${base}/api/ingest/csv`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    return { status: r.status, body: await r.text() };
+  });
+  assert.equal(res.status, 429, "JobQuotaExceededError must use its statusCode");
+  const json = JSON.parse(res.body) as { error: string };
+  assert.match(json.error, /quota exceeded/i);
+  assert.ok(json.error.includes(orgId));
 });
 
 test("non-DB Error collapses to a generic message (no message leakage)", async () => {

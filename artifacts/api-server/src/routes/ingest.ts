@@ -14,7 +14,7 @@ import {
   mockErpSourceAdapter,
   type MockErpConfig,
 } from "../lib/adapters/mock-erp-adapter";
-import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import { enqueueJob } from "../lib/jobs/queue";
 import {
   sanitizeDbErrorMessage,
   errorLogContext,
@@ -70,29 +70,17 @@ router.post("/ingest/csv", tenantMiddleware, async (req, res) => {
     }
   }
 
-  try {
-    if (isAsync(req)) {
-      const job = await enqueueJob({
-        kind: "ingest_csv",
-        orgId,
-        payload: { csv },
-      });
-      res.status(202).json({ jobId: job.id, status: job.status });
-      return;
-    }
-    const result = await csvSourceAdapter.fullSync({ orgId, config: csv });
-    res.json(result);
-  } catch (err) {
-    if (err instanceof JobQuotaExceededError) {
-      res.status(err.statusCode).json({ error: err.message });
-      return;
-    }
-    req.log.error(
-      { err, ...errorLogContext(err), orgId, route: "/ingest/csv" },
-      "CSV ingest failed",
-    );
-    res.status(500).json({ error: sanitizeDbErrorMessage(err) });
+  if (isAsync(req)) {
+    const job = await enqueueJob({
+      kind: "ingest_csv",
+      orgId,
+      payload: { csv },
+    });
+    res.status(202).json({ jobId: job.id, status: job.status });
+    return;
   }
+  const result = await csvSourceAdapter.fullSync({ orgId, config: csv });
+  res.json(result);
 });
 
 router.post("/ingest/mock-erp", tenantMiddleware, async (req, res) => {
@@ -122,36 +110,24 @@ router.post("/ingest/mock-erp", tenantMiddleware, async (req, res) => {
 
   const config: MockErpConfig = { feed: body.feed as MockErpConfig["feed"] };
 
-  try {
-    if (isAsync(req)) {
-      const job = await enqueueJob({
-        kind: "ingest_mock_erp",
-        orgId,
-        payload: { erp: config, cursor: body.cursor ?? null },
-      });
-      res.status(202).json({ jobId: job.id, status: job.status });
-      return;
-    }
-
-    const result = body.cursor
-      ? await mockErpSourceAdapter.incrementalSync({
-          orgId,
-          config,
-          cursor: body.cursor,
-        })
-      : await mockErpSourceAdapter.fullSync({ orgId, config });
-    res.json(result);
-  } catch (err) {
-    if (err instanceof JobQuotaExceededError) {
-      res.status(err.statusCode).json({ error: err.message });
-      return;
-    }
-    req.log.error(
-      { err, ...errorLogContext(err), orgId, route: "/ingest/mock-erp" },
-      "Mock ERP ingest failed",
-    );
-    res.status(500).json({ error: sanitizeDbErrorMessage(err) });
+  if (isAsync(req)) {
+    const job = await enqueueJob({
+      kind: "ingest_mock_erp",
+      orgId,
+      payload: { erp: config, cursor: body.cursor ?? null },
+    });
+    res.status(202).json({ jobId: job.id, status: job.status });
+    return;
   }
+
+  const result = body.cursor
+    ? await mockErpSourceAdapter.incrementalSync({
+        orgId,
+        config,
+        cursor: body.cursor,
+      })
+    : await mockErpSourceAdapter.fullSync({ orgId, config });
+  res.json(result);
 });
 
 /**
