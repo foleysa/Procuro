@@ -35,7 +35,10 @@ import { newId } from "../lib/ids";
 import {
   captureFunnelSnapshot,
   funnelSnapshotFailuresCounter,
+  backfillFunnelSnapshotsForOrg,
+  backfillFunnelSnapshotsForAllTenants,
 } from "../lib/ooda/funnel";
+import { requirePlatformAdmin } from "../lib/platform-admin";
 import { ALL_LEVERS } from "../lib/levers";
 import { toAnalyzeResult, type LeverAnalyzer } from "../lib/levers/types";
 import { loadPriors } from "../lib/ooda/priors";
@@ -504,6 +507,54 @@ router.get(
       tenants: rows.rows,
       failures: failures.rows,
       cyclesPerTenant: cyclesBack,
+    });
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Backfill (task #188) — fill in funnel_snapshots for cycles that
+// completed before the snapshot writer shipped. Cross-tenant by design
+// so a platform operator can light up the observability page for every
+// established tenant in one call. Per-tenant invocation is opt-in via
+// the `orgId` body field; absence means "all tenants".
+//
+// Long-running (proportional to historical cycle count × tenants), so
+// we keep it synchronous and guarded by the platform-admin token.
+// Idempotent: cycles that already have a snapshot are skipped.
+// ─────────────────────────────────────────────────────────────────────
+
+router.post(
+  "/platform/funnel/backfill",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const body = (req.body ?? {}) as { orgId?: string | null };
+    const orgId =
+      typeof body.orgId === "string" && body.orgId ? body.orgId : null;
+    const startedAt = Date.now();
+    const reports = orgId
+      ? [await backfillFunnelSnapshotsForOrg(orgId, { ALL_LEVERS })]
+      : await backfillFunnelSnapshotsForAllTenants({ ALL_LEVERS });
+    const totals = reports.reduce(
+      (acc, r) => ({
+        cyclesScanned: acc.cyclesScanned + r.cyclesScanned,
+        snapshotsCreated: acc.snapshotsCreated + r.snapshotsCreated,
+        alreadyHadSnapshot: acc.alreadyHadSnapshot + r.alreadyHadSnapshot,
+        skippedNotCompleted:
+          acc.skippedNotCompleted + r.skippedNotCompleted,
+        failed: acc.failed + r.failed,
+      }),
+      {
+        cyclesScanned: 0,
+        snapshotsCreated: 0,
+        alreadyHadSnapshot: 0,
+        skippedNotCompleted: 0,
+        failed: 0,
+      },
+    );
+    res.json({
+      tenants: reports,
+      totals,
+      durationMs: Date.now() - startedAt,
     });
   },
 );

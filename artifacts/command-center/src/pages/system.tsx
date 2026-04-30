@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getListJobsQueryKey,
   getListJobKindSettingsQueryKey,
@@ -51,6 +51,7 @@ import {
   Trash2,
   Activity,
   Gauge,
+  Layers,
 } from "lucide-react";
 
 const STATUS_OPTS: { v: string; l: string }[] = [
@@ -146,6 +147,20 @@ const KIND_DESCRIPTION: Record<string, string> = {
   analysis_cycle_fanout:
     "System scheduler — fans out one analysis cycle per tenant every 6h",
 };
+
+interface BackfillTenantReport {
+  orgId: string;
+  cyclesScanned: number;
+  snapshotsCreated: number;
+  alreadyHadSnapshot: number;
+  skippedNotCompleted: number;
+  failed: number;
+}
+interface BackfillResponse {
+  tenants: BackfillTenantReport[];
+  totals: Omit<BackfillTenantReport, "orgId">;
+  durationMs: number;
+}
 
 interface RetryBudgetRowProps {
   setting: JobKindSetting;
@@ -459,6 +474,46 @@ export default function System() {
     },
   });
 
+  // ─── Funnel snapshot backfill (task #188) ───────────────────────────
+  // Cycles that completed before the funnel snapshot writer shipped
+  // have no `funnel_snapshots` row, so the observability page is blank
+  // for historical generations. This card lets a platform operator
+  // backfill — per-tenant by id, or for every tenant when the field
+  // is left blank. Idempotent: existing snapshots are skipped.
+  const [backfillOrgId, setBackfillOrgId] = useState<string>("");
+  const [backfillResult, setBackfillResult] = useState<
+    BackfillResponse | null
+  >(null);
+  const backfillM = useMutation<BackfillResponse, Error, string>({
+    mutationFn: async (orgId: string) => {
+      const res = await fetch("/api/platform/funnel/backfill", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(orgId ? { orgId } : {}),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`${res.status} ${text || res.statusText}`);
+      }
+      return (await res.json()) as BackfillResponse;
+    },
+    onSuccess: (resp) => {
+      setBackfillResult(resp);
+      const created = resp.totals.snapshotsCreated;
+      const skipped = resp.totals.alreadyHadSnapshot;
+      toast({
+        title: "Backfill complete",
+        description: `${created} snapshot(s) created, ${skipped} already present across ${resp.tenants.length} tenant(s).`,
+      });
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Backfill failed",
+        description: String(e),
+        variant: "destructive",
+      }),
+  });
+
   // CSV throughput trends (#73 / #74). Computed client-side from the
   // last `ingest_csv` jobs already in the table so we do not need a
   // separate query: each succeeded ingest_csv row carries
@@ -729,6 +784,112 @@ export default function System() {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-funnel-backfill">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              Funnel snapshot backfill
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Writes funnel snapshots for completed cycles that ran
+              before the snapshot writer shipped. Stages 1–5 are
+              zeroed (signals/drafts cannot be reconstructed
+              post-hoc); stages 6–10 are derived from current
+              persisted opportunities and decisions. Idempotent —
+              re-running only fills new gaps.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <label
+                htmlFor="backfill-org-id"
+                className="text-xs uppercase text-muted-foreground"
+              >
+                Tenant org id (blank = all tenants)
+              </label>
+              <Input
+                id="backfill-org-id"
+                data-testid="input-backfill-org-id"
+                placeholder="org_…"
+                value={backfillOrgId}
+                onChange={(e) => setBackfillOrgId(e.target.value.trim())}
+                disabled={backfillM.isPending}
+              />
+            </div>
+            {backfillResult && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Snapshots created
+                    </div>
+                    <div data-testid="text-backfill-created">
+                      {backfillResult.totals.snapshotsCreated}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Already had snapshot
+                    </div>
+                    <div data-testid="text-backfill-skipped">
+                      {backfillResult.totals.alreadyHadSnapshot}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Cycles scanned
+                    </div>
+                    <div>{backfillResult.totals.cyclesScanned}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Failed
+                    </div>
+                    <div
+                      className={
+                        backfillResult.totals.failed > 0
+                          ? "text-red-600"
+                          : ""
+                      }
+                      data-testid="text-backfill-failed"
+                    >
+                      {backfillResult.totals.failed}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {backfillResult.tenants.length} tenant(s) processed in{" "}
+                  {backfillResult.durationMs}ms.
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                data-testid="btn-run-backfill"
+                onClick={() => backfillM.mutate(backfillOrgId)}
+                disabled={backfillM.isPending}
+                title={
+                  backfillOrgId
+                    ? `Backfill snapshots for ${backfillOrgId}`
+                    : "Backfill snapshots for every tenant"
+                }
+              >
+                {backfillM.isPending ? (
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                ) : (
+                  <PlayCircle className="w-3 h-3 mr-1" />
+                )}
+                {backfillM.isPending
+                  ? "Running…"
+                  : backfillOrgId
+                    ? "Run backfill (tenant)"
+                    : "Run backfill (all tenants)"}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

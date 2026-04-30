@@ -27,12 +27,14 @@ import {
   opportunitiesTable,
   decisionsTable,
   marketSignalsTable,
+  analysisCyclesTable,
+  orgsTable,
   COHORT_WINDOWS,
   type CohortWindow,
   type LeverId,
   type OpportunityRow,
 } from "@workspace/db";
-import { and, desc, eq, gte, inArray, lt, sql, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql, isNull, or } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { ALL_LEVERS } from "../levers";
@@ -762,3 +764,137 @@ class Counter {
 }
 
 export const funnelSnapshotFailuresCounter = new Counter();
+
+// ────────────────────────────────────────────────────────────────────────
+// Backfill (task #188)
+// ────────────────────────────────────────────────────────────────────────
+
+export interface BackfillReport {
+  orgId: string;
+  cyclesScanned: number;
+  snapshotsCreated: number;
+  alreadyHadSnapshot: number;
+  skippedNotCompleted: number;
+  failed: number;
+}
+
+function emptyBackfillReport(orgId: string): BackfillReport {
+  return {
+    orgId,
+    cyclesScanned: 0,
+    snapshotsCreated: 0,
+    alreadyHadSnapshot: 0,
+    skippedNotCompleted: 0,
+    failed: 0,
+  };
+}
+
+/**
+ * Walk every completed cycle for `orgId` (in `(orgId, generation)`
+ * order) and write a snapshot for each one that doesn't already have
+ * one. Mirrors the recompute endpoint's path: empty pre-Act inputs
+ * (signals/drafts stages 1–5 collapse to 0) but real persisted
+ * opportunities and decisions for stages 6–10.
+ *
+ * Idempotent: cycles with an existing snapshot are skipped, so a
+ * re-run after new cycles complete only fills the gap.
+ *
+ * The system page invokes this per-tenant or for all tenants via
+ * `POST /platform/funnel/backfill`; the script
+ * `scripts/src/backfill-funnel-snapshots.ts` is an offline equivalent
+ * for ops use that writes a minimal snapshot directly without going
+ * through the api-server (it can't import from this module).
+ */
+export async function backfillFunnelSnapshotsForOrg(
+  orgId: string,
+  opts: { ALL_LEVERS: LeverAnalyzer[] },
+): Promise<BackfillReport> {
+  const report = emptyBackfillReport(orgId);
+
+  // Anti-join: fetch only cycles that don't already have a snapshot,
+  // ordered by generation ASC so backfilled rows respect the same
+  // monotonic ordering the live writer relies on for delta detection.
+  const cycles = await db
+    .select({
+      id: analysisCyclesTable.id,
+      generation: analysisCyclesTable.generation,
+      status: analysisCyclesTable.status,
+    })
+    .from(analysisCyclesTable)
+    .leftJoin(
+      funnelSnapshotsTable,
+      eq(funnelSnapshotsTable.cycleId, analysisCyclesTable.id),
+    )
+    .where(
+      and(
+        eq(analysisCyclesTable.orgId, orgId),
+        isNull(funnelSnapshotsTable.id),
+      ),
+    )
+    .orderBy(asc(analysisCyclesTable.generation));
+
+  for (const cycle of cycles) {
+    report.cyclesScanned += 1;
+    if (cycle.status !== "completed") {
+      report.skippedNotCompleted += 1;
+      continue;
+    }
+
+    // Re-fetch persisted opportunities for this cycle. Same shape the
+    // recompute endpoint uses; lever results are empty because the
+    // analyzers aren't replayable post-hoc.
+    const persistedOpps = await db
+      .select()
+      .from(opportunitiesTable)
+      .where(
+        and(
+          eq(opportunitiesTable.orgId, orgId),
+          eq(opportunitiesTable.cycleId, cycle.id),
+        ),
+      );
+
+    const leverResults = opts.ALL_LEVERS.map((lever) => ({
+      lever,
+      result: { drafts: [], consultedSignalIds: [] } as AnalyzeResult,
+    }));
+
+    const result = await captureFunnelSnapshot({
+      orgId,
+      cycleId: cycle.id,
+      cycleGeneration: cycle.generation,
+      leverResults,
+      draftsPostExclusion: [],
+      persistedOpps,
+      priorDeltas: [],
+    });
+    if (result.failed) {
+      report.failed += 1;
+    } else if (result.snapshotId) {
+      report.snapshotsCreated += 1;
+    } else {
+      report.alreadyHadSnapshot += 1;
+    }
+  }
+
+  return report;
+}
+
+/**
+ * Backfill every tenant in deterministic id-ASC order. Used by the
+ * cross-tenant POST `/platform/funnel/backfill` endpoint. Returns one
+ * `BackfillReport` per tenant so the caller can render a per-tenant
+ * summary table.
+ */
+export async function backfillFunnelSnapshotsForAllTenants(opts: {
+  ALL_LEVERS: LeverAnalyzer[];
+}): Promise<BackfillReport[]> {
+  const orgs = await db
+    .select({ id: orgsTable.id })
+    .from(orgsTable)
+    .orderBy(asc(orgsTable.id));
+  const reports: BackfillReport[] = [];
+  for (const org of orgs) {
+    reports.push(await backfillFunnelSnapshotsForOrg(org.id, opts));
+  }
+  return reports;
+}
