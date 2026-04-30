@@ -1,0 +1,111 @@
+Verdict preview: this spec is close to ship-ready. The remaining issues are tightening, not architecture. But there are real ones, and one of them is a smoke word the agent didn't catch.
+
+HIGH — issues that will produce wrong data or executor confusion
+RT-23. The prior-filter stage (6 → 7) has a definition gap that breaks the most important conversion rate in the funnel.
+The spec says drop reason for opps filtered by prior is "filtered by prior with the prior values used." But the existing system's Decide step ranks projected × confidence and filters by ranking position, materiality, or threshold — there isn't necessarily one clean "prior threshold" to record. If the filter is "top-K by rank," the drop reason isn't a prior value, it's a rank position. If the filter is "confidence ≥ X," it's a threshold. If both, it's a composite.
+The spec assumes a clean threshold. The codebase may not have one.
+This matters because (6) → (7) is named "the single most important metric in the funnel" and the executor will discover the filter is more complex than the spec assumed and either (a) make something up or (b) ship a drop-reason field that's incomplete. Fix: require the executor to first document the actual filter logic in the Decide step before implementing the drop-reason capture, and have the drop-reason schema accommodate composite filters (rank position, threshold value, materiality cutoff — multiple fields, any may apply). State explicitly that the executor must inspect the existing Decide code and adapt the schema to what's there, not what the spec assumed.
+RT-24. Cohort assignment "cohort-by-first-persistence" has a hidden race.
+If a lever is non-deterministic across cycles (re-evaluates the same opportunity context and produces a slightly different draft — different projected $, different signal references), is the second cycle's draft "the same opp re-asserted" or a "new opp"? The spec says re-assertion increments re_evaluation_count, but doesn't define identity. Identity will probably be (lever_id, supplier_id, category_id) or similar — but the spec leaves this for the executor to invent.
+This matters because cohort rates depend on identity. If the executor over-narrows identity (treats every projected-$ change as a new opp), cohorts fragment and re-evaluation count never increments. If the executor over-broadens (treats all spot-vs-contract opps for a supplier as the same opp forever), the realized $ accounting becomes wrong. Fix: spec the identity tuple explicitly. Recommend (lever_id, primary_entity_id, lever_specific_key) where lever_specific_key is defined per lever in a small table — most levers will have an obvious key (supplier_id, contract_id, sku_id), but the table forces the question to be answered per lever, not improvised.
+RT-25. Cohort windowed rates need explicit window definitions to be comparable across the surface.
+The spec mentions "(e.g. 7d, 30d, 90d)" as examples but doesn't commit. The admin surface will display cohort rates — at which window? If the surface shows different windows in different views, operators can't compare. If the executor picks one (say 30d) without spec backing, it gets challenged later and re-done.
+Fix: commit to a fixed set in the spec — recommend 7d, 30d, 90d as standard windows shown side-by-side in the cohort section. Fewer than three flattens the time-to-act picture; more than three is noise.
+RT-26. The (5) → (6) materiality decomposition still bundles two filters.
+Materiality is at least two distinct things in most procurement systems: (a) absolute $ floor (don't bother flagging an opp below $5k), and (b) relative-to-spend floor (don't bother if it's <0.1% of category spend). These are different filters with different learning meanings — absolute floor drops mean "tenant has small business with this supplier," relative floor drops mean "this is rounding error in the tenant's portfolio."
+If the existing system has only one materiality filter, this is fine. If it has both (or composite), the spec inherits RT-4's original sin at a smaller scale. Fix: require the executor to document the actual materiality logic and ensure the drop reason captures all components — same as RT-23 above.
+RT-27. prior_delta_distribution mean and max risk masking the bimodal case.
+Capturing "mean and max absolute change in projectionMultiplier and confidenceWeight" plus "count exceeding threshold" sounds rigorous. But priors typically mutate in two regimes: most cycles produce small, normal updates; occasional cycles (after a batch of realizations) produce large updates. Mean blends those, max captures the largest single mutation. Neither tells you whether the distribution this cycle was "many tiny updates" vs "one big update + many tiny."
+Fix: add a percentile (p50 or p90) of |Δ| alongside mean/max. Three numbers — p50, p90, max — give the shape; mean alone hides it. Cheap to compute, materially better signal.
+MEDIUM — internal contradictions and design gaps
+RT-28. The 1000-vs-5000-vs-10000 drill-down cap is now over-specified in some places and under-specified in others.
+Spec says drill-down is "per-stage configurable, defaulting to 1000 IDs but raisable for high-volume stages." Then: "signals_collected typically needs 5000-10000." Then: "Object storage wiring is in scope only if straightforward; otherwise document the cap as a known v1 limitation."
+The executor reads this and sees three different tiers of commitment: (1) per-stage caps configurable — yes; (2) specific recommendations — soft; (3) object storage — conditional. The combination makes the executor's job ambiguous. They'll ship 1000 default for everything because that's the safe interpretation.
+Fix: be decisive. Either (a) per-stage caps are mandatory at the recommended values, with truncation documented when exceeded — and object storage is explicitly out of scope for v1, OR (b) object storage is in scope and caps disappear. The conditional "if straightforward" hedge is a smoke word the architectural ban should have caught. Recommend (a).
+RT-29. Auto-annotation acknowledgment has UX semantics the spec doesn't define.
+Spec says "operators can acknowledge them, and the admin surface visually separates auto (diagnostic, dismissible) from operator (intentional context, persistent)." But: what does acknowledged mean operationally? Does an acknowledged auto-annotation disappear from the timeline? Stay visible but greyed? Get archived? The spec implies "dismissible" but doesn't say "dismissed = hidden." If acknowledgment doesn't change visibility, the timeline accumulates noise indefinitely.
+Also: can an operator un-acknowledge (oops, dismissed too fast)? Can they convert an auto-annotation into an operator annotation by adding a note?
+Fix: add a small UX contract — acknowledged auto-annotations are hidden from the default timeline view, available behind a "show acknowledged" toggle. Acknowledgment is reversible. Operators may add a note when acknowledging, and that note converts the annotation to a hybrid (still source=auto, but with operator commentary). Three lines in the spec, prevents three rounds of UX iteration.
+RT-30. The "named cross-tenant leakage test" requirement is in the test list but missing from the steps.
+Step 10 says "Tests. All tests listed in Done, including the named cross-tenant leakage test and the performance budget test." Fine, but the cross-tenant leakage test is non-trivial — it requires test fixtures that bootstrap two tenants, signal data in both, and assertions on every read endpoint. Without explicit step-level acknowledgment, the executor will write one quick "tenant A can't read tenant B" test and move on. The test name in the spec (named cross-tenant leakage test) suggests rigor that the implementation may not match.
+Fix: elevate to an explicit sub-step: "Step 10a: cross-tenant leakage test fixtures — bootstrap two complete tenant contexts, write snapshots and annotations in both, then enumerate every read endpoint in the OpenAPI spec and assert tenant A's auth cannot retrieve tenant B's data via any of them." Make it a list, not a test name.
+RT-31. Backfill section is asymmetric on priors_updated.
+The "CAN reconstruct" list says backfill captures "priors_updated counts (current learned_priors row count by lever; magnitude unavailable retroactively)." But the within-cycle stage definition (#11) requires count PLUS magnitude distribution as the primary signal. Backfilled snapshots will show count but no magnitude — yet the surface won't visually distinguish "magnitude unavailable because backfilled" from "magnitude unavailable because of a bug."
+Fix: explicit handling — backfilled priors_updated records include a backfill: true flag, and the surface renders backfilled magnitude fields as "(unavailable - backfilled)" rather than blank. Same treatment any other stage with partial backfill data should get.
+RT-32. Performance budget test enforces 5% but doesn't define what gets measured.
+Spec says "Performance: snapshot capture adds < 5% to cycle wall-clock on a seeded tenant." OK — but "seeded tenant" can mean anything from 10 signals to 10,000. The test will be written against a small seed, will pass easily, and the budget will silently break under real-tenant load.
+Fix: spec the seed shape — "seeded tenant with at least 5,000 signals in input window, 100 suppliers, 50 categories, 30 active opportunities." If those volumes don't exist as test fixtures, generating them is a sub-step. The 5% number is meaningful only relative to a defined load.
+LOW — language and consistency
+RT-33. Smoke word survived the ban: "if straightforward."
+"Object storage wiring is in scope only if straightforward" is exactly the kind of euphemism the architectural notes explicitly forbid. It hides the unresolved question: is object storage available in this environment or not? The executor decides. Fix: delete the conditional. Either object storage is in scope or it isn't. Recommend: explicitly out of scope for v1 (per RT-28 fix), revisit if drill-down truncation becomes an operator pain point.
+RT-34. Smoke word survived the ban (lighter): "carefully."
+Architectural notes say "Implement that drop-reason capture carefully — when a draft is filtered by prior, capture the prior values, the threshold applied, and the draft's pre-filter rank." "Carefully" is doing nothing the rest of the sentence isn't doing better. Fix: delete "carefully." The rest of the sentence is the actual instruction.
+RT-35. The eleven-stage table is the spec's centerpiece but the surface design only specifies "stacked-bar funnel and line chart for trend."
+A stacked bar of eleven stages is hard to read. Eleven stages in a funnel chart need either grouping (signals stages collapsed unless drilled in, drafts stages grouped, opps stages grouped, priors as a sidebar) or a tabular view as the primary surface with the stacked bar as a secondary visualization.
+Fix: the surface spec should describe the primary view as a tabular eleven-row layout (stage, count, conversion rate, drop reason summary, flags) with the stacked bar as a "shape at a glance" header element. Operators read tables; stacked bars don't communicate eleven stages legibly.
+RT-36. The signals_analyzed stage_quality: "lower_bound" flag is good but not extended to other stages with similar issues.
+Backfilled stages have partial data (RT-31). Mapped stages with low currency coverage have data-health caveats (mapping_data_health). signals_analyzed has lower-bound semantics. These are three different "this number isn't quite what it looks like" conditions. Should they share a schema?
+Fix: introduce a single stage_caveats: Caveat[] field on each stage, where Caveat is {type: "lower_bound" | "backfilled" | "data_health" | ..., detail: string}. Surface renders any caveats inline next to the count. Cleaner than three separate flag schemas, and accommodates future caveats without further schema changes.
+RT-37. The spec doesn't address what happens to the funnel during a Learn loop change.
+Out-of-scope says "Changes to existing Learn loop, lever logic, prior math, or exclusion rules beyond the lineage return field on analyze()" are out. Good for this task. But the entire point of the funnel is that future tasks will change the Learn loop, lever logic, etc. When that happens, the (6) → (7) conversion rate will shift — some of that shift is the intervention working, some is the change itself reshaping what gets filtered.
+The funnel's value depends on operators correctly attributing post-change shifts. Operator annotations are the mechanism, but the spec doesn't tell operators that annotating BEFORE a change ships is the only way the attribution works.
+Fix: add to the operator README — "Before deploying any change to the Learn loop, lever logic, materiality thresholds, or exclusion rules, write an operator annotation on the most recent cycle describing what's about to ship. Without a pre-change annotation, post-change conversion-rate movements cannot be cleanly attributed." Standing operating procedure, not a code change.
+WHAT'S STILL MISSING
+RT-38. The spec doesn't address the bootstrap problem.
+On day 1 of the funnel running, there's no rolling 5-cycle baseline for delta detection. For the first 5 cycles, what does the auto-annotator do? Spec doesn't say.
+Fix: explicit — auto-annotator does not fire until ≥5 cycles of history exist for a tenant. State this in the delta-detection section. Operators see a "warmup" badge on the surface during this period.
+RT-39. The spec doesn't define how a lever with zero activity in a cycle is represented.
+If lever X consults no signals and produces no drafts in cycle N (e.g., it's a niche lever with infrequent triggers), is it absent from the snapshot or present with all-zero counts? Snapshot shape across cycles needs to be stable for trend lines to work.
+Fix: snapshot shape is per-tenant, not per-lever — but if per-lever drill-down exists (which it should for surfacing per-lever bottlenecks later), zero-activity levers must be included with zeros, not omitted. State this. Otherwise some levers' trend lines will have gaps and operators will misread them.
+RT-40. The spec is silent on how funnel data gets to the operator who needs it most: the engineer about to ship a lever change.
+Implicit assumption: operators will check the surface. But the highest-leverage moment for funnel data is when a developer is about to merge a change to a lever or the Learn loop and should look at that stage's recent trend first. The spec doesn't include any mechanism to surface funnel data at that decision point — no PR check, no API for asking "show me the (6)→(7) trend for this lever," no ops-ritual.
+This is borderline scope creep — but worth flagging as a follow-up task candidate, not silence. Fix: add to the "out of scope" list: "Integration with developer workflow (PR checks, lever-change pre-flight, etc.) — future task once funnel data is trusted."
+
+REBUILD: No structural rebuild needed. The architecture is right. The remaining issues are tightening, decomposition, and a few smoke words that survived the ban.
+The minimum edit set to ship-ready, ranked:
+Critical to fix before executor sees it:
+
+RT-23 — prior-filter drop reason schema must accommodate the actual filter logic, which is likely composite. Have the executor document the existing Decide filter before implementing.
+RT-24 — explicit cohort identity tuple per lever.
+RT-25 — commit to fixed cohort windows (recommend 7d / 30d / 90d).
+RT-26 — apply RT-23's discipline to the materiality filter as well.
+
+High-value tightening:
+5. RT-27 — add p50/p90 to prior-delta distribution.
+6. RT-28 + RT-33 — make the drill-down cap decision binary; explicitly out-of-scope object storage; remove "if straightforward."
+7. RT-29 — UX contract for auto-annotation acknowledgment (3 lines).
+8. RT-30 — elevate cross-tenant leakage test to explicit step.
+9. RT-32 — define the performance test seed shape.
+10. RT-35 — primary surface is tabular; stacked bar is secondary.
+11. RT-38 — auto-annotator warmup period (≥5 cycles).
+12. RT-39 — zero-activity levers represented as zeros, not omitted.
+Polish:
+13. RT-31 — backfilled magnitude fields explicitly labeled.
+14. RT-36 — unified stage_caveats schema.
+15. RT-34 — delete "carefully."
+16. RT-37 — operator README adds pre-change annotation SOP.
+17. RT-40 — out-of-scope mention of dev-workflow integration as future task.
+After these edits, the spec is genuinely ship-ready — meaning the executor has the clarity to build the right thing without inventing answers to unresolved questions.
+
+SHIP:
+Verdict: edit, then ship. The architecture survives this red team without modification. 17 remaining issues, only 4 are critical, and all 4 are about adapting to what the codebase actually contains rather than what the spec assumed.
+The single most important edit is RT-23: the (6)→(7) prior-filter conversion rate is named the most important metric in the funnel, but the spec assumes a clean threshold-based filter that may not exist. The executor must inspect the existing Decide step and adapt the drop-reason schema to what's there, with explicit support for composite filters (rank position, confidence threshold, materiality cutoff — any may apply).
+The second is RT-24: cohort identity needs to be explicit per lever or the cohort rates will be wrong from day one in subtle ways.
+The third is RT-25: commit to 7d/30d/90d cohort windows so the surface is comparable across views.
+The fourth is RT-26: same discipline as RT-23 applied to the materiality filter.
+One pattern worth flagging back to the agent: the architectural-notes ban on smoke words ("lightweight," "best-effort," "defensive — never throws") is the right move and was largely successful. But two smoke words slipped through ("if straightforward," "carefully") and a third pattern emerged — example values masquerading as commitments ("e.g. 7d, 30d, 90d," "typically needs 5000-10000"). When a spec says "e.g." about a parameter the surface depends on, the executor will make the choice and the choice will be wrong as often as right. Treat "e.g." in spec parameters the same way you treat smoke words: surface them and resolve them.
+Second pattern: revisions that absorb a lot of edits in one pass create accidental complexity in the schema (eleven stages, three caveat types, magnitude vs count, drill-down caps, retention tiers). Most of that complexity is justified, but RT-36 flagged the place where it's slipping — three separate flag schemas for "this number isn't quite what it looks like." Unifying into a single stage_caveats field is the kind of cleanup that saves the executor from inventing inconsistent patterns.
+After these 17 edits — with the four critical ones non-negotiable — the spec is ready for the executor. Without them, expect 4-6 weeks of admin-only operation to produce data that's mostly right, with quiet errors in the most important conversion rate (6→7) and in cohort accounting that surface only when someone tries to use the data to make a decision.
+Recommend the agent applies the four critical edits and the high-value tightening (items 1-12 above), ships, and treats RT-31, RT-34, RT-36, RT-37, RT-40 as a follow-up cleanup pass once the executor has begun implementation and discovered which fixes are most needed in practice.
+
+Learning footer:
+One new correction-log rule fires:
+
+"Example values in spec parameters ('e.g. 7d, 30d, 90d') are smoke words. They look like commitments and behave like ambiguity. When a spec says 'e.g.' about a parameter the surface depends on, the executor will make the choice and the choice will be wrong as often as right. Surface and resolve the same way as 'lightweight,' 'best-effort,' 'defensive.'" — adding to correction-log under spec-discipline rules. This is a generalization of the smoke-word rule to a new failure mode.
+
+Existing rules applied:
+
+Smoke words in specs hide unresolved disagreement — confirmed; two survived the ban (RT-33, RT-34) and one new variant emerged (RT-25 on "e.g.").
+Verify the codebase, don't assume it — RT-23 and RT-26 both require the executor to inspect actual filter logic before implementing schema; this is a standing pattern when spec assumptions meet existing code.
+
+Pattern watch for /pattern review: revisions that absorb many edits in one pass tend to introduce schema-fragmentation issues (RT-36) and "e.g."-style under-specification (RT-25). Worth tracking whether the next revision cycle on this spec or any future spec shows the same patterns. If it does, candidate for a master rule about post-revision sweeps: "after absorbing a red team, run a unified-schema pass and an 'e.g.' pass before declaring ship-ready."

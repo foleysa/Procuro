@@ -1,0 +1,156 @@
+Verdict preview: spec is genuinely close to ship-ready. The architecture survives. But the prior-calibration metric — which is the spec's biggest new idea and the answer to its most important question — has math holes that will produce misleading results in real data. That's the one thing that must get fixed before ship.
+
+CRITICAL — math errors in the prior-calibration metric
+RT-41. The calibration error formula has division-by-near-zero behavior the spec doesn't address.
+Formula: raw_error = |realized − raw| / max(realized, 1) and same for prior_rescaled.
+When realized is small (say $50, or $0 for a no-savings outcome, or negative for a cost increase) the denominator floor of 1 produces enormous errors that swamp the per-lever average. A lever with one realization of $0 against a $5,000 raw projection produces raw_error = 5,000. Mean error across 30 realizations gets dominated by this one outlier.
+This isn't theoretical. Procurement realizations include cancelled initiatives, partial executions, and counterfactuals where the savings didn't materialize. They're common.
+Fix: the spec must define error robustly. Three options, in order of robustness:
+
+(a) Use absolute error, not relative — error = |realized − projection|. Aggregated as median, not mean. No division at all.
+(b) Use relative error but clip both numerator and denominator to a sane floor (e.g., min(|realized − projection|, 5 × max(realized, projection)) / max(|realized|, |projection|, $1000)), and report median.
+(c) Use a different metric entirely — log-ratio of projection to realized, capturing over- vs under-projection symmetrically. Closer to standard forecasting practice.
+
+Recommend (a) for v1 — simplest, least defensible against gaming, but easiest to read. Mean → median is the critical change. Mean error is dominated by the worst case; median is the typical case.
+RT-42. The "helping / neutral / hurting" trichotomy ignores statistical significance.
+Spec says "negative = priors helping; zero = neutral; positive = priors hurting." But for a lever with 3 realizations in 30d, any difference between raw_error and prior_rescaled_error is noise. Operators reading "priors hurting on this lever" with n=3 will draw wrong conclusions and either disable the prior or escalate.
+Fix: require a minimum realization count before rendering helping/neutral/hurting verdict. Recommend minimum n=10 in the window, below which the surface shows "insufficient data" instead of a verdict. The underlying numbers can still be displayed for transparency, but the categorical claim is gated.
+RT-43. The calibration metric conflates two different prior effects.
+Priors do two things in the existing code: (a) rescale projectedSavingsUsd via projectionMultiplier, (b) feed confidence into rank ordering. The calibration metric only measures (a). If priors are over-confident (b is wrong) but well-scaled (a is right), the calibration shows priors as helping when they're actually causing miscalibrated rankings.
+For v1 this is acceptable — measuring (a) alone is still better than measuring nothing — but the spec must say so explicitly. Otherwise operators will read "priors helping" as a global verdict on the Learn loop, when it's actually a verdict on projection rescaling only.
+Fix: the operator README must explicitly state that the prior calibration metric measures projection rescaling accuracy, NOT confidence calibration, and that confidence's contribution to ranking is not currently measurable from the data. Add a follow-up task placeholder: "confidence calibration via realization-rate-vs-projected-confidence is a v2 candidate."
+RT-44. "Per‑lever calibration over rolling 30/90‑day windows" doesn't define what 30/90 mean.
+30/90 days from when? Cycle execution time, opp persistence time, opp realization time? The spec says "Aggregate per lever over rolling 30/90‑day windows: mean error of each, count of realizations." This implies "realizations occurring in the last 30/90 days" — but the spec doesn't say so. The executor will pick "last 30 days of realization timestamps" because that's the obvious choice, but if the codebase realization timestamp is on the decision row vs the opportunity row vs derived, the answer differs.
+Fix: define explicitly — "rolling 30d window = realizations with realize-decision-event timestamps in the trailing 30 days." Same for 90d.
+
+HIGH — stage logic and cohort issues
+RT-45. Stage (4) drafts_produced has a definitional inconsistency with (5)→(6) being identity.
+Spec defines drafts_produced as "Total OpportunityDraft outputs across all levers, after each lever's internal materiality / threshold / scoping logic has run." Then (5) drafts_post_exclusion = drafts surviving exclusion_rules. Then (6) opps_persisted = identity of (5) in current code.
+So in current code: (4) → (5) is the only real conversion (exclusions), and (5) = (6). That means the within-cycle funnel is effectively five stages of conversion (1→2→3→4→5) with stage 6 mirroring stage 5. Operators looking at the table will see two adjacent identical numbers and ask "why are these the same."
+Fix: the surface must explicitly label (6) as "(post-prior filter — currently a no-op pass-through; reserved for future filtering)" so it's read as architecturally intentional, not a bug. Just labeling. Three words on the surface, prevents the recurring "why two identical rows" question.
+RT-46. Cohort identity for "supplier_consolidation" levers with empty lever_specific_key collides.
+Spec says levers with no natural sub-key (e.g. supplier_consolidation) get empty string. So all consolidation opps for the same primary_entity (say, a category_id when no supplier is identified) collapse into one cohort tuple. If a category produces multiple consolidation opps over time, they all map to the same cohort.
+That's probably fine for some cases (consolidation campaigns often re-target the same category) but problematic for others (a category with two distinct consolidation opportunities in two different cycles will be merged, with re_evaluation_count incrementing instead of cohorts forking).
+Fix: the empty-string rule needs an escape hatch. Either (a) consolidation-style levers should generate a cohort key from a draft fingerprint (hash of the draft's specific recommendation — supplier set, category combination), or (b) the empty string is acceptable but the spec must state explicitly that empty-key levers cannot distinguish multiple cohorts per primary_entity over time, and operators should read re_evaluation_count carefully on those levers.
+Recommend (b) for v1 — simpler, honest about the limitation, matches the rest of the spec's discipline.
+RT-47. Cohort time anchoring is undefined.
+When does the 7d/30d/90d clock start? Cohort = "cycle in which the tuple first appeared" (good). But within that cycle, opps_persisted is created at cycle execution time. The 7d window — is it 7 days from cycle start, cycle end, or opp row creation? These can differ by minutes-to-hours but the difference matters for boundary cases (an opp persisted at 23:55 on day 1 and approved at 00:05 on day 2 — does it count as "approved within 7d"? Yes, but at what reference point?).
+Fix: define cohort time anchor as "opps_persisted row created_at timestamp." Specify in the spec, then 7d/30d/90d are unambiguous.
+RT-48. The mapping_data_health payload definition is incomplete.
+Spec gives one example: currency_coverage_pct = suppliers_with_billing_currency / total_suppliers. Then "etc." That "etc." is a smoke word — what other coverage metrics are in the payload? Category code coverage? Material code coverage? Supplier ID coverage on signals? The executor will guess.
+Fix: explicit list. At minimum:
+
+currency_coverage_pct: % of suppliers with billing_currency populated
+category_code_coverage_pct: % of signals with non-null scope_category_code
+supplier_match_coverage_pct: % of signals with a direct supplier_id match in the suppliers table
+
+Three fields, named, defined. Add more if/when needed via schema extension.
+
+MEDIUM — internal consistency and missing scope
+RT-49. The spec is silent on what happens when a lever changes its cohortKey() definition.
+Adding a new lever requires declaring cohortKey(). What about modifying an existing lever's cohortKey (e.g., supplier_fx_exposure changes from currency_pair to currency_pair + region)? Existing cohorts in the database will silently use the old key while new cohorts use the new key. Re-evaluation count breaks. Cohort time-series fragments.
+Fix: add to architectural notes — "Modifying a lever's cohortKey() is a schema-breaking operation. It requires a migration to either (a) re-key existing cohorts under the new definition, or (b) close out existing cohorts and start fresh. Without explicit handling, cohort accounting silently fragments." Treat as a forward-warning to any future engineer.
+RT-50. The unified caveat schema doesn't specify priority/conflict behavior.
+A stage may have multiple caveats simultaneously (e.g., backfilled AND warmup; lower_bound AND data_health). Caveat is {type, detail}. The surface "renders any caveats inline next to the count." How? In what order? Are some caveats more important than others (e.g., "backfilled" should probably win prominence over "data_health")?
+Fix: specify rendering order. Recommend: backfilled > warmup > lower_bound > data_health. Render in that priority order, comma-separated, with the highest-priority caveat first. Three lines in the surface spec.
+RT-51. Performance budget test fixture is partially defined but the generation strategy isn't.
+Spec says "If those volumes don't exist as test fixtures, generating them is a sub-step of the performance test." What does "generating them" mean — a seed script with synthetic data? A snapshot from a real tenant copied to a test environment? These produce different test fidelity.
+Fix: explicit — "Generate via a seed script that creates synthetic but realistic data: 5,000 signals across 30 BLS series and 10 FX pairs over 90 days; 100 suppliers with billing_currency populated for at least 60%; 50 categories with scope_category_code matched to ≥30 of the 30 BLS series; 30 opportunities active in the past 30 days across the FX, spot-vs-contract, and material-index-arbitrage levers." This pins the fixture so the budget test is repeatable.
+RT-52. Snapshot failure banner has no dismissal/aging logic.
+Spec says the banner shows "recent snapshot failures by tenant." What does recent mean? Forever? Last 24h? Until acknowledged?
+Fix: banner shows snapshot failures from the last 24 hours, grouped by tenant. After 24 hours a failure no longer appears unless it's recurring. If the same failure recurs ≥3 times in 24h, it's flagged as "recurring failure" and persists until acknowledged.
+
+LOW — language and consistency
+RT-53. Smoke words to flag.
+Hunting per the architectural ban:
+
+"etc." in mapping_data_health (RT-48 above) — flagged.
+"if those volumes don't exist as test fixtures, generating them is a sub-step" — "if" is conditional; either spec the fixture or don't. (RT-51 above.)
+"Treat accordingly" in the lineage step ("This refactor is repo‑wide on the type signature even where the field is empty; treat accordingly") — what does "treat accordingly" mean? It's the architectural-notes equivalent of "carefully." Fix: delete "treat accordingly" or replace with concrete guidance ("expect the change to touch every file declaring an analyzer; budget time accordingly").
+"Plan the touch surface accordingly" in architectural notes — same pattern. Fix: replace with explicit guidance ("expect to modify N files: types, every analyzer, every analyzer test").
+
+RT-54. The cohort window declaration "fixed at 7d/30d/90d" repeats in three places without single source of truth.
+Spec mentions 7d/30d/90d in the stage table, the cohort identity section, the surface section, and the schema. If a future change adds a 365d window or moves to 14d/60d/180d, four places need to update. Not a bug, but an invitation to drift.
+Fix: define COHORT_WINDOWS = [7, 30, 90] (days) as a single constant in the schema spec, referenced everywhere else by name. Mechanical change but prevents drift.
+
+WHAT'S STILL MISSING
+RT-55. The spec doesn't say what happens to the funnel when a lever is added or removed.
+Adding a lever: zero historical cohorts exist for the new lever. Cohort rates are NaN for it for 30/90 days. The surface needs to handle this gracefully or operators see broken visualizations.
+Removing a lever: existing cohorts continue to age. Their realizations may never come (the lever isn't producing new opps but old opps are still live). Calibration metric continues to fire on old realizations.
+Fix: add to architectural notes — "New levers display 'no data yet' for cohort and calibration sections until ≥10 realizations accumulate. Removed levers (those no longer in ALL_LEVERS) continue to show their historical data but are visually flagged as 'lever decommissioned' to distinguish from active levers."
+RT-56. The spec doesn't define what the funnel does during a tenant onboarding.
+A new tenant has no historical cycles. Day 1: all stages render zeros, calibration shows no data, warmup badge active. The spec implies this works automatically (warmup gate covers it for delta detection), but the surface UX during onboarding is unaddressed. Operators looking at a new tenant see what looks like a broken funnel.
+Fix: explicit empty-state rendering — "For tenants with <5 cycles in their history, the surface displays a 'tenant onboarding' header explaining that the funnel will populate over the next several cycles. Calibration table shows 'awaiting first realizations' instead of zeros."
+RT-57. The spec doesn't address what the funnel does when a single lever runs into errors.
+If FX lever throws in cycle N, what happens to its drafts/opps in the snapshot? The cycle integrity rule says the OODA cycle still completes. But does the snapshot record the lever as having produced 0 drafts (misleading — implies inactivity), or carry an error caveat (correct), or omit the lever from this cycle (creates the trend gap RT-39 warned about)?
+Fix: lever errors during a cycle are captured in the snapshot as a per-lever caveat: {type: "lever_error", detail: "FX lever threw in cycle N: [error class]"}. Counts for that lever are recorded as 0 with the caveat attached, so trend lines remain continuous and the gap is explainable.
+RT-58. The spec doesn't require a regression test for "is the funnel itself working."
+There are tests for snapshot completeness, delta detection, annotation CRUD, cross-tenant leakage, performance, and Playwright e2e. There is no test that asserts the funnel correctly identifies a known bottleneck.
+Fix: add a test — "Synthetic-bottleneck test: seed a tenant with deliberate stage imbalance (e.g., 1000 signals → 50 mapped → 5 analyzed → 50 drafts → 50 post-exclusion → 50 opps) and assert the funnel surfaces signals_collected → signals_mapped as the dominant bottleneck on the per-tenant view." This is the integration test that validates the funnel's primary purpose.
+
+REBUILD: No structural rebuild needed. The architecture survives this round and is now meaningfully better than two rounds ago. The remaining issues split into three groups:
+Critical — must fix before ship (math errors that produce wrong answers):
+
+RT-41 (calibration formula robust to small/zero/negative realized values; switch mean → median)
+RT-42 (minimum n=10 before rendering helping/neutral/hurting verdict)
+RT-43 (operator README explicit about what calibration measures and doesn't)
+RT-44 (define rolling window timestamp anchor)
+
+High — should fix before ship (clarity and correctness):
+
+RT-45 (label stage 6 as forward-compatible no-op on the surface)
+RT-46 (empty-key cohort limitation explicit in spec)
+RT-47 (cohort time anchor = opps_persisted.created_at)
+RT-48 (mapping_data_health fields enumerated)
+
+Medium — fix this round if cheap, else next pass:
+
+RT-49 (cohortKey change = schema-breaking, document)
+RT-50 (caveat rendering priority order)
+RT-51 (performance test fixture spec'd)
+RT-52 (banner aging/recurrence logic)
+RT-55 (new/removed lever surface behavior)
+RT-56 (tenant-onboarding empty state)
+RT-57 (lever-error caveat on snapshot)
+RT-58 (synthetic-bottleneck integration test)
+
+Low — polish:
+
+RT-53 (smoke words: "treat accordingly," "plan the touch surface accordingly," "etc.")
+RT-54 (COHORT_WINDOWS constant)
+
+
+SHIP:
+Verdict: edit, then ship. The four critical issues are the only ones that must be fixed before the executor sees this. Everything else is real but lower-stakes.
+The spec is now mature enough that the most important question is not "is the architecture right" — it is. The most important question is whether the prior-calibration metric, which is the agent's biggest new idea and the answer to the funnel's most important question, computes correctly on real data. As written, it doesn't. The error formula divides by max(realized, 1) and reports mean error — both of which break on the realistic distribution of procurement realization outcomes (small, zero, and negative values; long-tailed errors). Without RT-41 and RT-42, the calibration table will report nonsense for at least some levers, and operators will either disable priors or escalate based on noise.
+The four non-negotiable edits:
+
+RT-41: Switch the error formula to absolute error |realized − projection| aggregated as median (not mean). Drop the divide-by-near-zero pattern entirely. The metric becomes "median absolute error" and the comparison stays the same: prior-rescaled median error vs raw median error.
+RT-42: Gate the helping/neutral/hurting verdict on minimum n=10 realizations in the window. Below that, surface shows "insufficient data" alongside the raw numbers. Operators see transparency without categorical noise.
+RT-43: Operator README must state that the calibration metric measures projection rescaling, NOT confidence calibration. Confidence's effect on ranking is unmeasured in v1 and a v2 candidate.
+RT-44: Define rolling 30/90 windows with explicit anchor — "realize-decision-event timestamps in the trailing 30/90 days."
+
+The four high-value edits worth making now:
+
+RT-45: Label stage 6 on the surface as "post-prior filter (no-op pass-through; reserved for future filtering)."
+RT-46: Document empty-key cohort limitation explicitly.
+RT-47: Cohort time anchor = opps_persisted.created_at.
+RT-48: Enumerate mapping_data_health fields.
+
+After these eight edits, the spec is ship-ready. The remaining ten items (RT-49 through RT-58) are real but can ship as a polish pass after the executor has begun implementation and the most pressing issues are visible from contact with code.
+One pattern worth flagging back to the agent:
+The biggest improvement in this revision was code grounding — the agent inspected the actual cycle.ts, fx-exposure.ts, etc., and discovered the prior spec's assumed filter chain didn't exist. That move (replacing "(6)→(7) prior filter conversion rate" with a calibration metric tied to actual rescaling math) is the kind of revision that earns trust. But the new metric was reasoned about in the abstract, not stress-tested against the realistic distribution of procurement realization outcomes. The same code-grounding discipline that fixed the prior framing should be applied to the new framing: pull a sample of historical realizations from the actual decisions table, compute the proposed error formula on them, and look at the distribution. If outliers dominate the mean — which they will — the formula needs to change before ship. This is a verification habit worth adding: any new metric in a spec should be validated against the actual data shape it'll consume, not just defined abstractly.
+The agent should also note: this is the third red team. The pattern across all three rounds is that the agent has correctly absorbed feedback and improved the spec each time, but each new revision introduces new failure modes (in this case, calibration math holes). That's expected and not a criticism — it's how iterative spec design works. Ship with the four critical fixes, treat the remaining list as a backlog, and stop iterating on the spec. The next iteration should be the executor's draft, not another spec round.
+
+Learning footer:
+Two new correction-log rules fire:
+
+"New metrics introduced in specs must be validated against real data shape, not just defined abstractly. Pull sample data from the actual source table, compute the proposed formula, and inspect the distribution before ship." — Adding to correction-log under spec-discipline rules. This generalizes the pattern from RT-41: the calibration formula was reasoned about correctly in the abstract but breaks on the realistic distribution of procurement realization outcomes (zeros, negatives, long tails). The fix is procedural — test the metric against real data before committing to it in spec.
+"Stop iterating on a spec when the remaining items are at the executor-discovery level. After 3 rounds of red team, additional spec polish has diminishing returns relative to letting the executor draft and surface real-world ambiguities." — Pattern observation. Three rounds of red team produced strictly better specs each time but the rate of new critical findings is decelerating. The fourth round's findings would likely be at the polish level. Ship gate: when critical findings drop below a threshold per round, the next iteration should be code, not spec.
+
+Existing rules applied:
+
+Smoke words in specs hide unresolved disagreement — confirmed; three new variants caught (RT-53: "etc.," "treat accordingly," "plan the touch surface accordingly").
+Verify the codebase, don't assume it — the agent applied this rule beautifully in this revision (the cycle.ts inspection that produced the calibration metric framing). Same discipline now needs to extend to validating the new metric against real data.
+
+Pattern watch for /pattern review: the smoke-word ban is now established. The agent applies it to obvious phrases ("lightweight," "best-effort") but new variants emerge each round ("if straightforward," "carefully," now "treat accordingly," "etc."). The rule may need to evolve from a denylist to a principle — "any phrase that could be replaced with concrete guidance and isn't is a smoke word." Worth surfacing in next /pattern review whether to elevate to master rule.

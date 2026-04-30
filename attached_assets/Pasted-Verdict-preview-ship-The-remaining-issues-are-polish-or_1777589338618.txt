@@ -1,0 +1,91 @@
+Verdict preview: ship. The remaining issues are polish or executor-discovery level. The critical-findings rate has clearly decelerated. Two issues worth flagging for the executor to surface during implementation, but neither blocks shipping the spec.
+
+Walking the spec for remaining issues:
+RT-59. The $100 dead-band is unit-blind across lever scales.
+The agent added: "helping if delta_median < −$100, hurting if delta_median > +$100, neutral otherwise. The $100 dead-band prevents flipping verdicts on rounding-scale differences."
+Sensible idea, but procurement levers operate at vastly different magnitudes. A small-spend lever with median realizations of $500 will flip "helping/hurting" verdicts on tiny actual differences (a $100 dead-band is 20% of typical magnitude). A large-spend lever with median realizations of $50,000 will register everything as "neutral" because $100 is rounding error (0.2%).
+This isn't a bug that produces wrong code. It's a definition that produces noise on small levers and false-neutrals on large levers. The executor will ship it as written and it'll work correctly on day one — the verdict will just be miscalibrated until someone tunes it.
+Severity: medium. Not a ship-blocker. The metric is correct; the dead-band is too coarse a knob.
+Recommendation (not a required fix): consider replacing the absolute $100 with a relative dead-band — "neutral when |delta_median| < 5% of raw_median_abs_error, helping/hurting otherwise." This auto-scales across lever magnitudes. But this can also be discovered and tuned post-deploy when the executor sees the actual distribution. Defer to executor judgment during implementation; flag in operator README as a tunable.
+RT-60. The pre-implementation validation requirement is good, but doesn't define what the executor does if the validation reveals a problem.
+Spec says: "before the executor commits to the formula, they must pull a sample of historical realizations... compute the proposed median absolute error formula on the actual data, and inspect the distribution. If the executor finds the median is itself dominated by structural outliers (e.g. a single lever produces 90% of realizations and that lever has a known projection bug), document the finding in the operator README. The metric ships either way..."
+"The metric ships either way" is the right call — don't let validation become a blocker. But what about cases the spec didn't anticipate? E.g., the validation reveals that 90% of realizations have realized_savings_usd = 0 (everything was cancelled), making median absolute error = raw_projected for nearly everything and the comparison trivially noise. That's not "a single lever has a bug"; it's "the data shape doesn't support the metric at all."
+Severity: low. The executor will probably make a sensible call, but the spec should give them explicit permission. Recommendation: add one line — "If validation reveals the data shape cannot support the metric (e.g. realizations are predominantly zero), document this in the operator README and ship the surface with the calibration table marked 'awaiting sufficient realization variance' across all levers. This is acceptable; the funnel still earns its keep on the other nine stages."
+RT-61. The "wide-but-shallow PR" instruction is correct but doesn't bound the discovery cost.
+Architectural notes say: "the levers that touch raw signals (FX, spot-vs-contract, material-index-arbitrage, plus any others discovered during implementation) populate the field."
+"Plus any others discovered during implementation" is honest — the executor will find more. But the spec doesn't say what happens if the executor finds 8 more signal-touching levers, doubling the touch surface. Does the executor stop and ask, or proceed?
+Severity: low. The instruction "expect a wide-but-shallow PR" implies proceed. But this is the kind of mid-implementation discovery that benefits from explicit guidance.
+Recommendation: add — "If implementation discovers more than 5 additional signal-touching levers beyond the three named, surface this in the PR description rather than expanding scope silently. The lineage contract change for those additional levers is in scope; the question is just visibility into what was touched."
+RT-62. One smoke word survived (under the principle, not the original denylist).
+Spec says (under stage 2 mapping_data_health): "Additional fields are added by schema extension if/when needed."
+"If/when needed" is a smoke word under the elevated principle ("any phrase that could be replaced with concrete guidance and isn't"). The spec doesn't say who decides "needed" or what the trigger condition is.
+Severity: very low. The executor will not be confused by this — the listed three fields are explicit, and "if/when needed" is forward-looking guidance rather than a parameter the surface depends on. But it does fail the principle.
+Recommendation: delete the sentence. The three fields are listed; future additions don't need spec sign-off in this task.
+RT-63. Snapshot failure acknowledgment endpoint is referenced but not specified.
+Spec says: "A failure recurring ≥ 3 times in 24h is flagged as 'recurring failure' and persists in the banner until acknowledged by an operator (acknowledgment endpoint same shape as auto-annotation acknowledgment, scoped to the failure record)."
+"Same shape as auto-annotation acknowledgment" tells the executor the schema. But the spec doesn't include the failure record in the schema section (funnel_snapshots and funnel_annotations are listed; nothing for failures). Where does the failure record live? Presumably the funnel_snapshot_failures_total counter is in metrics, but a counter can't be acknowledged.
+Severity: medium. This is the kind of gap that lands the executor inventing a small table mid-implementation.
+Recommendation: add to schema step — "funnel_snapshot_failures table (id, org_id, cycle_id, attempted_at, error_class, error_detail, acknowledged_at NULLABLE, acknowledged_by NULLABLE, recurrence_count INT DEFAULT 1) for the banner UX." One sentence, prevents an invent-as-you-go.
+RT-64. Snapshot writer step doesn't say where the per-lever drill-down counts come from.
+Step 4 says: "Extend runAnalysisCycle to capture stage counts, drill‑down entity arrays (per‑stage caps as specified), prior‑calibration data, and mapping data health at each transition."
+"At each transition" — but the OODA cycle's existing transitions don't all expose per-lever data. signals_collected is collector-driven (not per-lever). signals_analyzed needs lever-by-lever lineage. drafts_produced is per-lever by definition (each lever returns drafts). drafts_post_exclusion is post-exclusion (a Decide-step thing, not per-lever in current code).
+So "per-lever drill-down" requires the snapshot writer to do different things at different transitions. The spec implies but doesn't spell this out.
+Severity: low. The executor will figure this out from the stage definitions. But it's a place where ambiguity could produce subtly wrong drill-downs.
+Recommendation: add to architectural notes — "Per-lever drill-down is meaningful for stages 3, 4, 5, 6, and 10. For stages 1 and 2, per-lever attribution is not meaningful (signals are pre-lever); drill-down is per-signal only. The snapshot writer must produce per-lever breakdowns only for the stages where lever attribution exists."
+RT-65. The synthetic-bottleneck integration test is good, but the assertion logic is underspecified.
+Test says: "assert the funnel surfaces signals_collected → signals_mapped as the dominant bottleneck on the per-tenant view."
+"Surfaces as the dominant bottleneck" — what does this mean in code? Is the assertion (a) the conversion rate at that stage is the lowest in the funnel? (b) the surface visually highlights it? (c) an auto-annotation fires on it? The seeded numbers (1000 → 50, 5%) make it the lowest conversion rate, but there's no "dominant bottleneck" signal in the spec — the funnel doesn't compute or store one.
+Severity: medium. The test as written is unimplementable without the executor inventing a bottleneck-detection function the spec doesn't define.
+Recommendation: clarify the assertion. Recommend: "assert that the snapshot's within_cycle_rates show signals_collected → signals_mapped as the lowest conversion rate in the within-cycle stages." That's checkable from the snapshot row directly, no new function needed. If the surface doesn't visually identify the lowest stage as a "dominant bottleneck" feature, the test name is misleading; rename to "lowest-conversion-rate identification test."
+
+REBUILD: No structural rebuild. This round produced 7 findings (RT-59 through RT-65). None are critical. None block shipping. The character of the findings is now overwhelmingly executor-discovery level (RT-60, RT-61, RT-64) or polish (RT-59, RT-62, RT-65) with one small gap that should be closed (RT-63 — failure schema).
+Comparison of finding rates across rounds:
+
+Round 1: 22 findings, 4 critical (architecture-level holes)
+Round 2: 18 findings, 4 critical (math errors that produced wrong answers)
+Round 3: 7 findings, 0 critical, 1 medium that warrants pre-ship fix (RT-63)
+
+This is the deceleration the standing rule was watching for.
+
+SHIP:
+Verdict: ship the spec. Apply RT-63 before handing to executor; everything else is polish or executor-discovery and should be resolved in implementation, not in another spec round.
+The architecture is sound. The metrics are correct. The smoke-word discipline is holding (one minor lapse caught in RT-62, no consequences). The math holes in the previous round's calibration metric have been fixed correctly with the additional dead-band addition that the agent introduced independently — sensible move, though the dead-band itself is unit-blind across lever scales (RT-59) and worth marking as a tunable in the operator README.
+The single edit worth making before ship:
+RT-63: Add the funnel_snapshot_failures table to the schema step. Without it, the executor will invent a small persistence layer for the banner mid-implementation. One sentence in the schema section prevents this.
+Schema addition recommended:
+
+funnel_snapshot_failures (id, org_id, cycle_id, attempted_at, error_class, error_detail, acknowledged_at NULLABLE, acknowledged_by NULLABLE, recurrence_count INT DEFAULT 1) for the recurring-failure banner UX.
+
+Items worth carrying into the operator README rather than the spec:
+
+RT-59: Dead-band is fixed at $100 in v1; flag as tunable for post-deploy refinement once distributions across levers are observed. If multiple levers are showing miscalibrated verdicts, switch to relative dead-band (e.g., 5% of raw_median_abs_error).
+RT-60: If pre-implementation validation reveals the realization data cannot support calibration math at all (e.g., predominantly zero), ship the calibration section with "awaiting sufficient realization variance" across all levers; the funnel still earns its keep on the other nine stages.
+
+Items to flag in the implementation PR description rather than the spec:
+
+RT-61: If more than 5 additional signal-touching levers are discovered beyond the three named, surface in PR description.
+RT-64: Per-lever drill-down meaningful for stages 3, 4, 5, 6, 10 only.
+
+Item worth tightening before the executor reads the test list:
+
+RT-65: Rename "synthetic-bottleneck integration test" to "lowest-conversion-rate identification test" and specify the assertion as "snapshot's within_cycle_rates show signals_collected → signals_mapped as the lowest within-cycle conversion rate." Avoids invent-a-function.
+
+Item to delete:
+
+RT-62: "Additional fields are added by schema extension if/when needed" — delete the sentence under stage 2 mapping_data_health. The principle says any phrase that could be replaced with concrete guidance and isn't is a smoke word; this one isn't doing work.
+
+One thing to flag back to the agent:
+Three rounds of red team have produced strictly improving specs with strictly decelerating critical-finding rates. The standing rule from the prior round predicted exactly this trajectory: "When critical findings drop below a threshold per round, the next iteration should be code, not spec." That threshold has been crossed. The next iteration should be the executor's draft, not another spec round. Apply RT-63 (schema), RT-65 (test rename), RT-62 (delete one sentence), carry the operator-README items, and ship.
+If the executor surfaces real issues during implementation, those go into a follow-up spec revision. Spec rounds without contact with code have diminishing returns past round 3, and this round confirms it — none of the findings are architecture-level.
+
+Learning footer:
+No new correction-log rules fire. Existing rules applied:
+
+"Stop iterating on a spec when critical-finding rate decelerates" — fired correctly. Round 1: 4 critical. Round 2: 4 critical. Round 3: 0 critical. The rule predicted this round would be ship-time, and it is.
+"Smoke-word principle (any phrase replaceable with concrete guidance)" — fired and caught one lapse (RT-62). The principle generalization from the prior round is working.
+"Validate metrics against real data shape" — the spec absorbed this rule cleanly into the architectural notes as a pre-implementation validation step. Rule application is now structural, not behavioral.
+"Example values masquerading as commitments" — no new instances this round. Pattern resolved.
+
+Pattern observation worth noting in next /pattern review:
+The four-round arc on this spec is now the canonical example of how spec iteration should work and when it should stop. The agent absorbed every prior round of feedback, the critical-finding rate decelerated monotonically, and the failure modes evolved from "wrong architecture" → "wrong math" → "wrong scope" → "polish and executor-discovery." That's the shape. Future spec iterations should expect this curve and stop at the same inflection point. Worth elevating from observation to template: "spec iteration follows architecture → math → scope → polish; ship at the polish round."
+The agent should also note: this spec is now sufficient. Further iteration will likely make it longer without making it better. The next surface area for improvement is implementation contact, not spec text.
