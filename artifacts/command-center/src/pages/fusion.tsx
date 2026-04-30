@@ -103,6 +103,23 @@ export default function Fusion() {
   }, [search]);
   const [tab, setTab] = useState<FusionTab>(initialTab);
   const [activeEntityRef, setActiveEntityRef] = useState<string | null>(null);
+
+  // Cross-link entry point: sibling pages can deep-link into a specific
+  // Entity 360 view via `/fusion?tab=entity&entity=<kind>:<id>`. We
+  // seed `activeEntityRef` from the URL param and re-sync whenever the
+  // search string changes so back/forward and in-app pivots both work.
+  const initialEntityRef = useMemo(
+    () => new URLSearchParams(search).get("entity"),
+    [search],
+  );
+
+  // Initialize activeEntityRef with initialEntityRef if provided
+  useEffect(() => {
+    if (initialEntityRef) {
+      setActiveEntityRef(initialEntityRef);
+    }
+  }, [initialEntityRef]);
+
   // Pre-filter applied to the Signal Browser when the user clicks a
   // country on the Risk Heatmap map. We bump a nonce alongside the
   // value so back-to-back clicks on the same country still trigger
@@ -127,6 +144,10 @@ export default function Fusion() {
   useEffect(() => {
     if (cycleId) setTab("events");
   }, [cycleId]);
+  // Same for `?entity=` deep-links from Supplier 360 et al.
+  useEffect(() => {
+    if (initialEntityRef) setTab("entity");
+  }, [initialEntityRef]);
 
   const openEntity = (ref: string) => {
     setActiveEntityRef(ref);
@@ -662,12 +683,25 @@ function EntityPane({
                     </Badge>
                   )}
                 </span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  {data.recentSpend != null
-                    ? `${
-                        data.kind === "contract" ? "Annual baseline" : "Spend (90d)"
-                      }: ${formatUsd(data.recentSpend, { compact: true })}`
-                    : "Spend: n/a"}
+                <span className="flex items-center gap-3">
+                  {data.kind === "supplier" && id && (
+                    <Link
+                      href={`/suppliers/${id}`}
+                      className="text-xs text-primary hover:underline font-normal"
+                      data-testid="link-open-supplier-360"
+                    >
+                      Open Supplier 360 →
+                    </Link>
+                  )}
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {data.recentSpend != null
+                      ? `${
+                          data.kind === "contract"
+                            ? "Annual baseline"
+                            : "Spend (90d)"
+                        }: ${formatUsd(data.recentSpend, { compact: true })}`
+                      : "Spend: n/a"}
+                  </span>
                 </span>
               </CardTitle>
             </CardHeader>

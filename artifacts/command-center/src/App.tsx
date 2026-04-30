@@ -13,6 +13,7 @@ import { Layout } from "./components/layout";
 import Landing from "./pages/landing";
 import Dashboard from "./pages/dashboard";
 import SpendOverview from "./pages/spend";
+import Suppliers from "./pages/suppliers";
 import SupplierDetail from "./pages/supplier-detail";
 import Opportunities from "./pages/opportunities";
 import OpportunityDetail from "./pages/opportunity-detail";
@@ -198,6 +199,7 @@ function AppRoutes() {
           <Switch>
             <Route path="/" component={Dashboard} />
             <Route path="/spend" component={SpendOverview} />
+            <Route path="/suppliers" component={Suppliers} />
             <Route path="/suppliers/:id" component={SupplierDetail} />
             <Route path="/opportunities" component={Opportunities} />
             <Route path="/opportunities/:id" component={OpportunityDetail} />

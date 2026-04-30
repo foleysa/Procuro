@@ -12,17 +12,21 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Supplier {
-  id: string;
-  name: string;
-  countryCode?: string | null;
-  /** ISO 4217 currency code in which this supplier bills. Null
-means "unknown / inherits the org base currency".
+/**
+ * Partial update for the operator-controlled fields on a supplier.
+Every property is optional. Sending `null` for a nullable field
+clears it; omitting a field leaves the stored value unchanged.
+
  */
+export interface PatchSupplierRequest {
+  /**
+   * ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`.
+   * @maxLength 3
+   */
   billingCurrency?: string | null;
-  paymentTermsDays?: string | null;
-  isStrategic: boolean;
-  isPreferred: boolean;
+  isStrategic?: boolean;
+  isPreferred?: boolean;
   tags?: string[];
+  /** @maxLength 5000 */
   internalNotes?: string | null;
 }

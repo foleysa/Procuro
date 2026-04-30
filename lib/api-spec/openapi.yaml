@@ -185,6 +185,60 @@ paths:
               schema:
                 $ref: "#/components/schemas/SupplierListResponse"
 
+  /suppliers/{id}:
+    get:
+      operationId: getSupplier
+      tags: [suppliers]
+      summary: Supplier 360 detail (header + spend + contracts + opportunities + signals + audit)
+      description: |
+        Returns a single supplier's profile alongside the joined
+        operator views the Supplier 360 page renders: trailing-365d
+        spend rollup, the supplier's active contract list, the
+        opportunities whose lever stamped this supplier id, the FX
+        rate history for the supplier's billing currency (when set),
+        and the inline-edit audit log.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Supplier detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchSupplier
+      tags: [suppliers]
+      summary: Inline-edit supplier operator fields
+      description: |
+        Update operator-controlled fields on a supplier:
+        `billingCurrency`, `isStrategic`, `isPreferred`, `tags`, and
+        `internalNotes`. Every changed field is recorded in the
+        supplier audit log so reviewers can answer "who flagged this
+        supplier strategic and when?". Returns the refreshed
+        `SupplierDetail` so the UI re-renders in one round-trip.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchSupplierRequest"
+      responses:
+        "200":
+          description: Updated supplier detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /suppliers/{id}/intelligence:
     get:
       operationId: getSupplierIntelligence
@@ -270,6 +324,14 @@ paths:
             $ref: "#/components/schemas/LeverId"
         - in: query
           name: cycleId
+          schema: { type: string }
+        - in: query
+          name: supplierId
+          description: |
+            Restrict to opportunities scoped to one supplier. Matches both
+            the canonical `supplier_id` column and the `inputs.supplierId`
+            field that lever code stamps when a row is built without a
+            normalised supplier link yet.
           schema: { type: string }
         - in: query
           name: limit
@@ -2354,12 +2416,21 @@ components:
         id: { type: string }
         name: { type: string }
         countryCode: { type: string, nullable: true }
+        billingCurrency:
+          type: string
+          nullable: true
+          description: |
+            ISO 4217 currency code in which this supplier bills. Null
+            means "unknown / inherits the org base currency".
         paymentTermsDays: { type: string, nullable: true }
         isStrategic: { type: boolean }
         isPreferred: { type: boolean }
         tags:
           type: array
           items: { type: string }
+        internalNotes:
+          type: string
+          nullable: true
 
     SupplierListResponse:
       type: object
@@ -2372,6 +2443,131 @@ components:
         nextCursor:
           type: string
           nullable: true
+
+    SupplierLinkedContract:
+      type: object
+      required: [id, contractNumber, title, status, derivedStatus, endDate]
+      properties:
+        id: { type: string }
+        contractNumber: { type: string }
+        title: { type: string }
+        status: { type: string }
+        derivedStatus:
+          $ref: "#/components/schemas/ContractDerivedStatus"
+        endDate: { type: string, format: date-time }
+        daysToExpiry: { type: integer }
+        billingCurrency: { type: string, nullable: true }
+        annualBaselineUsd: { type: number, nullable: true }
+
+    SupplierLinkedOpportunity:
+      type: object
+      required: [id, leverId, status, title, projectedSavingsUsd, createdAt]
+      properties:
+        id: { type: string }
+        leverId: { type: string }
+        status: { type: string }
+        title: { type: string }
+        projectedSavingsUsd: { type: number }
+        createdAt: { type: string, format: date-time }
+
+    SupplierSpendRollup:
+      type: object
+      description: |
+        Trailing-365-day spend rollup for one supplier. Numbers are in
+        USD; `monthly` is ordered oldest-first so the chart can render
+        a left-to-right time series without re-sorting.
+      required: [totalSpendUsd, poCount, monthly, topCategories]
+      properties:
+        totalSpendUsd: { type: number }
+        poCount: { type: integer }
+        monthly:
+          type: array
+          items:
+            type: object
+            required: [month, spendUsd]
+            properties:
+              month:
+                type: string
+                description: ISO month start, e.g. `2025-04-01`.
+              spendUsd: { type: number }
+        topCategories:
+          type: array
+          items:
+            type: object
+            required: [categoryId, categoryName, spendUsd]
+            properties:
+              categoryId: { type: string }
+              categoryName: { type: string }
+              spendUsd: { type: number }
+
+    SupplierAuditEntry:
+      type: object
+      required: [id, field, actorEmail, createdAt]
+      properties:
+        id: { type: string }
+        field: { type: string }
+        actorEmail: { type: string }
+        oldValue: {}
+        newValue: {}
+        createdAt: { type: string, format: date-time }
+
+    SupplierDetail:
+      allOf:
+        - $ref: "#/components/schemas/Supplier"
+        - type: object
+          required:
+            [
+              spend,
+              contracts,
+              opportunities,
+              fxSignals,
+              auditLog,
+            ]
+          properties:
+            spend:
+              $ref: "#/components/schemas/SupplierSpendRollup"
+            contracts:
+              type: array
+              items:
+                $ref: "#/components/schemas/SupplierLinkedContract"
+            opportunities:
+              type: array
+              items:
+                $ref: "#/components/schemas/SupplierLinkedOpportunity"
+            fxSignals:
+              type: array
+              description: |
+                Most-recent FX rate observations for the supplier's
+                billing currency pair (when set). The Command Center
+                renders these in the FX exposure tab.
+              items:
+                $ref: "#/components/schemas/MarketSignal"
+            auditLog:
+              type: array
+              items:
+                $ref: "#/components/schemas/SupplierAuditEntry"
+
+    PatchSupplierRequest:
+      type: object
+      description: |
+        Partial update for the operator-controlled fields on a supplier.
+        Every property is optional. Sending `null` for a nullable field
+        clears it; omitting a field leaves the stored value unchanged.
+      properties:
+        billingCurrency:
+          type: string
+          nullable: true
+          maxLength: 3
+          description: ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`.
+        isStrategic: { type: boolean }
+        isPreferred: { type: boolean }
+        tags:
+          type: array
+          items: { type: string, maxLength: 64 }
+        internalNotes:
+          type: string
+          nullable: true
+          maxLength: 5000
 
     SupplierIntelligenceSignalType:
       type: string

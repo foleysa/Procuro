@@ -101,6 +101,7 @@ import type {
   PatchCollectorRequest,
   PatchContractRequest,
   PatchMeSettingsRequest,
+  PatchSupplierRequest,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
@@ -108,6 +109,7 @@ import type {
   RunNextCycleParams,
   SpendOverview,
   SubmitDefensePackFeedbackRequest,
+  SupplierDetail,
   SupplierIntelligenceResponse,
   SupplierListResponse,
   SyncResultResponse,
@@ -674,6 +676,194 @@ export function useListSuppliers<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns a single supplier's profile alongside the joined
+operator views the Supplier 360 page renders: trailing-365d
+spend rollup, the supplier's active contract list, the
+opportunities whose lever stamped this supplier id, the FX
+rate history for the supplier's billing currency (when set),
+and the inline-edit audit log.
+
+ * @summary Supplier 360 detail (header + spend + contracts + opportunities + signals + audit)
+ */
+export const getGetSupplierUrl = (id: string) => {
+  return `/api/suppliers/${id}`;
+};
+
+export const getSupplier = async (
+  id: string,
+  options?: RequestInit,
+): Promise<SupplierDetail> => {
+  return customFetch<SupplierDetail>(getGetSupplierUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSupplierQueryKey = (id: string) => {
+  return [`/api/suppliers/${id}`] as const;
+};
+
+export const getGetSupplierQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSupplier>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSupplier>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSupplierQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSupplier>>> = ({
+    signal,
+  }) => getSupplier(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSupplier>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSupplierQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSupplier>>
+>;
+export type GetSupplierQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Supplier 360 detail (header + spend + contracts + opportunities + signals + audit)
+ */
+
+export function useGetSupplier<
+  TData = Awaited<ReturnType<typeof getSupplier>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSupplier>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSupplierQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Update operator-controlled fields on a supplier:
+`billingCurrency`, `isStrategic`, `isPreferred`, `tags`, and
+`internalNotes`. Every changed field is recorded in the
+supplier audit log so reviewers can answer "who flagged this
+supplier strategic and when?". Returns the refreshed
+`SupplierDetail` so the UI re-renders in one round-trip.
+
+ * @summary Inline-edit supplier operator fields
+ */
+export const getPatchSupplierUrl = (id: string) => {
+  return `/api/suppliers/${id}`;
+};
+
+export const patchSupplier = async (
+  id: string,
+  patchSupplierRequest: PatchSupplierRequest,
+  options?: RequestInit,
+): Promise<SupplierDetail> => {
+  return customFetch<SupplierDetail>(getPatchSupplierUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchSupplierRequest),
+  });
+};
+
+export const getPatchSupplierMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchSupplier>>,
+    TError,
+    { id: string; data: BodyType<PatchSupplierRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchSupplier>>,
+  TError,
+  { id: string; data: BodyType<PatchSupplierRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchSupplier"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchSupplier>>,
+    { id: string; data: BodyType<PatchSupplierRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchSupplier(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchSupplierMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchSupplier>>
+>;
+export type PatchSupplierMutationBody = BodyType<PatchSupplierRequest>;
+export type PatchSupplierMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Inline-edit supplier operator fields
+ */
+export const usePatchSupplier = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchSupplier>>,
+    TError,
+    { id: string; data: BodyType<PatchSupplierRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchSupplier>>,
+  TError,
+  { id: string; data: BodyType<PatchSupplierRequest> },
+  TContext
+> => {
+  return useMutation(getPatchSupplierMutationOptions(options));
+};
 
 /**
  * Returns the unified risk-and-filings timeline for a supplier — every

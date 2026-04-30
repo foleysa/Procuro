@@ -2,12 +2,25 @@ import { Router, type IRouter } from "express";
 import {
   db,
   suppliersTable,
+  supplierAuditLogTable,
+  contractsTable,
+  categoriesTable,
+  opportunitiesTable,
   marketSignalsTable,
+  orgsTable,
   type MarketSignalRow,
+  type SupplierRow,
 } from "@workspace/db";
 import { and, eq, ilike, gt, asc, desc, isNull, or, sql } from "drizzle-orm";
+import { z } from "zod";
 import { resolveEntity, type ResolvedEntity } from "@workspace/intelligence";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { newId } from "../lib/ids";
+import { readRenewalAlertDays } from "../lib/contract-settings";
+import {
+  deriveContractStatus,
+  daysToExpiry,
+} from "./contracts";
 import { getCollector } from "../lib/intelligence/runtime";
 import { collectorContract } from "../lib/intelligence/collector";
 import {
@@ -17,6 +30,26 @@ import {
 } from "../lib/supplier-intelligence";
 
 const router: IRouter = Router();
+
+// ─── Supplier mapper ─────────────────────────────────────────────────────
+//
+// One row mapper shared by list + detail + patch responses so the wire
+// shape stays in lockstep across endpoints. Drift here would silently
+// break the codegen-derived `Supplier` type the FE binds against.
+
+function mapSupplier(s: SupplierRow): Record<string, unknown> {
+  return {
+    id: s.id,
+    name: s.name,
+    countryCode: s.countryCode,
+    billingCurrency: s.billingCurrency,
+    paymentTermsDays: s.paymentTermsDays,
+    isStrategic: s.isStrategic,
+    isPreferred: s.isPreferred,
+    tags: s.tags ?? [],
+    internalNotes: s.internalNotes,
+  };
+}
 
 router.get("/suppliers", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
@@ -32,26 +65,444 @@ router.get("/suppliers", tenantMiddleware, async (req, res) => {
   if (cursor) where.push(gt(suppliersTable.id, cursor));
 
   const rows = await db
-    .select({
-      id: suppliersTable.id,
-      name: suppliersTable.name,
-      countryCode: suppliersTable.countryCode,
-      paymentTermsDays: suppliersTable.paymentTermsDays,
-      isStrategic: suppliersTable.isStrategic,
-      isPreferred: suppliersTable.isPreferred,
-      tags: suppliersTable.tags,
-    })
+    .select()
     .from(suppliersTable)
     .where(and(...where))
     .orderBy(asc(suppliersTable.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
-  const items = hasMore ? rows.slice(0, limit) : rows;
+  const sliced = hasMore ? rows.slice(0, limit) : rows;
   res.json({
-    items,
-    nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+    items: sliced.map(mapSupplier),
+    nextCursor: hasMore ? sliced.at(-1)?.id ?? null : null,
   });
+});
+
+// ─── PATCH body schema ──────────────────────────────────────────────────
+//
+// Inline-edit shape for the Supplier 360 page. Mirrors the
+// `patchContractBodySchema` semantics: every field optional, `null`
+// clears nullable fields, omitted fields are left untouched, and
+// empty/whitespace strings collapse to `null` on the nullable
+// trimmed fields. Subsumes #53 (billing currency) and the supplier
+// half of #60 (internal notes).
+
+function nullableTrimmedString(maxLength: number) {
+  return z
+    .union([z.string().max(maxLength), z.null()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      if (v === null) return null;
+      const trimmed = v.trim();
+      return trimmed.length === 0 ? null : trimmed;
+    });
+}
+
+export const patchSupplierBodySchema = z.object({
+  billingCurrency: z
+    .union([z.string().max(3), z.null()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      if (v === null) return null;
+      const trimmed = v.trim().toUpperCase();
+      if (trimmed.length === 0) return null;
+      // Loose ISO-4217 shape check: 3 alpha chars. We don't pull in
+      // the full currency table here; downstream FX lookup still
+      // works on whatever code the operator types and quietly
+      // surfaces an empty FX panel for unknown codes.
+      if (!/^[A-Z]{3}$/.test(trimmed)) {
+        throw new z.ZodError([
+          {
+            code: z.ZodIssueCode.custom,
+            path: ["billingCurrency"],
+            message: "Expected a 3-letter ISO 4217 currency code",
+          },
+        ]);
+      }
+      return trimmed;
+    }),
+  isStrategic: z.boolean().optional(),
+  isPreferred: z.boolean().optional(),
+  tags: z
+    .array(z.string().max(64).transform((s) => s.trim()).pipe(z.string().min(1)))
+    .max(50)
+    .optional(),
+  internalNotes: nullableTrimmedString(5000),
+});
+
+export type PatchSupplierBody = z.infer<typeof patchSupplierBodySchema>;
+
+// ─── Detail loader (used by GET + PATCH) ─────────────────────────────────
+
+async function loadSupplierDetail(
+  orgId: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const [row] = await db
+    .select({ s: suppliersTable, orgSettings: orgsTable.settings })
+    .from(suppliersTable)
+    .innerJoin(orgsTable, eq(suppliersTable.orgId, orgsTable.id))
+    .where(and(eq(suppliersTable.orgId, orgId), eq(suppliersTable.id, id)));
+  if (!row) return null;
+
+  const threshold = readRenewalAlertDays(row.orgSettings ?? null);
+  const billingCurrency = row.s.billingCurrency;
+
+  const [
+    spendTotalRow,
+    monthlyRows,
+    topCategoryRows,
+    contractRows,
+    oppRows,
+    fxSignals,
+    auditRows,
+  ] = await Promise.all([
+    // Trailing-365d spend total + PO count from po_lines joined to
+    // purchase_orders. We sum at the line level (extended_usd is the
+    // canonical spend metric) and count distinct POs to give a quick
+    // "how active is this supplier" signal in the Overview tab.
+    db.execute(sql`
+      SELECT
+        COALESCE(SUM(pol.extended_usd::numeric), 0) AS total_usd,
+        COUNT(DISTINCT po.id)::int AS po_count
+      FROM po_lines pol
+      JOIN purchase_orders po ON po.id = pol.po_id
+      WHERE pol.org_id = ${orgId}
+        AND po.supplier_id = ${id}
+        AND pol.order_date >= NOW() - INTERVAL '365 days'
+    `),
+    // Monthly spend series for the 12-month sparkline. We bucket on
+    // `date_trunc('month', order_date)` so the series stays stable
+    // across DST/timezone shifts; the FE renders this oldest-first
+    // (ASC) without re-sorting.
+    db.execute(sql`
+      SELECT
+        date_trunc('month', pol.order_date) AS month,
+        COALESCE(SUM(pol.extended_usd::numeric), 0) AS spend_usd
+      FROM po_lines pol
+      JOIN purchase_orders po ON po.id = pol.po_id
+      WHERE pol.org_id = ${orgId}
+        AND po.supplier_id = ${id}
+        AND pol.order_date >= NOW() - INTERVAL '365 days'
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `),
+    // Top-N category breakdown for the Spend tab.
+    db.execute(sql`
+      SELECT
+        cat.id AS category_id,
+        cat.name AS category_name,
+        COALESCE(SUM(pol.extended_usd::numeric), 0) AS spend_usd
+      FROM po_lines pol
+      JOIN purchase_orders po ON po.id = pol.po_id
+      JOIN categories cat ON cat.id = pol.category_id
+      WHERE pol.org_id = ${orgId}
+        AND po.supplier_id = ${id}
+        AND pol.order_date >= NOW() - INTERVAL '365 days'
+      GROUP BY cat.id, cat.name
+      ORDER BY spend_usd DESC
+      LIMIT 10
+    `),
+    db
+      .select({
+        c: contractsTable,
+        categoryName: categoriesTable.name,
+      })
+      .from(contractsTable)
+      .leftJoin(
+        categoriesTable,
+        eq(contractsTable.categoryId, categoriesTable.id),
+      )
+      .where(
+        and(
+          eq(contractsTable.orgId, orgId),
+          eq(contractsTable.supplierId, id),
+        ),
+      )
+      .orderBy(asc(contractsTable.endDate)),
+    // Opportunities scoped to this supplier. Same OR predicate as
+    // the list endpoint's `?supplierId=` filter so the cross-link
+    // counts can never disagree.
+    db
+      .select()
+      .from(opportunitiesTable)
+      .where(
+        and(
+          eq(opportunitiesTable.orgId, orgId),
+          or(
+            eq(opportunitiesTable.supplierId, id),
+            sql`${opportunitiesTable.inputs}->>'supplierId' = ${id}`,
+          )!,
+        ),
+      )
+      .orderBy(desc(opportunitiesTable.createdAt))
+      .limit(100),
+    // FX rate observations for the supplier's billing currency. ECB
+    // feed is platform-wide (org_id IS NULL) so we union with the
+    // tenant's own org_id rows. 180-day window keeps the chart
+    // bounded; the FxTrendChart component handles its own thinning.
+    billingCurrency
+      ? db
+          .select()
+          .from(marketSignalsTable)
+          .where(
+            and(
+              or(
+                eq(marketSignalsTable.orgId, orgId),
+                isNull(marketSignalsTable.orgId),
+              )!,
+              eq(marketSignalsTable.signalType, "fx_rate"),
+              or(
+                eq(
+                  marketSignalsTable.scopeMaterialCode,
+                  `EUR/${billingCurrency}`,
+                ),
+                eq(
+                  marketSignalsTable.scopeMaterialCode,
+                  `USD/${billingCurrency}`,
+                ),
+              )!,
+              sql`${marketSignalsTable.observedAt} >= NOW() - INTERVAL '180 days'`,
+            ),
+          )
+          .orderBy(sql`${marketSignalsTable.observedAt} DESC`)
+          .limit(180)
+      : Promise.resolve([] as Array<typeof marketSignalsTable.$inferSelect>),
+    db
+      .select()
+      .from(supplierAuditLogTable)
+      .where(
+        and(
+          eq(supplierAuditLogTable.orgId, orgId),
+          eq(supplierAuditLogTable.supplierId, id),
+        ),
+      )
+      .orderBy(desc(supplierAuditLogTable.createdAt))
+      .limit(200),
+  ]);
+
+  const totalRow = spendTotalRow.rows[0] as
+    | { total_usd: string; po_count: number }
+    | undefined;
+  const totalSpendUsd = Number(totalRow?.total_usd ?? 0);
+  const poCount = Number(totalRow?.po_count ?? 0);
+  const monthly = (
+    monthlyRows.rows as Array<{ month: Date | string; spend_usd: string }>
+  ).map((r) => ({
+    month:
+      r.month instanceof Date
+        ? r.month.toISOString().slice(0, 10)
+        : String(r.month).slice(0, 10),
+    spendUsd: Number(r.spend_usd),
+  }));
+  const topCategories = (
+    topCategoryRows.rows as Array<{
+      category_id: string;
+      category_name: string;
+      spend_usd: string;
+    }>
+  ).map((r) => ({
+    categoryId: r.category_id,
+    categoryName: r.category_name,
+    spendUsd: Number(r.spend_usd),
+  }));
+
+  return {
+    ...mapSupplier(row.s),
+    spend: {
+      totalSpendUsd,
+      poCount,
+      monthly,
+      topCategories,
+    },
+    contracts: contractRows.map((r) => ({
+      id: r.c.id,
+      contractNumber: r.c.contractNumber,
+      title: r.c.title,
+      status: r.c.status,
+      derivedStatus: deriveContractStatus(
+        r.c.status,
+        r.c.endDate,
+        threshold,
+      ),
+      endDate: r.c.endDate,
+      daysToExpiry: daysToExpiry(r.c.endDate),
+      billingCurrency: r.c.billingCurrency,
+      annualBaselineUsd:
+        r.c.annualBaselineUsd === null
+          ? null
+          : Number(r.c.annualBaselineUsd),
+    })),
+    opportunities: oppRows.map((o) => ({
+      id: o.id,
+      leverId: o.leverId,
+      status: o.status,
+      title: o.title,
+      projectedSavingsUsd: Number(o.projectedSavingsUsd),
+      createdAt: o.createdAt,
+    })),
+    fxSignals: fxSignals.map((s) => ({
+      id: s.id,
+      collectorId: s.collectorId,
+      signalType: s.signalType,
+      scopeMaterialCode: s.scopeMaterialCode,
+      scopeCategoryId: null,
+      scopeSupplierId: null,
+      value: Number(s.value),
+      unit: s.unit,
+      currency: s.currency,
+      confidence: s.confidence !== null ? Number(s.confidence) : null,
+      observedAt: s.observedAt,
+      sourceUrl: s.sourceUrl,
+      createdAt: s.fetchedAt,
+    })),
+    auditLog: auditRows.map((a) => ({
+      id: a.id,
+      field: a.field,
+      actorEmail: a.actorEmail,
+      oldValue: a.oldValue,
+      newValue: a.newValue,
+      createdAt: a.createdAt,
+    })),
+  };
+}
+
+// ─── GET /suppliers/:id ──────────────────────────────────────────────────
+
+router.get("/suppliers/:id", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const id = String(req.params.id);
+  const detail = await loadSupplierDetail(orgId, id);
+  if (!detail) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+  res.json(detail);
+});
+
+// ─── PATCH /suppliers/:id ────────────────────────────────────────────────
+//
+// Inline-edit billing currency / strategic / preferred / tags /
+// internal notes. Each changed field becomes one row in the supplier
+// audit log so the Activity tab can answer "who flipped this and
+// when?". Subsumes #53 and the supplier half of #60.
+
+router.patch("/suppliers/:id", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const id = String(req.params.id);
+  const body = patchSupplierBodySchema.parse(req.body);
+
+  const [current] = await db
+    .select()
+    .from(suppliersTable)
+    .where(and(eq(suppliersTable.orgId, orgId), eq(suppliersTable.id, id)));
+  if (!current) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+
+  const updates: Partial<typeof suppliersTable.$inferInsert> = {};
+  const changes: Array<{ field: string; oldValue: unknown; newValue: unknown }> =
+    [];
+
+  if (
+    body.billingCurrency !== undefined &&
+    body.billingCurrency !== current.billingCurrency
+  ) {
+    updates.billingCurrency = body.billingCurrency;
+    changes.push({
+      field: "billingCurrency",
+      oldValue: current.billingCurrency,
+      newValue: body.billingCurrency,
+    });
+  }
+  if (
+    body.isStrategic !== undefined &&
+    body.isStrategic !== current.isStrategic
+  ) {
+    updates.isStrategic = body.isStrategic;
+    changes.push({
+      field: "isStrategic",
+      oldValue: current.isStrategic,
+      newValue: body.isStrategic,
+    });
+  }
+  if (
+    body.isPreferred !== undefined &&
+    body.isPreferred !== current.isPreferred
+  ) {
+    updates.isPreferred = body.isPreferred;
+    changes.push({
+      field: "isPreferred",
+      oldValue: current.isPreferred,
+      newValue: body.isPreferred,
+    });
+  }
+  if (body.tags !== undefined) {
+    // Tag arrays are equal when their sorted-deduped contents match —
+    // a re-order or duplicate insert is not an audit-worthy change.
+    const norm = (xs: string[]) =>
+      Array.from(new Set(xs.map((x) => x.trim()).filter(Boolean))).sort();
+    const incoming = norm(body.tags);
+    const existing = norm(current.tags ?? []);
+    const same =
+      incoming.length === existing.length &&
+      incoming.every((v, i) => v === existing[i]);
+    if (!same) {
+      updates.tags = incoming;
+      changes.push({
+        field: "tags",
+        oldValue: existing,
+        newValue: incoming,
+      });
+    }
+  }
+  if (
+    body.internalNotes !== undefined &&
+    body.internalNotes !== current.internalNotes
+  ) {
+    updates.internalNotes = body.internalNotes;
+    changes.push({
+      field: "internalNotes",
+      oldValue: current.internalNotes,
+      newValue: body.internalNotes,
+    });
+  }
+
+  if (changes.length > 0) {
+    const actor = req.actorEmail ?? "system@procuro.ai";
+    await db.transaction(async (tx) => {
+      await tx
+        .update(suppliersTable)
+        .set(updates)
+        .where(eq(suppliersTable.id, id));
+      for (const change of changes) {
+        await tx.insert(supplierAuditLogTable).values({
+          id: newId("sup_aud"),
+          orgId,
+          supplierId: id,
+          actorEmail: actor,
+          field: change.field,
+          oldValue: change.oldValue as never,
+          newValue: change.newValue as never,
+        });
+      }
+    });
+    req.log.info(
+      { supplierId: id, fields: changes.map((c) => c.field), actor },
+      "supplier.patch",
+    );
+  }
+
+  const detail = await loadSupplierDetail(orgId, id);
+  if (!detail) {
+    res.status(404).json({ error: "Supplier not found" });
+    return;
+  }
+  res.json(detail);
 });
 
 /**

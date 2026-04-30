@@ -19,6 +19,14 @@ export type ListOpportunitiesParams = {
   leverId?: LeverId;
   cycleId?: string;
   /**
+ * Restrict to opportunities scoped to one supplier. Matches both
+the canonical `supplier_id` column and the `inputs.supplierId`
+field that lever code stamps when a row is built without a
+normalised supplier link yet.
+
+ */
+  supplierId?: string;
+  /**
    * @minimum 1
    * @maximum 200
    */

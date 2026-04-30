@@ -48,6 +48,12 @@ export const suppliersTable = pgTable(
     isStrategic: boolean("is_strategic").notNull().default(false),
     isPreferred: boolean("is_preferred").notNull().default(false),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    /**
+     * Operator-authored notes on the relationship — surfaced in the
+     * Supplier 360 Activity tab. Free-form text, capped at 5000 chars
+     * by the PATCH body schema. Mirrors `contracts.internal_notes`.
+     */
+    internalNotes: text("internal_notes"),
     sourceSystem: text("source_system").notNull().default("seed"),
     sourceExternalId: text("source_external_id"),
     sourceSyncedAt: timestamp("source_synced_at", { withTimezone: true })

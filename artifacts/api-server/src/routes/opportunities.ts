@@ -147,6 +147,7 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   const status = req.query.status as OpportunityStatus | undefined;
   const leverId = req.query.leverId as LeverId | undefined;
   const cycleId = req.query.cycleId as string | undefined;
+  const supplierId = req.query.supplierId as string | undefined;
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "100", 10) || 100, 1),
     200,
@@ -160,6 +161,18 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   if (status) where.push(eq(opportunitiesTable.status, status));
   if (leverId) where.push(eq(opportunitiesTable.leverId, leverId));
   if (cycleId) where.push(eq(opportunitiesTable.cycleId, cycleId));
+  if (supplierId) {
+    // Match both the canonical `supplier_id` column AND the
+    // `inputs.supplierId` field that older lever code stamps before
+    // a normalised supplier link is resolved. We OR them so a
+    // Supplier 360 page surfaces every opportunity that touches the
+    // supplier regardless of which path the lever took.
+    const cond = or(
+      eq(opportunitiesTable.supplierId, supplierId),
+      sql`${opportunitiesTable.inputs}->>'supplierId' = ${supplierId}`,
+    );
+    if (cond) where.push(cond);
+  }
   if (cursor) {
     const decoded = decodeOppCursor(cursor);
     if (decoded) {

@@ -403,14 +403,300 @@ export const ListSuppliersResponse = zod.object({
       id: zod.string(),
       name: zod.string(),
       countryCode: zod.string().nullish(),
+      billingCurrency: zod
+        .string()
+        .nullish()
+        .describe(
+          'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+        ),
       paymentTermsDays: zod.string().nullish(),
       isStrategic: zod.boolean(),
       isPreferred: zod.boolean(),
       tags: zod.array(zod.string()).optional(),
+      internalNotes: zod.string().nullish(),
     }),
   ),
   nextCursor: zod.string().nullish(),
 });
+
+/**
+ * Returns a single supplier's profile alongside the joined
+operator views the Supplier 360 page renders: trailing-365d
+spend rollup, the supplier's active contract list, the
+opportunities whose lever stamped this supplier id, the FX
+rate history for the supplier's billing currency (when set),
+and the inline-edit audit log.
+
+ * @summary Supplier 360 detail (header + spend + contracts + opportunities + signals + audit)
+ */
+export const GetSupplierParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetSupplierHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetSupplierResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    countryCode: zod.string().nullish(),
+    billingCurrency: zod
+      .string()
+      .nullish()
+      .describe(
+        'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+      ),
+    paymentTermsDays: zod.string().nullish(),
+    isStrategic: zod.boolean(),
+    isPreferred: zod.boolean(),
+    tags: zod.array(zod.string()).optional(),
+    internalNotes: zod.string().nullish(),
+  })
+  .and(
+    zod.object({
+      spend: zod
+        .object({
+          totalSpendUsd: zod.number(),
+          poCount: zod.number(),
+          monthly: zod.array(
+            zod.object({
+              month: zod
+                .string()
+                .describe("ISO month start, e.g. `2025-04-01`."),
+              spendUsd: zod.number(),
+            }),
+          ),
+          topCategories: zod.array(
+            zod.object({
+              categoryId: zod.string(),
+              categoryName: zod.string(),
+              spendUsd: zod.number(),
+            }),
+          ),
+        })
+        .describe(
+          "Trailing-365-day spend rollup for one supplier. Numbers are in\nUSD; `monthly` is ordered oldest-first so the chart can render\na left-to-right time series without re-sorting.\n",
+        ),
+      contracts: zod.array(
+        zod.object({
+          id: zod.string(),
+          contractNumber: zod.string(),
+          title: zod.string(),
+          status: zod.string(),
+          derivedStatus: zod
+            .enum(["active", "expiring", "expired", "pending", "cancelled"])
+            .describe(
+              "Bucketed view of a contract's expiration state:\n  - `active` — `endDate > now + tenant renewal threshold`\n  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`\n  - `expired` — `endDate <= now`\nComputed server-side so the renewal calendar \/ list \/ colour\ncoding stays consistent across surfaces.\n",
+            ),
+          endDate: zod.coerce.date(),
+          daysToExpiry: zod.number().optional(),
+          billingCurrency: zod.string().nullish(),
+          annualBaselineUsd: zod.number().nullish(),
+        }),
+      ),
+      opportunities: zod.array(
+        zod.object({
+          id: zod.string(),
+          leverId: zod.string(),
+          status: zod.string(),
+          title: zod.string(),
+          projectedSavingsUsd: zod.number(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+      fxSignals: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            collectorId: zod.string().nullish(),
+            signalType: zod.string(),
+            scopeMaterialCode: zod.string().nullish(),
+            scopeCategoryCode: zod.string().nullish(),
+            scopeCategoryId: zod.string().nullish(),
+            scopeSupplierId: zod.string().nullish(),
+            value: zod.number(),
+            unit: zod.string().nullish(),
+            currency: zod.string().nullish(),
+            confidence: zod.number().nullish(),
+            observedAt: zod.coerce.date(),
+            sourceUrl: zod.string().nullish(),
+            createdAt: zod.coerce.date(),
+          }),
+        )
+        .describe(
+          "Most-recent FX rate observations for the supplier's\nbilling currency pair (when set). The Command Center\nrenders these in the FX exposure tab.\n",
+        ),
+      auditLog: zod.array(
+        zod.object({
+          id: zod.string(),
+          field: zod.string(),
+          actorEmail: zod.string(),
+          oldValue: zod.unknown().optional(),
+          newValue: zod.unknown().optional(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * Update operator-controlled fields on a supplier:
+`billingCurrency`, `isStrategic`, `isPreferred`, `tags`, and
+`internalNotes`. Every changed field is recorded in the
+supplier audit log so reviewers can answer "who flagged this
+supplier strategic and when?". Returns the refreshed
+`SupplierDetail` so the UI re-renders in one round-trip.
+
+ * @summary Inline-edit supplier operator fields
+ */
+export const PatchSupplierParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchSupplierHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const patchSupplierBodyBillingCurrencyMax = 3;
+
+export const patchSupplierBodyTagsItemMax = 64;
+
+export const patchSupplierBodyInternalNotesMax = 5000;
+
+export const PatchSupplierBody = zod
+  .object({
+    billingCurrency: zod
+      .string()
+      .max(patchSupplierBodyBillingCurrencyMax)
+      .nullish()
+      .describe("ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`."),
+    isStrategic: zod.boolean().optional(),
+    isPreferred: zod.boolean().optional(),
+    tags: zod.array(zod.string().max(patchSupplierBodyTagsItemMax)).optional(),
+    internalNotes: zod
+      .string()
+      .max(patchSupplierBodyInternalNotesMax)
+      .nullish(),
+  })
+  .describe(
+    "Partial update for the operator-controlled fields on a supplier.\nEvery property is optional. Sending `null` for a nullable field\nclears it; omitting a field leaves the stored value unchanged.\n",
+  );
+
+export const PatchSupplierResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    countryCode: zod.string().nullish(),
+    billingCurrency: zod
+      .string()
+      .nullish()
+      .describe(
+        'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+      ),
+    paymentTermsDays: zod.string().nullish(),
+    isStrategic: zod.boolean(),
+    isPreferred: zod.boolean(),
+    tags: zod.array(zod.string()).optional(),
+    internalNotes: zod.string().nullish(),
+  })
+  .and(
+    zod.object({
+      spend: zod
+        .object({
+          totalSpendUsd: zod.number(),
+          poCount: zod.number(),
+          monthly: zod.array(
+            zod.object({
+              month: zod
+                .string()
+                .describe("ISO month start, e.g. `2025-04-01`."),
+              spendUsd: zod.number(),
+            }),
+          ),
+          topCategories: zod.array(
+            zod.object({
+              categoryId: zod.string(),
+              categoryName: zod.string(),
+              spendUsd: zod.number(),
+            }),
+          ),
+        })
+        .describe(
+          "Trailing-365-day spend rollup for one supplier. Numbers are in\nUSD; `monthly` is ordered oldest-first so the chart can render\na left-to-right time series without re-sorting.\n",
+        ),
+      contracts: zod.array(
+        zod.object({
+          id: zod.string(),
+          contractNumber: zod.string(),
+          title: zod.string(),
+          status: zod.string(),
+          derivedStatus: zod
+            .enum(["active", "expiring", "expired", "pending", "cancelled"])
+            .describe(
+              "Bucketed view of a contract's expiration state:\n  - `active` — `endDate > now + tenant renewal threshold`\n  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`\n  - `expired` — `endDate <= now`\nComputed server-side so the renewal calendar \/ list \/ colour\ncoding stays consistent across surfaces.\n",
+            ),
+          endDate: zod.coerce.date(),
+          daysToExpiry: zod.number().optional(),
+          billingCurrency: zod.string().nullish(),
+          annualBaselineUsd: zod.number().nullish(),
+        }),
+      ),
+      opportunities: zod.array(
+        zod.object({
+          id: zod.string(),
+          leverId: zod.string(),
+          status: zod.string(),
+          title: zod.string(),
+          projectedSavingsUsd: zod.number(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+      fxSignals: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            collectorId: zod.string().nullish(),
+            signalType: zod.string(),
+            scopeMaterialCode: zod.string().nullish(),
+            scopeCategoryCode: zod.string().nullish(),
+            scopeCategoryId: zod.string().nullish(),
+            scopeSupplierId: zod.string().nullish(),
+            value: zod.number(),
+            unit: zod.string().nullish(),
+            currency: zod.string().nullish(),
+            confidence: zod.number().nullish(),
+            observedAt: zod.coerce.date(),
+            sourceUrl: zod.string().nullish(),
+            createdAt: zod.coerce.date(),
+          }),
+        )
+        .describe(
+          "Most-recent FX rate observations for the supplier's\nbilling currency pair (when set). The Command Center\nrenders these in the FX exposure tab.\n",
+        ),
+      auditLog: zod.array(
+        zod.object({
+          id: zod.string(),
+          field: zod.string(),
+          actorEmail: zod.string(),
+          oldValue: zod.unknown().optional(),
+          newValue: zod.unknown().optional(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  );
 
 /**
  * Returns the unified risk-and-filings timeline for a supplier — every
@@ -634,6 +920,12 @@ export const ListOpportunitiesQueryParams = zod.object({
     ])
     .optional(),
   cycleId: zod.coerce.string().optional(),
+  supplierId: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Restrict to opportunities scoped to one supplier. Matches both\nthe canonical `supplier_id` column and the `inputs.supplierId`\nfield that lever code stamps when a row is built without a\nnormalised supplier link yet.\n",
+    ),
   limit: zod.coerce
     .number()
     .min(1)

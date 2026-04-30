@@ -107,7 +107,7 @@ function renderCard(data: SupplierIntelligenceResponse) {
     qc,
     ...render(
       <QueryClientProvider client={qc}>
-        <BillingCurrencyCard data={data} />
+        <BillingCurrencyCard intel={data} />
       </QueryClientProvider>,
     ),
   };

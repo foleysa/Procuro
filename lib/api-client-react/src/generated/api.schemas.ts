@@ -159,15 +159,143 @@ export interface Supplier {
   id: string;
   name: string;
   countryCode?: string | null;
+  /** ISO 4217 currency code in which this supplier bills. Null
+means "unknown / inherits the org base currency".
+ */
+  billingCurrency?: string | null;
   paymentTermsDays?: string | null;
   isStrategic: boolean;
   isPreferred: boolean;
   tags?: string[];
+  internalNotes?: string | null;
 }
 
 export interface SupplierListResponse {
   items: Supplier[];
   nextCursor?: string | null;
+}
+
+/**
+ * Bucketed view of a contract's expiration state:
+  - `active` — `endDate > now + tenant renewal threshold`
+  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`
+  - `expired` — `endDate <= now`
+Computed server-side so the renewal calendar / list / colour
+coding stays consistent across surfaces.
+
+ */
+export type ContractDerivedStatus =
+  (typeof ContractDerivedStatus)[keyof typeof ContractDerivedStatus];
+
+export const ContractDerivedStatus = {
+  active: "active",
+  expiring: "expiring",
+  expired: "expired",
+  pending: "pending",
+  cancelled: "cancelled",
+} as const;
+
+export interface SupplierLinkedContract {
+  id: string;
+  contractNumber: string;
+  title: string;
+  status: string;
+  derivedStatus: ContractDerivedStatus;
+  endDate: string;
+  daysToExpiry?: number;
+  billingCurrency?: string | null;
+  annualBaselineUsd?: number | null;
+}
+
+export interface SupplierLinkedOpportunity {
+  id: string;
+  leverId: string;
+  status: string;
+  title: string;
+  projectedSavingsUsd: number;
+  createdAt: string;
+}
+
+export type SupplierSpendRollupMonthlyItem = {
+  /** ISO month start, e.g. `2025-04-01`. */
+  month: string;
+  spendUsd: number;
+};
+
+export type SupplierSpendRollupTopCategoriesItem = {
+  categoryId: string;
+  categoryName: string;
+  spendUsd: number;
+};
+
+/**
+ * Trailing-365-day spend rollup for one supplier. Numbers are in
+USD; `monthly` is ordered oldest-first so the chart can render
+a left-to-right time series without re-sorting.
+
+ */
+export interface SupplierSpendRollup {
+  totalSpendUsd: number;
+  poCount: number;
+  monthly: SupplierSpendRollupMonthlyItem[];
+  topCategories: SupplierSpendRollupTopCategoriesItem[];
+}
+
+export interface SupplierAuditEntry {
+  id: string;
+  field: string;
+  actorEmail: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  createdAt: string;
+}
+
+export interface MarketSignal {
+  id: string;
+  collectorId?: string | null;
+  signalType: string;
+  scopeMaterialCode?: string | null;
+  scopeCategoryCode?: string | null;
+  scopeCategoryId?: string | null;
+  scopeSupplierId?: string | null;
+  value: number;
+  unit?: string | null;
+  currency?: string | null;
+  confidence?: number | null;
+  observedAt: string;
+  sourceUrl?: string | null;
+  createdAt: string;
+}
+
+export type SupplierDetail = Supplier & {
+  spend: SupplierSpendRollup;
+  contracts: SupplierLinkedContract[];
+  opportunities: SupplierLinkedOpportunity[];
+  /** Most-recent FX rate observations for the supplier's
+billing currency pair (when set). The Command Center
+renders these in the FX exposure tab.
+ */
+  fxSignals: MarketSignal[];
+  auditLog: SupplierAuditEntry[];
+};
+
+/**
+ * Partial update for the operator-controlled fields on a supplier.
+Every property is optional. Sending `null` for a nullable field
+clears it; omitting a field leaves the stored value unchanged.
+
+ */
+export interface PatchSupplierRequest {
+  /**
+   * ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`.
+   * @maxLength 3
+   */
+  billingCurrency?: string | null;
+  isStrategic?: boolean;
+  isPreferred?: boolean;
+  tags?: string[];
+  /** @maxLength 5000 */
+  internalNotes?: string | null;
 }
 
 /**
@@ -691,43 +819,6 @@ export interface CollectorBackfillResult {
   signalsSkipped: number;
   durationMs: number;
 }
-
-export interface MarketSignal {
-  id: string;
-  collectorId?: string | null;
-  signalType: string;
-  scopeMaterialCode?: string | null;
-  scopeCategoryCode?: string | null;
-  scopeCategoryId?: string | null;
-  scopeSupplierId?: string | null;
-  value: number;
-  unit?: string | null;
-  currency?: string | null;
-  confidence?: number | null;
-  observedAt: string;
-  sourceUrl?: string | null;
-  createdAt: string;
-}
-
-/**
- * Bucketed view of a contract's expiration state:
-  - `active` — `endDate > now + tenant renewal threshold`
-  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`
-  - `expired` — `endDate <= now`
-Computed server-side so the renewal calendar / list / colour
-coding stays consistent across surfaces.
-
- */
-export type ContractDerivedStatus =
-  (typeof ContractDerivedStatus)[keyof typeof ContractDerivedStatus];
-
-export const ContractDerivedStatus = {
-  active: "active",
-  expiring: "expiring",
-  expired: "expired",
-  pending: "pending",
-  cancelled: "cancelled",
-} as const;
 
 export type ContractStatus =
   (typeof ContractStatus)[keyof typeof ContractStatus];
@@ -2609,6 +2700,14 @@ export type ListOpportunitiesParams = {
   status?: ListOpportunitiesStatus;
   leverId?: LeverId;
   cycleId?: string;
+  /**
+ * Restrict to opportunities scoped to one supplier. Matches both
+the canonical `supplier_id` column and the `inputs.supplierId`
+field that lever code stamps when a row is built without a
+normalised supplier link yet.
+
+ */
+  supplierId?: string;
   /**
    * @minimum 1
    * @maximum 200

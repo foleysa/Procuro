@@ -12,17 +12,8 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Supplier {
-  id: string;
-  name: string;
-  countryCode?: string | null;
-  /** ISO 4217 currency code in which this supplier bills. Null
-means "unknown / inherits the org base currency".
- */
-  billingCurrency?: string | null;
-  paymentTermsDays?: string | null;
-  isStrategic: boolean;
-  isPreferred: boolean;
-  tags?: string[];
-  internalNotes?: string | null;
-}
+export type SupplierSpendRollupMonthlyItem = {
+  /** ISO month start, e.g. `2025-04-01`. */
+  month: string;
+  spendUsd: number;
+};

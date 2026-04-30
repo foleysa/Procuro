@@ -7,6 +7,7 @@ import {
   CheckSquare,
   TrendingUp,
   BookOpen,
+  Building2,
   Radar,
   Server,
   Workflow,
@@ -38,6 +39,7 @@ export function Layout({ children }: LayoutProps) {
   const baseNav = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/spend", label: "Spend Overview", icon: BarChart3 },
+    { href: "/suppliers", label: "Suppliers", icon: Building2 },
     { href: "/opportunities", label: "Opportunities", icon: Sparkles },
     { href: "/contracts", label: "Contracts", icon: FileText },
     { href: "/approvals", label: "Approvals", icon: CheckSquare },

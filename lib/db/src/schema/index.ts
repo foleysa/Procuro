@@ -6,6 +6,7 @@ export * from "./adminAuditLog";
 export * from "./categories";
 export * from "./items";
 export * from "./suppliers";
+export * from "./supplierAuditLog";
 export * from "./contracts";
 export * from "./contractAuditLog";
 export * from "./alerts";

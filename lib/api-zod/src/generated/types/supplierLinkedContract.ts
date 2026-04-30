@@ -11,18 +11,16 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { ContractDerivedStatus } from "./contractDerivedStatus";
 
-export interface Supplier {
+export interface SupplierLinkedContract {
   id: string;
-  name: string;
-  countryCode?: string | null;
-  /** ISO 4217 currency code in which this supplier bills. Null
-means "unknown / inherits the org base currency".
- */
+  contractNumber: string;
+  title: string;
+  status: string;
+  derivedStatus: ContractDerivedStatus;
+  endDate: Date;
+  daysToExpiry?: number;
   billingCurrency?: string | null;
-  paymentTermsDays?: string | null;
-  isStrategic: boolean;
-  isPreferred: boolean;
-  tags?: string[];
-  internalNotes?: string | null;
+  annualBaselineUsd?: number | null;
 }
