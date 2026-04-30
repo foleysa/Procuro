@@ -1,0 +1,158 @@
+ROUTE: Round 2 red team on revised IA spec #199. Skills: cross-domain-trace, strategy-frameworks. Standing rules applied: smoke-word principle, validate-against-real-data, structures-not-surfaces, stop-when-critical-findings-decelerate, "IA redesign must integrate the most recent foundational architectural decision" (just added in prior round). This is round 2 on this spec but round 1 since the four-edit absorption.
+RESEARCH:
+What changed:
+
+Five-journey framing absorbed. Engineer-shipping-change and decision-maker journeys named explicitly.
+/admin/funnel placement now mandatory in step 6 with two stated options (inside Operations vs. its own "Engine" section).
+Today-substrate decision now explicit in step 3 with two paths and a forced choice.
+Backend aggregator carve-outs added: /api/today/feed and /api/operations/health. Both go through OpenAPI codegen and Zod validation per workspace conventions.
+Funnel substrate's snapshot-failure banner explicitly participates in Operations health view.
+Slot reservation for v2 decision-maker slice from #185's week-4 readiness review.
+/admin/funnel URL preservation guaranteed alongside any new friendlier path.
+
+What I'm assuming:
+
+The codebase paths in "Relevant files" are accurate (admin-funnel.tsx exists, funnel.ts route exists, etc.).
+The OpenAPI codegen workflow and Zod validation conventions are real and known to the executor.
+
+What to test:
+
+Has the absorption introduced new gaps?
+Are the two big choice points (step 3 path, step 6 funnel placement) defined well enough that the executor can make and defend the pick?
+Are there integration points between #185 and #199 that still aren't addressed?
+Smoke words?
+Has the rate of critical findings decelerated, per the standing rule?
+
+THINK:
+This is a meaningfully better spec. The five-journey framing fixes the core diagnostic gap. The Today-substrate decision is forced rather than implicit. The funnel substrate is no longer invisible.
+Three categories to look for:
+
+The forced choices. Step 3 makes the executor pick (a) substrate-driven or (b) feed-only Today. Step 6 makes them place /admin/funnel. Both are right, but a forced choice that doesn't define the criteria for choosing is just a deferred problem. The executor will pick whichever feels safer (likely (b) for Today, "inside Operations" for funnel) without a framework for the decision.
+Cross-#185-#199 integration points. The snapshot-failure banner participates in Operations health view (good). What about: cohort identity surfacing across IA, prior calibration table placement, signal lineage in the analyst journey, the funnel_snapshot_failures table's UI from RT-63? These are real touchpoints that the spec mentions for one (banner) but not for others.
+Aggregator endpoint design. Two new endpoints. The spec says they go through codegen and Zod validation, which is good convention discipline. But shape, caching, error semantics, and tenant scoping aren't specified at all.
+
+Standing-rule check: the prior red team on this spec (round 1) found 4 critical gaps. This round should find fewer if the absorption is real. If I find 4 more critical gaps, the absorption was cosmetic. If I find 1-2 polish items, the spec is ship-ready. If I find 0-1 critical gaps and 3-5 polish items, that's the expected deceleration curve.
+PLAN:
+
+Test the forced-choice criteria — can the executor actually pick?
+Test cross-#185-#199 integration points beyond the banner.
+Test the aggregator endpoints for hidden complexity.
+Hunt smoke words.
+Test internal consistency.
+Test what's still missing.
+Honest assessment: ship-as-is, edit, or another round.
+
+BUILD DRAFT — not for shipping:
+Verdict preview: ship after one moderate edit. The absorption was real. The remaining gaps are mostly polish, but two issues need addressing before the executor sees the spec — neither rises to architecture-level.
+
+HIGH — issues that could meaningfully alter executor output
+RT-66. The forced choices in step 3 and step 6 lack decision criteria.
+Step 3 says: "The executor must explicitly pick one of the two paths in the design doc, with rationale, before building." Then describes (a) substrate-driven and (b) feed-only.
+Step 6 says: "Place /admin/funnel (#185) at its intentional new home — either as the engine-health surface inside Operations or as its own top-level 'Engine' section, per the design doc's decision in step 1."
+Both are forced choices, both correctly require rationale, but neither defines the criteria for "what makes this the right pick."
+The executor will default to whichever feels safer. For step 3, that's (b) feed-only — easier, no coordination with #185's evolving shape, ships faster. For step 6, that's "inside Operations" — fewer top-level sections, less invention. Both default picks are plausibly wrong without criteria to weigh against.
+For step 3 specifically: the criterion is whether the substrate's outputs are mature enough by the time Today ships. If the funnel substrate has been running for 4-6 weeks and the v2 readiness review has happened, (a) is right. If the substrate just shipped and outputs aren't trustworthy yet (per #185's behavioral verification step), (b) is right and the follow-up task is real.
+For step 6: the criterion is whether the funnel substrate is conceptually one of "is my data flowing" (Operations) or one of "what is the engine learning" (Engine). The data-flowing framing is about freshness and health. The learning framing is about calibration, conversion rates, and bottlenecks. The substrate does both, but its primary purpose per #185 is the latter.
+Severity: high. Forced choices without criteria are deferred decisions. The executor will pick safely, not correctly.
+Fix: add to step 3 — "Criterion for picking (a) vs (b): is the funnel substrate from #185 considered trustworthy at the time this redesign reaches the Today step? Trustworthiness is verified by #185's behavioral verification step (3 cycles, manual count audit). If yes, pick (a). If no, pick (b) and create the follow-up task with a defined trigger condition (substrate trustworthiness verified)."
+Add to step 6 — "Criterion for placement: the funnel substrate's primary purpose is engine observability — answering 'what is the engine learning, and where are the bottlenecks.' That's a different question from 'is my data flowing.' Default to its own top-level 'Engine' section unless the design doc identifies a specific reason the engine-observability framing collapses meaningfully into operations-health framing."
+RT-67. The cross-#185-#199 integration is partial. The snapshot-failure banner is addressed; four other touchpoints aren't.
+The funnel substrate from #185 introduces several pieces that have natural homes in the new IA but the spec only addresses one (snapshot-failure banner → Operations health view). Other touchpoints:
+
+Cohort identity surfacing. When an analyst investigates an opportunity, does the new Intelligence section show its cohort identity tuple, re_evaluation_count, and cohort time-window status? Or does that stay buried in /admin/funnel? An analyst's job is to investigate signals; a cohort with re_evaluation_count = 12 is a powerful signal that the analyst should see in their journey.
+Prior calibration table placement. The per-lever calibration table from #185 lives at /admin/funnel today. Does it also surface anywhere in the analyst's journey (e.g., as a sidebar on a per-lever investigation page)? Should it? The spec doesn't say.
+Signal lineage in the analyst journey. The signal_analyzed lower-bound from #185 means an analyst looking at a signal can ask "which levers consulted this?" The data is now persisted. Does the new IA surface this on a signal detail page?
+funnel_snapshot_failures table UI placement. From RT-63 in the prior round, this table backs the recurring-failure banner UX. Does its detail view (per-failure record, acknowledge button) live in /admin/funnel only, or does it surface in Operations alongside other failure views?
+
+These aren't bugs in #199 — they're places where the IA redesign could either deliberately exclude these touchpoints (acceptable, with explicit reasoning) or deliberately include them (more work, more value). The spec is silent, which means the executor will exclude them by gravity.
+Severity: high. The IA redesign is the moment to make these decisions. Doing it later means another IA pass.
+Fix: add to step 1 (audit) — "The audit must enumerate the funnel substrate's user-facing outputs (snapshot-failure banner, prior calibration table, cohort identity tuples on opps, signal lineage on signals, recurring-failure detail UI) and decide for each: (a) surfaces in the new IA at location X, or (b) stays admin-only in /admin/funnel. Silence is not an option; the design doc must state the placement decision for each output."
+MEDIUM — clarity and design completeness
+RT-68. The two new aggregator endpoints have no shape, caching, or error contract.
+Spec says /api/today/feed "composes existing alert / opportunity / approval / job-failure (and, if step 3 picks the substrate-driven path, funnel-substrate signal) endpoints into a single feed payload." OK — but:
+
+What does the response shape look like? An array of feed items with a kind discriminator? A grouped object with sections per source?
+What happens when one underlying endpoint fails — partial response or fail-fast?
+What's the cache behavior? Computed per-request? Cached for some TTL? If TTL, what's the staleness policy?
+What's the tenant scoping? (Implicit answer: same as the underlying endpoints, but "implicit" failed RT-30 in #185.)
+
+Same questions for /api/operations/health.
+Severity: medium. The executor will design these and they'll work, but the design will be improvised. Improvised aggregators tend to develop incompatible shapes (Today's response array doesn't match Operations' grouped object, even though both are "compose feeds from sources") and make future maintenance painful.
+Fix: add to the carve-out — "Both aggregators return a discriminated-union response: { items: Array<{ kind: string, source: string, payload: T, occurred_at: timestamp, severity: 'info' | 'warn' | 'error' }>, partial: boolean, errors: Array<{ source: string, error: string }> }. Both endpoints fail-soft: if any underlying endpoint errors, the aggregator returns successful sources in items, sets partial: true, and lists the failures in errors. Caching is per-request; no server-side TTL in v1. Tenant scoping inherits from the underlying endpoints; the aggregator must not introduce its own data access — it composes responses from authenticated calls to the existing endpoints with the user's session."
+This is a small spec addition that prevents large maintenance pain.
+RT-69. The "lives at /admin/funnel even if it gains a friendlier path" rule is right but the friendlier-path naming isn't decided.
+If the design doc decides to put the substrate inside Operations, the friendlier path is something like /operations/engine. If it goes to its own Engine section, it might be /engine/funnel or /engine. The spec says "alongside any new friendlier path" but doesn't commit.
+Severity: medium. This is a small thing that turns into bikeshedding mid-implementation if not pre-decided.
+Fix: the design doc (step 1 output) must include the friendlier path's name as part of the placement decision. State this in step 6.
+RT-70. The behavioral-verification gap from #185 doesn't have an analog in #199.
+#185's spec required post-deploy manual count auditing on a sample tenant before declaring the funnel trustworthy. #199 doesn't include any post-deploy verification of the IA decisions — the test sweep covers regression and new-flow tests, but there's no "ship-then-validate-with-real-users" step.
+For an IA redesign the analog would be: after deploy, watch one operator for 30 minutes, watch one analyst for 30 minutes, document any moments where the new IA produces confusion. This is the equivalent of #185's "is the instrumentation trustworthy" — for IA, it's "is the navigation legible."
+Severity: medium. Without this, the IA ships, gets used, and small confusion accumulates without a feedback mechanism.
+Fix: add a post-deploy step — "Behavioral verification: within 7 days of deploy, shadow one operator and one analyst for one work session each. Document any moments where the new IA produces hesitation, wrong-page navigation, or confusion. If any pattern emerges (3+ similar issues across users), file a follow-up task to address. This is the IA equivalent of #185's instrumentation trustworthiness check."
+LOW — language and consistency
+RT-71. One smoke word survived: "if step 3 picks the substrate-driven path, funnel-substrate signal."
+The carve-out for /api/today/feed says it composes "existing alert / opportunity / approval / job-failure (and, if step 3 picks the substrate-driven path, funnel-substrate signal) endpoints." The "if" hedge is fine — it correctly defers to step 3's decision. But "funnel-substrate signal endpoints" (plural) without naming them is the example-values-as-commitments anti-pattern. Which substrate endpoints? The conversion-rate trend endpoint? The auto-annotations feed? Both? Either?
+Severity: low. The executor will figure this out from the substrate's available endpoints, but the spec is leaving a decision implicit.
+Fix: if step 3 picks (a), the aggregator must compose the substrate's auto-annotations endpoint and the conversion-rate-deltas endpoint specifically (per #185's delta-detection output). State this. If those endpoints don't exist by name yet in #185, that's a coordination point worth surfacing.
+RT-72. "Either as the engine-health surface inside Operations or as its own top-level 'Engine' section" — the section name "Engine" is a smoke-word coin flip.
+The spec offers two options for funnel placement and names the second "Engine." But the section's actual name should be informed by the design doc's user-journey analysis. Calling it "Engine" by default is acceptable but unexamined — operators may not think of the funnel substrate as "the engine"; analysts might call it "Learning" or "Calibration"; decision-makers might call it "Performance."
+Severity: very low. The executor will pick a name. But the spec offering "Engine" as a placeholder isn't doing work.
+Fix: rephrase the option as "as its own top-level section with a name to be determined by the design doc, informed by which user types are the primary audience for the substrate's outputs." Three more words, prevents a default name from becoming the name.
+RT-73. The Relevant files list includes funnel.ts and funnel substrate files but not the funnel_snapshot_failures table from RT-63 of #185's red team.
+If RT-63 was absorbed into #185's final spec (and the schema includes funnel_snapshot_failures), then the IA's Operations health view consuming the substrate's failure banner needs to read from this table. The relevant files list mentions artifacts/api-server/src/lib/ooda/funnel.ts but not the failure table or any UI for acknowledging failures.
+Severity: low. The executor will discover this from following the substrate's code, but the file list is incomplete.
+Fix: verify whether funnel_snapshot_failures made it into the final #185 spec; if so, add the relevant routes/tables to the file list.
+
+WHAT'S STILL MISSING
+RT-74. The spec doesn't address the migration cost for users with existing bookmarks, deep links, and muscle memory.
+The spec covers backwards-compatibility redirects (good — bookmarks keep working). But muscle memory ("Dashboard is on the left sidebar at position 3") doesn't redirect. Power users will be slowed for days as they relearn the nav.
+Severity: low. This is the kind of UX cost that's real but doesn't affect ship/no-ship.
+Fix: add to the design doc — "Communication plan for the change: a one-time in-app banner on first sign-in post-deploy explaining the IA changes and where major surfaces moved (link to old → new mapping). Banner dismissable; auto-hides after 7 days."
+RT-75. No mention of role-gated nav rendering.
+The IA includes an Operations section. Should non-admin users see Operations at all? The /admin/funnel admin gating is preserved (good), but the broader Operations section probably has read-only views for non-admins and write/control views for admins. The spec doesn't say what non-admins see when they look at the new sidebar.
+Severity: medium-leaning-low. The current sidebar likely has this concern already and it's been handled per-page, but the redesign is a chance to make it consistent.
+Fix: add to step 2 — "Sidebar items render based on user role. Each item is tagged with the minimum role required to access it; users with insufficient role see a redacted sidebar (item hidden, not shown-and-disabled). The design doc lists which items are role-gated."
+
+REBUILD: No structural rebuild. Round 2 produced 10 findings (RT-66 through RT-75). 2 are high-severity; 4 are medium; 4 are low. Compare to round 1: 4 critical, all of which were absorbed.
+The deceleration is happening but not as steeply as in #185's iteration. The reason is that #199 is touching a larger and less-explored surface than #185 (an entire application's IA vs. one substrate). The two high-severity items (RT-66 and RT-67) are real architectural decisions the spec needs to make before the executor sees it.
+Comparison of finding rates:
+
+Round 1: 4 findings, 4 critical (architecture-level: missing journeys, missing #185 integration, Today=#180 risk, backend-constraint wrong)
+Round 2: 10 findings, 0 critical, 2 high (decision criteria for forced choices, broader #185 integration), 4 medium, 4 low
+
+Round 2 has more findings than round 1 in absolute terms, but zero critical. The character has shifted from "architecture wrong" to "decisions need criteria." That's the deceleration shape.
+
+SHIP:
+Verdict: edit, then ship. Two high-severity edits before the executor sees the spec. Everything else is polish or executor-discovery.
+The absorption from round 1 was real. The five-journey framing, the Today-substrate forced choice, the funnel-substrate placement requirement, the backend aggregator carve-outs — all landed correctly. The remaining issues are about decision criteria for the forced choices and about completing the cross-#185-#199 integration beyond the snapshot-failure banner.
+The two high-severity edits before ship:
+
+RT-66: Add decision criteria to the step 3 and step 6 forced choices. Without criteria, the executor defaults to safer-but-possibly-wrong options. Step 3 criterion: substrate trustworthiness per #185's behavioral verification. Step 6 criterion: substrate's primary purpose is engine observability, not data flow — default to its own section unless the design doc identifies a specific collapse argument.
+RT-67: Step 1 audit must enumerate the funnel substrate's user-facing outputs (snapshot-failure banner, prior calibration table, cohort identity tuples on opps, signal lineage on signals, recurring-failure detail UI) and decide placement for each. Silence on these touchpoints means the executor excludes them by gravity, and another IA pass becomes inevitable in a quarter.
+
+The four medium edits worth making but not blocking:
+
+RT-68: Spec the aggregator response shape, error semantics, and tenant scoping. One paragraph in the carve-out section.
+RT-69: Friendlier-path naming for the funnel substrate is part of the design doc's placement decision.
+RT-70: Post-deploy behavioral verification — shadow one operator and one analyst for a session each, document confusion patterns.
+RT-75: Role-gated sidebar rendering as part of step 2.
+
+The polish items (RT-71, RT-72, RT-73, RT-74) can ship as-is or be addressed in implementation.
+One thing worth saying directly to the agent:
+The absorption from round 1 was clean and the spec is materially better. But there's a pattern visible across both #185 and #199: forced choices in specs without decision criteria become default choices in implementation. The agent has correctly identified the choice points (Today-substrate path, funnel placement, calibration formula validation) but tends to leave the criteria implicit. The next pattern worth elevating: "any forced choice in a spec must include the criteria the implementer uses to pick. Without criteria, the choice defaults to whichever option is safer to implement, which is not always the right one."
+After RT-66 and RT-67 are addressed, ship the spec to the executor. Round 3 of red team on #199 would likely find polish items only, and per the standing rule from #185, that's the signal to stop iterating on spec and start iterating on code.
+One pattern across the two specs worth flagging: #185 took 4 red-team rounds. #199 will take 2-3. The compression is real and it's because the agent absorbed standing rules from #185 (smoke-word ban, validate-against-real-data, structures-not-surfaces) into #199's structure from the start. That's the rule-compounding payoff of the correction-log discipline. Worth noting in the next /pattern review.
+
+Learning footer:
+One new correction-log rule fires:
+"Forced choices in specs must include decision criteria. Without criteria, the implementer defaults to the option that's safer to implement, which is not always the option that's right for the product. State the criterion the implementer uses to pick, and the rationale that makes one option correct vs. the other." — Adding to correction-log under spec-discipline rules. This generalizes from RT-66: both forced choices in #199 (Today-substrate path, funnel placement) had options stated correctly but criteria for picking implicit. Same pattern visible in #185's calibration formula validation step (the agent absorbed RT-60's fix in round 4 to add "what to do if validation fails").
+Existing rules applied:
+
+IA redesign must integrate the most recent foundational architectural decision — this rule (added last round) drove the absorption that made round 2 mostly successful. RT-67 is a refinement: integration must extend beyond the most-visible touchpoint to all user-facing outputs of the foundational decision.
+Smoke-word principle — fired on RT-71 ("funnel-substrate signal endpoints" plural without naming) and RT-72 ("Engine" as placeholder name). Two minor lapses, no consequences.
+Stop iterating when critical-finding rate decelerates — the round 2 rate (0 critical, 2 high) suggests round 3 would find polish only. After RT-66 and RT-67 are absorbed, recommend stopping spec rounds.
+Validate against real data shape — analog applied as RT-70 (post-deploy behavioral verification): IA decisions are validated by watching real users navigate, the same way metrics are validated against real distributions.
+
+Pattern observation worth elevating in next /pattern review:
+The compression from #185 (4 rounds) to #199 (2-3 rounds) is the rule-compounding payoff. The agent absorbed standing rules from #185 into #199's initial draft, eliminating an entire round's worth of architecture-level findings. This is the compounding behavior the correction-log structure was designed to produce. If the next major spec from this agent shows further compression (round 1 ships with only polish edits needed), that's strong evidence the system is working as designed and the correction-log/standing-rules pattern is the right mechanism for spec quality at scale. Worth tracking explicitly: "rounds-to-ship per spec, indexed by which standing rules were absorbed pre-draft."
+The next iteration should be the executor's draft, not another spec round. Apply RT-66 and RT-67, ship.

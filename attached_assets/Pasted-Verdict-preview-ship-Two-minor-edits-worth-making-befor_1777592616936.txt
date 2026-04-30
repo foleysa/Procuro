@@ -1,0 +1,91 @@
+Verdict preview: ship. Two minor edits worth making before executor sees it. The deceleration is now decisive and further spec rounds have crossed into diminishing returns.
+Walking the spec:
+
+MEDIUM — issues that warrant pre-ship attention
+RT-76. The substrate-output enumeration has the same forced-choice-without-criteria pattern that step 3 and step 6 had — applied to five new choices.
+Step 1 says: "Substrate-output enumeration (mandatory): the audit must additionally enumerate the funnel substrate's user-facing outputs and decide placement for each. Silence is not an option." Then lists five outputs with an "or admin-only" alternative each.
+The new standing rule from the prior round says: "every forced choice in this spec includes the criteria the implementer uses to pick." But the five substrate-output placements are forced choices without criteria. The executor must decide for each whether it goes to analyst journey or admin-only, but no criterion tells them which factor decides.
+The spec gets the principle right at the top level (step 3, step 6) and forgets to apply it recursively to the new sub-choices it just introduced.
+Severity: medium. The executor will pick something for each, and the picks will be defensible, but they won't be principled.
+Fix: add to step 1 — "Criterion for placement of each substrate output: does a non-admin user (operator or analyst) need this information to do their job? If yes, the output surfaces in their journey. If the information is purely diagnostic for engineers debugging the substrate itself, it stays admin-only. The default for ambiguous cases is admin-only — surfacing engine internals has a cost, and substrate outputs with unproven decision-supporting value are better deferred than introduced and walked back."
+Three sentences, applies the standing rule recursively, prevents implementer guessing.
+RT-77. The coordination flag for substrate endpoints in step 3 path (a) creates an unresolved dependency cycle with #185.
+Step 3 path (a) requires composing two substrate endpoints that don't exist by name yet: auto-annotations and conversion-rate-deltas. The Out of scope carve-out says "they would need to be added as part of step 3 if path (a) is picked, and the executor should confirm their existence (or plan their addition) before committing to path (a)."
+This is honest, but it creates a problem: adding these endpoints is technically out of scope per the spec ("All other backend work, including new endpoints not listed above..."). So path (a) requires the executor to either:
+
+(i) Add the endpoints as scope creep, in violation of "all other backend work" exclusion,
+(ii) File a separate task to add them, then wait for that task to ship before continuing #199 (blocking dependency),
+(iii) Pick path (b) instead.
+
+The criterion in step 3 says pick (a) if the substrate is trustworthy. But the criterion for picking (a) is necessary, not sufficient — the substrate could be trustworthy AND the endpoints not exist, and (a) still wouldn't be feasible without separate scope.
+Severity: medium. The executor will likely default to (b) when they hit this, because (a) has a hidden coordination cost the spec acknowledges but doesn't resolve.
+Fix: clarify in step 3 — "Picking path (a) requires both: (i) the substrate is trustworthy per #185's behavioral verification, AND (ii) the two substrate endpoints (auto-annotations, conversion-rate-deltas) either already exist or can be added within this task's scope. If (ii) requires a separate task to add the endpoints, the executor must either (a) treat that as a blocking dependency and file the prerequisite task before proceeding with the Today step, OR (b) pick path (b) for #199 and create the substrate-driven follow-up that includes the endpoint-creation work as part of its scope."
+This makes the implicit choice explicit: either accept the coordination cost or take the cheaper route. Both are defensible; defaulting via gravity isn't.
+
+LOW — polish
+RT-78. One smoke word survived: "the closest available proxy — recorded session, structured walk-through, etc."
+Step 9 says "shadow one operator and one analyst for one work session each (or the closest available proxy — recorded session, structured walk-through, etc.)."
+"Etc." is on the smoke-word denylist. The proxy options listed (recorded session, structured walk-through) plus "etc." imply more options exist without naming them. The "etc." adds nothing the listed options don't already cover.
+Severity: very low. The executor will pick a proxy and it'll be fine.
+Fix: delete "etc." Replace with "or use a recorded session or structured walk-through if live shadowing is unavailable." Same meaning, no smoke word.
+RT-79. The "Operations or admin-only" alternative for substrate outputs assumes only two homes exist.
+The five substrate outputs in step 1 each have placement options like "analyst journey or admin-only" or "Operations area or admin-only." But the new IA has more sections than these. Could a substrate output go in the Org section? Could prior calibration go in a future Performance section that doesn't exist yet?
+Severity: very low. The five outputs listed are correctly mapped to the most likely homes, but the binary framing is restrictive.
+Fix: generalize the placement language — "Each substrate output is placed in the most appropriate IA section per the criterion in the audit, or kept admin-only if no non-admin user needs it." Removes the binary, applies the criterion uniformly.
+RT-80. The migration banner's content isn't specified.
+Spec says "the design doc must include the post-deploy communication plan (the in-app migration banner copy + dismissal behaviour)." The banner copy is delegated to the design doc. The dismissal behavior is partially specified (one-time, dismissable, 7-day auto-hide) but the actual content is implementer-decided.
+Severity: very low. The executor will write reasonable banner copy.
+Fix (optional): add to step 7 — "Banner copy must include: a one-line acknowledgment that the navigation has changed, a link to the old → new mapping, and a dismiss button. Three elements, no more — the banner is informational, not a tutorial."
+
+WHAT'S STILL MISSING
+RT-81. The spec doesn't define what happens if step 9's behavioral verification finds confusion patterns.
+Step 9 says "If any pattern emerges (3+ similar issues across users), file a follow-up task to address." Good — but what about the IA itself? If three operators all hesitate at the new sidebar grouping, is the IA broken? Does the redesign get reverted? Adjusted? What's the threshold for "the IA is fine, just needs polish" vs "the IA was wrong and needs another pass"?
+Severity: low. The executor will file follow-up tasks, but the framing of those follow-ups (polish vs re-redesign) isn't bounded.
+Fix (optional): add to step 9 — "Follow-up tasks from behavioral verification are scoped as polish (copy changes, label tweaks, badge additions) unless the verification reveals a structural failure (3+ users unable to complete a primary journey). Structural failures trigger a separate task to revisit the IA with the failure pattern as input — not a re-redesign by default."
+
+REBUILD: No structural changes. Round 3 produced 6 findings (RT-76 through RT-81). 0 critical. 2 medium. 4 low. The standing rule's deceleration test is decisively passed.
+Comparison across all rounds of #199:
+
+Round 1: 4 findings, 4 critical
+Round 2: 10 findings, 0 critical, 2 high
+Round 3: 6 findings, 0 critical, 2 medium
+
+The shape is unmistakable. Critical findings hit zero in round 2 and stayed there. High-severity findings dropped from 2 to 0 in round 3. The remaining items are now the kind of polish that ship-then-fix produces better answers for than another spec round.
+
+SHIP:
+Verdict: ship the spec. Apply RT-76 and RT-77 before handing to executor; everything else is polish or executor-discovery. Further spec rounds have crossed the diminishing-returns threshold definitively.
+The absorption discipline across the seven cumulative red-team rounds (four on #185, three on #199) is now the strongest evidence of the rule-compounding pattern observed in the prior round. Each new spec absorbed standing rules from the previous one's red teams into its initial structure. The critical-finding rate is now zero for two consecutive rounds on #199. The remaining items are the polish bucket.
+The two pre-ship edits:
+
+RT-76: Add the placement criterion for the five substrate outputs to step 1. The new standing rule (forced choices need criteria) applies recursively to the sub-choices step 1 introduces, and the spec doesn't currently apply it. Three sentences. Default to admin-only when ambiguous; require evidence of non-admin user need to surface engine internals.
+RT-77: Resolve the dependency cycle in step 3 path (a). Currently the executor must pick (a) only if the substrate is trustworthy AND the endpoints exist (or can be added within scope). Make the AND explicit: trustworthy alone is necessary but not sufficient. Either accept the prerequisite-task dependency cost, or pick (b) and roll the endpoint creation into the substrate-driven follow-up. Either is defensible; the spec just needs to make the choice visible.
+
+The three polish items (RT-78, RT-79, RT-80) and one missing item (RT-81) can ship as-is or be handled in implementation. None block.
+One thing worth saying directly to the agent:
+This is the third red-team round on #199 and the seventh cumulative round across both specs. The deceleration is decisive. The agent has demonstrated the absorption discipline that the standing rules predict — each round's lessons compound into the next spec's initial structure rather than being relearned. After RT-76 and RT-77 are absorbed, the next iteration should be the executor's draft, not another spec round.
+If the agent is tempted to run a fourth round on this spec, the question to ask is: are the issues being found at the polish level (RT-78, RT-79, RT-80, RT-81 in this round)? If yes, more spec polish has worse marginal value than letting the executor discover real-world issues during implementation. The diminishing-returns curve is now visible in the data: 4 critical → 0 critical → 0 critical, 2 high → 0 high. Ship.
+One pattern worth flagging across the seven cumulative rounds:
+The agent's specs have improved monotonically and the rounds-to-ship has compressed (#185 took 4 rounds, #199 took 3). The compression is real and it's driven by standing-rule absorption. The next major spec from this agent should be expected to ship in 2 rounds if the compression continues. If it ships in 1 round (the spec's initial draft already absorbing all standing rules cleanly), that's strong evidence the system has stabilized and further structural improvement of the spec-iteration process has diminishing returns. Worth tracking.
+
+Learning footer:
+No new correction-log rules fire. Existing rules applied:
+
+Forced choices in specs need criteria — fired correctly in RT-76. The rule was added in round 2 and applied to step 3 and step 6. Round 3 caught its non-application to the five substrate-output placements step 1 introduces. The rule is now self-recursive: applying it once at the top level reveals where it hasn't been applied at sub-levels.
+Stop iterating when critical-finding rate decelerates — fired decisively. Rounds 2 and 3 on #199 produced zero critical findings. The rule's threshold is crossed.
+IA redesign must integrate the most recent foundational architectural decision — confirmed working as intended. The agent's substrate-output enumeration in step 1 is the rule's structural absorption.
+Smoke-word principle — fired weakly on RT-78 ("etc."). Single minor lapse, no consequences.
+
+Pattern observation worth elevating in next /pattern review:
+The seven-round arc across #185 and #199 is now the canonical example of the spec-iteration shape. The compression from 4 rounds to 3 rounds is the rule-compounding payoff in action. The next major spec from this agent — particularly one that touches similarly large architectural surface — should be expected to ship in 2 rounds. If it ships in 1, the system has stabilized. If it takes 4 again, something's regressed.
+The standing-rule library is now:
+
+Smoke-word principle (any phrase replaceable with concrete guidance)
+Validate metrics against real data shape
+IA redesign must integrate most recent foundational architectural decision
+Forced choices in specs need criteria
+Stop iterating when critical-finding rate decelerates
+Example values masquerading as commitments are smoke words
+Structures, not surfaces
+
+These seven rules now constitute the spec-discipline canon. They compounded across two specs to produce the deceleration shape visible in the data. Worth surfacing in the next /pattern review whether to formalize the seven into a master "spec discipline" rule cluster that gets read at the start of every new spec drafting session — making the absorption explicit rather than implicit.
+The next iteration on #199 should be the executor's draft. Apply RT-76 and RT-77, ship.Opus 4.7
