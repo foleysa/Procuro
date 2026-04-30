@@ -3128,6 +3128,93 @@ paths:
           description: Deleted
         '404':
           $ref: '#/components/responses/NotFound'
+  /readiness:
+    get:
+      operationId: getReadiness
+      tags: [onboarding]
+      summary: Lever-by-lever data readiness for the active tenant
+      description: |
+        Runs the data-readiness rules engine: for each lever it reports a
+        `score` (0-100) and any `blockers` describing what data is missing
+        or unmapped, with a `fixUrl` deep-link the operator can follow to
+        repair it. Cheap to call (one COUNT per check); the wizard and the
+        dashboard "Data readiness" card both poll it.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+
+  /onboarding/state:
+    get:
+      operationId: getOnboardingState
+      tags: [onboarding]
+      summary: Get the wizard state for the current actor
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Wizard state (a fresh row is materialised on first call)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+    patch:
+      operationId: patchOnboardingState
+      tags: [onboarding]
+      summary: Update the wizard state (current step / completed steps / dismissal)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchOnboardingStateRequest"
+      responses:
+        "200":
+          description: Updated state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+
+  /onboarding/sample-data:
+    post:
+      operationId: installSampleData
+      tags: [onboarding]
+      summary: Install a curated synthetic dataset (Org Admin only)
+      description: |
+        Idempotent. Tags every inserted row with `source_system =
+        'sample_data'` so DELETE can remove them cleanly without touching
+        any operator-supplied data.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Sample data installed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SampleDataResult"
+    delete:
+      operationId: removeSampleData
+      tags: [onboarding]
+      summary: Remove the sample dataset previously installed (Org Admin only)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Sample data removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SampleDataResult"
+
 components:
   parameters:
     OrgIdHeader:
@@ -3284,8 +3371,141 @@ components:
       - tail_spend_rationalization
       - supplier_consolidation
       - contract_renegotiation_trigger
+      - spot_vs_contract
       - supplier_fx_exposure
       - material_index_arbitrage
+
+    ReadinessBlocker:
+      type: object
+      required: [id, field, message, missingPct, missingCount, totalCount, fixUrl, hard]
+      properties:
+        id: { type: string, description: "Stable id, e.g. `suppliers.billing_currency`." }
+        field: { type: string, description: "Operator-readable field name." }
+        message: { type: string }
+        missingPct: { type: integer, minimum: 0, maximum: 100 }
+        missingCount: { type: integer, minimum: 0 }
+        totalCount: { type: integer, minimum: 0 }
+        fixUrl: { type: string, description: "Deep-link to the page that fixes the gap." }
+        hard:
+          type: boolean
+          description: "True when this blocker fully prevents the lever from running."
+
+    LeverReadiness:
+      type: object
+      required: [leverId, label, tier, score, blockers]
+      properties:
+        leverId: { $ref: "#/components/schemas/LeverId" }
+        label: { type: string }
+        tier: { type: integer, minimum: 1, maximum: 5 }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        blockers:
+          type: array
+          items: { $ref: "#/components/schemas/ReadinessBlocker" }
+
+    ReadinessResponse:
+      type: object
+      required: [overallScore, hasIngestedData, sampleDataInstalled, levers]
+      properties:
+        overallScore: { type: integer, minimum: 0, maximum: 100 }
+        hasIngestedData:
+          type: boolean
+          description: "False when no contracts/POs/invoices exist yet for the tenant."
+        sampleDataInstalled:
+          type: boolean
+          description: "True when the curated synthetic dataset is currently loaded."
+        levers:
+          type: array
+          items: { $ref: "#/components/schemas/LeverReadiness" }
+
+    OnboardingWizardStep:
+      type: string
+      enum:
+        - welcome
+        - bring_data
+        - map_categories
+        - invite_team
+        - configure_settings
+        - run_first_cycle
+        - completed
+
+    CompletedOnboardingStep:
+      type: object
+      required: [step, completedAt]
+      properties:
+        step: { $ref: "#/components/schemas/OnboardingWizardStep" }
+        completedAt: { type: string, format: date-time }
+
+    OnboardingState:
+      type: object
+      required: [currentStep, completedSteps, startedAt, updatedAt, dismissed, completed]
+      properties:
+        currentStep: { $ref: "#/components/schemas/OnboardingWizardStep" }
+        completedSteps:
+          type: array
+          items: { $ref: "#/components/schemas/CompletedOnboardingStep" }
+        startedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        dismissedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        dismissed: { type: boolean }
+        completed: { type: boolean }
+
+    PatchOnboardingStateRequest:
+      type: object
+      description: |
+        Partial update for the actor's wizard row. Any subset of fields
+        may be supplied. Setting `completedStep` appends an entry to the
+        `completedSteps` array; setting `dismissed: true` stamps a
+        `dismissedAt`. When `completedStep` is supplied together with
+        `skipped: true`, the audit log records `step_skipped` instead of
+        `step_completed` so CS can spot the drop-off pattern.
+      properties:
+        currentStep: { $ref: "#/components/schemas/OnboardingWizardStep" }
+        completedStep: { $ref: "#/components/schemas/OnboardingWizardStep" }
+        skipped: { type: boolean }
+        dismissed: { type: boolean }
+        completed: { type: boolean }
+
+    SampleDataCounts:
+      type: object
+      required:
+        - suppliers
+        - categories
+        - items
+        - contracts
+        - purchaseOrders
+        - poLines
+        - invoices
+        - payments
+      properties:
+        suppliers: { type: integer, minimum: 0 }
+        categories: { type: integer, minimum: 0 }
+        items: { type: integer, minimum: 0 }
+        contracts: { type: integer, minimum: 0 }
+        purchaseOrders: { type: integer, minimum: 0 }
+        poLines: { type: integer, minimum: 0 }
+        invoices: { type: integer, minimum: 0 }
+        payments: { type: integer, minimum: 0 }
+
+    SampleDataResult:
+      type: object
+      required: [installed, removed, counts]
+      properties:
+        installed:
+          type: boolean
+          description: "True if this call inserted rows; false if rows already existed (idempotent)."
+        removed:
+          type: boolean
+          description: "True if this call deleted rows; false if no sample data was present."
+        counts:
+          $ref: "#/components/schemas/SampleDataCounts"
+
     RejectionReasonCode:
       type: string
       enum:

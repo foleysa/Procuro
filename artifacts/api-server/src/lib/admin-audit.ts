@@ -37,5 +37,15 @@ export const ADMIN_AUDIT_ACTIONS = [
   "tenant.settings_update",
   "scim.user_provision",
   "scim.user_deprovision",
+  // Onboarding wizard telemetry — emitted on every state transition
+  // (start / advance / dismiss / complete) and on sample-data
+  // install/remove. CS uses these to monitor wizard drop-off.
+  "onboarding.step_started",
+  "onboarding.step_completed",
+  "onboarding.step_skipped",
+  "onboarding.dismissed",
+  "onboarding.completed",
+  "onboarding.sample_data_installed",
+  "onboarding.sample_data_removed",
 ] as const;
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

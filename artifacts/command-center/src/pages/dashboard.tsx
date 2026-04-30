@@ -1,8 +1,13 @@
-import { Link } from "wouter";
+import { useEffect } from "react";
+import { Link, useLocation } from "wouter";
 import {
   useGetMe,
   useGetSpendOverview,
   useGetBillingSummary,
+  useGetReadiness,
+  useGetOnboardingState,
+  getGetReadinessQueryKey,
+  getGetOnboardingStateQueryKey,
   useListOpportunities,
   useListCycles,
   useListJobs,
@@ -48,13 +53,33 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { DataReadinessCard } from "@/components/data-readiness-card";
 
 const POLL_MS = 30_000;
 
 export default function Dashboard() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: me } = useGetMe();
+
+  // Auto-trigger the wizard on first visit when no data has been
+  // ingested yet AND the actor hasn't dismissed/completed onboarding.
+  // We poll the readiness API (cheap) and the per-actor wizard state.
+  const onboardingQ = useGetOnboardingState({
+    query: { queryKey: getGetOnboardingStateQueryKey(), staleTime: 60_000 },
+  });
+  const readinessQ = useGetReadiness({
+    query: { queryKey: getGetReadinessQueryKey(), staleTime: 60_000 },
+  });
+  useEffect(() => {
+    if (!onboardingQ.data || !readinessQ.data) return;
+    const shouldOpen =
+      !readinessQ.data.hasIngestedData &&
+      !onboardingQ.data.completed &&
+      !onboardingQ.data.dismissed;
+    if (shouldOpen) setLocation("/onboarding");
+  }, [onboardingQ.data, readinessQ.data, setLocation]);
 
   // Cycles auto-run every 6h via the system scheduler. This mutation
   // exists only as an on-demand override for operators who want a
@@ -445,6 +470,11 @@ export default function Dashboard() {
           to inspect all rows.
         </div>
       )}
+
+      {/* Data readiness — persistent on the dashboard. Even at 100%
+          we keep the card mounted so the user can confirm at a glance
+          that every lever still has the data it needs. */}
+      <DataReadinessCard basePath={import.meta.env.BASE_URL.replace(/\/$/, "")} />
 
       {/* Attention + System pulse */}
       <div className="grid lg:grid-cols-3 gap-6">

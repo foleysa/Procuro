@@ -121,9 +121,133 @@ export const LeverId = {
   tail_spend_rationalization: "tail_spend_rationalization",
   supplier_consolidation: "supplier_consolidation",
   contract_renegotiation_trigger: "contract_renegotiation_trigger",
+  spot_vs_contract: "spot_vs_contract",
   supplier_fx_exposure: "supplier_fx_exposure",
   material_index_arbitrage: "material_index_arbitrage",
 } as const;
+
+export interface ReadinessBlocker {
+  /** Stable id, e.g. `suppliers.billing_currency`. */
+  id: string;
+  /** Operator-readable field name. */
+  field: string;
+  message: string;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  missingPct: number;
+  /** @minimum 0 */
+  missingCount: number;
+  /** @minimum 0 */
+  totalCount: number;
+  /** Deep-link to the page that fixes the gap. */
+  fixUrl: string;
+  /** True when this blocker fully prevents the lever from running. */
+  hard: boolean;
+}
+
+export interface LeverReadiness {
+  leverId: LeverId;
+  label: string;
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  tier: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  score: number;
+  blockers: ReadinessBlocker[];
+}
+
+export interface ReadinessResponse {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  overallScore: number;
+  /** False when no contracts/POs/invoices exist yet for the tenant. */
+  hasIngestedData: boolean;
+  /** True when the curated synthetic dataset is currently loaded. */
+  sampleDataInstalled: boolean;
+  levers: LeverReadiness[];
+}
+
+export type OnboardingWizardStep =
+  (typeof OnboardingWizardStep)[keyof typeof OnboardingWizardStep];
+
+export const OnboardingWizardStep = {
+  welcome: "welcome",
+  bring_data: "bring_data",
+  map_categories: "map_categories",
+  invite_team: "invite_team",
+  configure_settings: "configure_settings",
+  run_first_cycle: "run_first_cycle",
+  completed: "completed",
+} as const;
+
+export interface CompletedOnboardingStep {
+  step: OnboardingWizardStep;
+  completedAt: string;
+}
+
+export interface OnboardingState {
+  currentStep: OnboardingWizardStep;
+  completedSteps: CompletedOnboardingStep[];
+  startedAt: string;
+  updatedAt: string;
+  dismissedAt?: string | null;
+  completedAt?: string | null;
+  dismissed: boolean;
+  completed: boolean;
+}
+
+/**
+ * Partial update for the actor's wizard row. Any subset of fields
+may be supplied. Setting `completedStep` appends an entry to the
+`completedSteps` array; setting `dismissed: true` stamps a
+`dismissedAt`. When `completedStep` is supplied together with
+`skipped: true`, the audit log records `step_skipped` instead of
+`step_completed` so CS can spot the drop-off pattern.
+
+ */
+export interface PatchOnboardingStateRequest {
+  currentStep?: OnboardingWizardStep;
+  completedStep?: OnboardingWizardStep;
+  skipped?: boolean;
+  dismissed?: boolean;
+  completed?: boolean;
+}
+
+export interface SampleDataCounts {
+  /** @minimum 0 */
+  suppliers: number;
+  /** @minimum 0 */
+  categories: number;
+  /** @minimum 0 */
+  items: number;
+  /** @minimum 0 */
+  contracts: number;
+  /** @minimum 0 */
+  purchaseOrders: number;
+  /** @minimum 0 */
+  poLines: number;
+  /** @minimum 0 */
+  invoices: number;
+  /** @minimum 0 */
+  payments: number;
+}
+
+export interface SampleDataResult {
+  /** True if this call inserted rows; false if rows already existed (idempotent). */
+  installed: boolean;
+  /** True if this call deleted rows; false if no sample data was present. */
+  removed: boolean;
+  counts: SampleDataCounts;
+}
 
 export type RejectionReasonCode =
   (typeof RejectionReasonCode)[keyof typeof RejectionReasonCode];

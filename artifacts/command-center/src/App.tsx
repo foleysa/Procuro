@@ -29,6 +29,7 @@ import System from "./pages/system";
 import Ingest from "./pages/ingest";
 import Integrations from "./pages/integrations";
 import Settings from "./pages/settings";
+import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
 import Admin from "./pages/admin";
 import TrustPage from "./pages/trust";
@@ -221,6 +222,7 @@ function AppRoutes() {
             <Route path="/watched-companies" component={WatchedCompanies} />
             <Route path="/trust" component={TrustPage} />
             <Route path="/settings" component={Settings} />
+            <Route path="/onboarding" component={OnboardingPage} />
             <Route path="/admin">
               <AdminGuard>
                 <Admin />

@@ -26,6 +26,8 @@ import systemRouter from "./system";
 import defensePacksRouter from "./defense-packs";
 import trustRouter from "./trust";
 import alertsRouter from "./alerts";
+import readinessRouter from "./readiness";
+import onboardingRouter from "./onboarding";
 
 const router: IRouter = Router();
 
@@ -56,5 +58,7 @@ router.use(systemRouter);
 router.use(defensePacksRouter);
 router.use(trustRouter);
 router.use(alertsRouter);
+router.use(readinessRouter);
+router.use(onboardingRouter);
 
 export default router;

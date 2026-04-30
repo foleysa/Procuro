@@ -935,6 +935,7 @@ export const ListOpportunitiesQueryParams = zod.object({
       "tail_spend_rationalization",
       "supplier_consolidation",
       "contract_renegotiation_trigger",
+      "spot_vs_contract",
       "supplier_fx_exposure",
       "material_index_arbitrage",
     ])
@@ -979,6 +980,7 @@ export const ListOpportunitiesResponse = zod.object({
         "tail_spend_rationalization",
         "supplier_consolidation",
         "contract_renegotiation_trigger",
+        "spot_vs_contract",
         "supplier_fx_exposure",
         "material_index_arbitrage",
       ]),
@@ -1056,6 +1058,7 @@ export const GetOpportunityResponse = zod
       "tail_spend_rationalization",
       "supplier_consolidation",
       "contract_renegotiation_trigger",
+      "spot_vs_contract",
       "supplier_fx_exposure",
       "material_index_arbitrage",
     ]),
@@ -1191,6 +1194,7 @@ export const ApproveOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "spot_vs_contract",
     "supplier_fx_exposure",
     "material_index_arbitrage",
   ]),
@@ -1278,6 +1282,7 @@ export const RejectOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "spot_vs_contract",
     "supplier_fx_exposure",
     "material_index_arbitrage",
   ]),
@@ -1351,6 +1356,7 @@ export const ExecuteOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "spot_vs_contract",
     "supplier_fx_exposure",
     "material_index_arbitrage",
   ]),
@@ -1429,6 +1435,7 @@ export const RealizeOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "spot_vs_contract",
     "supplier_fx_exposure",
     "material_index_arbitrage",
   ]),
@@ -1605,6 +1612,7 @@ export const RunNextCycleResponse = zod.object({
           "tail_spend_rationalization",
           "supplier_consolidation",
           "contract_renegotiation_trigger",
+          "spot_vs_contract",
           "supplier_fx_exposure",
           "material_index_arbitrage",
         ]),
@@ -1644,6 +1652,7 @@ export const ListLearnedPriorsResponseItem = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "spot_vs_contract",
     "supplier_fx_exposure",
     "material_index_arbitrage",
   ]),
@@ -3906,6 +3915,7 @@ export const GetBillingSummaryResponse = zod.object({
         "tail_spend_rationalization",
         "supplier_consolidation",
         "contract_renegotiation_trigger",
+        "spot_vs_contract",
         "supplier_fx_exposure",
         "material_index_arbitrage",
       ]),
@@ -5859,4 +5869,333 @@ export const DeleteEscalationPolicyHeader = zod.object({
     .describe(
       "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
     ),
+});
+
+/**
+ * Runs the data-readiness rules engine: for each lever it reports a
+`score` (0-100) and any `blockers` describing what data is missing
+or unmapped, with a `fixUrl` deep-link the operator can follow to
+repair it. Cheap to call (one COUNT per check); the wizard and the
+dashboard "Data readiness" card both poll it.
+
+ * @summary Lever-by-lever data readiness for the active tenant
+ */
+export const GetReadinessHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const getReadinessResponseOverallScoreMin = 0;
+export const getReadinessResponseOverallScoreMax = 100;
+
+export const getReadinessResponseLeversItemTierMax = 5;
+
+export const getReadinessResponseLeversItemScoreMin = 0;
+export const getReadinessResponseLeversItemScoreMax = 100;
+
+export const getReadinessResponseLeversItemBlockersItemMissingPctMin = 0;
+export const getReadinessResponseLeversItemBlockersItemMissingPctMax = 100;
+
+export const getReadinessResponseLeversItemBlockersItemMissingCountMin = 0;
+
+export const getReadinessResponseLeversItemBlockersItemTotalCountMin = 0;
+
+export const GetReadinessResponse = zod.object({
+  overallScore: zod
+    .number()
+    .min(getReadinessResponseOverallScoreMin)
+    .max(getReadinessResponseOverallScoreMax),
+  hasIngestedData: zod
+    .boolean()
+    .describe(
+      "False when no contracts\/POs\/invoices exist yet for the tenant.",
+    ),
+  sampleDataInstalled: zod
+    .boolean()
+    .describe("True when the curated synthetic dataset is currently loaded."),
+  levers: zod.array(
+    zod.object({
+      leverId: zod.enum([
+        "sku_price_benchmark",
+        "maverick_spend",
+        "contract_leakage",
+        "duplicate_payment",
+        "missed_volume_threshold",
+        "payment_term_extension",
+        "tail_spend_rationalization",
+        "supplier_consolidation",
+        "contract_renegotiation_trigger",
+        "spot_vs_contract",
+        "supplier_fx_exposure",
+        "material_index_arbitrage",
+      ]),
+      label: zod.string(),
+      tier: zod.number().min(1).max(getReadinessResponseLeversItemTierMax),
+      score: zod
+        .number()
+        .min(getReadinessResponseLeversItemScoreMin)
+        .max(getReadinessResponseLeversItemScoreMax),
+      blockers: zod.array(
+        zod.object({
+          id: zod
+            .string()
+            .describe("Stable id, e.g. `suppliers.billing_currency`."),
+          field: zod.string().describe("Operator-readable field name."),
+          message: zod.string(),
+          missingPct: zod
+            .number()
+            .min(getReadinessResponseLeversItemBlockersItemMissingPctMin)
+            .max(getReadinessResponseLeversItemBlockersItemMissingPctMax),
+          missingCount: zod
+            .number()
+            .min(getReadinessResponseLeversItemBlockersItemMissingCountMin),
+          totalCount: zod
+            .number()
+            .min(getReadinessResponseLeversItemBlockersItemTotalCountMin),
+          fixUrl: zod
+            .string()
+            .describe("Deep-link to the page that fixes the gap."),
+          hard: zod
+            .boolean()
+            .describe(
+              "True when this blocker fully prevents the lever from running.",
+            ),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * @summary Get the wizard state for the current actor
+ */
+export const GetOnboardingStateHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetOnboardingStateResponse = zod.object({
+  currentStep: zod.enum([
+    "welcome",
+    "bring_data",
+    "map_categories",
+    "invite_team",
+    "configure_settings",
+    "run_first_cycle",
+    "completed",
+  ]),
+  completedSteps: zod.array(
+    zod.object({
+      step: zod.enum([
+        "welcome",
+        "bring_data",
+        "map_categories",
+        "invite_team",
+        "configure_settings",
+        "run_first_cycle",
+        "completed",
+      ]),
+      completedAt: zod.coerce.date(),
+    }),
+  ),
+  startedAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date().nullish(),
+  completedAt: zod.coerce.date().nullish(),
+  dismissed: zod.boolean(),
+  completed: zod.boolean(),
+});
+
+/**
+ * @summary Update the wizard state (current step / completed steps / dismissal)
+ */
+export const PatchOnboardingStateHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchOnboardingStateBody = zod
+  .object({
+    currentStep: zod
+      .enum([
+        "welcome",
+        "bring_data",
+        "map_categories",
+        "invite_team",
+        "configure_settings",
+        "run_first_cycle",
+        "completed",
+      ])
+      .optional(),
+    completedStep: zod
+      .enum([
+        "welcome",
+        "bring_data",
+        "map_categories",
+        "invite_team",
+        "configure_settings",
+        "run_first_cycle",
+        "completed",
+      ])
+      .optional(),
+    skipped: zod.boolean().optional(),
+    dismissed: zod.boolean().optional(),
+    completed: zod.boolean().optional(),
+  })
+  .describe(
+    "Partial update for the actor's wizard row. Any subset of fields\nmay be supplied. Setting `completedStep` appends an entry to the\n`completedSteps` array; setting `dismissed: true` stamps a\n`dismissedAt`. When `completedStep` is supplied together with\n`skipped: true`, the audit log records `step_skipped` instead of\n`step_completed` so CS can spot the drop-off pattern.\n",
+  );
+
+export const PatchOnboardingStateResponse = zod.object({
+  currentStep: zod.enum([
+    "welcome",
+    "bring_data",
+    "map_categories",
+    "invite_team",
+    "configure_settings",
+    "run_first_cycle",
+    "completed",
+  ]),
+  completedSteps: zod.array(
+    zod.object({
+      step: zod.enum([
+        "welcome",
+        "bring_data",
+        "map_categories",
+        "invite_team",
+        "configure_settings",
+        "run_first_cycle",
+        "completed",
+      ]),
+      completedAt: zod.coerce.date(),
+    }),
+  ),
+  startedAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+  dismissedAt: zod.coerce.date().nullish(),
+  completedAt: zod.coerce.date().nullish(),
+  dismissed: zod.boolean(),
+  completed: zod.boolean(),
+});
+
+/**
+ * Idempotent. Tags every inserted row with `source_system =
+'sample_data'` so DELETE can remove them cleanly without touching
+any operator-supplied data.
+
+ * @summary Install a curated synthetic dataset (Org Admin only)
+ */
+export const InstallSampleDataHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const installSampleDataResponseCountsSuppliersMin = 0;
+
+export const installSampleDataResponseCountsCategoriesMin = 0;
+
+export const installSampleDataResponseCountsItemsMin = 0;
+
+export const installSampleDataResponseCountsContractsMin = 0;
+
+export const installSampleDataResponseCountsPurchaseOrdersMin = 0;
+
+export const installSampleDataResponseCountsPoLinesMin = 0;
+
+export const installSampleDataResponseCountsInvoicesMin = 0;
+
+export const installSampleDataResponseCountsPaymentsMin = 0;
+
+export const InstallSampleDataResponse = zod.object({
+  installed: zod
+    .boolean()
+    .describe(
+      "True if this call inserted rows; false if rows already existed (idempotent).",
+    ),
+  removed: zod
+    .boolean()
+    .describe(
+      "True if this call deleted rows; false if no sample data was present.",
+    ),
+  counts: zod.object({
+    suppliers: zod.number().min(installSampleDataResponseCountsSuppliersMin),
+    categories: zod.number().min(installSampleDataResponseCountsCategoriesMin),
+    items: zod.number().min(installSampleDataResponseCountsItemsMin),
+    contracts: zod.number().min(installSampleDataResponseCountsContractsMin),
+    purchaseOrders: zod
+      .number()
+      .min(installSampleDataResponseCountsPurchaseOrdersMin),
+    poLines: zod.number().min(installSampleDataResponseCountsPoLinesMin),
+    invoices: zod.number().min(installSampleDataResponseCountsInvoicesMin),
+    payments: zod.number().min(installSampleDataResponseCountsPaymentsMin),
+  }),
+});
+
+/**
+ * @summary Remove the sample dataset previously installed (Org Admin only)
+ */
+export const RemoveSampleDataHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const removeSampleDataResponseCountsSuppliersMin = 0;
+
+export const removeSampleDataResponseCountsCategoriesMin = 0;
+
+export const removeSampleDataResponseCountsItemsMin = 0;
+
+export const removeSampleDataResponseCountsContractsMin = 0;
+
+export const removeSampleDataResponseCountsPurchaseOrdersMin = 0;
+
+export const removeSampleDataResponseCountsPoLinesMin = 0;
+
+export const removeSampleDataResponseCountsInvoicesMin = 0;
+
+export const removeSampleDataResponseCountsPaymentsMin = 0;
+
+export const RemoveSampleDataResponse = zod.object({
+  installed: zod
+    .boolean()
+    .describe(
+      "True if this call inserted rows; false if rows already existed (idempotent).",
+    ),
+  removed: zod
+    .boolean()
+    .describe(
+      "True if this call deleted rows; false if no sample data was present.",
+    ),
+  counts: zod.object({
+    suppliers: zod.number().min(removeSampleDataResponseCountsSuppliersMin),
+    categories: zod.number().min(removeSampleDataResponseCountsCategoriesMin),
+    items: zod.number().min(removeSampleDataResponseCountsItemsMin),
+    contracts: zod.number().min(removeSampleDataResponseCountsContractsMin),
+    purchaseOrders: zod
+      .number()
+      .min(removeSampleDataResponseCountsPurchaseOrdersMin),
+    poLines: zod.number().min(removeSampleDataResponseCountsPoLinesMin),
+    invoices: zod.number().min(removeSampleDataResponseCountsInvoicesMin),
+    payments: zod.number().min(removeSampleDataResponseCountsPaymentsMin),
+  }),
 });

@@ -24,6 +24,7 @@ export const LeverId = {
   tail_spend_rationalization: "tail_spend_rationalization",
   supplier_consolidation: "supplier_consolidation",
   contract_renegotiation_trigger: "contract_renegotiation_trigger",
+  spot_vs_contract: "spot_vs_contract",
   supplier_fx_exposure: "supplier_fx_exposure",
   material_index_arbitrage: "material_index_arbitrage",
 } as const;

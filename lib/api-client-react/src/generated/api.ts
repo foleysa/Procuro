@@ -116,6 +116,7 @@ import type {
   MeResponse,
   MockErpIngestRequest,
   NotFoundResponse,
+  OnboardingState,
   Opportunity,
   OpportunityDetail,
   OpportunityListResponse,
@@ -129,13 +130,16 @@ import type {
   PatchContractRequest,
   PatchEscalationPolicyRequest,
   PatchMeSettingsRequest,
+  PatchOnboardingStateRequest,
   PatchSupplierRequest,
   PatchWatchlistRequest,
+  ReadinessResponse,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
   RunCycleResponse,
   RunNextCycleParams,
+  SampleDataResult,
   SpendOverview,
   SubmitDefensePackFeedbackRequest,
   SupplierDetail,
@@ -10179,4 +10183,413 @@ export const useDeleteEscalationPolicy = <
   TContext
 > => {
   return useMutation(getDeleteEscalationPolicyMutationOptions(options));
+};
+
+/**
+ * Runs the data-readiness rules engine: for each lever it reports a
+`score` (0-100) and any `blockers` describing what data is missing
+or unmapped, with a `fixUrl` deep-link the operator can follow to
+repair it. Cheap to call (one COUNT per check); the wizard and the
+dashboard "Data readiness" card both poll it.
+
+ * @summary Lever-by-lever data readiness for the active tenant
+ */
+export const getGetReadinessUrl = () => {
+  return `/api/readiness`;
+};
+
+export const getReadiness = async (
+  options?: RequestInit,
+): Promise<ReadinessResponse> => {
+  return customFetch<ReadinessResponse>(getGetReadinessUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetReadinessQueryKey = () => {
+  return [`/api/readiness`] as const;
+};
+
+export const getGetReadinessQueryOptions = <
+  TData = Awaited<ReturnType<typeof getReadiness>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getReadiness>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetReadinessQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getReadiness>>> = ({
+    signal,
+  }) => getReadiness({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getReadiness>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetReadinessQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getReadiness>>
+>;
+export type GetReadinessQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Lever-by-lever data readiness for the active tenant
+ */
+
+export function useGetReadiness<
+  TData = Awaited<ReturnType<typeof getReadiness>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getReadiness>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetReadinessQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the wizard state for the current actor
+ */
+export const getGetOnboardingStateUrl = () => {
+  return `/api/onboarding/state`;
+};
+
+export const getOnboardingState = async (
+  options?: RequestInit,
+): Promise<OnboardingState> => {
+  return customFetch<OnboardingState>(getGetOnboardingStateUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOnboardingStateQueryKey = () => {
+  return [`/api/onboarding/state`] as const;
+};
+
+export const getGetOnboardingStateQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOnboardingState>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOnboardingState>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOnboardingStateQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOnboardingState>>
+  > = ({ signal }) => getOnboardingState({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOnboardingState>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOnboardingStateQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOnboardingState>>
+>;
+export type GetOnboardingStateQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the wizard state for the current actor
+ */
+
+export function useGetOnboardingState<
+  TData = Awaited<ReturnType<typeof getOnboardingState>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOnboardingState>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOnboardingStateQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the wizard state (current step / completed steps / dismissal)
+ */
+export const getPatchOnboardingStateUrl = () => {
+  return `/api/onboarding/state`;
+};
+
+export const patchOnboardingState = async (
+  patchOnboardingStateRequest: PatchOnboardingStateRequest,
+  options?: RequestInit,
+): Promise<OnboardingState> => {
+  return customFetch<OnboardingState>(getPatchOnboardingStateUrl(), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchOnboardingStateRequest),
+  });
+};
+
+export const getPatchOnboardingStateMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchOnboardingState>>,
+    TError,
+    { data: BodyType<PatchOnboardingStateRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchOnboardingState>>,
+  TError,
+  { data: BodyType<PatchOnboardingStateRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchOnboardingState"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchOnboardingState>>,
+    { data: BodyType<PatchOnboardingStateRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return patchOnboardingState(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchOnboardingStateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchOnboardingState>>
+>;
+export type PatchOnboardingStateMutationBody =
+  BodyType<PatchOnboardingStateRequest>;
+export type PatchOnboardingStateMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update the wizard state (current step / completed steps / dismissal)
+ */
+export const usePatchOnboardingState = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchOnboardingState>>,
+    TError,
+    { data: BodyType<PatchOnboardingStateRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchOnboardingState>>,
+  TError,
+  { data: BodyType<PatchOnboardingStateRequest> },
+  TContext
+> => {
+  return useMutation(getPatchOnboardingStateMutationOptions(options));
+};
+
+/**
+ * Idempotent. Tags every inserted row with `source_system =
+'sample_data'` so DELETE can remove them cleanly without touching
+any operator-supplied data.
+
+ * @summary Install a curated synthetic dataset (Org Admin only)
+ */
+export const getInstallSampleDataUrl = () => {
+  return `/api/onboarding/sample-data`;
+};
+
+export const installSampleData = async (
+  options?: RequestInit,
+): Promise<SampleDataResult> => {
+  return customFetch<SampleDataResult>(getInstallSampleDataUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getInstallSampleDataMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof installSampleData>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof installSampleData>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["installSampleData"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof installSampleData>>,
+    void
+  > = () => {
+    return installSampleData(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InstallSampleDataMutationResult = NonNullable<
+  Awaited<ReturnType<typeof installSampleData>>
+>;
+
+export type InstallSampleDataMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Install a curated synthetic dataset (Org Admin only)
+ */
+export const useInstallSampleData = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof installSampleData>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof installSampleData>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getInstallSampleDataMutationOptions(options));
+};
+
+/**
+ * @summary Remove the sample dataset previously installed (Org Admin only)
+ */
+export const getRemoveSampleDataUrl = () => {
+  return `/api/onboarding/sample-data`;
+};
+
+export const removeSampleData = async (
+  options?: RequestInit,
+): Promise<SampleDataResult> => {
+  return customFetch<SampleDataResult>(getRemoveSampleDataUrl(), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveSampleDataMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeSampleData>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeSampleData>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["removeSampleData"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeSampleData>>,
+    void
+  > = () => {
+    return removeSampleData(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveSampleDataMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeSampleData>>
+>;
+
+export type RemoveSampleDataMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove the sample dataset previously installed (Org Admin only)
+ */
+export const useRemoveSampleData = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeSampleData>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeSampleData>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getRemoveSampleDataMutationOptions(options));
 };
