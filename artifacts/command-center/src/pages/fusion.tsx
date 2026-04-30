@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import {
   useListIntelligenceSignals,
@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
 import { formatUsd, formatDateTime } from "@/lib/format";
@@ -51,6 +52,8 @@ import {
   Activity,
   AlertTriangle,
   Building2,
+  CirclePause,
+  CirclePlay,
   Compass,
   Filter,
   Globe2,
@@ -63,6 +66,12 @@ import {
 } from "lucide-react";
 
 const POLL_MS = 60_000;
+// War room polls more aggressively than the rest of the fusion center
+// because operators expect new disruption events to surface promptly.
+const WAR_ROOM_POLL_MS = 15_000;
+// How long the "NEW" highlight lingers on a freshly-arrived event row
+// before it fades back to normal styling.
+const NEW_BADGE_LINGER_MS = 30_000;
 
 type FusionTab =
   | "signals"
@@ -1092,13 +1101,118 @@ function EventStreamPane({
     cycleId?: string;
   } = { hours: 72, limit: 200 };
   if (cycleId) eventsParams.cycleId = cycleId;
-  const { data, isLoading } = useListIntelligenceEvents(eventsParams, {
-    query: {
-      queryKey: getListIntelligenceEventsQueryKey(eventsParams),
-      refetchInterval: 30_000,
-    },
-  });
+
+  // Pause toggle: when paused we freeze the *visible* list (so an
+  // analyst can study a specific event without it scrolling away) but
+  // we deliberately keep polling in the background. That way we can
+  // show a "X new events queued — resume" affordance the moment fresh
+  // data lands, instead of leaving the operator blind to the firehose
+  // they've temporarily silenced.
+  const [paused, setPaused] = useState(false);
+
+  const { data, isLoading, dataUpdatedAt, isFetching } =
+    useListIntelligenceEvents(eventsParams, {
+      query: {
+        queryKey: getListIntelligenceEventsQueryKey(eventsParams),
+        refetchInterval: WAR_ROOM_POLL_MS,
+        refetchOnWindowFocus: true,
+      },
+    });
   const items = data?.items ?? [];
+
+  // ---- NEW-badge tracking ---------------------------------------------
+  // `seenIds` records every event id we have ever rendered in this
+  // mounted session. The first batch is silently absorbed (no NEW
+  // badges on initial load — those are just history). Anything that
+  // shows up later is "new" and we stamp it with `firstSeenAt` so the
+  // badge can fade out after NEW_BADGE_LINGER_MS.
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  const [newSince, setNewSince] = useState<Map<string, number>>(new Map());
+  // Snapshot of items rendered at the moment the user clicked Pause.
+  // We render this snapshot instead of the live `items` while paused.
+  const [snapshot, setSnapshot] = useState<typeof items | null>(null);
+
+  // Reset the seen-id baseline whenever the filter context changes
+  // (e.g. cross-link from /fusion?tab=events to a specific cycleId
+  // and back). Otherwise a long-lived session could carry "NEW"
+  // marks across totally different windows of events.
+  useEffect(() => {
+    seenIdsRef.current = null;
+    setNewSince(new Map());
+  }, [cycleId]);
+
+  useEffect(() => {
+    if (!data) return;
+    const now = Date.now();
+    if (seenIdsRef.current === null) {
+      // First payload after mount — seed the seen set silently.
+      seenIdsRef.current = new Set(items.map((e) => e.id));
+      return;
+    }
+    const seen = seenIdsRef.current;
+    const arrivals: string[] = [];
+    for (const e of items) {
+      if (!seen.has(e.id)) {
+        seen.add(e.id);
+        arrivals.push(e.id);
+      }
+    }
+    if (arrivals.length > 0) {
+      setNewSince((prev) => {
+        const next = new Map(prev);
+        for (const id of arrivals) next.set(id, now);
+        return next;
+      });
+    }
+    // dataUpdatedAt changes whenever React Query writes a new payload
+    // into the cache, which is the precise moment we want to diff.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataUpdatedAt]);
+
+  // Decay the NEW badges once they exceed the linger window so the
+  // list doesn't end up with every row screaming NEW after a busy
+  // morning.
+  useEffect(() => {
+    if (newSince.size === 0) return;
+    const t = setInterval(() => {
+      const cutoff = Date.now() - NEW_BADGE_LINGER_MS;
+      setNewSince((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [id, ts] of next) {
+          if (ts < cutoff) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 5_000);
+    return () => clearInterval(t);
+  }, [newSince.size]);
+
+  // Snapshot management: capture on pause, drop on unpause.
+  useEffect(() => {
+    if (paused) {
+      setSnapshot(items);
+    } else {
+      setSnapshot(null);
+    }
+    // We intentionally only re-snapshot when `paused` flips, not when
+    // `items` shifts — that would defeat the freeze.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const displayed = paused && snapshot ? snapshot : items;
+  const queuedWhilePaused = useMemo(() => {
+    if (!paused || !snapshot) return 0;
+    const snapIds = new Set(snapshot.map((e) => e.id));
+    return items.reduce((n, e) => (snapIds.has(e.id) ? n : n + 1), 0);
+  }, [paused, snapshot, items]);
+
+  const lastUpdatedLabel = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString()
+    : null;
 
   return (
     <div className="space-y-4">
@@ -1122,34 +1236,104 @@ function EventStreamPane({
       )}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 justify-between">
+          <CardTitle className="flex items-center gap-2 justify-between flex-wrap">
             <span className="flex items-center gap-2">
               <Siren className="w-5 h-5" /> Live event stream{" "}
               {cycleId ? "(cycle window)" : "(last 72h)"}
             </span>
-            <span className="text-xs text-muted-foreground font-normal">
-              {data
-                ? `${items.length} events · ${data.droppedByPolicy} hidden by ${data.policy}`
-                : null}
-            </span>
+            <div className="flex items-center gap-3 text-xs font-normal">
+              {data && (
+                <span className="text-muted-foreground">
+                  {displayed.length} events · {data.droppedByPolicy} hidden by{" "}
+                  {data.policy}
+                </span>
+              )}
+              <div
+                className="flex items-center gap-2"
+                data-testid="war-room-pause-control"
+              >
+                {paused ? (
+                  <CirclePause
+                    className="w-3.5 h-3.5 text-amber-600"
+                    aria-hidden
+                  />
+                ) : (
+                  <CirclePlay
+                    className={cn(
+                      "w-3.5 h-3.5 text-emerald-600",
+                      isFetching && "animate-pulse",
+                    )}
+                    aria-hidden
+                  />
+                )}
+                <span
+                  className={cn(
+                    "uppercase tracking-wide",
+                    paused ? "text-amber-600" : "text-emerald-600",
+                  )}
+                  data-testid="war-room-pause-state"
+                >
+                  {paused ? "Paused" : "Live"}
+                </span>
+                <Switch
+                  checked={!paused}
+                  onCheckedChange={(v) => setPaused(!v)}
+                  aria-label={
+                    paused
+                      ? "Resume live event stream"
+                      : "Pause live event stream"
+                  }
+                  data-testid="war-room-pause-toggle"
+                />
+              </div>
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div
+            className="flex items-center justify-between gap-3 flex-wrap text-xs text-muted-foreground mb-3"
+            data-testid="war-room-status-line"
+          >
+            <span>
+              {paused
+                ? lastUpdatedLabel
+                  ? `View frozen · backend last polled ${lastUpdatedLabel}`
+                  : "View frozen"
+                : lastUpdatedLabel
+                  ? `Last refresh ${lastUpdatedLabel} · auto-refresh every ${
+                      WAR_ROOM_POLL_MS / 1000
+                    }s`
+                  : `Auto-refresh every ${WAR_ROOM_POLL_MS / 1000}s`}
+            </span>
+            {paused && queuedWhilePaused > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPaused(false)}
+                data-testid="war-room-queued-button"
+              >
+                {queuedWhilePaused} new event
+                {queuedWhilePaused === 1 ? "" : "s"} queued — resume
+              </Button>
+            )}
+          </div>
           {isLoading && <SkeletonRows count={6} />}
-          {!isLoading && items.length === 0 && (
+          {!isLoading && displayed.length === 0 && (
             <p className="text-sm text-muted-foreground">
               No geopolitical / disruption events in the{" "}
               {cycleId ? "cycle window" : "last 72 hours"}.
             </p>
           )}
-          {!isLoading && items.length > 0 && (
+          {!isLoading && displayed.length > 0 && (
             <ul className="space-y-2">
-              {items.map((e) => (
+              {displayed.map((e) => (
                 <EventRow
                   key={e.id}
                   event={e}
                   policy={policy}
                   onOpenEntity={onOpenEntity}
+                  isNew={newSince.has(e.id)}
                 />
               ))}
             </ul>
@@ -1164,10 +1348,12 @@ function EventRow({
   event,
   policy,
   onOpenEntity,
+  isNew = false,
 }: {
   event: IntelligenceEvent;
   policy: ReturnType<typeof usePolicy>;
   onOpenEntity: (ref: string) => void;
+  isNew?: boolean;
 }) {
   const sev = event.severity ?? null;
   const sevTone =
@@ -1180,12 +1366,28 @@ function EventRow({
       : "bg-muted text-muted-foreground border-border";
   return (
     <li
-      className="border rounded-md p-3 space-y-1"
+      className={cn(
+        "border rounded-md p-3 space-y-1 transition-colors",
+        isNew &&
+          "border-primary/50 bg-primary/5 animate-in fade-in slide-in-from-top-2 duration-500",
+      )}
       data-testid={`event-row-${event.id}`}
+      data-new={isNew ? "true" : "false"}
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="font-medium truncate">
-          {event.title ?? event.signalType}
+        <div className="font-medium truncate flex items-center gap-2">
+          {isNew && (
+            <span
+              className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary-foreground animate-pulse"
+              data-testid={`event-row-new-${event.id}`}
+              aria-label="New event"
+            >
+              New
+            </span>
+          )}
+          <span className="truncate">
+            {event.title ?? event.signalType}
+          </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {event.country && (
