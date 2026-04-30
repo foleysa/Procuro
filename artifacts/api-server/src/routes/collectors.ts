@@ -8,7 +8,12 @@ import {
   marketSignalsTable,
   suppliersTable,
   categoriesTable,
+  orgsTable,
 } from "@workspace/db";
+import {
+  getCollectorCostsFromBq,
+  getCollectorCostsFromBilling,
+} from "@workspace/intelligence";
 import {
   and,
   asc,
@@ -653,6 +658,177 @@ router.patch(
   },
 );
 
+const BroadcastPostureSchema = z.object({
+  tenantOptedIn: z.boolean().nullable(),
+  reason: z.string().max(1000).optional(),
+});
+
+/**
+ * Platform-admin only: broadcast a per-tenant opt-in decision for a
+ * collector to every org in one transaction. This is the right hammer
+ * when an upstream source's posture changes (e.g. flips to
+ * `tos_restricted`) and the platform team wants to force-opt-out every
+ * tenant pending a re-review, rather than waiting on per-tenant action.
+ *
+ * Writes are wrapped in a single DB transaction so a partial broadcast
+ * can't happen, and a `tenant_opt_in_broadcast` audit row is emitted
+ * per affected tenant for forensic reconstruction. No `x-org-id` is
+ * required since the action is, by definition, fleet-wide.
+ */
+router.post(
+  "/admin/collectors/:id/broadcast-posture",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const id = String(req.params.id);
+    const data = BroadcastPostureSchema.parse(req.body);
+    const actor = req.actorEmail ?? "system@procuro.ai";
+
+    const [current] = await db
+      .select()
+      .from(collectorsTable)
+      .where(eq(collectorsTable.id, id));
+    if (!current) {
+      res.status(404).json({ error: "Collector not found" });
+      return;
+    }
+
+    // Validate the broadcast value is consistent with the collector's
+    // registered allowed set: the registry's `tenantOptInDefault` is
+    // either `true`, `false`, or `null` (meaning the contract has no
+    // opinion). All three are valid broadcast targets — there is no
+    // deny list — but we still confirm the collector exists in the
+    // in-memory registry so that operators can't broadcast posture
+    // for a stale row that's already been removed from the contract.
+    const reg = getCollector(id);
+    if (!reg) {
+      res.status(404).json({
+        error: "Collector is not registered with the runtime",
+      });
+      return;
+    }
+
+    const orgs = await db.select({ id: orgsTable.id }).from(orgsTable);
+    let tenantsAffected = 0;
+    await db.transaction(async (tx) => {
+      for (const org of orgs) {
+        if (data.tenantOptedIn === null) {
+          // Drop the per-tenant override so resolution falls back to
+          // `tenantOptInDefault` again.
+          const result = await tx
+            .delete(collectorTenantOptInsTable)
+            .where(
+              and(
+                eq(collectorTenantOptInsTable.orgId, org.id),
+                eq(collectorTenantOptInsTable.collectorId, id),
+              ),
+            );
+          // drizzle returns nothing useful for delete; treat as
+          // "applied" so the audit row still fires for this org.
+          void result;
+        } else {
+          await tx
+            .insert(collectorTenantOptInsTable)
+            .values({
+              id: `cto_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+              orgId: org.id,
+              collectorId: id,
+              optedIn: data.tenantOptedIn ? 1 : 0,
+              updatedBy: actor,
+            })
+            .onConflictDoUpdate({
+              target: [
+                collectorTenantOptInsTable.orgId,
+                collectorTenantOptInsTable.collectorId,
+              ],
+              set: {
+                optedIn: data.tenantOptedIn ? 1 : 0,
+                updatedAt: new Date(),
+                updatedBy: actor,
+              },
+            });
+        }
+        await tx.insert(collectorAuditLogTable).values({
+          id: `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}_${tenantsAffected}`,
+          collectorId: id,
+          event: "tenant_opt_in_broadcast",
+          metadata: {
+            actor,
+            orgId: org.id,
+            tenantOptedIn: data.tenantOptedIn,
+            reason: data.reason ?? null,
+          },
+        });
+        tenantsAffected += 1;
+      }
+    });
+
+    req.log?.info(
+      { collectorId: id, tenantsAffected, tenantOptedIn: data.tenantOptedIn, actor },
+      "Broadcast collector posture across tenants",
+    );
+
+    res.json({
+      id,
+      tenantOptedIn: data.tenantOptedIn,
+      tenantsAffected,
+    });
+  },
+);
+
+/**
+ * Pre-confirmation preview for the broadcast posture action.
+ *
+ * The UI calls this when the operator opens the AlertDialog so it can
+ * surface "this will affect N tenants — M are currently opted in,
+ * K opted out, T have no override" *before* the irreversible button
+ * click. Without this endpoint the count is only known after the
+ * broadcast has already been written, which the audit trail records
+ * but operators reasonably want to see in advance.
+ *
+ * Read-only — no DB writes, no audit rows.
+ */
+router.get(
+  "/admin/collectors/:id/broadcast-posture/preview",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const id = String(req.params.id);
+    const [current] = await db
+      .select()
+      .from(collectorsTable)
+      .where(eq(collectorsTable.id, id));
+    if (!current) {
+      res.status(404).json({ error: "Collector not found" });
+      return;
+    }
+    const reg = getCollector(id);
+    if (!reg) {
+      res.status(404).json({
+        error: "Collector is not registered with the runtime",
+      });
+      return;
+    }
+    const orgs = await db.select({ id: orgsTable.id }).from(orgsTable);
+    const overrides = await db
+      .select({
+        orgId: collectorTenantOptInsTable.orgId,
+        optedIn: collectorTenantOptInsTable.optedIn,
+      })
+      .from(collectorTenantOptInsTable)
+      .where(eq(collectorTenantOptInsTable.collectorId, id));
+    const optedInOrgs = overrides.filter((o) => o.optedIn === 1).length;
+    const optedOutOrgs = overrides.filter((o) => o.optedIn === 0).length;
+    const noOverrideOrgs = orgs.length - overrides.length;
+    res.json({
+      id,
+      tenantsTotal: orgs.length,
+      currentOptedIn: optedInOrgs,
+      currentOptedOut: optedOutOrgs,
+      currentNoOverride: noOverrideOrgs,
+      registryDefault: reg.tenantOptInDefault,
+    });
+  },
+);
+
 // -----------------------------------------------------------------------
 // Workbench access policy:
 //   * READ tabs (catalog, source-health, lineage, coverage, cost, runs):
@@ -805,6 +981,34 @@ router.get(
         const lastFailureAt = audit.find((a) => failureEvents.includes(a.event))
           ?.createdAt ?? null;
         const lastSchemaDriftAt = drifts[0]?.createdAt ?? null;
+        // Most recent successful run that landed at least one row.
+        // We walk the audit in DESC-by-createdAt order (already
+        // ordered by the query above) so the first match wins.
+        const lastNonEmptyRunAt =
+          audit.find((a) => {
+            if (!successEvents.includes(a.event)) return false;
+            const md = (a.metadata ?? {}) as Record<string, unknown>;
+            const inserted = Number(md["inserted"] ?? md["signalsInserted"] ?? 0);
+            return Number.isFinite(inserted) && inserted > 0;
+          })?.createdAt ?? null;
+        // "Empty-source" chip: collector is still running (a recent
+        // success exists) but has not landed a row within the
+        // collector-kind-specific tolerance. The threshold lives on
+        // the IntelligenceCollector contract
+        // (`staleEmptyThresholdHours`); we fall back to 48h when a
+        // collector hasn't declared one. Daily macro feeds want a
+        // tighter window (24-48h); weekly filings sources need ≥ 8
+        // days. We cap the gap measurement at the lookback window so
+        // a 720h lookback doesn't accidentally suppress the alarm.
+        const staleEmptyThresholdHours =
+          reg.staleEmptyThresholdHours ?? 48;
+        const staleEmptyGapMs = staleEmptyThresholdHours * 60 * 60 * 1000;
+        const staleEmptyRuns =
+          runs > 0 &&
+          (lastNonEmptyRunAt === null ||
+            (lastRunAt !== null &&
+              lastRunAt.getTime() - lastNonEmptyRunAt.getTime() >
+                staleEmptyGapMs));
         return {
           collectorId: id,
           name: reg.name,
@@ -816,6 +1020,8 @@ router.get(
           lastRunAt,
           lastFailureAt,
           lastSchemaDriftAt,
+          lastNonEmptyRunAt,
+          staleEmptyRuns,
           recentDrifts: drifts.slice(0, 5).map((d) => ({
             signalType: (d.sample as Record<string, unknown>)["signalType"]
               ? String((d.sample as Record<string, unknown>)["signalType"])
@@ -987,6 +1193,92 @@ router.get(
     const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
     const ids = listRegisteredCollectorIds();
 
+    // Cost source priority:
+    //   1. `billing` — real dollars from the GCP Cloud Billing export
+    //      (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
+    //      query/analysis cost from Cloud Storage cost and attributes
+    //      project totals proportionally to each collector's bytes_raw.
+    //   2. `bigquery` — the on-demand-pricing estimate computed from
+    //      `collector_runs.bytes_raw × $5 / 1 TB`. No storage cost.
+    //   3. `proxy` — Postgres-audit-log throughput proxy used when GCP
+    //      isn't configured or the BQ query fails.
+    let billingRows: Awaited<
+      ReturnType<typeof getCollectorCostsFromBilling>
+    > = null;
+    try {
+      billingRows = await getCollectorCostsFromBilling({
+        lookbackHours,
+        collectorIds: ids,
+      });
+    } catch (err) {
+      req.log?.warn(
+        { err: (err as Error).message },
+        "GCP Billing cost read failed; falling back to BigQuery estimate",
+      );
+      billingRows = null;
+    }
+
+    if (billingRows) {
+      const byId = new Map(billingRows.map((r) => [r.collectorId, r]));
+      const entries = ids
+        .map((id) => {
+          const reg = getCollector(id)!;
+          const r = byId.get(id);
+          return {
+            collectorId: id,
+            name: reg.name,
+            runs: r?.runs ?? 0,
+            rowsWritten: r?.rowsWritten ?? 0,
+            estimateUsd: r?.estimateUsd ?? 0,
+            queryUsd: r?.queryUsd ?? 0,
+            storageUsd: r?.storageUsd ?? 0,
+            notes:
+              "Real billing dollars from the GCP Cloud Billing export (cached 24h). " +
+              "Splits BigQuery query cost + Cloud Storage cost; per-collector " +
+              "attribution by bytes_raw share.",
+          };
+        })
+        .sort((a, b) => b.estimateUsd - a.estimateUsd);
+      res.json({ source: "billing" as const, lookbackHours, entries });
+      return;
+    }
+
+    let bqRows: Awaited<ReturnType<typeof getCollectorCostsFromBq>> = null;
+    try {
+      bqRows = await getCollectorCostsFromBq({
+        lookbackHours,
+        collectorIds: ids,
+      });
+    } catch (err) {
+      req.log?.warn(
+        { err: (err as Error).message },
+        "BigQuery cost read failed; falling back to audit-log proxy",
+      );
+      bqRows = null;
+    }
+
+    if (bqRows) {
+      const byId = new Map(bqRows.map((r) => [r.collectorId, r]));
+      const entries = ids
+        .map((id) => {
+          const reg = getCollector(id)!;
+          const r = byId.get(id);
+          return {
+            collectorId: id,
+            name: reg.name,
+            runs: r?.runs ?? 0,
+            rowsWritten: r?.rowsWritten ?? 0,
+            estimateUsd: r?.estimateUsd ?? 0,
+            notes:
+              "On-demand-pricing estimate from `collector_runs.bytes_raw × $5/TB` " +
+              "(cached 24h). Set `GCP_BILLING_EXPORT_TABLE` for real billing dollars.",
+          };
+        })
+        .sort((a, b) => b.estimateUsd - a.estimateUsd);
+      res.json({ source: "bigquery" as const, lookbackHours, entries });
+      return;
+    }
+
     const auditRows = ids.length
       ? await db
           .select()
@@ -1001,10 +1293,8 @@ router.get(
 
     // Proxy cost model:
     //   estimateUsd = max(rowsWritten * 0.0000005, runs * 0.0001)
-    // This is documented as a *proxy* rather than real BQ slot/byte
-    // cost — INFORMATION_SCHEMA.JOBS access is not configured in
-    // local/dev. Production deployments should swap this endpoint
-    // for the real BQ accounting API.
+    // Documented as a *proxy* rather than real BQ slot/byte cost —
+    // used when GCP isn't configured locally or the BQ query fails.
     const entries = ids
       .map((id) => {
         const reg = getCollector(id)!;
@@ -1029,7 +1319,7 @@ router.get(
           rowsWritten,
           estimateUsd,
           notes:
-            "Proxy estimate from audit-log throughput. Swap for BigQuery INFORMATION_SCHEMA.JOBS in prod.",
+            "Proxy estimate from audit-log throughput (BigQuery cost read unavailable).",
         };
       })
       .sort((a, b) => b.estimateUsd - a.estimateUsd);

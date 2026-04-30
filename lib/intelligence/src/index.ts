@@ -17,8 +17,13 @@ export {
   ensureWarehouseSchema,
   mergeMarketSignals,
   recordCollectorRun,
+  getCollectorCostsFromBq,
+  getCollectorCostsFromBilling,
+  __setRecordCollectorRunOverrideForTests,
+  __clearCollectorCostCacheForTests,
   type BqMarketSignalRow,
   type CollectorRunRecord,
+  type CollectorCostRow,
 } from "./bq/index.js";
 export {
   landRawPayload,
@@ -26,6 +31,7 @@ export {
   readRawPayload,
   rawPayloadPath,
   rawPayloadPointer,
+  __setLandRawPayloadOverrideForTests,
   type LandPayloadArgs,
   type LandPayloadResult,
 } from "./gcs/index.js";

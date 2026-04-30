@@ -18,5 +18,13 @@ export interface CollectorCostEntry {
   runs: number;
   rowsWritten: number;
   estimateUsd: number;
+  /** BigQuery query/analysis cost in USD for the lookback window.
+Populated only when `source=billing`; null otherwise.
+ */
+  queryUsd?: number | null;
+  /** Cloud Storage cost in USD for the lookback window. Populated
+only when `source=billing`; null otherwise.
+ */
+  storageUsd?: number | null;
   notes?: string | null;
 }

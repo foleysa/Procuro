@@ -246,3 +246,37 @@ test("renderInsight: only T4 sources → not visible under any non-analyst polic
     assert.equal(r.citations.length, 0);
   }
 });
+
+// Disclosure-tier policy hook regression: callers (the lever runtime,
+// future MCP shims) sometimes don't carry an explicit `policy` flag —
+// they should get the same result as if they had passed
+// `policy: "standard"`. Standard surfaces T1/T2/T3 but never T4.
+test("renderInsight: defaults to standard policy when omitted", () => {
+  const explicit = renderInsight({
+    sources: [makeSource("T1"), makeSource("T3"), makeSource("T4")],
+    policy: "standard",
+  });
+  const omitted = renderInsight({
+    sources: [makeSource("T1"), makeSource("T3"), makeSource("T4")],
+  });
+  assert.equal(omitted.visible, true);
+  assert.equal(omitted.citations.length, explicit.citations.length);
+  assert.deepEqual(
+    omitted.citations.map((c) => c.tier).sort(),
+    explicit.citations.map((c) => c.tier).sort(),
+  );
+  // Sanity: the omitted call must include the T3 source (proving
+  // we're not silently falling back to the conservative default).
+  assert.ok(omitted.citations.some((c) => c.tier === "T3"));
+  assert.ok(!omitted.citations.some((c) => c.tier === "T4"));
+});
+
+test("renderInsight: defaults to standard even when only a T3 source is provided", () => {
+  // A T3-only payload is the most likely real-world default-policy
+  // regression target: under conservative it would silently hide
+  // (visible=false, no citations). Under standard it must surface.
+  const r = renderInsight({ sources: [makeSource("T3")] });
+  assert.equal(r.visible, true);
+  assert.equal(r.citations.length, 1);
+  assert.equal(r.citations[0]!.tier, "T3");
+});

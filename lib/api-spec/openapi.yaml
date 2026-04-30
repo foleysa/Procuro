@@ -638,6 +638,84 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /admin/collectors/{id}/broadcast-posture:
+    post:
+      operationId: broadcastCollectorPosture
+      tags: [collectors]
+      summary: |
+        Platform admin: broadcast a per-tenant opt-in decision for a
+        collector to every org in one transaction.
+      description: |
+        Used when the platform team needs to roll a posture-related
+        decision (typically a forced opt-out — e.g. a collector's
+        underlying source has flipped from `public-api` to a
+        `tos_restricted` posture) across the entire fleet. Writes are
+        wrapped in a single DB transaction so partial broadcasts can
+        never happen, and a `tenant_opt_in_broadcast` audit row is
+        emitted per affected tenant for forensic reconstruction.
+        Only callable by platform admins (`x-platform-admin-token`);
+        no `x-org-id` is required because the action targets all orgs.
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BroadcastCollectorPostureRequest"
+      responses:
+        "200":
+          description: Broadcast result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastCollectorPostureResult"
+        "401":
+          description: Missing or invalid platform-admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Collector not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/collectors/{id}/broadcast-posture/preview:
+    get:
+      operationId: previewBroadcastCollectorPosture
+      tags: [collectors]
+      summary: |
+        Platform admin: preview tenant counts before broadcasting a posture.
+      description: |
+        Read-only sibling of POST `/admin/collectors/{id}/broadcast-posture`.
+        The UI calls this when the operator opens the broadcast confirmation
+        dialog so the dialog can show "this will affect N tenants — M opted
+        in, K opted out, T no override" *before* the irreversible click.
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Tenant breakdown for the broadcast preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastCollectorPosturePreview"
+        "401":
+          description: Missing or invalid platform-admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Collector not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /collectors/workbench/catalog:
     get:
       operationId: listCollectorCatalog
@@ -743,12 +821,18 @@ paths:
       tags: [collectors]
       summary: Per-collector cost & throughput estimate.
       description: |
-        Honest fallback: real BigQuery cost requires
-        `INFORMATION_SCHEMA.JOBS` access which is not configured in
-        local/dev environments. This endpoint derives a *proxy* cost
-        from audit-log throughput (rows pulled, runs in window) and
-        flags the estimate as `proxy`. Production deployments wire
-        this to the real BQ slot/byte numbers.
+        Returns per-collector cost & throughput for the lookback window,
+        choosing the best available source in this priority order:
+          1. `billing` — real dollars from the GCP Cloud Billing export
+             (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
+             query/analysis cost from Cloud Storage cost; per-collector
+             attribution by `bytes_raw` share. Daily cache.
+          2. `bigquery` — on-demand-pricing estimate from
+             `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.
+          3. `proxy` — audit-log throughput proxy (rows pulled, runs in
+             window) used when GCP isn't configured or the BQ query fails.
+        The response always carries a `source` discriminator so the UI can
+        badge the row honestly.
       parameters:
         - $ref: "#/components/parameters/OrgIdHeader"
         - in: query
@@ -763,7 +847,7 @@ paths:
                 type: object
                 required: [source, lookbackHours, entries]
                 properties:
-                  source: { type: string, enum: [proxy, bigquery] }
+                  source: { type: string, enum: [proxy, bigquery, billing] }
                   lookbackHours: { type: integer }
                   entries:
                     type: array
@@ -2819,6 +2903,71 @@ components:
             Per-tenant opt-in toggle for the active tenant. Setting
             null deletes the override and restores the default.
 
+    BroadcastCollectorPostureRequest:
+      type: object
+      required: [tenantOptedIn]
+      properties:
+        tenantOptedIn:
+          type: boolean
+          nullable: true
+          description: |
+            Opt-in value to apply uniformly to every org for this
+            collector. `null` deletes any per-tenant overrides and
+            restores the default. `true`/`false` upserts an explicit
+            override row per tenant.
+        reason:
+          type: string
+          maxLength: 1000
+          description: |
+            Optional human-readable explanation captured in every
+            audit row so reviewers can reconstruct the why later.
+
+    BroadcastCollectorPostureResult:
+      type: object
+      required: [id, tenantsAffected, tenantOptedIn]
+      properties:
+        id: { type: string }
+        tenantOptedIn:
+          type: boolean
+          nullable: true
+        tenantsAffected:
+          type: integer
+          description: Number of orgs whose opt-in row was upserted/deleted.
+
+    BroadcastCollectorPosturePreview:
+      type: object
+      required:
+        [
+          id,
+          tenantsTotal,
+          currentOptedIn,
+          currentOptedOut,
+          currentNoOverride,
+          registryDefault,
+        ]
+      properties:
+        id: { type: string }
+        tenantsTotal:
+          type: integer
+          description: Total number of orgs the broadcast will iterate.
+        currentOptedIn:
+          type: integer
+          description: Orgs that currently have an explicit opt-in row.
+        currentOptedOut:
+          type: integer
+          description: Orgs that currently have an explicit opt-out row.
+        currentNoOverride:
+          type: integer
+          description: |
+            Orgs with no per-tenant override; they currently resolve to
+            the registry default.
+        registryDefault:
+          type: boolean
+          nullable: true
+          description: |
+            The collector's `tenantOptInDefault` from the registry; what
+            orgs in `currentNoOverride` resolve to today.
+
     CollectorPostureResult:
       type: object
       required: [id, postureClass, disclosureTier, jurisdiction]
@@ -2908,6 +3057,22 @@ components:
         lastRunAt: { type: string, format: date-time, nullable: true }
         lastFailureAt: { type: string, format: date-time, nullable: true }
         lastSchemaDriftAt: { type: string, format: date-time, nullable: true }
+        lastNonEmptyRunAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Timestamp of the most recent successful run whose
+            `metadata.inserted` was greater than zero. Null when no
+            run in the lookback window landed any rows.
+        staleEmptyRuns:
+          type: boolean
+          description: |
+            True when the collector is still running (recent
+            success_at) but has not produced any new rows for ≥ 48h.
+            The Source Health tab surfaces this as a yellow chip so
+            operators can investigate silent upstream stalls before
+            they become outages.
         recentDrifts:
           type: array
           items:
@@ -3012,6 +3177,18 @@ components:
         runs: { type: integer }
         rowsWritten: { type: integer }
         estimateUsd: { type: number }
+        queryUsd:
+          type: number
+          nullable: true
+          description: |
+            BigQuery query/analysis cost in USD for the lookback window.
+            Populated only when `source=billing`; null otherwise.
+        storageUsd:
+          type: number
+          nullable: true
+          description: |
+            Cloud Storage cost in USD for the lookback window. Populated
+            only when `source=billing`; null otherwise.
         notes: { type: string, nullable: true }
 
     ClientDataSource:

@@ -30,7 +30,14 @@ import {
 } from "@workspace/db";
 import { and, eq, like } from "drizzle-orm";
 
+import { z } from "zod";
+
 import { supplierFxExposureLever } from "../src/lib/levers/fx-exposure";
+import {
+  registerCollector,
+  getCollector,
+} from "../src/lib/intelligence/runtime";
+import type { IntelligenceCollector } from "../src/lib/intelligence/collector";
 import { pickOrgId } from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `fxlev-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -468,5 +475,107 @@ describe("supplierFxExposureLever", () => {
       !contractsB.includes(usdContractB),
       "USD-denominated contract on a GBP supplier must NOT be listed under the GBP exposure row",
     );
+  });
+
+  // Disclosure-tier regression (#112): when the FX collector that
+  // produced the underlying market_signal is registered as a T1
+  // (public_api) source, the lever MUST stamp every emitted draft
+  // with a non-empty `inputs.sources` array whose entries carry
+  // `disclosureTier === "T1"`. This is what powers downstream
+  // citations / posture badges in the UI; a regression here would
+  // silently render every FX opportunity as un-attributed.
+  it("stamps every draft's inputs.sources with the registered T1 collector contract", async () => {
+    // Register the synthetic test collector against the in-memory
+    // runtime registry. Keep any previously-registered entry for
+    // the same id so we can restore it afterwards (the registry
+    // exposes registerCollector as overwrite-by-id; there is no
+    // unregister).
+    const previous = getCollector(COLLECTOR_ID);
+    const fakeCollector: IntelligenceCollector = {
+      id: COLLECTOR_ID,
+      name: `Test FX Collector ${TEST_RUN_ID}`,
+      description: "Synthetic T1 collector for fx-exposure regression.",
+      posture: "public-api",
+      sourceUrl: "https://example.invalid/test",
+      defaultRateLimitRpm: 60,
+      defaultScheduleCron: null,
+      postureClass: "public_api",
+      disclosureTier: "T1",
+      jurisdiction: "GLOBAL",
+      retentionDays: 365,
+      tenantOptInDefault: true,
+      signalSchema: z.object({}).passthrough(),
+      stableSignalKey: (d) =>
+        `${COLLECTOR_ID}:${d.signalType}:${d.scopeMaterialCode ?? ""}:${
+          d.observedAt instanceof Date
+            ? d.observedAt.toISOString()
+            : String(d.observedAt)
+        }`,
+      collect: async () => [],
+    };
+    registerCollector(fakeCollector);
+    try {
+      const drafts = await supplierFxExposureLever.analyze({
+        orgId: ctx.orgId,
+        cycleId: ctx.cycleId,
+      });
+      assert.ok(
+        drafts.length >= 1,
+        "expected at least one FX exposure opportunity in the test fixture",
+      );
+
+      // Acceptance for #112: EVERY produced opportunity must carry
+      // citations stamped from the registered T1 collector contract.
+      // This is what the disclosure-tier renderer keys off in the UI;
+      // a single uncited opportunity would render with the wrong
+      // posture badge and break the trust contract.
+      for (const draft of drafts) {
+        const inputs = draft.inputs as Record<string, unknown>;
+        const sources = inputs.sources as
+          | Array<{
+              collectorId: string;
+              contract: { disclosureTier: string; postureClass: string };
+            }>
+          | undefined;
+        assert.ok(
+          Array.isArray(sources) && sources.length >= 1,
+          `every FX opportunity must have a non-empty inputs.sources array; ` +
+            `draft ${draft.supplierId} had: ${JSON.stringify(sources)}`,
+        );
+        const ours = sources!.find((s) => s.collectorId === COLLECTOR_ID);
+        assert.ok(
+          ours,
+          `every FX opportunity must cite the registered T1 collector ${COLLECTOR_ID}; ` +
+            `draft ${draft.supplierId} cited: ${sources!
+              .map((s) => s.collectorId)
+              .join(", ")}`,
+        );
+        assert.equal(
+          ours!.contract.disclosureTier,
+          "T1",
+          `every FX opportunity must surface the registered collector's ` +
+            `disclosureTier verbatim; draft ${draft.supplierId} had ` +
+            `disclosureTier=${ours!.contract.disclosureTier}`,
+        );
+        assert.equal(
+          ours!.contract.postureClass,
+          "public_api",
+          `every FX opportunity must surface the registered collector's ` +
+            `postureClass verbatim; draft ${draft.supplierId} had ` +
+            `postureClass=${ours!.contract.postureClass}`,
+        );
+      }
+
+      // Spot-check: the GBP supplier (the one with the threshold-
+      // crossing FX move in the fixture) is in the drafts and is
+      // covered by the same per-draft assertions above.
+      const gbp = drafts.find((d) => d.supplierId === ctx.supplierGbpId);
+      assert.ok(gbp, "GBP supplier draft should still be emitted");
+    } finally {
+      // Restore prior registry state if there was one; otherwise leave
+      // the test entry in place — the registry is per-process and the
+      // collector id is namespaced under TEST_RUN_ID.
+      if (previous) registerCollector(previous);
+    }
   });
 });

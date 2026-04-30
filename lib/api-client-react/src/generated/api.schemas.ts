@@ -1223,6 +1223,47 @@ null deletes the override and restores the default.
   tenantOptedIn?: boolean | null;
 }
 
+export interface BroadcastCollectorPostureRequest {
+  /** Opt-in value to apply uniformly to every org for this
+collector. `null` deletes any per-tenant overrides and
+restores the default. `true`/`false` upserts an explicit
+override row per tenant.
+ */
+  tenantOptedIn: boolean | null;
+  /**
+   * Optional human-readable explanation captured in every
+audit row so reviewers can reconstruct the why later.
+
+   * @maxLength 1000
+   */
+  reason?: string;
+}
+
+export interface BroadcastCollectorPostureResult {
+  id: string;
+  tenantOptedIn: boolean | null;
+  /** Number of orgs whose opt-in row was upserted/deleted. */
+  tenantsAffected: number;
+}
+
+export interface BroadcastCollectorPosturePreview {
+  id: string;
+  /** Total number of orgs the broadcast will iterate. */
+  tenantsTotal: number;
+  /** Orgs that currently have an explicit opt-in row. */
+  currentOptedIn: number;
+  /** Orgs that currently have an explicit opt-out row. */
+  currentOptedOut: number;
+  /** Orgs with no per-tenant override; they currently resolve to
+the registry default.
+ */
+  currentNoOverride: number;
+  /** The collector's `tenantOptInDefault` from the registry; what
+orgs in `currentNoOverride` resolve to today.
+ */
+  registryDefault: boolean | null;
+}
+
 export type CollectorPostureResultPostureClass =
   (typeof CollectorPostureResultPostureClass)[keyof typeof CollectorPostureResultPostureClass];
 
@@ -1367,6 +1408,18 @@ export interface CollectorSourceHealthEntry {
   lastRunAt?: string | null;
   lastFailureAt?: string | null;
   lastSchemaDriftAt?: string | null;
+  /** Timestamp of the most recent successful run whose
+`metadata.inserted` was greater than zero. Null when no
+run in the lookback window landed any rows.
+ */
+  lastNonEmptyRunAt?: string | null;
+  /** True when the collector is still running (recent
+success_at) but has not produced any new rows for ≥ 48h.
+The Source Health tab surfaces this as a yellow chip so
+operators can investigate silent upstream stalls before
+they become outages.
+ */
+  staleEmptyRuns?: boolean;
   recentDrifts?: CollectorSourceHealthEntryRecentDriftsItem[];
   /** 0-100 (100 = clean, 0 = all runs failing). */
   healthScore?: number;
@@ -1454,6 +1507,14 @@ export interface CollectorCostEntry {
   runs: number;
   rowsWritten: number;
   estimateUsd: number;
+  /** BigQuery query/analysis cost in USD for the lookback window.
+Populated only when `source=billing`; null otherwise.
+ */
+  queryUsd?: number | null;
+  /** Cloud Storage cost in USD for the lookback window. Populated
+only when `source=billing`; null otherwise.
+ */
+  storageUsd?: number | null;
   notes?: string | null;
 }
 
@@ -1732,6 +1793,7 @@ export type GetCollectorCost200Source =
 export const GetCollectorCost200Source = {
   proxy: "proxy",
   bigquery: "bigquery",
+  billing: "billing",
 } as const;
 
 export type GetCollectorCost200 = {

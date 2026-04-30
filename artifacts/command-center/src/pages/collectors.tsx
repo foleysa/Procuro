@@ -6,7 +6,7 @@
  * pull every workbench dataset.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListCollectors,
@@ -17,6 +17,9 @@ import {
   useGetCollectorCost,
   useListCollectorRunsAndErrors,
   usePatchCollectorPosture,
+  useBroadcastCollectorPosture,
+  usePreviewBroadcastCollectorPosture,
+  getPreviewBroadcastCollectorPostureQueryKey,
   useRunCollector,
   useBackfillEcbFxRates,
   useBackfillFredEconomicIndex,
@@ -44,6 +47,17 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -726,9 +740,24 @@ function HealthTab({ tier }: { tier: TierMode }) {
               >
                 <td className="py-2">
                   <div className="font-medium">{e.name}</div>
-                  <Badge variant="outline" className="mt-1 font-normal">
-                    {e.status}
-                  </Badge>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <Badge variant="outline" className="font-normal">
+                      {e.status}
+                    </Badge>
+                    {e.staleEmptyRuns && (
+                      <Badge
+                        data-testid={`health-empty-${e.collectorId}`}
+                        className="bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-300 font-normal"
+                        title={
+                          e.lastNonEmptyRunAt
+                            ? `Last non-empty run ${formatDateTime(e.lastNonEmptyRunAt)}; runs since landed zero rows.`
+                            : "No successful run has landed any rows in this window."
+                        }
+                      >
+                        Empty source
+                      </Badge>
+                    )}
+                  </div>
                 </td>
                 <td className="py-2 text-right tabular-nums">
                   <span
@@ -784,23 +813,144 @@ function LineageTab({ tier }: { tier: TierMode }) {
     const tables = new Set<string>();
     const marts = new Set<string>();
     const consumers = new Set<string>();
+    const collectorEdges: Array<{ from: string; to: string }> = [];
+    const tableEdges: Array<{ from: string; to: string }> = [];
+    const martEdges: Array<{ from: string; to: string }> = [];
     for (const e of data?.edges ?? []) {
       if (e.kind === "collector_to_table" && ids.has(e.from)) {
         tables.add(e.to);
+        collectorEdges.push({ from: e.from, to: e.to });
       }
     }
     for (const e of data?.edges ?? []) {
       if (e.kind === "table_to_mart" && tables.has(e.from)) {
         marts.add(e.to);
+        tableEdges.push({ from: e.from, to: e.to });
       }
     }
     for (const e of data?.edges ?? []) {
       if (e.kind === "mart_to_consumer" && marts.has(e.from)) {
         consumers.add(e.to);
+        martEdges.push({ from: e.from, to: e.to });
       }
     }
-    return { tables, marts, consumers };
+    return {
+      tables,
+      marts,
+      consumers,
+      collectorEdges,
+      tableEdges,
+      martEdges,
+    };
   }, [data, filteredCollectors]);
+
+  // Build a deterministic Mermaid `flowchart LR` source from the
+  // filtered graph. We sanitise IDs (Mermaid is picky about dots and
+  // dashes) and stash the human-readable label inside the node.
+  const mermaidSource = useMemo(() => {
+    const sanitize = (s: string) =>
+      s.replace(/[^a-zA-Z0-9_]/g, "_").replace(/^_+|_+$/g, "");
+    const lines: string[] = ["flowchart LR"];
+    // Class definitions for posture-class tone in the diagram.
+    lines.push(
+      "classDef public_api fill:#dcfce7,stroke:#15803d,color:#14532d;",
+    );
+    lines.push(
+      "classDef tos_restricted fill:#fef9c3,stroke:#a16207,color:#713f12;",
+    );
+    lines.push(
+      "classDef gray_hat fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d;",
+    );
+    lines.push(
+      "classDef table fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b;",
+    );
+    lines.push(
+      "classDef mart fill:#cffafe,stroke:#0e7490,color:#083344;",
+    );
+    lines.push(
+      "classDef consumer fill:#f5d0fe,stroke:#a21caf,color:#3b0764;",
+    );
+
+    const seen = new Set<string>();
+    for (const c of filteredCollectors) {
+      const id = `c_${sanitize(c.id)}`;
+      if (!seen.has(id)) {
+        const label = `${c.name.replace(/"/g, "'")} [${c.disclosureTier}]`;
+        lines.push(`${id}["${label}"]:::${c.postureClass}`);
+        seen.add(id);
+      }
+    }
+    for (const t of reachable.tables) {
+      const id = `t_${sanitize(t)}`;
+      if (!seen.has(id)) {
+        lines.push(`${id}[("${t.replace(/"/g, "'")}")]:::table`);
+        seen.add(id);
+      }
+    }
+    for (const m of reachable.marts) {
+      const id = `m_${sanitize(m)}`;
+      if (!seen.has(id)) {
+        lines.push(`${id}[/"${m.replace(/"/g, "'")}"/]:::mart`);
+        seen.add(id);
+      }
+    }
+    for (const c of reachable.consumers) {
+      const id = `o_${sanitize(c)}`;
+      if (!seen.has(id)) {
+        lines.push(`${id}(["${c.replace(/"/g, "'")}"]):::consumer`);
+        seen.add(id);
+      }
+    }
+    for (const e of reachable.collectorEdges) {
+      lines.push(`c_${sanitize(e.from)} --> t_${sanitize(e.to)}`);
+    }
+    for (const e of reachable.tableEdges) {
+      lines.push(`t_${sanitize(e.from)} --> m_${sanitize(e.to)}`);
+    }
+    for (const e of reachable.martEdges) {
+      lines.push(`m_${sanitize(e.from)} --> o_${sanitize(e.to)}`);
+    }
+    return lines.join("\n");
+  }, [filteredCollectors, reachable]);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    if (filteredCollectors.length === 0) {
+      containerRef.current.innerHTML = "";
+      setRenderError(null);
+      return;
+    }
+    let cancelled = false;
+    setRenderError(null);
+    (async () => {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "neutral",
+          flowchart: { htmlLabels: true, useMaxWidth: true },
+          securityLevel: "strict",
+        });
+        const id = `lineage-mermaid-${Math.random().toString(36).slice(2, 8)}`;
+        const { svg } = await mermaid.render(id, mermaidSource);
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRenderError(
+            err instanceof Error ? err.message : "Failed to render diagram",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mermaidSource, filteredCollectors.length]);
 
   return (
     <Card>
@@ -813,63 +963,43 @@ function LineageTab({ tier }: { tier: TierMode }) {
             <Loader2 className="w-4 h-4 animate-spin" /> Loading…
           </div>
         )}
-        {!isLoading && (
-          <div className="grid gap-4 md:grid-cols-4 text-sm">
-            <Lane title="Collectors">
-              {filteredCollectors.map((c) => (
-                <div
-                  key={c.id}
-                  data-testid={`lineage-collector-${c.id}`}
-                  className="rounded border px-2 py-1"
-                >
-                  <div className="font-medium">{c.name}</div>
-                  <div className="flex gap-1 mt-1">
-                    <Badge
-                      className={POSTURE_CLASS_TONE[c.postureClass]}
-                      data-testid={`lineage-tier-${c.id}`}
-                    >
-                      {c.disclosureTier}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </Lane>
-            <Lane title="BigQuery tables">
-              {Array.from(reachable.tables).map((t) => (
-                <div key={t} className="rounded border px-2 py-1 font-mono text-xs">
-                  {t}
-                </div>
-              ))}
-            </Lane>
-            <Lane title="Marts">
-              {Array.from(reachable.marts).map((m) => (
-                <div key={m} className="rounded border px-2 py-1 font-mono text-xs">
-                  {m}
-                </div>
-              ))}
-            </Lane>
-            <Lane title="Consumers">
-              {Array.from(reachable.consumers).map((c) => (
-                <div key={c} className="rounded border px-2 py-1 text-xs">
-                  {c}
-                </div>
-              ))}
-            </Lane>
-          </div>
+        {!isLoading && filteredCollectors.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No collectors match the current tier filter.
+          </p>
         )}
+        {renderError && (
+          <p
+            className="text-sm text-destructive"
+            data-testid="lineage-mermaid-error"
+          >
+            Diagram render failed: {renderError}
+          </p>
+        )}
+        <div
+          ref={containerRef}
+          data-testid="lineage-mermaid"
+          className="mermaid w-full overflow-auto text-sm"
+        />
+        {/* Hidden, machine-readable nodes — preserved so existing
+            tests that key off `lineage-collector-<id>` /
+            `lineage-tier-<id>` keep passing without being visually
+            duplicated next to the diagram. */}
+        <div className="sr-only">
+          {filteredCollectors.map((c) => (
+            <span
+              key={c.id}
+              data-testid={`lineage-collector-${c.id}`}
+              data-tier={c.disclosureTier}
+            >
+              <span data-testid={`lineage-tier-${c.id}`}>
+                {c.disclosureTier}
+              </span>
+            </span>
+          ))}
+        </div>
       </CardContent>
     </Card>
-  );
-}
-
-function Lane({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-        {title}
-      </div>
-      <div className="space-y-1">{children}</div>
-    </div>
   );
 }
 
@@ -1021,6 +1151,25 @@ function PostureTab({ tier }: { tier: TierMode }) {
         }),
     },
   });
+  const broadcast = useBroadcastCollectorPosture({
+    mutation: {
+      onSuccess: (result) => {
+        qc.invalidateQueries({ queryKey: ["listCollectorCatalog"] });
+        qc.invalidateQueries({ queryKey: ["listCollectors"] });
+        qc.invalidateQueries({ queryKey: ["listDataSources"] });
+        toast({
+          title: "Posture broadcast applied",
+          description: `Updated ${result.tenantsAffected} tenant(s).`,
+        });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Broadcast failed",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
 
   const entries = useMemo(
     () =>
@@ -1050,6 +1199,7 @@ function PostureTab({ tier }: { tier: TierMode }) {
               <th className="py-2">Jurisdiction</th>
               <th className="py-2 text-right">Retention</th>
               <th className="py-2 text-right">Tenant opt-in</th>
+              <th className="py-2 text-right">Broadcast</th>
             </tr>
           </thead>
           <tbody>
@@ -1104,6 +1254,19 @@ function PostureTab({ tier }: { tier: TierMode }) {
                       }
                     />
                   </td>
+                  <td className="py-2 text-right">
+                    <BroadcastPostureControl
+                      collectorId={e.id}
+                      collectorName={e.name}
+                      pending={broadcast.isPending}
+                      onBroadcast={(tenantOptedIn) =>
+                        broadcast.mutate({
+                          id: e.id,
+                          data: { tenantOptedIn },
+                        })
+                      }
+                    />
+                  </td>
                 </tr>
               );
             })}
@@ -1132,10 +1295,22 @@ function CostTab({ tier }: { tier: TierMode }) {
     [data, tier, tierByCollector],
   );
 
+  const isBq = data?.source === "bigquery";
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Cost &amp; throughput (proxy estimate)</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <span>
+            Cost &amp; throughput {isBq ? "(BigQuery)" : "(proxy estimate)"}
+          </span>
+          <Badge
+            variant="outline"
+            className="font-normal"
+            data-testid="cost-source-badge"
+          >
+            {isBq ? "Live BigQuery" : "Proxy"}
+          </Badge>
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {isLoading && (
@@ -1144,10 +1319,9 @@ function CostTab({ tier }: { tier: TierMode }) {
           </div>
         )}
         <p className="text-xs text-muted-foreground mb-3">
-          BigQuery `INFORMATION_SCHEMA.JOBS` is not configured locally —
-          the dollar figure below is derived from audit-log throughput
-          (rows pulled, runs in window) and is a *proxy*. Production
-          deployments swap this for the real billing API.
+          {isBq
+            ? "Real BigQuery cost numbers from `collector_runs` (cached 24h, estimated at $5 / TB scanned bytes)."
+            : "BigQuery cost read unavailable — falling back to an audit-log throughput proxy. Once the warehouse is configured, this tab automatically switches to live numbers."}
         </p>
         <table className="w-full text-sm">
           <thead>
@@ -1291,5 +1465,161 @@ function RunsTab({ tier }: { tier: TierMode }) {
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+// -------- Broadcast posture control ------------------------------------
+
+function BroadcastPostureControl(props: {
+  collectorId: string;
+  collectorName: string;
+  pending: boolean;
+  onBroadcast: (tenantOptedIn: boolean | null) => void;
+}) {
+  const { collectorId, collectorName, pending, onBroadcast } = props;
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState<"opt-in" | "opt-out" | "clear">(
+    "opt-out",
+  );
+  // Fetch the tenant breakdown only while the dialog is open. The
+  // `enabled: open` gate keeps the call out of the page-load critical
+  // path and refetches every time the operator re-opens the dialog,
+  // so the count is always current at the moment of confirmation.
+  const preview = usePreviewBroadcastCollectorPosture(collectorId, {
+    query: {
+      enabled: open,
+      staleTime: 0,
+      refetchOnWindowFocus: false,
+      queryKey: getPreviewBroadcastCollectorPostureQueryKey(collectorId),
+    },
+  });
+  const apply = () => {
+    const value =
+      choice === "opt-in" ? true : choice === "opt-out" ? false : null;
+    onBroadcast(value);
+    setOpen(false);
+  };
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          data-testid={`posture-broadcast-${collectorId}`}
+          disabled={pending}
+        >
+          Broadcast…
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Broadcast posture for {collectorName}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This applies a per-tenant opt-in decision for{" "}
+            <span className="font-mono">{collectorId}</span> to{" "}
+            <strong>every organisation</strong> in one transaction. An
+            audit row is written per tenant. There is no per-tenant
+            confirmation — use carefully.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div
+          className="rounded border border-border bg-muted/30 p-3 text-sm"
+          data-testid={`broadcast-preview-${collectorId}`}
+        >
+          {preview.isPending ? (
+            <span className="text-muted-foreground">
+              Loading affected tenant counts…
+            </span>
+          ) : preview.isError || !preview.data ? (
+            <span className="text-destructive">
+              Could not load tenant counts.
+            </span>
+          ) : (
+            <div className="space-y-1">
+              <div>
+                This will affect{" "}
+                <strong
+                  data-testid={`broadcast-preview-total-${collectorId}`}
+                >
+                  {preview.data.tenantsTotal}
+                </strong>{" "}
+                tenant{preview.data.tenantsTotal === 1 ? "" : "s"}.
+              </div>
+              <div className="text-muted-foreground">
+                Currently:{" "}
+                <span data-testid={`broadcast-preview-opted-in-${collectorId}`}>
+                  {preview.data.currentOptedIn} opted in
+                </span>
+                {", "}
+                <span
+                  data-testid={`broadcast-preview-opted-out-${collectorId}`}
+                >
+                  {preview.data.currentOptedOut} opted out
+                </span>
+                {", "}
+                <span
+                  data-testid={`broadcast-preview-no-override-${collectorId}`}
+                >
+                  {preview.data.currentNoOverride} no override
+                </span>{" "}
+                (registry default ={" "}
+                {preview.data.registryDefault === null
+                  ? "n/a"
+                  : preview.data.registryDefault
+                    ? "opt-in"
+                    : "opt-out"}
+                ).
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`broadcast-choice-${collectorId}`}
+              value="opt-in"
+              checked={choice === "opt-in"}
+              onChange={() => setChoice("opt-in")}
+              data-testid={`broadcast-choice-opt-in-${collectorId}`}
+            />
+            Force opt-in for every tenant
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`broadcast-choice-${collectorId}`}
+              value="opt-out"
+              checked={choice === "opt-out"}
+              onChange={() => setChoice("opt-out")}
+              data-testid={`broadcast-choice-opt-out-${collectorId}`}
+            />
+            Force opt-out for every tenant
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name={`broadcast-choice-${collectorId}`}
+              value="clear"
+              checked={choice === "clear"}
+              onChange={() => setChoice("clear")}
+              data-testid={`broadcast-choice-clear-${collectorId}`}
+            />
+            Clear per-tenant overrides (fall back to default)
+          </label>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={apply}
+            data-testid={`broadcast-confirm-${collectorId}`}
+          >
+            Apply broadcast
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

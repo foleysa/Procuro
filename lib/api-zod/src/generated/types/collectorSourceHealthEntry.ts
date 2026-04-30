@@ -25,6 +25,18 @@ export interface CollectorSourceHealthEntry {
   lastRunAt?: Date | null;
   lastFailureAt?: Date | null;
   lastSchemaDriftAt?: Date | null;
+  /** Timestamp of the most recent successful run whose
+`metadata.inserted` was greater than zero. Null when no
+run in the lookback window landed any rows.
+ */
+  lastNonEmptyRunAt?: Date | null;
+  /** True when the collector is still running (recent
+success_at) but has not produced any new rows for ≥ 48h.
+The Source Health tab surfaces this as a yellow chip so
+operators can investigate silent upstream stalls before
+they become outages.
+ */
+  staleEmptyRuns?: boolean;
   recentDrifts?: CollectorSourceHealthEntryRecentDriftsItem[];
   /** 0-100 (100 = clean, 0 = all runs failing). */
   healthScore?: number;

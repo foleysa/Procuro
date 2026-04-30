@@ -15,6 +15,9 @@ must supply it. All list endpoints return only rows owned by that org.
 export * from "./approveOpportunityRequest";
 export * from "./billingSummary";
 export * from "./billingSummaryByLeverItem";
+export * from "./broadcastCollectorPosturePreview";
+export * from "./broadcastCollectorPostureRequest";
+export * from "./broadcastCollectorPostureResult";
 export * from "./clientDataSource";
 export * from "./clientDataSourceDisclosureTier";
 export * from "./collector";

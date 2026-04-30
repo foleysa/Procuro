@@ -124,6 +124,24 @@ export interface LandPayloadResult {
 }
 
 /**
+ * Test-only override for `landRawPayload`. Set to a fake when you want
+ * the runtime to behave as if GCS landing succeeded without actually
+ * standing up a Storage client. Always reset to `null` after the test
+ * to avoid bleeding into other suites.
+ */
+let landRawPayloadOverride:
+  | ((args: LandPayloadArgs) => Promise<LandPayloadResult | null>)
+  | null = null;
+
+export function __setLandRawPayloadOverrideForTests(
+  override:
+    | ((args: LandPayloadArgs) => Promise<LandPayloadResult | null>)
+    | null,
+): void {
+  landRawPayloadOverride = override;
+}
+
+/**
  * Write a raw payload to GCS. Returns `null` when GCP isn't configured —
  * callers must treat that as "raw landing skipped" and proceed with the
  * legacy code path.
@@ -131,6 +149,7 @@ export interface LandPayloadResult {
 export async function landRawPayload(
   args: LandPayloadArgs,
 ): Promise<LandPayloadResult | null> {
+  if (landRawPayloadOverride) return landRawPayloadOverride(args);
   const cfg = resolveIntelligenceConfig();
   if (!cfg) return null;
   const storage = await getStorage();

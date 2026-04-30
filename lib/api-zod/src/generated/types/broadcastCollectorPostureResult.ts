@@ -12,11 +12,9 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetCollectorCost200Source =
-  (typeof GetCollectorCost200Source)[keyof typeof GetCollectorCost200Source];
-
-export const GetCollectorCost200Source = {
-  proxy: "proxy",
-  bigquery: "bigquery",
-  billing: "billing",
-} as const;
+export interface BroadcastCollectorPostureResult {
+  id: string;
+  tenantOptedIn: boolean | null;
+  /** Number of orgs whose opt-in row was upserted/deleted. */
+  tenantsAffected: number;
+}

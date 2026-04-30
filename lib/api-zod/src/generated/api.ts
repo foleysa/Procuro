@@ -1453,6 +1453,88 @@ export const PatchCollectorPostureResponse = zod.object({
 });
 
 /**
+ * Used when the platform team needs to roll a posture-related
+decision (typically a forced opt-out — e.g. a collector's
+underlying source has flipped from `public-api` to a
+`tos_restricted` posture) across the entire fleet. Writes are
+wrapped in a single DB transaction so partial broadcasts can
+never happen, and a `tenant_opt_in_broadcast` audit row is
+emitted per affected tenant for forensic reconstruction.
+Only callable by platform admins (`x-platform-admin-token`);
+no `x-org-id` is required because the action targets all orgs.
+
+ * @summary Platform admin: broadcast a per-tenant opt-in decision for a
+collector to every org in one transaction.
+
+ */
+export const BroadcastCollectorPostureParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const broadcastCollectorPostureBodyReasonMax = 1000;
+
+export const BroadcastCollectorPostureBody = zod.object({
+  tenantOptedIn: zod
+    .boolean()
+    .nullable()
+    .describe(
+      "Opt-in value to apply uniformly to every org for this\ncollector. `null` deletes any per-tenant overrides and\nrestores the default. `true`\/`false` upserts an explicit\noverride row per tenant.\n",
+    ),
+  reason: zod
+    .string()
+    .max(broadcastCollectorPostureBodyReasonMax)
+    .optional()
+    .describe(
+      "Optional human-readable explanation captured in every\naudit row so reviewers can reconstruct the why later.\n",
+    ),
+});
+
+export const BroadcastCollectorPostureResponse = zod.object({
+  id: zod.string(),
+  tenantOptedIn: zod.boolean().nullable(),
+  tenantsAffected: zod
+    .number()
+    .describe("Number of orgs whose opt-in row was upserted\/deleted."),
+});
+
+/**
+ * Read-only sibling of POST `/admin/collectors/{id}/broadcast-posture`.
+The UI calls this when the operator opens the broadcast confirmation
+dialog so the dialog can show "this will affect N tenants — M opted
+in, K opted out, T no override" *before* the irreversible click.
+
+ * @summary Platform admin: preview tenant counts before broadcasting a posture.
+
+ */
+export const PreviewBroadcastCollectorPostureParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PreviewBroadcastCollectorPostureResponse = zod.object({
+  id: zod.string(),
+  tenantsTotal: zod
+    .number()
+    .describe("Total number of orgs the broadcast will iterate."),
+  currentOptedIn: zod
+    .number()
+    .describe("Orgs that currently have an explicit opt-in row."),
+  currentOptedOut: zod
+    .number()
+    .describe("Orgs that currently have an explicit opt-out row."),
+  currentNoOverride: zod
+    .number()
+    .describe(
+      "Orgs with no per-tenant override; they currently resolve to\nthe registry default.\n",
+    ),
+  registryDefault: zod
+    .boolean()
+    .nullable()
+    .describe(
+      "The collector's `tenantOptInDefault` from the registry; what\norgs in `currentNoOverride` resolve to today.\n",
+    ),
+});
+
+/**
  * Drives the Catalog tab. Returns one entry per registered
 collector enriched with the workbench-only metadata (ToS URL,
 license note, logo, cadence, scope kinds, output signal types)
@@ -1551,6 +1633,18 @@ export const ListCollectorSourceHealthResponse = zod.object({
       lastRunAt: zod.coerce.date().nullish(),
       lastFailureAt: zod.coerce.date().nullish(),
       lastSchemaDriftAt: zod.coerce.date().nullish(),
+      lastNonEmptyRunAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Timestamp of the most recent successful run whose\n`metadata.inserted` was greater than zero. Null when no\nrun in the lookback window landed any rows.\n",
+        ),
+      staleEmptyRuns: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when the collector is still running (recent\nsuccess_at) but has not produced any new rows for ≥ 48h.\nThe Source Health tab surfaces this as a yellow chip so\noperators can investigate silent upstream stalls before\nthey become outages.\n",
+        ),
       recentDrifts: zod
         .array(
           zod.object({
@@ -1656,12 +1750,18 @@ export const GetCollectorCoverageResponse = zod.object({
 });
 
 /**
- * Honest fallback: real BigQuery cost requires
-`INFORMATION_SCHEMA.JOBS` access which is not configured in
-local/dev environments. This endpoint derives a *proxy* cost
-from audit-log throughput (rows pulled, runs in window) and
-flags the estimate as `proxy`. Production deployments wire
-this to the real BQ slot/byte numbers.
+ * Returns per-collector cost & throughput for the lookback window,
+choosing the best available source in this priority order:
+  1. `billing` — real dollars from the GCP Cloud Billing export
+     (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
+     query/analysis cost from Cloud Storage cost; per-collector
+     attribution by `bytes_raw` share. Daily cache.
+  2. `bigquery` — on-demand-pricing estimate from
+     `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.
+  3. `proxy` — audit-log throughput proxy (rows pulled, runs in
+     window) used when GCP isn't configured or the BQ query fails.
+The response always carries a `source` discriminator so the UI can
+badge the row honestly.
 
  * @summary Per-collector cost & throughput estimate.
  */
@@ -1686,7 +1786,7 @@ export const GetCollectorCostHeader = zod.object({
 });
 
 export const GetCollectorCostResponse = zod.object({
-  source: zod.enum(["proxy", "bigquery"]),
+  source: zod.enum(["proxy", "bigquery", "billing"]),
   lookbackHours: zod.number(),
   entries: zod.array(
     zod.object({
@@ -1695,6 +1795,18 @@ export const GetCollectorCostResponse = zod.object({
       runs: zod.number(),
       rowsWritten: zod.number(),
       estimateUsd: zod.number(),
+      queryUsd: zod
+        .number()
+        .nullish()
+        .describe(
+          "BigQuery query\/analysis cost in USD for the lookback window.\nPopulated only when `source=billing`; null otherwise.\n",
+        ),
+      storageUsd: zod
+        .number()
+        .nullish()
+        .describe(
+          "Cloud Storage cost in USD for the lookback window. Populated\nonly when `source=billing`; null otherwise.\n",
+        ),
       notes: zod.string().nullish(),
     }),
   ),

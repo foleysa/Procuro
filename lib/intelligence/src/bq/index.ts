@@ -383,10 +383,275 @@ export interface CollectorRunRecord {
   error: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Cost reads — pulled from the `collector_runs` table in BigQuery (the
+// row source-of-truth for what every run actually processed). We
+// intentionally do NOT hit `INFORMATION_SCHEMA.JOBS_BY_PROJECT` here:
+// that view has its own access requirements and a 180-day retention,
+// while `collector_runs` is part of the warehouse we already own.
+//
+// The cost estimate is `bytes_raw * $5 / 1 TB` — the same
+// straight-line approximation BigQuery itself uses for on-demand
+// pricing. Callers that want a *fully* real number can post-process
+// the row and add scan/storage costs from the billing API.
+// ---------------------------------------------------------------------------
+
+export interface CollectorCostRow {
+  collectorId: string;
+  runs: number;
+  rowsWritten: number;
+  bytesRaw: number;
+  estimateUsd: number;
+  /**
+   * BigQuery query/analysis cost attributed to this collector for the
+   * lookback window. Populated only when costs are sourced from the
+   * GCP Billing export; `null` for the on-demand-pricing estimate.
+   */
+  queryUsd?: number | null;
+  /**
+   * Cloud Storage cost attributed to this collector for the lookback
+   * window. Populated only when costs are sourced from the GCP Billing
+   * export; `null` for the on-demand-pricing estimate.
+   */
+  storageUsd?: number | null;
+}
+
+/** Per-TB on-demand BigQuery price used for the cost estimate. */
+const BQ_USD_PER_TB = 5;
+
+interface CostCacheEntry {
+  fetchedAt: number;
+  rows: CollectorCostRow[];
+}
+
+const costCache = new Map<string, CostCacheEntry>();
+/** Default TTL for the cost cache: 24h, matching daily billing close. */
+const COST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Read per-collector cost + throughput numbers from the BigQuery
+ * `collector_runs` table. Returns `null` when intelligence isn't
+ * configured or the BigQuery client/query fails — callers must fall
+ * back to the Postgres-audit-log proxy in that case.
+ *
+ * The result is cached in-process for 24h per
+ * `(lookbackHours, collectorIds)` key so the workbench tab doesn't
+ * burn a query on every page load.
+ */
+export async function getCollectorCostsFromBq(args: {
+  lookbackHours: number;
+  collectorIds: string[];
+  /** Override the cache TTL, primarily for tests. Defaults to 24h. */
+  cacheTtlMs?: number;
+}): Promise<CollectorCostRow[] | null> {
+  const cfg = resolveIntelligenceConfig();
+  if (!cfg) return null;
+  if (args.collectorIds.length === 0) return [];
+
+  // Stable key — sorted ids so order doesn't bust the cache.
+  const sortedIds = [...args.collectorIds].sort();
+  const ttl = args.cacheTtlMs ?? COST_CACHE_TTL_MS;
+  const key = `${args.lookbackHours}|${sortedIds.join(",")}`;
+  const cached = costCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < ttl) return cached.rows;
+
+  const bq = await getBigQueryClient();
+  if (!bq) return null;
+
+  try {
+    const sql = `
+      SELECT
+        collector_id,
+        COUNT(*)             AS runs,
+        IFNULL(SUM(rows_emitted), 0) AS rows_written,
+        IFNULL(SUM(bytes_raw), 0)    AS bytes_raw
+      FROM \`${cfg.projectId}.${cfg.bqDataset}.collector_runs\`
+      WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),
+                                         INTERVAL @hours HOUR)
+        AND collector_id IN UNNEST(@ids)
+      GROUP BY collector_id
+    `;
+    const [rowsRaw] = await bq.query({
+      query: sql,
+      params: { hours: args.lookbackHours, ids: sortedIds },
+      types: { hours: "INT64", ids: ["STRING"] },
+      maximumBytesBilled: String(cfg.maxBytesBilled),
+      location: cfg.bqLocation,
+    });
+    const rows: CollectorCostRow[] = (rowsRaw as Array<Record<string, unknown>>).map(
+      (r) => {
+        const bytes = Number(r["bytes_raw"] ?? 0);
+        const estimate = (bytes / 1e12) * BQ_USD_PER_TB;
+        return {
+          collectorId: String(r["collector_id"]),
+          runs: Number(r["runs"] ?? 0),
+          rowsWritten: Number(r["rows_written"] ?? 0),
+          bytesRaw: bytes,
+          estimateUsd: Number(estimate.toFixed(6)),
+        };
+      },
+    );
+    costCache.set(key, { fetchedAt: Date.now(), rows });
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
+/** Test helper to wipe the cost cache between assertions. */
+export function __clearCollectorCostCacheForTests(): void {
+  costCache.clear();
+  billingCostCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Billing-backed cost reads.
+//
+// When the operator has stood up a Cloud Billing export to BigQuery
+// (https://cloud.google.com/billing/docs/how-to/export-data-bigquery)
+// and points us at the export table via `GCP_BILLING_EXPORT_TABLE`
+// (full path `project.dataset.table`), we can return *real* dollars
+// for BigQuery query/analysis and Cloud Storage components rather
+// than the on-demand-pricing approximation.
+//
+// Per-collector attribution: GCP doesn't natively label individual
+// query jobs by collector_id (that's a follow-up — labelling jobs at
+// query time), so we attribute the project-level totals proportionally
+// to each collector's `bytes_raw` share for the same lookback window.
+// This is the same model finance teams use for shared-infra cost
+// allocation and is dramatically closer to ground truth than the
+// per-TB estimate.
+//
+// Falls back to `null` when the export table isn't configured or the
+// query fails — callers must then fall back to the estimate path.
+// ---------------------------------------------------------------------------
+
+interface BillingCacheEntry {
+  fetchedAt: number;
+  rows: CollectorCostRow[];
+}
+const billingCostCache = new Map<string, BillingCacheEntry>();
+/** Daily cache, matching billing export close cadence. */
+const BILLING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Read per-collector cost rows whose `queryUsd` and `storageUsd`
+ * fields are sourced from the GCP Billing export, and whose
+ * `estimateUsd` field is the sum of those two for convenience.
+ *
+ * Returns `null` when:
+ *   - intelligence isn't configured (`resolveIntelligenceConfig()` is null), or
+ *   - `GCP_BILLING_EXPORT_TABLE` env is unset / not in `project.dataset.table` form, or
+ *   - the BigQuery client/query fails.
+ *
+ * Callers must treat `null` as "billing data unavailable" and fall
+ * back to `getCollectorCostsFromBq` (estimate) or the Postgres proxy.
+ */
+export async function getCollectorCostsFromBilling(args: {
+  lookbackHours: number;
+  collectorIds: string[];
+  cacheTtlMs?: number;
+}): Promise<CollectorCostRow[] | null> {
+  const cfg = resolveIntelligenceConfig();
+  if (!cfg) return null;
+  if (args.collectorIds.length === 0) return [];
+
+  const exportTable = process.env["GCP_BILLING_EXPORT_TABLE"]?.trim();
+  if (!exportTable || exportTable.split(".").length !== 3) return null;
+
+  const sortedIds = [...args.collectorIds].sort();
+  const ttl = args.cacheTtlMs ?? BILLING_CACHE_TTL_MS;
+  const key = `${args.lookbackHours}|${sortedIds.join(",")}|${exportTable}`;
+  const cached = billingCostCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < ttl) return cached.rows;
+
+  const bq = await getBigQueryClient();
+  if (!bq) return null;
+
+  try {
+    // Step 1: project-level totals from the billing export, split by
+    // service. We aggregate `cost + IFNULL(SUM(credits.amount), 0)` so
+    // applied credits net out the way the billing UI shows them.
+    const billingSql = `
+      SELECT
+        service.description AS service,
+        SUM(cost) + IFNULL(SUM((SELECT IFNULL(SUM(c.amount), 0)
+                                FROM UNNEST(credits) c)), 0) AS net_cost
+      FROM \`${exportTable}\`
+      WHERE project.id = @projectId
+        AND usage_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),
+                                              INTERVAL @hours HOUR)
+        AND service.description IN ('BigQuery', 'Cloud Storage')
+      GROUP BY service
+    `;
+    const [billingRowsRaw] = await bq.query({
+      query: billingSql,
+      params: { projectId: cfg.projectId, hours: args.lookbackHours },
+      types: { projectId: "STRING", hours: "INT64" },
+      maximumBytesBilled: String(cfg.maxBytesBilled),
+      location: cfg.bqLocation,
+    });
+    let projectQueryUsd = 0;
+    let projectStorageUsd = 0;
+    for (const r of billingRowsRaw as Array<Record<string, unknown>>) {
+      const svc = String(r["service"] ?? "");
+      const cost = Number(r["net_cost"] ?? 0);
+      if (svc === "BigQuery") projectQueryUsd += cost;
+      else if (svc === "Cloud Storage") projectStorageUsd += cost;
+    }
+
+    // Step 2: per-collector throughput so we can attribute the
+    // project-level totals proportionally to each collector.
+    const usage = await getCollectorCostsFromBq({
+      lookbackHours: args.lookbackHours,
+      collectorIds: sortedIds,
+      cacheTtlMs: ttl,
+    });
+    if (!usage) return null;
+
+    const totalBytes = usage.reduce((acc, r) => acc + r.bytesRaw, 0);
+    const rows: CollectorCostRow[] = usage.map((u) => {
+      const share = totalBytes > 0 ? u.bytesRaw / totalBytes : 0;
+      const queryUsd = projectQueryUsd * share;
+      const storageUsd = projectStorageUsd * share;
+      return {
+        collectorId: u.collectorId,
+        runs: u.runs,
+        rowsWritten: u.rowsWritten,
+        bytesRaw: u.bytesRaw,
+        queryUsd: Number(queryUsd.toFixed(6)),
+        storageUsd: Number(storageUsd.toFixed(6)),
+        estimateUsd: Number((queryUsd + storageUsd).toFixed(6)),
+      };
+    });
+    billingCostCache.set(key, { fetchedAt: Date.now(), rows });
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Test-only override for `recordCollectorRun`. Used by tests that need
+ * to assert what the runtime actually passes for fields like
+ * `rawPayloadPointer` without standing up a real BigQuery client.
+ * Reset to `null` after the test.
+ */
+let recordCollectorRunOverride:
+  | ((run: CollectorRunRecord) => Promise<boolean>)
+  | null = null;
+
+export function __setRecordCollectorRunOverrideForTests(
+  override: ((run: CollectorRunRecord) => Promise<boolean>) | null,
+): void {
+  recordCollectorRunOverride = override;
+}
+
 /** Append a row to the `collector_runs` audit table. Best-effort. */
 export async function recordCollectorRun(
   run: CollectorRunRecord,
 ): Promise<boolean> {
+  if (recordCollectorRunOverride) return recordCollectorRunOverride(run);
   const cfg = resolveIntelligenceConfig();
   if (!cfg) return false;
   const bq = await getBigQueryClient();

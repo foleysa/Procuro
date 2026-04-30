@@ -147,10 +147,17 @@ function renderProvenance(s: SignalSource): Citation {
  */
 export function renderInsight(args: {
   sources: readonly SignalSource[];
-  policy: TenantPolicy;
+  /**
+   * Tenant policy that decides which tiers are visible. Optional —
+   * when omitted (e.g. a caller has no tenant context yet), the
+   * conservative-but-still-useful `standard` policy is used as the
+   * default so insights never silently drop to invisibility.
+   */
+  policy?: TenantPolicy;
   aggregateConfidence?: number;
 }): RenderedInsight {
-  const { sources, policy } = args;
+  const { sources } = args;
+  const policy: TenantPolicy = args.policy ?? "standard";
   const aggregateConfidence = args.aggregateConfidence ?? 0.7;
 
   // Analyst policy is the simplest: emit a provenance-rich citation per

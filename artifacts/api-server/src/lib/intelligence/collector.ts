@@ -121,6 +121,14 @@ export interface IntelligenceCollector<
   readonly retentionDays: number;
   readonly tenantOptInDefault: boolean;
   /**
+   * How long an empty-result run window can persist before the
+   * source-health endpoint flags this collector as a "stale empty
+   * source". Different collector kinds tolerate different gaps —
+   * e.g. a daily macro feed might tolerate 24-48h, a weekly filings
+   * source needs 8+ days. Falls back to 48h when omitted.
+   */
+  readonly staleEmptyThresholdHours?: number;
+  /**
    * Zod schema applied to every emitted draft after `collect()`. Drafts
    * that fail validation are recorded as schema-drift events and
    * dropped — they never reach Postgres or BigQuery.

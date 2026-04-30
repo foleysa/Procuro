@@ -25,6 +25,9 @@ import type {
 import type {
   ApproveOpportunityRequest,
   BillingSummary,
+  BroadcastCollectorPosturePreview,
+  BroadcastCollectorPostureRequest,
+  BroadcastCollectorPostureResult,
   Collector,
   CollectorAuditEntry,
   CollectorBackfillResult,
@@ -2498,6 +2501,214 @@ export const usePatchCollectorPosture = <
 };
 
 /**
+ * Used when the platform team needs to roll a posture-related
+decision (typically a forced opt-out — e.g. a collector's
+underlying source has flipped from `public-api` to a
+`tos_restricted` posture) across the entire fleet. Writes are
+wrapped in a single DB transaction so partial broadcasts can
+never happen, and a `tenant_opt_in_broadcast` audit row is
+emitted per affected tenant for forensic reconstruction.
+Only callable by platform admins (`x-platform-admin-token`);
+no `x-org-id` is required because the action targets all orgs.
+
+ * @summary Platform admin: broadcast a per-tenant opt-in decision for a
+collector to every org in one transaction.
+
+ */
+export const getBroadcastCollectorPostureUrl = (id: string) => {
+  return `/api/admin/collectors/${id}/broadcast-posture`;
+};
+
+export const broadcastCollectorPosture = async (
+  id: string,
+  broadcastCollectorPostureRequest: BroadcastCollectorPostureRequest,
+  options?: RequestInit,
+): Promise<BroadcastCollectorPostureResult> => {
+  return customFetch<BroadcastCollectorPostureResult>(
+    getBroadcastCollectorPostureUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(broadcastCollectorPostureRequest),
+    },
+  );
+};
+
+export const getBroadcastCollectorPostureMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof broadcastCollectorPosture>>,
+    TError,
+    { id: string; data: BodyType<BroadcastCollectorPostureRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof broadcastCollectorPosture>>,
+  TError,
+  { id: string; data: BodyType<BroadcastCollectorPostureRequest> },
+  TContext
+> => {
+  const mutationKey = ["broadcastCollectorPosture"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof broadcastCollectorPosture>>,
+    { id: string; data: BodyType<BroadcastCollectorPostureRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return broadcastCollectorPosture(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BroadcastCollectorPostureMutationResult = NonNullable<
+  Awaited<ReturnType<typeof broadcastCollectorPosture>>
+>;
+export type BroadcastCollectorPostureMutationBody =
+  BodyType<BroadcastCollectorPostureRequest>;
+export type BroadcastCollectorPostureMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Platform admin: broadcast a per-tenant opt-in decision for a
+collector to every org in one transaction.
+
+ */
+export const useBroadcastCollectorPosture = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof broadcastCollectorPosture>>,
+    TError,
+    { id: string; data: BodyType<BroadcastCollectorPostureRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof broadcastCollectorPosture>>,
+  TError,
+  { id: string; data: BodyType<BroadcastCollectorPostureRequest> },
+  TContext
+> => {
+  return useMutation(getBroadcastCollectorPostureMutationOptions(options));
+};
+
+/**
+ * Read-only sibling of POST `/admin/collectors/{id}/broadcast-posture`.
+The UI calls this when the operator opens the broadcast confirmation
+dialog so the dialog can show "this will affect N tenants — M opted
+in, K opted out, T no override" *before* the irreversible click.
+
+ * @summary Platform admin: preview tenant counts before broadcasting a posture.
+
+ */
+export const getPreviewBroadcastCollectorPostureUrl = (id: string) => {
+  return `/api/admin/collectors/${id}/broadcast-posture/preview`;
+};
+
+export const previewBroadcastCollectorPosture = async (
+  id: string,
+  options?: RequestInit,
+): Promise<BroadcastCollectorPosturePreview> => {
+  return customFetch<BroadcastCollectorPosturePreview>(
+    getPreviewBroadcastCollectorPostureUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getPreviewBroadcastCollectorPostureQueryKey = (id: string) => {
+  return [`/api/admin/collectors/${id}/broadcast-posture/preview`] as const;
+};
+
+export const getPreviewBroadcastCollectorPostureQueryOptions = <
+  TData = Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getPreviewBroadcastCollectorPostureQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>
+  > = ({ signal }) =>
+    previewBroadcastCollectorPosture(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type PreviewBroadcastCollectorPostureQueryResult = NonNullable<
+  Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>
+>;
+export type PreviewBroadcastCollectorPostureQueryError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Platform admin: preview tenant counts before broadcasting a posture.
+
+ */
+
+export function usePreviewBroadcastCollectorPosture<
+  TData = Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof previewBroadcastCollectorPosture>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getPreviewBroadcastCollectorPostureQueryOptions(
+    id,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * Drives the Catalog tab. Returns one entry per registered
 collector enriched with the workbench-only metadata (ToS URL,
 license note, logo, cadence, scope kinds, output signal types)
@@ -2856,12 +3067,18 @@ export function useGetCollectorCoverage<
 }
 
 /**
- * Honest fallback: real BigQuery cost requires
-`INFORMATION_SCHEMA.JOBS` access which is not configured in
-local/dev environments. This endpoint derives a *proxy* cost
-from audit-log throughput (rows pulled, runs in window) and
-flags the estimate as `proxy`. Production deployments wire
-this to the real BQ slot/byte numbers.
+ * Returns per-collector cost & throughput for the lookback window,
+choosing the best available source in this priority order:
+  1. `billing` — real dollars from the GCP Cloud Billing export
+     (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
+     query/analysis cost from Cloud Storage cost; per-collector
+     attribution by `bytes_raw` share. Daily cache.
+  2. `bigquery` — on-demand-pricing estimate from
+     `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.
+  3. `proxy` — audit-log throughput proxy (rows pulled, runs in
+     window) used when GCP isn't configured or the BQ query fails.
+The response always carries a `source` discriminator so the UI can
+badge the row honestly.
 
  * @summary Per-collector cost & throughput estimate.
  */
