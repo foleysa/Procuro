@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["./**/*.ts", "./**/*.tsx", "../src/**/*"],
+  "exclude": [],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client", "@testing-library/jest-dom"],
+    "paths": {
+      "@/*": ["../src/*"]
+    }
+  }
+}
