@@ -11,21 +11,12 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
-import type { DisclosurePolicy } from "./disclosurePolicy";
 
-export interface Org {
+export interface ContractAuditEntry {
   id: string;
-  slug: string;
-  name: string;
-  /** Default contingency fee on realized savings */
-  successFeePct?: number;
-  disclosurePolicy: DisclosurePolicy;
-  /**
-   * Days-to-expiry threshold used by the renewal-alert worker.
-Defaults to 90 when not explicitly set in `orgs.settings`.
-
-   * @minimum 1
-   */
-  contractRenewalAlertDays: number;
+  field: string;
+  actorEmail: string;
+  oldValue?: unknown;
+  newValue?: unknown;
   createdAt: Date;
 }

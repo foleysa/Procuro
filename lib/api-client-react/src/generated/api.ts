@@ -34,6 +34,8 @@ import type {
   CollectorMutationResult,
   CollectorPostureResult,
   CollectorRunResult,
+  ContractDetail,
+  ContractListResponse,
   CreateErpConnectionRequest,
   CsvIngestRequest,
   Cycle,
@@ -59,6 +61,7 @@ import type {
   ListCollectorRunsAndErrorsParams,
   ListCollectorSourceHealth200,
   ListCollectorSourceHealthParams,
+  ListContractsParams,
   ListDataSources200,
   ListJobsParams,
   ListMarketSignalsParams,
@@ -74,6 +77,7 @@ import type {
   Org,
   PatchCollectorPostureRequest,
   PatchCollectorRequest,
+  PatchContractRequest,
   PatchMeSettingsRequest,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
@@ -4971,3 +4975,285 @@ export function useGetBillingSummary<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns contracts owned by the active tenant. Each row carries a
+derived `derivedStatus` field (`active` / `expiring` / `expired`)
+computed from `endDate` and the tenant's
+`contractRenewalAlertDays` threshold so the list and renewal
+calendar can colour-code uniformly without recomputing on the
+client.
+
+ * @summary List contracts (search + filters + cursor pagination)
+ */
+export const getListContractsUrl = (params?: ListContractsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/contracts?${stringifiedParams}`
+    : `/api/contracts`;
+};
+
+export const listContracts = async (
+  params?: ListContractsParams,
+  options?: RequestInit,
+): Promise<ContractListResponse> => {
+  return customFetch<ContractListResponse>(getListContractsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListContractsQueryKey = (params?: ListContractsParams) => {
+  return [`/api/contracts`, ...(params ? [params] : [])] as const;
+};
+
+export const getListContractsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listContracts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListContractsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listContracts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListContractsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listContracts>>> = ({
+    signal,
+  }) => listContracts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listContracts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListContractsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listContracts>>
+>;
+export type ListContractsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List contracts (search + filters + cursor pagination)
+ */
+
+export function useListContracts<
+  TData = Awaited<ReturnType<typeof listContracts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListContractsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listContracts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListContractsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Contract detail (header + items + linked opportunities + signals)
+ */
+export const getGetContractUrl = (id: string) => {
+  return `/api/contracts/${id}`;
+};
+
+export const getContract = async (
+  id: string,
+  options?: RequestInit,
+): Promise<ContractDetail> => {
+  return customFetch<ContractDetail>(getGetContractUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetContractQueryKey = (id: string) => {
+  return [`/api/contracts/${id}`] as const;
+};
+
+export const getGetContractQueryOptions = <
+  TData = Awaited<ReturnType<typeof getContract>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getContract>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetContractQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getContract>>> = ({
+    signal,
+  }) => getContract(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getContract>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetContractQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getContract>>
+>;
+export type GetContractQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Contract detail (header + items + linked opportunities + signals)
+ */
+
+export function useGetContract<
+  TData = Awaited<ReturnType<typeof getContract>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getContract>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetContractQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Update a small set of operator-controlled fields on a contract:
+`owner`, `internalNotes`, `renewalTargetDate`, and
+`renewalTargetAction`. Every changed field is recorded in the
+contract audit log so reviewers can answer "who set this and
+when?". Returns the refreshed `ContractDetail` shape so the UI
+re-renders in one round-trip.
+
+ * @summary Inline-edit contract operator fields
+ */
+export const getPatchContractUrl = (id: string) => {
+  return `/api/contracts/${id}`;
+};
+
+export const patchContract = async (
+  id: string,
+  patchContractRequest: PatchContractRequest,
+  options?: RequestInit,
+): Promise<ContractDetail> => {
+  return customFetch<ContractDetail>(getPatchContractUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchContractRequest),
+  });
+};
+
+export const getPatchContractMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchContract>>,
+    TError,
+    { id: string; data: BodyType<PatchContractRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchContract>>,
+  TError,
+  { id: string; data: BodyType<PatchContractRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchContract"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchContract>>,
+    { id: string; data: BodyType<PatchContractRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchContract(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchContractMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchContract>>
+>;
+export type PatchContractMutationBody = BodyType<PatchContractRequest>;
+export type PatchContractMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Inline-edit contract operator fields
+ */
+export const usePatchContract = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchContract>>,
+    TError,
+    { id: string; data: BodyType<PatchContractRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchContract>>,
+  TError,
+  { id: string; data: BodyType<PatchContractRequest> },
+  TContext
+> => {
+  return useMutation(getPatchContractMutationOptions(options));
+};

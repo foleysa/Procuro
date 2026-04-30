@@ -5,6 +5,7 @@ import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
+import { readRenewalAlertDays } from "../lib/contract-settings";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,7 @@ function serializeMe(
       name: org.name,
       successFeePct: Number(org.successFeePct),
       disclosurePolicy: readDisclosurePolicy(org.settings),
+      contractRenewalAlertDays: readRenewalAlertDays(org.settings),
       createdAt: org.createdAt,
     },
     actorEmail: actorEmail ?? "system@procuro.ai",
@@ -68,6 +70,11 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
   };
   if (body.disclosurePolicy !== undefined) {
     nextSettings["disclosurePolicy"] = body.disclosurePolicy;
+  }
+  if (body.contractRenewalAlertDays !== undefined) {
+    // Schema already constrains this to a 1..365 integer; the worker
+    // and `readRenewalAlertDays` re-clamp defensively anyway.
+    nextSettings["contractRenewalAlertDays"] = body.contractRenewalAlertDays;
   }
 
   const [updated] = await db

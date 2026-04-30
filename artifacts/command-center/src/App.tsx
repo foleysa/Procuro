@@ -16,6 +16,8 @@ import SpendOverview from "./pages/spend";
 import SupplierDetail from "./pages/supplier-detail";
 import Opportunities from "./pages/opportunities";
 import OpportunityDetail from "./pages/opportunity-detail";
+import Contracts from "./pages/contracts";
+import ContractDetail from "./pages/contract-detail";
 import Approvals from "./pages/approvals";
 import Ooda from "./pages/ooda";
 import Results from "./pages/results";
@@ -174,6 +176,8 @@ function AppRoutes() {
             <Route path="/suppliers/:id" component={SupplierDetail} />
             <Route path="/opportunities" component={Opportunities} />
             <Route path="/opportunities/:id" component={OpportunityDetail} />
+            <Route path="/contracts" component={Contracts} />
+            <Route path="/contracts/:id" component={ContractDetail} />
             <Route path="/approvals" component={Approvals} />
             <Route path="/ooda" component={Ooda} />
             <Route path="/results" component={Results} />

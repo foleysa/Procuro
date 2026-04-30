@@ -41,6 +41,9 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // twice, but the next scheduled run will catch up regardless, so the
   // default budget of 3 is plenty.
   prune_jobs: 3,
+  // Daily renewal-alert scan does only DB work (no upstream API calls);
+  // a transient retry budget of 3 mirrors the pruner.
+  renewal_alert_scan: 3,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */
@@ -790,4 +793,90 @@ export function stopJobPruner(): void {
   if (prunerHandle) clearInterval(prunerHandle);
   prunerHandle = null;
   prunerStarted = false;
+}
+
+// ─── Daily renewal-alert scheduler ───────────────────────────────────────
+//
+// Same shape as the prune scheduler: a fixed advisory-lock-protected
+// "ensure exactly one pending/running renewal_alert_scan" helper, plus
+// a process-local interval that keeps re-checking. The renewal-alert
+// handler itself iterates every tenant and is therefore enqueued
+// without an `org_id` (system-scoped) — one job per tick covers every
+// tenant.
+
+const RENEWAL_SCAN_LOCK_KEY = 0x52454e57; // "RENW"
+const DEFAULT_RENEWAL_SCAN_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+export async function ensureRenewalScanScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${RENEWAL_SCAN_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'renewal_alert_scan' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'renewal_alert_scan', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let renewalScanStarted = false;
+let renewalScanHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic renewal-alert scheduler. Enqueues a
+ * `renewal_alert_scan` job at boot, then again on a fixed interval
+ * (default 24h, overridable via `RENEWAL_SCAN_INTERVAL_MS`).
+ * Idempotent — calling twice has no effect.
+ */
+export function startRenewalScanScheduler(intervalMs?: number): void {
+  if (renewalScanStarted) return;
+  renewalScanStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "RENEWAL_SCAN_INTERVAL_MS",
+      DEFAULT_RENEWAL_SCAN_INTERVAL_MS,
+    );
+
+  void ensureRenewalScanScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial renewal_alert_scan",
+    );
+  });
+
+  renewalScanHandle = setInterval(() => {
+    ensureRenewalScanScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled renewal_alert_scan",
+      );
+    });
+  }, ms);
+}
+
+export function stopRenewalScanScheduler(): void {
+  if (renewalScanHandle) clearInterval(renewalScanHandle);
+  renewalScanHandle = null;
+  renewalScanStarted = false;
 }

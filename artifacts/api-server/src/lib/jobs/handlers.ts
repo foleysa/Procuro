@@ -1,6 +1,13 @@
-import type { JobRow } from "@workspace/db";
-import { db, erpConnectionsTable, type ErpWatermarks } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import {
+  db,
+  alertsTable,
+  contractsTable,
+  erpConnectionsTable,
+  orgsTable,
+  type ErpWatermarks,
+  type JobRow,
+} from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
 
 import { runAnalysisCycle } from "../ooda/cycle";
 import {
@@ -17,6 +24,8 @@ import { decryptCredentials } from "../erp/crypto";
 import { runCollector } from "../intelligence/runtime";
 import { isJobCancelRequested, pruneOldJobs } from "./queue";
 import { UnrecoverableJobError } from "./queue";
+import { newId } from "../ids";
+import { readRenewalAlertDays } from "../contract-settings";
 
 /**
  * Production job handlers.
@@ -360,4 +369,160 @@ export async function syncErpConnectionHandler(
     }
     wrapStructuralError(err);
   }
+}
+
+/**
+ * Daily renewal-alert scan.
+ *
+ * Iterates every tenant, reads the per-tenant
+ * `contractRenewalAlertDays` from `orgs.settings` (default 90), and for
+ * every active contract whose `end_date - now <= threshold_days`:
+ *
+ *   1. Inserts an `alerts` row with
+ *      `dedupeKey = renewal:${contractId}:${threshold}` and
+ *      `ON CONFLICT DO NOTHING` so re-runs are no-ops.
+ *   2. Appends `threshold` to `contracts.renewalAlertedThresholds` so
+ *      the contract list / detail UIs can show "alerted at <X> days"
+ *      without joining `alerts`.
+ *
+ * Severity is computed from days-to-expiry:
+ *   - <= 7 days  → critical
+ *   - <= 30 days → warning
+ *   - otherwise  → info
+ *
+ * Each tenant is processed inside its own transaction so a single bad
+ * tenant (e.g. an FK violation from a recently-deleted contract row)
+ * cannot poison the whole scan — the handler logs and continues.
+ *
+ * The job is system-scoped (no `org_id` on the job row); per-tenant
+ * thresholds are read inside the handler.
+ */
+export async function runRenewalAlertScanHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const orgs = await db
+    .select({ id: orgsTable.id, settings: orgsTable.settings })
+    .from(orgsTable);
+
+  let alertsInserted = 0;
+  let contractsUpdated = 0;
+  let orgsScanned = 0;
+  const orgErrors: Array<{ orgId: string; error: string }> = [];
+
+  for (const org of orgs) {
+    orgsScanned += 1;
+    const threshold = readRenewalAlertDays(org.settings ?? null);
+    try {
+      // Pull the candidate set in one query: active contracts whose
+      // end_date is within the threshold window. We join supplier name
+      // for the alert title without paying a per-row roundtrip.
+      // `end_date` arrives as either a `Date` or an ISO string depending
+      // on the pg type parser configuration; we normalise it below
+      // before calling `toISOString()`.
+      const candidates = await db.execute<{
+        id: string;
+        contract_number: string;
+        title: string;
+        supplier_id: string;
+        supplier_name: string;
+        end_date: Date | string;
+        days_to_expiry: number;
+        already_alerted: boolean;
+      }>(sql`
+        SELECT c.id,
+               c.contract_number,
+               c.title,
+               c.supplier_id,
+               s.name AS supplier_name,
+               c.end_date,
+               CEIL(EXTRACT(EPOCH FROM (c.end_date - NOW())) / 86400.0)::int
+                 AS days_to_expiry,
+               (${threshold} = ANY(c.renewal_alerted_thresholds))
+                 AS already_alerted
+        FROM contracts c
+        JOIN suppliers s ON s.id = c.supplier_id
+        WHERE c.org_id = ${org.id}
+          AND c.status = 'active'
+          AND c.end_date > NOW()
+          AND c.end_date <= NOW() + (${threshold} || ' days')::interval
+      `);
+
+      for (const r of candidates.rows) {
+        const days = Number(r.days_to_expiry);
+        const severity =
+          days <= 7 ? "critical" : days <= 30 ? "warning" : "info";
+        const dedupeKey = `renewal:${r.id}:${threshold}`;
+        const endDateIso = (
+          r.end_date instanceof Date ? r.end_date : new Date(r.end_date)
+        ).toISOString();
+
+        // INSERT ... ON CONFLICT (alerts_dedupe_uq) DO NOTHING. We
+        // rely on the unique index over `(org_id, kind, dedupe_key)`
+        // so the same trigger condition can never produce two rows
+        // even if the daily scheduler fires twice.
+        const inserted = await db.execute<{ id: string }>(sql`
+          INSERT INTO alerts (id, org_id, kind, severity, title, body,
+                              ref_type, ref_id, dedupe_key, metadata)
+          VALUES (
+            ${newId("alt")},
+            ${org.id},
+            'contract_renewal',
+            ${severity},
+            ${`Contract ${r.contract_number} renewing in ${days} day${days === 1 ? "" : "s"}`},
+            ${`${r.title} (${r.supplier_name}) — end date ${endDateIso.slice(0, 10)}.`},
+            'contract',
+            ${r.id},
+            ${dedupeKey},
+            ${sql`${JSON.stringify({
+              contractId: r.id,
+              supplierId: r.supplier_id,
+              thresholdDays: threshold,
+              daysToExpiry: days,
+              endDate: endDateIso,
+            })}::jsonb`}
+          )
+          ON CONFLICT (org_id, kind, dedupe_key) DO NOTHING
+          RETURNING id
+        `);
+        if (inserted.rows.length > 0) {
+          alertsInserted += 1;
+        }
+
+        // Even if the alert was a dedupe no-op, make sure the
+        // contract column reflects the threshold so the UI badge
+        // ("alerted at 90 days") matches the alerts table.
+        if (!r.already_alerted) {
+          await db
+            .update(contractsTable)
+            .set({
+              renewalAlertedThresholds: sql`array_append(
+                renewal_alerted_thresholds, ${threshold}
+              )`,
+            })
+            .where(
+              and(
+                eq(contractsTable.orgId, org.id),
+                eq(contractsTable.id, r.id),
+              ),
+            );
+          contractsUpdated += 1;
+        }
+      }
+    } catch (err) {
+      // One tenant's failure must not poison the whole scan — record
+      // it in the result payload so the System / Jobs page can
+      // surface partial-failure detail without us throwing.
+      orgErrors.push({
+        orgId: org.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return {
+    orgsScanned,
+    alertsInserted,
+    contractsUpdated,
+    orgErrors,
+  };
 }

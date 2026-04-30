@@ -8,6 +8,7 @@ import {
   jsonb,
   integer,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
 import { suppliersTable } from "./suppliers";
 import { categoriesTable } from "./categories";
@@ -51,6 +52,40 @@ export const contractsTable = pgTable(
       precision: 16,
       scale: 2,
     }).default("0"),
+    /**
+     * Procurement category manager / commodity owner accountable for the
+     * contract. Free-form (typically an email or person name), inline-
+     * editable from the contract detail UI. Null for legacy/seeded rows
+     * that pre-date the field.
+     */
+    owner: text("owner"),
+    /** Inline operator notes (e.g. renewal context). Editable via PATCH. */
+    internalNotes: text("internal_notes"),
+    /**
+     * Target date the procurement team is aiming to have the renewal
+     * negotiated by. Distinct from `endDate`: usually 30-90 days before
+     * expiry. Editable via PATCH.
+     */
+    renewalTargetDate: timestamp("renewal_target_date", {
+      withTimezone: true,
+    }),
+    /**
+     * Free-form operator note: what we plan to do at renewal
+     * (re-negotiate, switch supplier, let lapse, etc.).
+     */
+    renewalTargetAction: text("renewal_target_action"),
+    /**
+     * Day-thresholds (e.g. `[90, 30, 7]`) we have already raised a
+     * renewal alert at. Used by the daily renewal-alert worker to
+     * avoid re-firing when scanning the same day-window twice. The
+     * alerts table itself enforces idempotency via `dedupe_key`; this
+     * column is the cheap, additive marker the contract list/detail
+     * UIs read to show "alerted at <X> days" without joining.
+     */
+    renewalAlertedThresholds: integer("renewal_alerted_thresholds")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::integer[]`),
     sourceSystem: text("source_system").notNull().default("seed"),
     sourceExternalId: text("source_external_id"),
     sourceSyncedAt: timestamp("source_synced_at", { withTimezone: true })

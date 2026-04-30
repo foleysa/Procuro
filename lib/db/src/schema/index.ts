@@ -7,6 +7,8 @@ export * from "./categories";
 export * from "./items";
 export * from "./suppliers";
 export * from "./contracts";
+export * from "./contractAuditLog";
+export * from "./alerts";
 export * from "./purchaseOrders";
 export * from "./invoices";
 export * from "./shipments";

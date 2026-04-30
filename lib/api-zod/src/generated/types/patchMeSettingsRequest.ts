@@ -20,4 +20,12 @@ unspecified keys are left untouched on the stored JSONB.
  */
 export interface PatchMeSettingsRequest {
   disclosurePolicy?: DisclosurePolicy;
+  /**
+   * Days-to-expiry threshold the daily renewal-alert worker uses
+to surface a contract as a renewal alert. Default 90.
+
+   * @minimum 1
+   * @maximum 365
+   */
+  contractRenewalAlertDays?: number;
 }

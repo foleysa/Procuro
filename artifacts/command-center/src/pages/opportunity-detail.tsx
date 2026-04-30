@@ -31,7 +31,15 @@ import {
   leverLabel,
   REJECTION_REASON_LABELS,
 } from "@/lib/format";
-import { ArrowLeft, Check, X, Play, DollarSign, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  X,
+  Play,
+  DollarSign,
+  Loader2,
+  FileText,
+} from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
@@ -154,6 +162,23 @@ export default function OpportunityDetail() {
           <strong>Supplier:</strong> {opp.supplierName}
           {opp.categoryName && <> · <strong>Category:</strong> {opp.categoryName}</>}
         </div>
+      )}
+
+      {/*
+        Cross-link to the contract this opportunity was derived from.
+        The lever runner stores the contract id on `inputs.contractId`
+        for tier-2 contract levers (renegotiate, etc.) — when that key
+        is present, surface a one-click jump to the contract detail.
+      */}
+      {typeof opp.inputs?.contractId === "string" && (
+        <Link
+          href={`/contracts/${opp.inputs.contractId}`}
+          className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+          data-testid="link-source-contract"
+        >
+          <FileText className="w-4 h-4" />
+          Open source contract
+        </Link>
       )}
 
       {(opp.approvedAt || opp.rejectedAt || opp.executingAt || opp.realizedAt) && (

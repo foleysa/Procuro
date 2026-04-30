@@ -52,6 +52,13 @@ export interface Org {
   /** Default contingency fee on realized savings */
   successFeePct?: number;
   disclosurePolicy: DisclosurePolicy;
+  /**
+   * Days-to-expiry threshold used by the renewal-alert worker.
+Defaults to 90 when not explicitly set in `orgs.settings`.
+
+   * @minimum 1
+   */
+  contractRenewalAlertDays: number;
   createdAt: string;
 }
 
@@ -67,6 +74,14 @@ unspecified keys are left untouched on the stored JSONB.
  */
 export interface PatchMeSettingsRequest {
   disclosurePolicy?: DisclosurePolicy;
+  /**
+   * Days-to-expiry threshold the daily renewal-alert worker uses
+to surface a contract as a renewal alert. Default 90.
+
+   * @minimum 1
+   * @maximum 365
+   */
+  contractRenewalAlertDays?: number;
 }
 
 export type LeverId = (typeof LeverId)[keyof typeof LeverId];
@@ -623,6 +638,135 @@ export interface MarketSignal {
   observedAt: string;
   sourceUrl?: string | null;
   createdAt: string;
+}
+
+/**
+ * Bucketed view of a contract's expiration state:
+  - `active` — `endDate > now + tenant renewal threshold`
+  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`
+  - `expired` — `endDate <= now`
+Computed server-side so the renewal calendar / list / colour
+coding stays consistent across surfaces.
+
+ */
+export type ContractDerivedStatus =
+  (typeof ContractDerivedStatus)[keyof typeof ContractDerivedStatus];
+
+export const ContractDerivedStatus = {
+  active: "active",
+  expiring: "expiring",
+  expired: "expired",
+  pending: "pending",
+  cancelled: "cancelled",
+} as const;
+
+export type ContractStatus =
+  (typeof ContractStatus)[keyof typeof ContractStatus];
+
+export const ContractStatus = {
+  active: "active",
+  pending: "pending",
+  expired: "expired",
+  cancelled: "cancelled",
+} as const;
+
+export interface Contract {
+  id: string;
+  orgId: string;
+  supplierId: string;
+  supplierName?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  contractNumber: string;
+  title: string;
+  status: ContractStatus;
+  derivedStatus: ContractDerivedStatus;
+  /** Whole days from now to `endDate`. Negative if already
+expired. Null when `endDate` is somehow missing.
+ */
+  daysToExpiry?: number | null;
+  startDate: string;
+  endDate: string;
+  paymentTermsDays?: number | null;
+  referenceIndex?: string | null;
+  billingCurrency?: string | null;
+  annualBaselineUsd?: number | null;
+  owner?: string | null;
+  internalNotes?: string | null;
+  renewalTargetDate?: string | null;
+  renewalTargetAction?: string | null;
+  renewalAlertedThresholds: number[];
+  sourceSystem?: string;
+  sourceExternalId?: string | null;
+  createdAt: string;
+}
+
+export interface ContractListResponse {
+  items: Contract[];
+  nextCursor?: string | null;
+}
+
+export type ContractItemTiersItem = {
+  minQty: number;
+  unitPriceUsd: number;
+};
+
+export interface ContractItem {
+  id: string;
+  sku: string;
+  itemId?: string | null;
+  contractedUnitPriceUsd: number;
+  tiers?: ContractItemTiersItem[];
+}
+
+export interface ContractLinkedOpportunity {
+  id: string;
+  leverId: string;
+  status: string;
+  title: string;
+  projectedSavingsUsd: number;
+  createdAt?: string;
+}
+
+export interface ContractAuditEntry {
+  id: string;
+  field: string;
+  actorEmail: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  createdAt: string;
+}
+
+export type ContractDetail = Contract & {
+  items: ContractItem[];
+  linkedOpportunities: ContractLinkedOpportunity[];
+  /** Most-recent FX rate observations for the contract's
+billing currency pair (when set) and category-scoped
+PPI/economic-index observations. The Command Center
+renders these in the FX exposure / PPI benchmark cards.
+ */
+  marketSignals: MarketSignal[];
+  /** De-duplicated `InsightSource[]` backing the linked
+opportunities. Render through `renderInsight()`.
+ */
+  sources: InsightSource[];
+  auditLog: ContractAuditEntry[];
+};
+
+/**
+ * Partial update for the operator-controlled fields on a contract.
+Every property is optional. Sending `null` for a nullable field
+clears it; omitting a field leaves the stored value unchanged.
+
+ */
+export interface PatchContractRequest {
+  /** @maxLength 200 */
+  owner?: string | null;
+  /** @maxLength 5000 */
+  internalNotes?: string | null;
+  renewalTargetDate?: string | null;
+  /** @maxLength 1000 */
+  renewalTargetAction?: string | null;
 }
 
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
@@ -1727,3 +1871,45 @@ export type IngestCsvStreamBodyOne = {
 export type IngestMockErpParams = {
   async?: boolean;
 };
+
+export type ListContractsParams = {
+  /**
+   * Substring match on `contractNumber` or `title`.
+   */
+  search?: string;
+  /**
+ * Filter by stored `status` (`active` / `pending` / `expired` /
+`cancelled`) or by the derived bucket `expiring` (active
+contracts where days-to-expiry <= the tenant's renewal
+threshold).
+
+ */
+  status?: ListContractsStatus;
+  supplierId?: string;
+  categoryId?: string;
+  /**
+   * Filter by `billingCurrency` (ISO 4217).
+   */
+  currency?: string;
+  /**
+   * Substring match on `owner`.
+   */
+  owner?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  cursor?: string;
+};
+
+export type ListContractsStatus =
+  (typeof ListContractsStatus)[keyof typeof ListContractsStatus];
+
+export const ListContractsStatus = {
+  active: "active",
+  pending: "pending",
+  expired: "expired",
+  cancelled: "cancelled",
+  expiring: "expiring",
+} as const;

@@ -24,6 +24,7 @@ export const HealthCheckResponse = zod.object({
 /**
  * @summary List tenants available to the active user
  */
+
 export const ListOrgsResponseItem = zod.object({
   id: zod.string(),
   slug: zod.string(),
@@ -36,6 +37,12 @@ export const ListOrgsResponseItem = zod.object({
     .enum(["conservative", "standard", "analyst"])
     .describe(
       "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+    ),
+  contractRenewalAlertDays: zod
+    .number()
+    .min(1)
+    .describe(
+      "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
     ),
   createdAt: zod.coerce.date(),
 });
@@ -67,6 +74,12 @@ export const GetMeResponse = zod.object({
       .describe(
         "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
       ),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(1)
+      .describe(
+        "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
+      ),
     createdAt: zod.coerce.date(),
   }),
   actorEmail: zod.string().optional(),
@@ -89,6 +102,8 @@ export const PatchMeSettingsHeader = zod.object({
     ),
 });
 
+export const patchMeSettingsBodyContractRenewalAlertDaysMax = 365;
+
 export const PatchMeSettingsBody = zod
   .object({
     disclosurePolicy: zod
@@ -96,6 +111,14 @@ export const PatchMeSettingsBody = zod
       .optional()
       .describe(
         "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(1)
+      .max(patchMeSettingsBodyContractRenewalAlertDaysMax)
+      .optional()
+      .describe(
+        "Days-to-expiry threshold the daily renewal-alert worker uses\nto surface a contract as a renewal alert. Default 90.\n",
       ),
   })
   .describe(
@@ -115,6 +138,12 @@ export const PatchMeSettingsResponse = zod.object({
       .enum(["conservative", "standard", "analyst"])
       .describe(
         "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(1)
+      .describe(
+        "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
       ),
     createdAt: zod.coerce.date(),
   }),
@@ -2535,3 +2564,409 @@ export const GetBillingSummaryResponse = zod.object({
     }),
   ),
 });
+
+/**
+ * Returns contracts owned by the active tenant. Each row carries a
+derived `derivedStatus` field (`active` / `expiring` / `expired`)
+computed from `endDate` and the tenant's
+`contractRenewalAlertDays` threshold so the list and renewal
+calendar can colour-code uniformly without recomputing on the
+client.
+
+ * @summary List contracts (search + filters + cursor pagination)
+ */
+export const listContractsQueryLimitDefault = 50;
+export const listContractsQueryLimitMax = 200;
+
+export const ListContractsQueryParams = zod.object({
+  search: zod.coerce
+    .string()
+    .optional()
+    .describe("Substring match on `contractNumber` or `title`."),
+  status: zod
+    .enum(["active", "pending", "expired", "cancelled", "expiring"])
+    .optional()
+    .describe(
+      "Filter by stored `status` (`active` \/ `pending` \/ `expired` \/\n`cancelled`) or by the derived bucket `expiring` (active\ncontracts where days-to-expiry <= the tenant's renewal\nthreshold).\n",
+    ),
+  supplierId: zod.coerce.string().optional(),
+  categoryId: zod.coerce.string().optional(),
+  currency: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by `billingCurrency` (ISO 4217)."),
+  owner: zod.coerce.string().optional().describe("Substring match on `owner`."),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listContractsQueryLimitMax)
+    .default(listContractsQueryLimitDefault),
+  cursor: zod.coerce.string().optional(),
+});
+
+export const ListContractsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListContractsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      supplierId: zod.string(),
+      supplierName: zod.string().nullish(),
+      categoryId: zod.string().nullish(),
+      categoryName: zod.string().nullish(),
+      contractNumber: zod.string(),
+      title: zod.string(),
+      status: zod.enum(["active", "pending", "expired", "cancelled"]),
+      derivedStatus: zod
+        .enum(["active", "expiring", "expired", "pending", "cancelled"])
+        .describe(
+          "Bucketed view of a contract's expiration state:\n  - `active` — `endDate > now + tenant renewal threshold`\n  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`\n  - `expired` — `endDate <= now`\nComputed server-side so the renewal calendar \/ list \/ colour\ncoding stays consistent across surfaces.\n",
+        ),
+      daysToExpiry: zod
+        .number()
+        .nullish()
+        .describe(
+          "Whole days from now to `endDate`. Negative if already\nexpired. Null when `endDate` is somehow missing.\n",
+        ),
+      startDate: zod.coerce.date(),
+      endDate: zod.coerce.date(),
+      paymentTermsDays: zod.number().nullish(),
+      referenceIndex: zod.string().nullish(),
+      billingCurrency: zod.string().nullish(),
+      annualBaselineUsd: zod.number().nullish(),
+      owner: zod.string().nullish(),
+      internalNotes: zod.string().nullish(),
+      renewalTargetDate: zod.coerce.date().nullish(),
+      renewalTargetAction: zod.string().nullish(),
+      renewalAlertedThresholds: zod.array(zod.number()),
+      sourceSystem: zod.string().optional(),
+      sourceExternalId: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+  nextCursor: zod.string().nullish(),
+});
+
+/**
+ * @summary Contract detail (header + items + linked opportunities + signals)
+ */
+export const GetContractParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetContractHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetContractResponse = zod
+  .object({
+    id: zod.string(),
+    orgId: zod.string(),
+    supplierId: zod.string(),
+    supplierName: zod.string().nullish(),
+    categoryId: zod.string().nullish(),
+    categoryName: zod.string().nullish(),
+    contractNumber: zod.string(),
+    title: zod.string(),
+    status: zod.enum(["active", "pending", "expired", "cancelled"]),
+    derivedStatus: zod
+      .enum(["active", "expiring", "expired", "pending", "cancelled"])
+      .describe(
+        "Bucketed view of a contract's expiration state:\n  - `active` — `endDate > now + tenant renewal threshold`\n  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`\n  - `expired` — `endDate <= now`\nComputed server-side so the renewal calendar \/ list \/ colour\ncoding stays consistent across surfaces.\n",
+      ),
+    daysToExpiry: zod
+      .number()
+      .nullish()
+      .describe(
+        "Whole days from now to `endDate`. Negative if already\nexpired. Null when `endDate` is somehow missing.\n",
+      ),
+    startDate: zod.coerce.date(),
+    endDate: zod.coerce.date(),
+    paymentTermsDays: zod.number().nullish(),
+    referenceIndex: zod.string().nullish(),
+    billingCurrency: zod.string().nullish(),
+    annualBaselineUsd: zod.number().nullish(),
+    owner: zod.string().nullish(),
+    internalNotes: zod.string().nullish(),
+    renewalTargetDate: zod.coerce.date().nullish(),
+    renewalTargetAction: zod.string().nullish(),
+    renewalAlertedThresholds: zod.array(zod.number()),
+    sourceSystem: zod.string().optional(),
+    sourceExternalId: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+  })
+  .and(
+    zod.object({
+      items: zod.array(
+        zod.object({
+          id: zod.string(),
+          sku: zod.string(),
+          itemId: zod.string().nullish(),
+          contractedUnitPriceUsd: zod.number(),
+          tiers: zod
+            .array(
+              zod.object({
+                minQty: zod.number(),
+                unitPriceUsd: zod.number(),
+              }),
+            )
+            .optional(),
+        }),
+      ),
+      linkedOpportunities: zod.array(
+        zod.object({
+          id: zod.string(),
+          leverId: zod.string(),
+          status: zod.string(),
+          title: zod.string(),
+          projectedSavingsUsd: zod.number(),
+          createdAt: zod.coerce.date().optional(),
+        }),
+      ),
+      marketSignals: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            collectorId: zod.string().nullish(),
+            signalType: zod.string(),
+            scopeMaterialCode: zod.string().nullish(),
+            scopeCategoryCode: zod.string().nullish(),
+            scopeCategoryId: zod.string().nullish(),
+            scopeSupplierId: zod.string().nullish(),
+            value: zod.number(),
+            unit: zod.string().nullish(),
+            currency: zod.string().nullish(),
+            confidence: zod.number().nullish(),
+            observedAt: zod.coerce.date(),
+            sourceUrl: zod.string().nullish(),
+            createdAt: zod.coerce.date(),
+          }),
+        )
+        .describe(
+          "Most-recent FX rate observations for the contract's\nbilling currency pair (when set) and category-scoped\nPPI\/economic-index observations. The Command Center\nrenders these in the FX exposure \/ PPI benchmark cards.\n",
+        ),
+      sources: zod
+        .array(
+          zod
+            .object({
+              collectorId: zod.string(),
+              collectorName: zod.string(),
+              sourceUrl: zod.string(),
+              observedAt: zod.coerce.date(),
+              contract: zod.object({
+                postureClass: zod.enum([
+                  "public_api",
+                  "tos_restricted",
+                  "gray_hat",
+                ]),
+                disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+                jurisdiction: zod.string(),
+                retentionDays: zod.number(),
+                tenantOptInDefault: zod.boolean(),
+              }),
+            })
+            .describe(
+              "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+            ),
+        )
+        .describe(
+          "De-duplicated `InsightSource[]` backing the linked\nopportunities. Render through `renderInsight()`.\n",
+        ),
+      auditLog: zod.array(
+        zod.object({
+          id: zod.string(),
+          field: zod.string(),
+          actorEmail: zod.string(),
+          oldValue: zod.unknown().optional(),
+          newValue: zod.unknown().optional(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * Update a small set of operator-controlled fields on a contract:
+`owner`, `internalNotes`, `renewalTargetDate`, and
+`renewalTargetAction`. Every changed field is recorded in the
+contract audit log so reviewers can answer "who set this and
+when?". Returns the refreshed `ContractDetail` shape so the UI
+re-renders in one round-trip.
+
+ * @summary Inline-edit contract operator fields
+ */
+export const PatchContractParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchContractHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const patchContractBodyOwnerMax = 200;
+
+export const patchContractBodyInternalNotesMax = 5000;
+
+export const patchContractBodyRenewalTargetActionMax = 1000;
+
+export const PatchContractBody = zod
+  .object({
+    owner: zod.string().max(patchContractBodyOwnerMax).nullish(),
+    internalNotes: zod
+      .string()
+      .max(patchContractBodyInternalNotesMax)
+      .nullish(),
+    renewalTargetDate: zod.coerce.date().nullish(),
+    renewalTargetAction: zod
+      .string()
+      .max(patchContractBodyRenewalTargetActionMax)
+      .nullish(),
+  })
+  .describe(
+    "Partial update for the operator-controlled fields on a contract.\nEvery property is optional. Sending `null` for a nullable field\nclears it; omitting a field leaves the stored value unchanged.\n",
+  );
+
+export const PatchContractResponse = zod
+  .object({
+    id: zod.string(),
+    orgId: zod.string(),
+    supplierId: zod.string(),
+    supplierName: zod.string().nullish(),
+    categoryId: zod.string().nullish(),
+    categoryName: zod.string().nullish(),
+    contractNumber: zod.string(),
+    title: zod.string(),
+    status: zod.enum(["active", "pending", "expired", "cancelled"]),
+    derivedStatus: zod
+      .enum(["active", "expiring", "expired", "pending", "cancelled"])
+      .describe(
+        "Bucketed view of a contract's expiration state:\n  - `active` — `endDate > now + tenant renewal threshold`\n  - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`\n  - `expired` — `endDate <= now`\nComputed server-side so the renewal calendar \/ list \/ colour\ncoding stays consistent across surfaces.\n",
+      ),
+    daysToExpiry: zod
+      .number()
+      .nullish()
+      .describe(
+        "Whole days from now to `endDate`. Negative if already\nexpired. Null when `endDate` is somehow missing.\n",
+      ),
+    startDate: zod.coerce.date(),
+    endDate: zod.coerce.date(),
+    paymentTermsDays: zod.number().nullish(),
+    referenceIndex: zod.string().nullish(),
+    billingCurrency: zod.string().nullish(),
+    annualBaselineUsd: zod.number().nullish(),
+    owner: zod.string().nullish(),
+    internalNotes: zod.string().nullish(),
+    renewalTargetDate: zod.coerce.date().nullish(),
+    renewalTargetAction: zod.string().nullish(),
+    renewalAlertedThresholds: zod.array(zod.number()),
+    sourceSystem: zod.string().optional(),
+    sourceExternalId: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+  })
+  .and(
+    zod.object({
+      items: zod.array(
+        zod.object({
+          id: zod.string(),
+          sku: zod.string(),
+          itemId: zod.string().nullish(),
+          contractedUnitPriceUsd: zod.number(),
+          tiers: zod
+            .array(
+              zod.object({
+                minQty: zod.number(),
+                unitPriceUsd: zod.number(),
+              }),
+            )
+            .optional(),
+        }),
+      ),
+      linkedOpportunities: zod.array(
+        zod.object({
+          id: zod.string(),
+          leverId: zod.string(),
+          status: zod.string(),
+          title: zod.string(),
+          projectedSavingsUsd: zod.number(),
+          createdAt: zod.coerce.date().optional(),
+        }),
+      ),
+      marketSignals: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            collectorId: zod.string().nullish(),
+            signalType: zod.string(),
+            scopeMaterialCode: zod.string().nullish(),
+            scopeCategoryCode: zod.string().nullish(),
+            scopeCategoryId: zod.string().nullish(),
+            scopeSupplierId: zod.string().nullish(),
+            value: zod.number(),
+            unit: zod.string().nullish(),
+            currency: zod.string().nullish(),
+            confidence: zod.number().nullish(),
+            observedAt: zod.coerce.date(),
+            sourceUrl: zod.string().nullish(),
+            createdAt: zod.coerce.date(),
+          }),
+        )
+        .describe(
+          "Most-recent FX rate observations for the contract's\nbilling currency pair (when set) and category-scoped\nPPI\/economic-index observations. The Command Center\nrenders these in the FX exposure \/ PPI benchmark cards.\n",
+        ),
+      sources: zod
+        .array(
+          zod
+            .object({
+              collectorId: zod.string(),
+              collectorName: zod.string(),
+              sourceUrl: zod.string(),
+              observedAt: zod.coerce.date(),
+              contract: zod.object({
+                postureClass: zod.enum([
+                  "public_api",
+                  "tos_restricted",
+                  "gray_hat",
+                ]),
+                disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+                jurisdiction: zod.string(),
+                retentionDays: zod.number(),
+                tenantOptInDefault: zod.boolean(),
+              }),
+            })
+            .describe(
+              "A single signal-source descriptor backing an insight. Mirrors the\n`SignalSource` shape consumed by the disclosure-tier renderer in\n`@workspace\/intelligence\/tier`. The `contract` block carries the\ncollector's posture + disclosure metadata so the renderer can\ndecide what (if anything) to surface to the user.\n",
+            ),
+        )
+        .describe(
+          "De-duplicated `InsightSource[]` backing the linked\nopportunities. Render through `renderInsight()`.\n",
+        ),
+      auditLog: zod.array(
+        zod.object({
+          id: zod.string(),
+          field: zod.string(),
+          actorEmail: zod.string(),
+          oldValue: zod.unknown().optional(),
+          newValue: zod.unknown().optional(),
+          createdAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  );

@@ -36,6 +36,8 @@ tags:
     description: Ingestion endpoints (CSV / mock-ERP)
   - name: integrations
     description: ERP / source-system connectors (Org-Admin gated)
+  - name: contracts
+    description: Contracts directory + renewal calendar
 
 paths:
   /healthz:
@@ -1406,6 +1408,109 @@ paths:
               schema:
                 $ref: "#/components/schemas/BillingSummary"
 
+  /contracts:
+    get:
+      operationId: listContracts
+      tags: [contracts]
+      summary: List contracts (search + filters + cursor pagination)
+      description: |
+        Returns contracts owned by the active tenant. Each row carries a
+        derived `derivedStatus` field (`active` / `expiring` / `expired`)
+        computed from `endDate` and the tenant's
+        `contractRenewalAlertDays` threshold so the list and renewal
+        calendar can colour-code uniformly without recomputing on the
+        client.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: search
+          description: Substring match on `contractNumber` or `title`.
+          schema: { type: string }
+        - in: query
+          name: status
+          description: |
+            Filter by stored `status` (`active` / `pending` / `expired` /
+            `cancelled`) or by the derived bucket `expiring` (active
+            contracts where days-to-expiry <= the tenant's renewal
+            threshold).
+          schema:
+            type: string
+            enum: [active, pending, expired, cancelled, expiring]
+        - in: query
+          name: supplierId
+          schema: { type: string }
+        - in: query
+          name: categoryId
+          schema: { type: string }
+        - in: query
+          name: currency
+          description: Filter by `billingCurrency` (ISO 4217).
+          schema: { type: string }
+        - in: query
+          name: owner
+          description: Substring match on `owner`.
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Contracts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractListResponse"
+
+  /contracts/{id}:
+    get:
+      operationId: getContract
+      tags: [contracts]
+      summary: Contract detail (header + items + linked opportunities + signals)
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Contract detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchContract
+      tags: [contracts]
+      summary: Inline-edit contract operator fields
+      description: |
+        Update a small set of operator-controlled fields on a contract:
+        `owner`, `internalNotes`, `renewalTargetDate`, and
+        `renewalTargetAction`. Every changed field is recorded in the
+        contract audit log so reviewers can answer "who set this and
+        when?". Returns the refreshed `ContractDetail` shape so the UI
+        re-renders in one round-trip.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchContractRequest"
+      responses:
+        "200":
+          description: Updated contract detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     OrgIdHeader:
@@ -1463,7 +1568,8 @@ components:
 
     Org:
       type: object
-      required: [id, slug, name, createdAt, disclosurePolicy]
+      required:
+        [id, slug, name, createdAt, disclosurePolicy, contractRenewalAlertDays]
       properties:
         id: { type: string }
         slug: { type: string }
@@ -1473,6 +1579,12 @@ components:
           description: Default contingency fee on realized savings
         disclosurePolicy:
           $ref: "#/components/schemas/DisclosurePolicy"
+        contractRenewalAlertDays:
+          type: integer
+          minimum: 1
+          description: |
+            Days-to-expiry threshold used by the renewal-alert worker.
+            Defaults to 90 when not explicitly set in `orgs.settings`.
         createdAt: { type: string, format: date-time }
 
     DisclosurePolicy:
@@ -1501,6 +1613,13 @@ components:
       properties:
         disclosurePolicy:
           $ref: "#/components/schemas/DisclosurePolicy"
+        contractRenewalAlertDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: |
+            Days-to-expiry threshold the daily renewal-alert worker uses
+            to surface a contract as a renewal alert. Default 90.
 
     LeverId:
       type: string
@@ -2113,6 +2232,184 @@ components:
         observedAt: { type: string, format: date-time }
         sourceUrl: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+
+    ContractDerivedStatus:
+      type: string
+      description: |
+        Bucketed view of a contract's expiration state:
+          - `active` — `endDate > now + tenant renewal threshold`
+          - `expiring` — `0 < daysToExpiry <= tenant renewal threshold`
+          - `expired` — `endDate <= now`
+        Computed server-side so the renewal calendar / list / colour
+        coding stays consistent across surfaces.
+      enum: [active, expiring, expired, pending, cancelled]
+
+    Contract:
+      type: object
+      required:
+        [
+          id,
+          orgId,
+          supplierId,
+          contractNumber,
+          title,
+          status,
+          derivedStatus,
+          startDate,
+          endDate,
+          createdAt,
+          renewalAlertedThresholds,
+        ]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        supplierId: { type: string }
+        supplierName: { type: string, nullable: true }
+        categoryId: { type: string, nullable: true }
+        categoryName: { type: string, nullable: true }
+        contractNumber: { type: string }
+        title: { type: string }
+        status:
+          type: string
+          enum: [active, pending, expired, cancelled]
+        derivedStatus:
+          $ref: "#/components/schemas/ContractDerivedStatus"
+        daysToExpiry:
+          type: integer
+          nullable: true
+          description: |
+            Whole days from now to `endDate`. Negative if already
+            expired. Null when `endDate` is somehow missing.
+        startDate: { type: string, format: date-time }
+        endDate: { type: string, format: date-time }
+        paymentTermsDays: { type: integer, nullable: true }
+        referenceIndex: { type: string, nullable: true }
+        billingCurrency: { type: string, nullable: true }
+        annualBaselineUsd: { type: number, nullable: true }
+        owner: { type: string, nullable: true }
+        internalNotes: { type: string, nullable: true }
+        renewalTargetDate:
+          type: string
+          format: date-time
+          nullable: true
+        renewalTargetAction: { type: string, nullable: true }
+        renewalAlertedThresholds:
+          type: array
+          items: { type: integer }
+        sourceSystem: { type: string }
+        sourceExternalId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    ContractListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Contract"
+        nextCursor:
+          type: string
+          nullable: true
+
+    ContractItem:
+      type: object
+      required: [id, sku, contractedUnitPriceUsd]
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        itemId: { type: string, nullable: true }
+        contractedUnitPriceUsd: { type: number }
+        tiers:
+          type: array
+          items:
+            type: object
+            required: [minQty, unitPriceUsd]
+            properties:
+              minQty: { type: number }
+              unitPriceUsd: { type: number }
+
+    ContractLinkedOpportunity:
+      type: object
+      required: [id, leverId, status, title, projectedSavingsUsd]
+      properties:
+        id: { type: string }
+        leverId: { type: string }
+        status: { type: string }
+        title: { type: string }
+        projectedSavingsUsd: { type: number }
+        createdAt: { type: string, format: date-time }
+
+    ContractAuditEntry:
+      type: object
+      required: [id, field, actorEmail, createdAt]
+      properties:
+        id: { type: string }
+        field: { type: string }
+        actorEmail: { type: string }
+        oldValue: {}
+        newValue: {}
+        createdAt: { type: string, format: date-time }
+
+    ContractDetail:
+      allOf:
+        - $ref: "#/components/schemas/Contract"
+        - type: object
+          required:
+            [items, linkedOpportunities, marketSignals, sources, auditLog]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ContractItem"
+            linkedOpportunities:
+              type: array
+              items:
+                $ref: "#/components/schemas/ContractLinkedOpportunity"
+            marketSignals:
+              type: array
+              description: |
+                Most-recent FX rate observations for the contract's
+                billing currency pair (when set) and category-scoped
+                PPI/economic-index observations. The Command Center
+                renders these in the FX exposure / PPI benchmark cards.
+              items:
+                $ref: "#/components/schemas/MarketSignal"
+            sources:
+              type: array
+              description: |
+                De-duplicated `InsightSource[]` backing the linked
+                opportunities. Render through `renderInsight()`.
+              items:
+                $ref: "#/components/schemas/InsightSource"
+            auditLog:
+              type: array
+              items:
+                $ref: "#/components/schemas/ContractAuditEntry"
+
+    PatchContractRequest:
+      type: object
+      description: |
+        Partial update for the operator-controlled fields on a contract.
+        Every property is optional. Sending `null` for a nullable field
+        clears it; omitting a field leaves the stored value unchanged.
+      properties:
+        owner:
+          type: string
+          nullable: true
+          maxLength: 200
+        internalNotes:
+          type: string
+          nullable: true
+          maxLength: 5000
+        renewalTargetDate:
+          type: string
+          format: date-time
+          nullable: true
+        renewalTargetAction:
+          type: string
+          nullable: true
+          maxLength: 1000
 
     Job:
       type: object
