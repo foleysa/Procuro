@@ -42,7 +42,6 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -55,23 +54,30 @@ process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 
 import {
   db,
-  orgsTable,
-  suppliersTable,
-  purchaseOrdersTable,
-  poLinesTable,
   invoicesTable,
-  categoriesTable,
+  poLinesTable,
   pool,
 } from "@workspace/db";
 import { and, eq, like } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 import app from "../src/app";
 import { parseTerminalNdjsonEvent } from "./helpers/ndjson";
+import {
+  FIXTURE_SOURCE,
+  deleteFixtureRowsByPrefix,
+  loadSupplierIdMapByPrefix,
+  openAsBlob,
+  pickOrgId,
+  seedCategories,
+  seedPurchaseOrders,
+  seedSuppliers,
+  startServer,
+  writeInvoicesCsvSync,
+  writePoLinesCsvSync,
+} from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
 const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
 const TARGET_BYTES = 10 * 1024 * 1024; // 10 MB minimum
-const SOURCE = "csv";
 
 // Number of parent rows pre-seeded for child-CSV lookups. Small enough that
 // the per-batch `IN (...)` lookup fits in a single grouped query, large
@@ -79,293 +85,6 @@ const SOURCE = "csv";
 const PARENT_SUPPLIERS = 50;
 const PARENT_POS = 50;
 const PARENT_CATEGORIES = 5;
-
-function newId(prefix: string): string {
-  return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
-}
-
-/** Boot the express app on an ephemeral port; returns base URL + close fn. */
-async function startServer(): Promise<{
-  baseUrl: string;
-  close: () => Promise<void>;
-}> {
-  const server = http.createServer(app);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const addr = server.address();
-  if (!addr || typeof addr === "string") throw new Error("Failed to bind server");
-  return {
-    baseUrl: `http://127.0.0.1:${addr.port}`,
-    close: () => new Promise<void>((res) => server.close(() => res())),
-  };
-}
-
-/** Pick the first org id; the streaming endpoint requires a valid tenant. */
-async function pickOrgId(): Promise<string> {
-  const [row] = await db.select({ id: orgsTable.id }).from(orgsTable).limit(1);
-  if (!row) {
-    throw new Error(
-      "No org rows found. Seed the database (pnpm --filter @workspace/scripts run seed) before running this test.",
-    );
-  }
-  return row.id;
-}
-
-/**
- * Node 20+ ships `openAsBlob` on `node:fs`. Wrap it so the test reads the
- * file lazily via an underlying file descriptor instead of buffering its
- * entire contents into memory before the upload starts.
- */
-async function openAsBlob(filePath: string, type: string): Promise<Blob> {
-  const fsmod = await import("node:fs");
-  const fn = (fsmod as unknown as {
-    openAsBlob?: (p: string, opts?: { type?: string }) => Promise<Blob>;
-  }).openAsBlob;
-  if (typeof fn !== "function") {
-    throw new Error(
-      "node:fs.openAsBlob is not available; node >= 20 is required.",
-    );
-  }
-  return fn(filePath, { type });
-}
-
-/**
- * Seed N supplier rows so child entities (invoices, po_lines, purchase
- * orders, payments, shipments) have something to look up. Returns the
- * generated externalIds in insertion order.
- */
-async function seedSuppliers(orgId: string, count: number): Promise<string[]> {
-  const externalIds: string[] = [];
-  const rows: (typeof suppliersTable.$inferInsert)[] = [];
-  for (let i = 0; i < count; i++) {
-    const ext = `${EXTERNAL_ID_PREFIX}sup-${i}`;
-    externalIds.push(ext);
-    rows.push({
-      id: newId("sup"),
-      orgId,
-      name: `Seeded Test Supplier ${i}`,
-      normalizedName: `seeded test supplier ${i}`,
-      sourceSystem: SOURCE,
-      sourceExternalId: ext,
-    });
-  }
-  await db.insert(suppliersTable).values(rows);
-  return externalIds;
-}
-
-/**
- * Map { externalId -> internal id } for every supplier seeded by THIS test
- * run. Scoped via the unique `EXTERNAL_ID_PREFIX` so concurrent runs on the
- * same DB do not interfere.
- */
-async function loadThisRunsSupplierIdMap(
-  orgId: string,
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const rows = await db
-    .select({
-      id: suppliersTable.id,
-      ext: suppliersTable.sourceExternalId,
-    })
-    .from(suppliersTable)
-    .where(
-      and(
-        eq(suppliersTable.orgId, orgId),
-        eq(suppliersTable.sourceSystem, SOURCE),
-        like(suppliersTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}sup-%`),
-      ),
-    );
-  for (const r of rows) if (r.ext) map.set(r.ext, r.id);
-  return map;
-}
-
-/** Seed N PO rows linked round-robin to the seeded suppliers. */
-async function seedPurchaseOrders(
-  orgId: string,
-  count: number,
-  supplierIds: string[],
-): Promise<string[]> {
-  if (supplierIds.length === 0) {
-    throw new Error("seedPurchaseOrders requires at least one supplier");
-  }
-  const externalIds: string[] = [];
-  const rows: (typeof purchaseOrdersTable.$inferInsert)[] = [];
-  const today = new Date();
-  for (let i = 0; i < count; i++) {
-    const ext = `${EXTERNAL_ID_PREFIX}po-${i}`;
-    externalIds.push(ext);
-    rows.push({
-      id: newId("po"),
-      orgId,
-      poNumber: `${EXTERNAL_ID_PREFIX}PO-${i}`,
-      supplierId: supplierIds[i % supplierIds.length]!,
-      orderDate: today,
-      sourceSystem: SOURCE,
-      sourceExternalId: ext,
-    });
-  }
-  await db.insert(purchaseOrdersTable).values(rows);
-  return externalIds;
-}
-
-/** Seed N category rows whose `code` matches `${prefix}cat-${i}`. */
-async function seedCategories(
-  orgId: string,
-  count: number,
-): Promise<string[]> {
-  const codes: string[] = [];
-  const rows: (typeof categoriesTable.$inferInsert)[] = [];
-  for (let i = 0; i < count; i++) {
-    const code = `${EXTERNAL_ID_PREFIX}cat-${i}`;
-    codes.push(code);
-    rows.push({
-      id: newId("cat"),
-      orgId,
-      code,
-      name: `Seeded Test Category ${i}`,
-      class: "indirect",
-      sourceSystem: SOURCE,
-      sourceExternalId: code,
-    });
-  }
-  await db.insert(categoriesTable).values(rows);
-  return codes;
-}
-
-/**
- * Generate an `invoices` CSV row-by-row to disk. Each row references one of
- * the seeded supplier external IDs in round-robin order so the per-batch
- * lookup against `suppliers` resolves successfully.
- */
-function writeInvoicesCsvSync(
-  filePath: string,
-  minBytes: number,
-  supplierExternalIds: string[],
-): number {
-  if (supplierExternalIds.length === 0) {
-    throw new Error("writeInvoicesCsvSync requires at least one supplier extId");
-  }
-  const fd = fs.openSync(filePath, "w");
-  try {
-    const header =
-      "externalId,invoiceNumber,supplierExternalId,invoiceDate,amountUsd,status,dedupKey\n";
-    fs.writeSync(fd, header);
-    let bytes = header.length;
-    let rows = 0;
-    const pad = "x".repeat(40); // pad dedupKey to grow row size realistically
-    while (bytes < minBytes) {
-      const ext = `${EXTERNAL_ID_PREFIX}inv-${rows}`;
-      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
-      const invNo = `INV-${rows}`;
-      const date = "2025-01-15";
-      const amt = (100 + (rows % 10000)).toFixed(2);
-      const dedup = `${ext}|${supExt}|${pad}`;
-      const line = `${ext},${invNo},${supExt},${date},${amt},received,${dedup}\n`;
-      fs.writeSync(fd, line);
-      bytes += line.length;
-      rows++;
-    }
-    return rows;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-/**
- * Generate a `po_lines` CSV row-by-row to disk. Each row references one of
- * the seeded PO external IDs and one of the seeded category codes in
- * round-robin order — this exercises BOTH grouped lookups (POs and
- * categories) in `flushBatch`.
- */
-function writePoLinesCsvSync(
-  filePath: string,
-  minBytes: number,
-  poExternalIds: string[],
-  categoryCodes: string[],
-): number {
-  if (poExternalIds.length === 0) {
-    throw new Error("writePoLinesCsvSync requires at least one PO extId");
-  }
-  if (categoryCodes.length === 0) {
-    throw new Error("writePoLinesCsvSync requires at least one category code");
-  }
-  const fd = fs.openSync(filePath, "w");
-  try {
-    const header =
-      "externalId,poExternalId,lineNumber,sku,description,categoryExternalId,spendClass,qty,uom,unitPriceUsd,orderDate\n";
-    fs.writeSync(fd, header);
-    let bytes = header.length;
-    let rows = 0;
-    const descPad = "y".repeat(64);
-    while (bytes < minBytes) {
-      const ext = `${EXTERNAL_ID_PREFIX}pol-${rows}`;
-      const poExt = poExternalIds[rows % poExternalIds.length]!;
-      const cat = categoryCodes[rows % categoryCodes.length]!;
-      const sku = `SKU-${rows}`;
-      const desc = `Bulk Test PO Line ${rows} ${descPad}`;
-      const line = `${ext},${poExt},${(rows % 1000) + 1},${sku},"${desc}",${cat},indirect,${(1 + (rows % 50)).toFixed(2)},EA,${(5 + (rows % 100)).toFixed(2)},2025-01-15\n`;
-      fs.writeSync(fd, line);
-      bytes += line.length;
-      rows++;
-    }
-    return rows;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-/**
- * Delete everything this test run inserted, in foreign-key-safe order.
- * Children first (po_lines, invoices), then POs, then suppliers + categories.
- * Each delete is scoped to the unique `EXTERNAL_ID_PREFIX` so no other
- * concurrent runs are affected.
- */
-async function deleteAllTestRows(): Promise<void> {
-  // Children first.
-  await db
-    .delete(poLinesTable)
-    .where(
-      and(
-        eq(poLinesTable.sourceSystem, SOURCE),
-        like(poLinesTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}%`),
-      ),
-    );
-  await db
-    .delete(invoicesTable)
-    .where(
-      and(
-        eq(invoicesTable.sourceSystem, SOURCE),
-        like(invoicesTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}%`),
-      ),
-    );
-  // Parents: POs (FK restrict on suppliers), then suppliers + categories.
-  await db
-    .delete(purchaseOrdersTable)
-    .where(
-      and(
-        eq(purchaseOrdersTable.sourceSystem, SOURCE),
-        like(purchaseOrdersTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}%`),
-      ),
-    );
-  await db
-    .delete(suppliersTable)
-    .where(
-      and(
-        eq(suppliersTable.sourceSystem, SOURCE),
-        like(suppliersTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}%`),
-      ),
-    );
-  await db
-    .delete(categoriesTable)
-    .where(
-      and(
-        eq(categoriesTable.sourceSystem, SOURCE),
-        like(categoriesTable.sourceExternalId, `${EXTERNAL_ID_PREFIX}%`),
-      ),
-    );
-}
 
 /** Upload a CSV via the multipart streaming endpoint. */
 async function uploadCsv(args: {
@@ -398,7 +117,7 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
 
   t.after(async () => {
     try {
-      await deleteAllTestRows();
+      await deleteFixtureRowsByPrefix(EXTERNAL_ID_PREFIX);
     } catch (err) {
       console.error("[cleanup] failed to delete test rows:", err);
     }
@@ -416,13 +135,13 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
   });
 
   // Shared setup once.
-  server = await startServer();
+  server = await startServer(app);
   const orgId = await pickOrgId();
 
   // Defensive cleanup of any leftover rows from a prior aborted run with the
   // same prefix (the prefix is timestamped + pid-suffixed so this is
   // normally a no-op).
-  await deleteAllTestRows();
+  await deleteFixtureRowsByPrefix(EXTERNAL_ID_PREFIX);
 
   /**
    * One row per CSV-streaming entity covered by this test. Each variant:
@@ -455,6 +174,7 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
         const supplierExternalIds = await seedSuppliers(
           orgId,
           PARENT_SUPPLIERS,
+          EXTERNAL_ID_PREFIX,
         );
         return { writeArgs: { supplierExternalIds } };
       },
@@ -462,7 +182,11 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
         const { supplierExternalIds } = args as {
           supplierExternalIds: string[];
         };
-        return writeInvoicesCsvSync(filePath, TARGET_BYTES, supplierExternalIds);
+        return writeInvoicesCsvSync(filePath, {
+          supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          minBytes: TARGET_BYTES,
+        });
       },
     },
     {
@@ -473,10 +197,16 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
         // Reuse supplier seeds from earlier variants if present; otherwise
         // create them now. Either way we need the internal supplier ids to
         // build POs.
-        let supplierIdMap = await loadThisRunsSupplierIdMap(orgId);
+        let supplierIdMap = await loadSupplierIdMapByPrefix(
+          orgId,
+          EXTERNAL_ID_PREFIX,
+        );
         if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS);
-          supplierIdMap = await loadThisRunsSupplierIdMap(orgId);
+          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+          supplierIdMap = await loadSupplierIdMapByPrefix(
+            orgId,
+            EXTERNAL_ID_PREFIX,
+          );
         }
         const supplierIds = Array.from(supplierIdMap.values());
         assert.ok(
@@ -487,8 +217,13 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
           orgId,
           PARENT_POS,
           supplierIds,
+          EXTERNAL_ID_PREFIX,
         );
-        const categoryCodes = await seedCategories(orgId, PARENT_CATEGORIES);
+        const categoryCodes = await seedCategories(
+          orgId,
+          PARENT_CATEGORIES,
+          EXTERNAL_ID_PREFIX,
+        );
         return { writeArgs: { poExternalIds, categoryCodes } };
       },
       writeCsv: (filePath, args) => {
@@ -496,12 +231,12 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
           poExternalIds: string[];
           categoryCodes: string[];
         };
-        return writePoLinesCsvSync(
-          filePath,
-          TARGET_BYTES,
+        return writePoLinesCsvSync(filePath, {
           poExternalIds,
           categoryCodes,
-        );
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          minBytes: TARGET_BYTES,
+        });
       },
     },
   ];
@@ -561,7 +296,7 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
         .from(variant.childTable)
         .where(
           and(
-            eq(variant.childTable.sourceSystem, SOURCE),
+            eq(variant.childTable.sourceSystem, FIXTURE_SOURCE),
             like(
               variant.childTable.sourceExternalId,
               `${variant.childExtIdPrefix}%`,
