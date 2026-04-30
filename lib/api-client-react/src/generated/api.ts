@@ -70,6 +70,7 @@ import type {
   Org,
   PatchCollectorPostureRequest,
   PatchCollectorRequest,
+  PatchMeSettingsRequest,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
@@ -292,6 +293,97 @@ export function useGetMe<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Update fields stored in the active tenant's `orgs.settings` JSONB
+column. Currently exposes the disclosure policy; other keys in
+`settings` are preserved untouched. Returns the same shape as
+`GET /me` so clients can refresh their cached `MeResponse`.
+
+ * @summary Update tenant-wide preferences
+ */
+export const getPatchMeSettingsUrl = () => {
+  return `/api/me/settings`;
+};
+
+export const patchMeSettings = async (
+  patchMeSettingsRequest: PatchMeSettingsRequest,
+  options?: RequestInit,
+): Promise<MeResponse> => {
+  return customFetch<MeResponse>(getPatchMeSettingsUrl(), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchMeSettingsRequest),
+  });
+};
+
+export const getPatchMeSettingsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchMeSettings>>,
+    TError,
+    { data: BodyType<PatchMeSettingsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchMeSettings>>,
+  TError,
+  { data: BodyType<PatchMeSettingsRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchMeSettings"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchMeSettings>>,
+    { data: BodyType<PatchMeSettingsRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return patchMeSettings(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchMeSettingsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchMeSettings>>
+>;
+export type PatchMeSettingsMutationBody = BodyType<PatchMeSettingsRequest>;
+export type PatchMeSettingsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update tenant-wide preferences
+ */
+export const usePatchMeSettings = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchMeSettings>>,
+    TError,
+    { data: BodyType<PatchMeSettingsRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchMeSettings>>,
+  TError,
+  { data: BodyType<PatchMeSettingsRequest> },
+  TContext
+> => {
+  return useMutation(getPatchMeSettingsMutationOptions(options));
+};
 
 /**
  * @summary Spend overview (last 12 months)

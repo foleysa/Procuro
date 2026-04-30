@@ -60,6 +60,15 @@ export interface MeResponse {
   actorEmail?: string;
 }
 
+/**
+ * Partial update for `orgs.settings`. Every property is optional;
+unspecified keys are left untouched on the stored JSONB.
+
+ */
+export interface PatchMeSettingsRequest {
+  disclosurePolicy?: DisclosurePolicy;
+}
+
 export type LeverId = (typeof LeverId)[keyof typeof LeverId];
 
 export const LeverId = {

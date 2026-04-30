@@ -79,6 +79,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/MeResponse"
 
+  /me/settings:
+    patch:
+      operationId: patchMeSettings
+      tags: [orgs]
+      summary: Update tenant-wide preferences
+      description: |
+        Update fields stored in the active tenant's `orgs.settings` JSONB
+        column. Currently exposes the disclosure policy; other keys in
+        `settings` are preserved untouched. Returns the same shape as
+        `GET /me` so clients can refresh their cached `MeResponse`.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchMeSettingsRequest"
+      responses:
+        "200":
+          description: Updated tenant context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+
   /spend/overview:
     get:
       operationId: getSpendOverview
@@ -1257,6 +1283,15 @@ components:
         org:
           $ref: "#/components/schemas/Org"
         actorEmail: { type: string }
+
+    PatchMeSettingsRequest:
+      type: object
+      description: |
+        Partial update for `orgs.settings`. Every property is optional;
+        unspecified keys are left untouched on the stored JSONB.
+      properties:
+        disclosurePolicy:
+          $ref: "#/components/schemas/DisclosurePolicy"
 
     LeverId:
       type: string

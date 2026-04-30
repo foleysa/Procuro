@@ -73,6 +73,55 @@ export const GetMeResponse = zod.object({
 });
 
 /**
+ * Update fields stored in the active tenant's `orgs.settings` JSONB
+column. Currently exposes the disclosure policy; other keys in
+`settings` are preserved untouched. Returns the same shape as
+`GET /me` so clients can refresh their cached `MeResponse`.
+
+ * @summary Update tenant-wide preferences
+ */
+export const PatchMeSettingsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchMeSettingsBody = zod
+  .object({
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .optional()
+      .describe(
+        "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+  })
+  .describe(
+    "Partial update for `orgs.settings`. Every property is optional;\nunspecified keys are left untouched on the stored JSONB.\n",
+  );
+
+export const PatchMeSettingsResponse = zod.object({
+  org: zod.object({
+    id: zod.string(),
+    slug: zod.string(),
+    name: zod.string(),
+    successFeePct: zod
+      .number()
+      .optional()
+      .describe("Default contingency fee on realized savings"),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .describe(
+        "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+    createdAt: zod.coerce.date(),
+  }),
+  actorEmail: zod.string().optional(),
+});
+
+/**
  * @summary Spend overview (last 12 months)
  */
 export const GetSpendOverviewHeader = zod.object({

@@ -128,6 +128,7 @@ export * from "./orgIdHeaderParameter";
 export * from "./patchCollectorPostureRequest";
 export * from "./patchCollectorRequest";
 export * from "./patchCollectorRequestStatus";
+export * from "./patchMeSettingsRequest";
 export * from "./priorDelta";
 export * from "./realizeOpportunityRequest";
 export * from "./registerCollectorRequest";

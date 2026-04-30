@@ -17,6 +17,7 @@ import Collectors from "./pages/collectors";
 import DataSources from "./pages/data-sources";
 import System from "./pages/system";
 import Ingest from "./pages/ingest";
+import Settings from "./pages/settings";
 
 function Router() {
   return (
@@ -37,6 +38,7 @@ function Router() {
             <Route path="/data-sources" component={DataSources} />
             <Route path="/system" component={System} />
             <Route path="/ingest" component={Ingest} />
+            <Route path="/settings" component={Settings} />
             <Route component={NotFound} />
           </Switch>
         </Layout>
