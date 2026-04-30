@@ -16,6 +16,13 @@ export const orgsTable = pgTable(
     successFeePct: numeric("success_fee_pct", { precision: 5, scale: 2 })
       .notNull()
       .default("20.00"),
+    /**
+     * ISO 4217 reporting currency for the tenant. All `*_usd` columns elsewhere
+     * are stored as USD-normalized; this column tells downstream analyzers
+     * (e.g. supplier FX-exposure) which currency they should compare against
+     * when checking whether a supplier's billing currency has moved.
+     */
+    baseCurrency: text("base_currency").notNull().default("USD"),
     settings: jsonb("settings")
       .$type<Record<string, unknown>>()
       .notNull()

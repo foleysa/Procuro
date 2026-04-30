@@ -63,6 +63,7 @@ export const LEVER_DESCRIPTIONS: Record<string, string> = {
   index_based_pricing: "Index-Based Pricing",
   demand_aggregation: "Demand Aggregation",
   raw_material_hedging: "Raw Material Hedging",
+  supplier_fx_exposure: "Supplier FX Exposure",
   dual_sourcing: "Dual Sourcing",
   services_rate_card_benchmark: "Services Rate-Card Benchmark",
   sow_to_msa_conversion: "SOW → MSA Conversion",

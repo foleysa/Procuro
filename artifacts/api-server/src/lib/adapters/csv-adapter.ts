@@ -72,6 +72,8 @@ export interface CsvPayload {
     externalId: string;
     name: string;
     countryCode?: string;
+    /** ISO 4217 currency this supplier bills in (e.g. "EUR", "GBP"). */
+    billingCurrency?: string;
     paymentTermsDays?: string;
     isStrategic?: boolean;
     isPreferred?: boolean;
@@ -102,6 +104,8 @@ export interface CsvPayload {
     endDate: string;
     paymentTermsDays?: number;
     referenceIndex?: string;
+    /** ISO 4217 currency this contract is denominated in. */
+    billingCurrency?: string;
     annualBaselineUsd?: number;
     items: Array<{
       sku: string;
@@ -214,6 +218,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
         name: s.name,
         normalizedName: normalizeName(s.name),
         countryCode: s.countryCode ?? null,
+        billingCurrency: s.billingCurrency ?? null,
         paymentTermsDays: s.paymentTermsDays ?? null,
         isStrategic: s.isStrategic ?? false,
         isPreferred: s.isPreferred ?? false,
@@ -235,6 +240,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
               name: sql`excluded.name`,
               normalizedName: sql`excluded.normalized_name`,
               countryCode: sql`excluded.country_code`,
+              billingCurrency: sql`excluded.billing_currency`,
               isStrategic: sql`excluded.is_strategic`,
               isPreferred: sql`excluded.is_preferred`,
               tags: sql`excluded.tags`,
@@ -315,6 +321,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
           endDate: new Date(c.endDate),
           paymentTermsDays: c.paymentTermsDays ?? null,
           referenceIndex: c.referenceIndex ?? null,
+          billingCurrency: c.billingCurrency ?? null,
           annualBaselineUsd: c.annualBaselineUsd?.toFixed(2) ?? "0",
           sourceSystem: SOURCE,
           sourceExternalId: c.externalId,
@@ -332,6 +339,7 @@ export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
             set: {
               title: sql`excluded.title`,
               endDate: sql`excluded.end_date`,
+              billingCurrency: sql`excluded.billing_currency`,
               sourceSyncedAt: sql`now()`,
             },
           })
@@ -702,6 +710,7 @@ async function flushBatch(
         name: r["name"]!,
         normalizedName: normalizeName(r["name"]!),
         countryCode: r["countryCode"] ?? null,
+        billingCurrency: r["billingCurrency"] ?? null,
         paymentTermsDays: r["paymentTermsDays"] ?? null,
         isStrategic: r["isStrategic"] === "true",
         isPreferred: r["isPreferred"] === "true",
@@ -722,6 +731,7 @@ async function flushBatch(
             name: sql`excluded.name`,
             normalizedName: sql`excluded.normalized_name`,
             countryCode: sql`excluded.country_code`,
+            billingCurrency: sql`excluded.billing_currency`,
             isStrategic: sql`excluded.is_strategic`,
             isPreferred: sql`excluded.is_preferred`,
             tags: sql`excluded.tags`,

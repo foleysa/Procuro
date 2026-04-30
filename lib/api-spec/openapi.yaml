@@ -904,6 +904,7 @@ components:
         - tail_spend_rationalization
         - supplier_consolidation
         - contract_renegotiation_trigger
+        - supplier_fx_exposure
 
     RejectionReasonCode:
       type: string

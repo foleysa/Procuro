@@ -180,6 +180,7 @@ export const ListOpportunitiesQueryParams = zod.object({
       "tail_spend_rationalization",
       "supplier_consolidation",
       "contract_renegotiation_trigger",
+      "supplier_fx_exposure",
     ])
     .optional(),
   cycleId: zod.coerce.string().optional(),
@@ -216,6 +217,7 @@ export const ListOpportunitiesResponse = zod.object({
         "tail_spend_rationalization",
         "supplier_consolidation",
         "contract_renegotiation_trigger",
+        "supplier_fx_exposure",
       ]),
       tier: zod.number(),
       status: zod.enum([
@@ -291,6 +293,7 @@ export const GetOpportunityResponse = zod
       "tail_spend_rationalization",
       "supplier_consolidation",
       "contract_renegotiation_trigger",
+      "supplier_fx_exposure",
     ]),
     tier: zod.number(),
     status: zod.enum([
@@ -397,6 +400,7 @@ export const ApproveOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "supplier_fx_exposure",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -482,6 +486,7 @@ export const RejectOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "supplier_fx_exposure",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -553,6 +558,7 @@ export const ExecuteOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "supplier_fx_exposure",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -629,6 +635,7 @@ export const RealizeOpportunityResponse = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "supplier_fx_exposure",
   ]),
   tier: zod.number(),
   status: zod.enum([
@@ -776,6 +783,7 @@ export const RunNextCycleResponse = zod.object({
           "tail_spend_rationalization",
           "supplier_consolidation",
           "contract_renegotiation_trigger",
+          "supplier_fx_exposure",
         ]),
         prevProjectionMultiplier: zod.number(),
         newProjectionMultiplier: zod.number(),
@@ -813,6 +821,7 @@ export const ListLearnedPriorsResponseItem = zod.object({
     "tail_spend_rationalization",
     "supplier_consolidation",
     "contract_renegotiation_trigger",
+    "supplier_fx_exposure",
   ]),
   projectionMultiplier: zod.number(),
   confidenceWeight: zod.number(),
@@ -1421,6 +1430,7 @@ export const GetBillingSummaryResponse = zod.object({
         "tail_spend_rationalization",
         "supplier_consolidation",
         "contract_renegotiation_trigger",
+        "supplier_fx_exposure",
       ]),
       realizedUsd: zod.number(),
       projectedUsd: zod.number().optional(),

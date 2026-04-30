@@ -41,6 +41,12 @@ export const contractsTable = pgTable(
     endDate: timestamp("end_date", { withTimezone: true }).notNull(),
     paymentTermsDays: integer("payment_terms_days"),
     referenceIndex: text("reference_index"),
+    /**
+     * ISO 4217 currency this contract is denominated in. Null means "inherits
+     * supplier or org base currency". Used by the FX-exposure analyzer to
+     * scope alerts to the specific contracts a currency move impacts.
+     */
+    billingCurrency: text("billing_currency"),
     annualBaselineUsd: numeric("annual_baseline_usd", {
       precision: 16,
       scale: 2,

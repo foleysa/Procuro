@@ -19,6 +19,13 @@ export const suppliersTable = pgTable(
     name: text("name").notNull(),
     normalizedName: text("normalized_name").notNull(),
     countryCode: text("country_code"),
+    /**
+     * ISO 4217 currency code in which this supplier bills the tenant. Null
+     * means "unknown / inherits the org base currency". When set and different
+     * from the org base currency, the supplier is exposed to FX risk on the
+     * USD/<billingCurrency> (or base/<billingCurrency>) pair.
+     */
+    billingCurrency: text("billing_currency"),
     paymentTermsDays: text("payment_terms_days"),
     isStrategic: boolean("is_strategic").notNull().default(false),
     isPreferred: boolean("is_preferred").notNull().default(false),

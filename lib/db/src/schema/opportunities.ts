@@ -35,6 +35,7 @@ export const leverIds = [
   "index_based_pricing",
   "demand_aggregation",
   "raw_material_hedging",
+  "supplier_fx_exposure",
   "dual_sourcing",
   // Tier 5
   "services_rate_card_benchmark",
@@ -65,6 +66,7 @@ export const tierLabels: Record<LeverId, 1 | 2 | 3 | 4 | 5> = {
   index_based_pricing: 4,
   demand_aggregation: 4,
   raw_material_hedging: 4,
+  supplier_fx_exposure: 4,
   dual_sourcing: 4,
   services_rate_card_benchmark: 5,
   sow_to_msa_conversion: 5,
