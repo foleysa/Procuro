@@ -68,6 +68,7 @@ React + Vite + wouter + shadcn. Bootstrap auto‑selects SCIS org on first load;
 - `/results` — **Results & Billing** (realized $, contingency owed, by‑lever breakdown)
 - `/playbook` — **Procurement Playbook** (Tier 1–4 lever ladder w/ shipped vs starter vs planned)
 - `/collectors` — **Collector Registry** (intelligence sources + recent market signals + run‑now)
+- `/ingest` — **Data Ingest** (CSV upload UI for all 8 spend datasets; client‑side header validation, groups POs/contracts by externalId, calls `useIngestCsvBatch`)
 - `/landing` — RaaS positioning hero (linked from header)
 
 ### Seed (`scripts/src/seed.ts`)

@@ -9,6 +9,7 @@ import {
   Radar,
   Server,
   Workflow,
+  Upload,
 } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/playbook", label: "Playbook", icon: BookOpen },
     { href: "/collectors", label: "Collectors", icon: Radar },
     { href: "/system", label: "System / Jobs", icon: Server },
+    { href: "/ingest", label: "Data Ingest", icon: Upload },
   ];
 
   return (

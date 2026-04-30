@@ -14,6 +14,7 @@ import Results from "./pages/results";
 import Playbook from "./pages/playbook";
 import Collectors from "./pages/collectors";
 import System from "./pages/system";
+import Ingest from "./pages/ingest";
 
 function Router() {
   return (
@@ -31,6 +32,7 @@ function Router() {
             <Route path="/playbook" component={Playbook} />
             <Route path="/collectors" component={Collectors} />
             <Route path="/system" component={System} />
+            <Route path="/ingest" component={Ingest} />
             <Route component={NotFound} />
           </Switch>
         </Layout>
