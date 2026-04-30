@@ -10,7 +10,12 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const poolMaxRaw = process.env.PG_POOL_MAX;
+const poolMax = poolMaxRaw ? Math.max(1, Number.parseInt(poolMaxRaw, 10)) : 10;
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 10,
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

@@ -56,6 +56,10 @@ export const purchaseOrdersTable = pgTable(
   (t) => [
     index("po_org_idx").on(t.orgId),
     index("po_supplier_idx").on(t.orgId, t.supplierId),
+    // Single-column FK indexes so onDelete enforcement on the referenced
+    // parent row uses an index lookup instead of a sequential scan.
+    index("po_supplier_fk_idx").on(t.supplierId),
+    index("po_contract_fk_idx").on(t.contractId),
     index("po_order_date_idx").on(t.orgId, t.orderDate),
     index("po_business_unit_idx").on(t.orgId, t.businessUnit),
     uniqueIndex("po_source_uq").on(
@@ -104,8 +108,10 @@ export const poLinesTable = pgTable(
     index("po_lines_org_idx").on(t.orgId),
     index("po_lines_po_idx").on(t.poId),
     index("po_lines_item_idx").on(t.orgId, t.itemId),
+    index("po_lines_item_fk_idx").on(t.itemId),
     index("po_lines_sku_idx").on(t.orgId, t.sku),
     index("po_lines_category_idx").on(t.orgId, t.categoryId),
+    index("po_lines_category_fk_idx").on(t.categoryId),
     index("po_lines_spend_class_idx").on(t.orgId, t.spendClass),
     index("po_lines_order_date_idx").on(t.orgId, t.orderDate),
     uniqueIndex("po_lines_source_uq").on(

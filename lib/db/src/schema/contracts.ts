@@ -98,7 +98,9 @@ export const contractsTable = pgTable(
   (t) => [
     index("contracts_org_idx").on(t.orgId),
     index("contracts_supplier_idx").on(t.orgId, t.supplierId),
+    index("contracts_supplier_fk_idx").on(t.supplierId),
     index("contracts_category_idx").on(t.orgId, t.categoryId),
+    index("contracts_category_fk_idx").on(t.categoryId),
     index("contracts_end_date_idx").on(t.orgId, t.endDate),
     uniqueIndex("contracts_source_uq").on(
       t.orgId,

@@ -157,7 +157,9 @@ export const opportunitiesTable = pgTable(
     index("opps_lever_idx").on(t.orgId, t.leverId),
     index("opps_status_idx").on(t.orgId, t.status),
     index("opps_supplier_idx").on(t.orgId, t.supplierId),
+    index("opps_supplier_fk_idx").on(t.supplierId),
     index("opps_category_idx").on(t.orgId, t.categoryId),
+    index("opps_category_fk_idx").on(t.categoryId),
   ],
 );
 

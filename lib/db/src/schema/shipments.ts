@@ -55,6 +55,8 @@ export const shipmentsTable = pgTable(
     index("shipments_org_idx").on(t.orgId),
     index("shipments_lane_idx").on(t.orgId, t.laneKey),
     index("shipments_carrier_idx").on(t.orgId, t.carrier),
+    index("shipments_po_fk_idx").on(t.poId),
+    index("shipments_supplier_fk_idx").on(t.supplierId),
     uniqueIndex("shipments_source_uq").on(
       t.orgId,
       t.sourceSystem,

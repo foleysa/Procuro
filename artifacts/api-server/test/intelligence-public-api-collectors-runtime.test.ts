@@ -63,6 +63,7 @@ import { governmentSanctionsCollector } from "../src/lib/intelligence/collectors
 import { climateTraceCollector } from "../src/lib/intelligence/collectors/climate-trace";
 import { gdeltEventsCollector } from "../src/lib/intelligence/collectors/gdelt-events";
 import { naturalHazardsCollector } from "../src/lib/intelligence/collectors/natural-hazards";
+import { fredEconomicIndexCollector } from "../src/lib/intelligence/collectors/fred-economic-index";
 
 interface CollectorCase {
   /** Real collector id — must match the registered collector. */
@@ -509,6 +510,42 @@ const CASES: CollectorCase[] = [
           areaDesc: "Travis, TX",
           headline: "Severe Thunderstorm Warning until 7 PM",
           messageType: "Alert",
+        },
+      },
+    ],
+  },
+  {
+    id: fredEconomicIndexCollector.id,
+    base: fredEconomicIndexCollector,
+    drafts: [
+      {
+        signalType: "economic_index",
+        scopeMaterialCode: "IRON_STEEL",
+        value: 312.5,
+        unit: "index",
+        currency: "USD",
+        observedAt: TS_A,
+        sourceUrl: "https://fred.stlouisfed.org/series/WPU101",
+        confidence: 0.95,
+        metadata: {
+          seriesId: "WPU101",
+          label: "PPI: Iron and steel",
+          basis: "fred_latest_observation",
+        },
+      },
+      {
+        signalType: "economic_index",
+        scopeMaterialCode: "NONFERROUS_METALS",
+        value: 287.1,
+        unit: "index",
+        currency: "USD",
+        observedAt: TS_B,
+        sourceUrl: "https://fred.stlouisfed.org/series/WPU102",
+        confidence: 0.95,
+        metadata: {
+          seriesId: "WPU102",
+          label: "PPI: Nonferrous metals",
+          basis: "fred_latest_observation",
         },
       },
     ],

@@ -48,7 +48,9 @@ export const invoicesTable = pgTable(
   (t) => [
     index("invoices_org_idx").on(t.orgId),
     index("invoices_supplier_idx").on(t.orgId, t.supplierId),
+    index("invoices_supplier_fk_idx").on(t.supplierId),
     index("invoices_po_idx").on(t.orgId, t.poId),
+    index("invoices_po_fk_idx").on(t.poId),
     index("invoices_dedup_idx").on(t.orgId, t.dedupKey),
     uniqueIndex("invoices_source_uq").on(
       t.orgId,

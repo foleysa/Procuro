@@ -86,7 +86,18 @@ import {
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
 const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
-const TARGET_BYTES = 10 * 1024 * 1024; // 10 MB minimum
+// Per-entity CSV fixture size. The original 10 MB target made the suite
+// run for ~75 s and pushed the full `pnpm test` run over the 90 s CI
+// budget (#59). 3 MB still exercises every per-batch FK lookup path
+// (default flush is 1000 rows, generated CSVs land between 11k and 27k
+// rows at 3 MB so each entity flushes 11+ batches) while keeping the
+// total test wall-time under the budget. Override with the env var
+// `CSV_STREAM_FIXTURE_BYTES` for ad-hoc local stress runs.
+const TARGET_BYTES = (() => {
+  const raw = Number(process.env["CSV_STREAM_FIXTURE_BYTES"] ?? "");
+  if (Number.isFinite(raw) && raw >= 256 * 1024) return raw;
+  return 3 * 1024 * 1024;
+})();
 
 // Number of parent rows pre-seeded for child-CSV lookups. Small enough that
 // the per-batch `IN (...)` lookup fits in a single grouped query, large
@@ -121,7 +132,7 @@ async function uploadCsv(args: {
   return { status: res.status, rawBody };
 }
 
-test("streaming CSV ingest of >10 MB files lands every row for invoices and po_lines", async (t) => {
+test("streaming CSV ingest of large files lands every row for every supported entity", async (t) => {
   if (!process.env["DATABASE_URL"]) {
     throw new Error("DATABASE_URL is required to run this integration test.");
   }

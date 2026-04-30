@@ -16,7 +16,8 @@ import { parse, type Parser } from "csv-parse";
 import type { Readable } from "node:stream";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
+import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
+import { StructuralIngestError } from "../structural-ingest-error";
 import { resolveBillingCurrency } from "../suppliers/billing-currency-resolver";
 import { backfillSupplierBillingCurrency } from "../suppliers/backfill-billing-currency";
 import type {
@@ -1041,11 +1042,15 @@ async function flushBatch(
     default: {
       const _exhaustive: never = entity;
       // Permanent input error: an unknown entity name will never become
-      // valid by retrying. Throw `UnrecoverableJobError` so any caller
+      // valid by retrying. Throw `StructuralIngestError` so any caller
       // running this through the job queue fails immediately on
-      // attempt #1 instead of burning the full retry budget on a typo.
-      throw new UnrecoverableJobError(
+      // attempt #1 (via the worker's `wrapStructuralError`) instead of
+      // burning the full retry budget on a typo. Routes that surface
+      // the message to the client also see this as a structural error
+      // (no SQL, no PII; the offending entity name is the value).
+      throw new StructuralIngestError(
         `streamCsvEntity: unknown entity '${_exhaustive}'`,
+        { field: "entity", value: String(_exhaustive) },
       );
     }
   }

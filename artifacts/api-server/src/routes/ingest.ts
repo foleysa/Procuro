@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request } from "express";
 import type { Readable } from "node:stream";
 import Busboy from "busboy";
+import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
@@ -85,21 +86,80 @@ router.post("/ingest/csv", tenantMiddleware, requirePermission("ingest:write"), 
   res.json(result);
 });
 
+/**
+ * Field-level Zod schema for the mock-ERP ingest body (#99). Replaces
+ * the prior bag-of-`unknown`-checks approach with structured validation
+ * so:
+ *
+ *   - operators get pinpoint error messages naming the bad field
+ *     ("feed[3].payload: Expected object, received string") instead of a
+ *     generic "Body must include `feed` array";
+ *   - the type system enforces that every `MockErpRecord` field that
+ *     the downstream adapter relies on is present and well-typed before
+ *     the request ever reaches the queue or the DB;
+ *   - typos like `external_id` (snake_case) are rejected client-side
+ *     instead of silently being ignored and producing rows with a `null`
+ *     `source_external_id` that later collide on the natural-key UPSERT.
+ *
+ * The schema deliberately mirrors `MockErpRecord` from the adapter — if
+ * those drift, the validator will keep accepting payloads the adapter
+ * cannot consume. The dedicated `mock-erp-zod.test.ts` suite pins the
+ * shape so the next reader is forced to update both sides together.
+ */
+const MockErpRecordSchema = z.object({
+  type: z.enum(["supplier", "purchase_order", "invoice"]),
+  externalId: z.string().min(1, "externalId cannot be empty"),
+  updatedAt: z
+    .string()
+    .min(1, "updatedAt cannot be empty")
+    .refine((s) => !Number.isNaN(Date.parse(s)), {
+      message: "updatedAt must be an ISO-8601 timestamp",
+    }),
+  payload: z.record(z.string(), z.unknown()),
+  deleted: z.boolean().optional(),
+});
+
+const MockErpBodySchema = z.object({
+  feed: z.array(MockErpRecordSchema),
+  // Optional incremental cursor. ISO-8601 if present.
+  cursor: z
+    .string()
+    .min(1)
+    .refine((s) => !Number.isNaN(Date.parse(s)), {
+      message: "cursor must be an ISO-8601 timestamp if provided",
+    })
+    .optional(),
+});
+
 router.post("/ingest/mock-erp", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
-  const body = (req.body ?? {}) as { feed?: unknown[]; cursor?: string };
-  if (!Array.isArray(body.feed)) {
-    res.status(400).json({ error: "Body must include `feed` array." });
+  // Field-level validation up front. A bad shape is a permanent input
+  // error for this request — there is no point queueing a job that
+  // cannot succeed, so we reject 400 with the Zod issues list and the
+  // operator can fix the request before retrying.
+  const parsed = MockErpBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Invalid mock-ERP request body.",
+      // The Zod issues array is already structured for UI rendering:
+      // `{ path: ["feed", 3, "externalId"], message: "...", code: "..." }`.
+      issues: parsed.error.issues,
+    });
     return;
   }
+  const body = parsed.data;
 
   if (!isAsync(req)) {
     // Count total DB operations: each feed record plus any nested PO lines.
     let erpItemCount = body.feed.length;
     for (const rec of body.feed) {
-      const r = rec as { type?: string; payload?: { lines?: unknown[] } };
-      if (r.type === "purchase_order" && Array.isArray(r.payload?.lines)) {
-        erpItemCount += r.payload.lines.length;
+      // The schema preserves `payload` as `Record<string, unknown>`, so
+      // we still re-narrow the optional `lines` array shape here. This
+      // is a count-only path that can safely tolerate missing nested
+      // structure; the adapter will validate again before writing.
+      const lines = (rec.payload as { lines?: unknown[] }).lines;
+      if (rec.type === "purchase_order" && Array.isArray(lines)) {
+        erpItemCount += lines.length;
       }
     }
     if (erpItemCount > MAX_SYNC_INGEST_ITEMS) {

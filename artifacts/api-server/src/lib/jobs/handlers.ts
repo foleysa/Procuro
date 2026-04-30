@@ -30,6 +30,7 @@ import {
 import { UnrecoverableJobError } from "./queue";
 import { newId } from "../ids";
 import { readRenewalAlertDays } from "../contract-settings";
+import { isStructuralIngestError } from "../structural-ingest-error";
 
 /**
  * Production job handlers.
@@ -83,6 +84,10 @@ const PERMANENT_PG_SQLSTATES = new Set([
 
 function isPermanentStructuralError(err: unknown): boolean {
   if (err instanceof UnrecoverableJobError) return true;
+  // `StructuralIngestError` and any other error tagged with the
+  // `unrecoverable: true` brand are treated identically — both mean
+  // "the input is malformed; retrying will fail the same way".
+  if (isStructuralIngestError(err)) return true;
   if (err instanceof TypeError) return true;
   if (err instanceof RangeError) return true;
   if (err instanceof SyntaxError) return true;

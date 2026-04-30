@@ -37,6 +37,7 @@ export const itemsTable = pgTable(
     uniqueIndex("items_org_sku_uq").on(t.orgId, t.sku),
     index("items_normalized_idx").on(t.orgId, t.normalizedKey),
     index("items_category_idx").on(t.orgId, t.categoryId),
+    index("items_category_fk_idx").on(t.categoryId),
     uniqueIndex("items_source_uq").on(
       t.orgId,
       t.sourceSystem,
