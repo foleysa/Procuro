@@ -134,8 +134,8 @@ export default function Fusion() {
           <p className="text-muted-foreground mt-1 max-w-3xl">
             One pane of glass over every market signal your collectors gather.
             Browse signals, drill into a supplier or category, watch the
-            geo-risk heatmap, follow the live event stream, and find the
-            coverage gaps where your spend has no eyes on it.
+            geo-risk heatmap, follow the live war room, and find the coverage
+            gaps where your spend has no eyes on it.
           </p>
         </div>
         <Badge
@@ -166,7 +166,7 @@ export default function Fusion() {
             <MapIcon className="w-4 h-4 mr-1" /> Risk Heatmap
           </TabsTrigger>
           <TabsTrigger value="events" data-testid="tab-events">
-            <Siren className="w-4 h-4 mr-1" /> Event Stream
+            <Siren className="w-4 h-4 mr-1" /> War Room
           </TabsTrigger>
           <TabsTrigger value="coverage" data-testid="tab-coverage">
             <Compass className="w-4 h-4 mr-1" /> Coverage Gaps
@@ -1238,7 +1238,7 @@ function EventStreamPane({
         <CardHeader>
           <CardTitle className="flex items-center gap-2 justify-between flex-wrap">
             <span className="flex items-center gap-2">
-              <Siren className="w-5 h-5" /> Live event stream{" "}
+              <Siren className="w-5 h-5" /> War Room{" "}
               {cycleId ? "(cycle window)" : "(last 72h)"}
             </span>
             <div className="flex items-center gap-3 text-xs font-normal">
@@ -1279,9 +1279,7 @@ function EventStreamPane({
                   checked={!paused}
                   onCheckedChange={(v) => setPaused(!v)}
                   aria-label={
-                    paused
-                      ? "Resume live event stream"
-                      : "Pause live event stream"
+                    paused ? "Resume War Room" : "Pause War Room"
                   }
                   data-testid="war-room-pause-toggle"
                 />

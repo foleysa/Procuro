@@ -260,10 +260,10 @@ function CycleDetailCard({ cycleId }: { cycleId?: string }) {
             href={`/fusion?tab=events&cycleId=${encodeURIComponent(cycleId)}`}
             data-testid="link-fusion-cycle-events"
             className="inline-flex items-center gap-1 text-primary hover:underline"
-            title="Open the war-room event stream filtered to this cycle's window"
+            title="Open the War Room filtered to this cycle's window"
           >
             <Radar className="w-3.5 h-3.5" />
-            View war-room events for this cycle →
+            View War Room for this cycle →
           </Link>
         </div>
         {learn?.priorDeltas && learn.priorDeltas.length > 0 && (
