@@ -408,11 +408,20 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
     res.write(`${JSON.stringify(event)}\n`);
   };
 
-  const onProgress: StreamCsvArgsOnProgress = ({ rowsParsed, rowsInserted }) => {
+  const onProgress: StreamCsvArgsOnProgress = ({
+    rowsParsed,
+    rowsInserted,
+    bytesProcessed,
+  }) => {
     const now = Date.now();
     if (now - lastEmit < PROGRESS_EMIT_INTERVAL_MS) return;
     lastEmit = now;
-    writeEvent({ type: "progress", rowsParsed, rowsInserted });
+    writeEvent({
+      type: "progress",
+      rowsParsed,
+      rowsInserted,
+      bytesProcessed,
+    });
   };
 
   try {

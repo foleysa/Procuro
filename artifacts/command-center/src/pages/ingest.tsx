@@ -750,6 +750,21 @@ interface UploadProgress {
 export interface ServerProgress {
   rowsParsed: number;
   rowsInserted: number;
+  /**
+   * Bytes the server has consumed from the upload stream so far. Used by
+   * the UI (combined with the file's total size) to render a server-side
+   * progress bar and derive an ETA from the rows-per-second rate.
+   * Optional because not every NDJSON event carries it (e.g. very early
+   * progress events before the first batch flush, or older servers).
+   */
+  bytesProcessed?: number;
+  /**
+   * Wall-clock time (ms since epoch) when *this* progress sample was
+   * received by the client. Used to compute rows/sec for the ETA without
+   * re-rendering on every animation frame — we keep the most recent
+   * sample plus a "first sample" anchor.
+   */
+  receivedAt: number;
 }
 
 /**
@@ -762,7 +777,12 @@ export interface ServerProgress {
  * during the server-side processing tail of a large upload.
  */
 type StreamCsvEvent =
-  | { type: "progress"; rowsParsed: number; rowsInserted: number }
+  | {
+      type: "progress";
+      rowsParsed: number;
+      rowsInserted: number;
+      bytesProcessed?: number;
+    }
   | ({ type: "result" } & StreamCsvResult)
   | { type: "error"; error: string }
   | {
@@ -879,6 +899,8 @@ function uploadCsvStream(args: {
           args.onServerProgress?.({
             rowsParsed: evt.rowsParsed,
             rowsInserted: evt.rowsInserted,
+            bytesProcessed: evt.bytesProcessed,
+            receivedAt: Date.now(),
           });
         } else if (evt.type === "result") {
           // Strip the discriminator before exposing the final value.
@@ -893,6 +915,11 @@ function uploadCsvStream(args: {
           args.onServerProgress?.({
             rowsParsed: evt.rowsParsed,
             rowsInserted: evt.rowsInserted,
+            // The terminal result event doesn't carry bytesProcessed, but
+            // by definition the server has consumed every byte at this
+            // point — leave undefined so the renderer falls back to its
+            // "100% done" path naturally.
+            receivedAt: Date.now(),
           });
         } else if (evt.type === "error") {
           serverError = evt.error;
@@ -909,6 +936,7 @@ function uploadCsvStream(args: {
           args.onServerProgress?.({
             rowsParsed: evt.rowsParsed,
             rowsInserted: evt.rowsInserted,
+            receivedAt: Date.now(),
           });
         }
       }
@@ -974,6 +1002,115 @@ interface SuccessResult {
   durationMs: number;
 }
 
+/**
+ * Per-entity server progress tracked in component state. Carries the most
+ * recent sample plus a "first sample" anchor (`firstReceivedAt` /
+ * `firstRowsInserted`) so the EntityRow can compute a smoothed
+ * rows-per-second rate over the full server-processing window — which is
+ * what powers the ETA. Anchoring on the first observed insert avoids the
+ * pathological "ETA = ∞" you'd get from differencing two consecutive
+ * 250 ms-throttled samples that happened to land on the same batch flush.
+ */
+interface EntityServerProgress extends ServerProgress {
+  firstReceivedAt: number;
+  firstRowsInserted: number;
+}
+
+/**
+ * Format a remaining-time estimate compactly for the Data Ingest "ETA"
+ * line. Rounds aggressively because the underlying rate estimate is
+ * itself coarse — a rate that updates every 250 ms should not pretend to
+ * predict the remaining time to the second.
+ */
+function formatEtaSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 1) return "<1s";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds - mins * 60);
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins - hrs * 60;
+  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
+/**
+ * Render-time derivation of the ETA / rate / server-side bar percentage
+ * for one entity. Returns `null`s where not enough samples exist yet —
+ * the renderer suppresses the corresponding UI affordance instead of
+ * showing nonsense.
+ *
+ *   * `serverPct`   — percentage of the file the server has consumed,
+ *                     derived from bytesProcessed/fileSize. Only
+ *                     meaningful for streaming uploads where we know the
+ *                     file size up front.
+ *   * `rowsPerSec`  — smoothed insert rate since the *first* progress
+ *                     sample. Returns `null` until we have two distinct
+ *                     samples spanning at least one row.
+ *   * `etaSeconds`  — remaining seconds based on the estimated total row
+ *                     count (extrapolated from bytes consumed) and the
+ *                     current rate. Returns `null` if either input is
+ *                     missing or the bar is already at 100%.
+ */
+function deriveServerEta(
+  progress: EntityServerProgress | undefined,
+  fileSize: number,
+): {
+  serverPct: number | null;
+  rowsPerSec: number | null;
+  etaSeconds: number | null;
+  estimatedTotalRows: number | null;
+} {
+  if (!progress) {
+    return {
+      serverPct: null,
+      rowsPerSec: null,
+      etaSeconds: null,
+      estimatedTotalRows: null,
+    };
+  }
+  const bytes = progress.bytesProcessed;
+  const serverPct =
+    bytes !== undefined && fileSize > 0
+      ? Math.min(100, Math.round((bytes / fileSize) * 100))
+      : null;
+
+  const elapsedMs = progress.receivedAt - progress.firstReceivedAt;
+  const insertedSinceAnchor =
+    progress.rowsInserted - progress.firstRowsInserted;
+  const rowsPerSec =
+    elapsedMs > 250 && insertedSinceAnchor > 0
+      ? (insertedSinceAnchor / elapsedMs) * 1000
+      : null;
+
+  // Extrapolate total rows from how much of the file the server has
+  // consumed so far. Falls back to `null` (no ETA) when the server hasn't
+  // told us how many bytes it has read yet.
+  const estimatedTotalRows =
+    bytes !== undefined && bytes > 0 && fileSize > 0
+      ? Math.max(
+          progress.rowsParsed,
+          Math.round((progress.rowsParsed * fileSize) / bytes),
+        )
+      : null;
+
+  let etaSeconds: number | null = null;
+  if (
+    rowsPerSec !== null &&
+    estimatedTotalRows !== null &&
+    serverPct !== null &&
+    serverPct < 100
+  ) {
+    const remainingRows = Math.max(
+      0,
+      estimatedTotalRows - progress.rowsInserted,
+    );
+    etaSeconds = remainingRows / rowsPerSec;
+  }
+
+  return { serverPct, rowsPerSec, etaSeconds, estimatedTotalRows };
+}
+
 export default function Ingest() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -990,7 +1127,7 @@ export default function Ingest() {
   // (which tracks request bytes shipped) so the UI can show "X parsed /
   // Y inserted" updates during the long server-side tail of a large upload.
   const [serverProgress, setServerProgress] = useState<
-    Partial<Record<EntityKey, ServerProgress>>
+    Partial<Record<EntityKey, EntityServerProgress>>
   >({});
   // Tracks per-entity cancellation. Set when the user clicks "Cancel" on a
   // streaming row (or the server emits a `cancelled` NDJSON event); used by
@@ -1201,7 +1338,26 @@ export default function Ingest() {
             onUploadProgress: (p) =>
               setStreamProgress((prev) => ({ ...prev, [s.key]: p })),
             onServerProgress: (p) =>
-              setServerProgress((prev) => ({ ...prev, [s.key]: p })),
+              setServerProgress((prev) => {
+                const existing = prev[s.key];
+                // Preserve the first-sample anchor across updates so the
+                // EntityRow can compute a smoothed rows/sec rate over the
+                // full upload window. Without the anchor we'd be
+                // differencing two consecutive 250 ms-throttled samples,
+                // which is far too jumpy to feed into an ETA.
+                const next: EntityServerProgress = existing
+                  ? {
+                      ...p,
+                      firstReceivedAt: existing.firstReceivedAt,
+                      firstRowsInserted: existing.firstRowsInserted,
+                    }
+                  : {
+                      ...p,
+                      firstReceivedAt: p.receivedAt,
+                      firstRowsInserted: p.rowsInserted,
+                    };
+                return { ...prev, [s.key]: next };
+              }),
           })
             .then((r) => {
               aggregate.recordsProcessed += r.rowsParsed;
@@ -1439,7 +1595,7 @@ function EntityRow({
   entity: EntityDef;
   parsed?: ParsedFile;
   progress?: UploadProgress;
-  serverProgress?: ServerProgress;
+  serverProgress?: EntityServerProgress;
   isUploading: boolean;
   inFlight: boolean;
   cancelled: boolean;
@@ -1609,27 +1765,89 @@ function EntityRow({
 
       {parsed?.streaming && isUploading && (
         <div
-          className="space-y-1"
+          className="space-y-2"
           data-testid={`stream-progress-${entity.key}`}
         >
-          <Progress value={progressPct} />
-          <div className="text-[11px] text-muted-foreground tabular-nums">
-            {progress
-              ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)} · ${progressPct}%`
-              : "Uploading…"}
-            {uploadComplete && !serverProgress && (
-              <span className="ml-2 italic">processing on server…</span>
-            )}
-          </div>
-          {serverProgress && (
-            <div
-              className="text-[11px] text-muted-foreground tabular-nums"
-              data-testid={`server-progress-${entity.key}`}
-            >
-              {serverProgress.rowsParsed.toLocaleString()} rows parsed ·{" "}
-              {serverProgress.rowsInserted.toLocaleString()} inserted
+          {/* Upload progress: bytes shipped from browser to server. */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Upload</span>
+              <span className="tabular-nums">
+                {progress
+                  ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)} · ${progressPct}%`
+                  : "Uploading…"}
+              </span>
             </div>
-          )}
+            <Progress value={progressPct} />
+          </div>
+
+          {/*
+            Server-side progress: a separate bar that fills based on how
+            much of the file the server has actually consumed (bytes
+            processed / file size). This is the indicator that lights up
+            during the long "uploaded but still processing" tail. Falls
+            back to an indeterminate-looking 0% bar with a "processing on
+            server…" caption when the server hasn't reported a byte
+            count yet.
+          */}
+          {(uploadComplete || serverProgress) && (() => {
+            const { serverPct, rowsPerSec, etaSeconds, estimatedTotalRows } =
+              deriveServerEta(serverProgress, parsed.fileSize);
+            const barValue = serverPct ?? 0;
+            const isFinishing = serverPct !== null && serverPct >= 100;
+            return (
+              <div
+                className="space-y-1"
+                data-testid={`server-progress-${entity.key}`}
+              >
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Server processing</span>
+                  <span
+                    className="tabular-nums"
+                    data-testid={`server-progress-pct-${entity.key}`}
+                  >
+                    {serverPct !== null
+                      ? `${serverPct}%`
+                      : serverProgress
+                        ? "starting…"
+                        : "processing on server…"}
+                  </span>
+                </div>
+                <Progress value={barValue} />
+                {serverProgress && (
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums gap-2 flex-wrap">
+                    <span>
+                      {serverProgress.rowsParsed.toLocaleString()} parsed ·{" "}
+                      {serverProgress.rowsInserted.toLocaleString()} inserted
+                      {estimatedTotalRows !== null && !isFinishing && (
+                        <>
+                          {" "}
+                          / ~{estimatedTotalRows.toLocaleString()} est.
+                        </>
+                      )}
+                    </span>
+                    <span data-testid={`server-progress-eta-${entity.key}`}>
+                      {isFinishing ? (
+                        <span className="italic">finalizing…</span>
+                      ) : etaSeconds !== null ? (
+                        <>
+                          ETA ~{formatEtaSeconds(etaSeconds)} remaining
+                          {rowsPerSec !== null && (
+                            <>
+                              {" "}
+                              · {Math.round(rowsPerSec).toLocaleString()} rows/s
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <span className="italic">estimating…</span>
+                      )}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

@@ -215,6 +215,7 @@ test("streaming CSV ingest emits progress events before the terminal result", as
     type: "progress";
     rowsParsed: number;
     rowsInserted: number;
+    bytesProcessed?: number;
   };
   type ResultEvent = {
     type: "result";
@@ -388,6 +389,7 @@ test("streaming CSV ingest emits progress events before the terminal result", as
   // "zeros only" regressions in the progress payload.
   let prevParsed = 0;
   let prevInserted = 0;
+  let prevBytes = 0;
   for (const [i, ev] of progressEvents.entries()) {
     assert.ok(
       ev.rowsParsed >= prevParsed,
@@ -401,9 +403,37 @@ test("streaming CSV ingest emits progress events before the terminal result", as
       ev.rowsParsed <= ROW_COUNT,
       `progress event #${i} rowsParsed=${ev.rowsParsed} exceeds file row count ${ROW_COUNT}`,
     );
+    if (ev.bytesProcessed !== undefined) {
+      assert.ok(
+        ev.bytesProcessed >= prevBytes,
+        `progress event #${i} bytesProcessed went backward: ${prevBytes} -> ${ev.bytesProcessed}`,
+      );
+      assert.ok(
+        ev.bytesProcessed <= stat.size,
+        `progress event #${i} bytesProcessed=${ev.bytesProcessed} exceeds file size ${stat.size}`,
+      );
+      prevBytes = ev.bytesProcessed;
+    }
     prevParsed = ev.rowsParsed;
     prevInserted = ev.rowsInserted;
   }
+
+  // Lock down the bytesProcessed contract: at least one progress event
+  // must carry a positive `bytesProcessed` value. The Data Ingest page's
+  // server-side progress bar / ETA derives its percentage and rate from
+  // this field — a regression that drops it would leave the bar dark and
+  // hide the ETA for every long upload, but every other check above
+  // would still pass.
+  const eventsWithBytes = progressEvents.filter(
+    (e) => typeof e.bytesProcessed === "number" && e.bytesProcessed > 0,
+  );
+  assert.ok(
+    eventsWithBytes.length >= 1,
+    `expected at least one progress event with a positive bytesProcessed value ` +
+      `(used by the UI to render the server-side progress bar and ETA), but got ` +
+      `${eventsWithBytes.length} of ${progressEvents.length} progress events ` +
+      `with bytesProcessed set.`,
+  );
 
   // Lightweight throughput metric the team can grep CI logs for over time
   // to spot trend drift well before it crosses the hard ceiling above.

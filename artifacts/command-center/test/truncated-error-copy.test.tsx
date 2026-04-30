@@ -60,7 +60,6 @@ describe("TruncatedError copy button", () => {
     if (originalClipboard) {
       Object.defineProperty(window.navigator, "clipboard", originalClipboard);
     } else {
-      // @ts-expect-error - allow deletion in test cleanup
       delete (window.navigator as { clipboard?: unknown }).clipboard;
     }
     if (originalExecCommand) {
@@ -70,7 +69,6 @@ describe("TruncatedError copy button", () => {
         }
       ).execCommand = originalExecCommand;
     } else {
-      // @ts-expect-error - allow deletion in test cleanup
       delete (document as { execCommand?: unknown }).execCommand;
     }
     vi.restoreAllMocks();

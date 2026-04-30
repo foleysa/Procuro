@@ -694,9 +694,12 @@ paths:
         `application/x-ndjson` and the server writes one JSON object per
         line, terminated by `\n`:
 
-          * `{"type":"progress","rowsParsed":N,"rowsInserted":M}` —
+          * `{"type":"progress","rowsParsed":N,"rowsInserted":M,"bytesProcessed":B}` —
             emitted after batch flushes, throttled to ~4/sec server-side so
-            multi-million-row files don't flood the wire.
+            multi-million-row files don't flood the wire. `bytesProcessed`
+            is optional and reports how many request-body bytes the server
+            has consumed so far; the client uses it (plus the file size) to
+            render a server-side progress bar and a rows/sec ETA.
           * `{"type":"result","entity":"...","rowsParsed":N,"rowsInserted":M,"durationMs":D}` —
             exactly one terminal success event whose payload matches
             `StreamCsvResult`.
@@ -1343,6 +1346,12 @@ components:
       description: |
         Intermediate progress event emitted (throttled to ~4/sec) while the
         server is still parsing and inserting rows.
+
+        `bytesProcessed` is the running count of bytes the server has read
+        off the upload stream so far. Combined with the file's total size
+        (known to the client), it lets the UI render a server-side progress
+        bar and derive an ETA from the rows-per-second rate. It is optional
+        because not every transport surfaces a meaningful byte count.
       required: [type, rowsParsed, rowsInserted]
       properties:
         type:
@@ -1350,6 +1359,7 @@ components:
           enum: [progress]
         rowsParsed: { type: integer }
         rowsInserted: { type: integer }
+        bytesProcessed: { type: integer }
 
     StreamCsvResultEvent:
       type: object

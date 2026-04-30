@@ -418,11 +418,18 @@ export const StreamCsvProgressEventType = {
  * Intermediate progress event emitted (throttled to ~4/sec) while the
 server is still parsing and inserting rows.
 
+`bytesProcessed` is the running count of bytes the server has read
+off the upload stream so far. Combined with the file's total size
+(known to the client), it lets the UI render a server-side progress
+bar and derive an ETA from the rows-per-second rate. It is optional
+because not every transport surfaces a meaningful byte count.
+
  */
 export interface StreamCsvProgressEvent {
   type: StreamCsvProgressEventType;
   rowsParsed: number;
   rowsInserted: number;
+  bytesProcessed?: number;
 }
 
 export type StreamCsvResultEventType =

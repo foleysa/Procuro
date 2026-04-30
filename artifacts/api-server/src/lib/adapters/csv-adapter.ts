@@ -605,6 +605,15 @@ export interface StreamCsvResult {
 export interface StreamCsvProgress {
   rowsParsed: number;
   rowsInserted: number;
+  /**
+   * Running count of bytes read off the upload stream so far. The route
+   * forwards this to the client so the UI can render a server-side
+   * progress bar (`bytesProcessed / totalFileSize`) and derive an ETA from
+   * the rows/sec rate. Always present for streams that emit `Buffer`
+   * chunks (multipart file parts, raw `text/csv` request bodies); zero for
+   * exotic transports that don't.
+   */
+  bytesProcessed: number;
 }
 
 /**
@@ -664,6 +673,7 @@ export async function streamCsvEntity(
   const batchSize = args.batchSize ?? BATCH_SIZE;
   let rowsParsed = 0;
   let rowsInserted = 0;
+  let bytesProcessed = 0;
   let buffer: Record<string, string>[] = [];
 
   const parser: Parser = args.input.pipe(
@@ -694,10 +704,22 @@ export async function streamCsvEntity(
     args.signal.addEventListener("abort", onAbort, { once: true });
   }
 
+  // Count bytes off the source stream so the route can forward an
+  // ETA-friendly `bytesProcessed` to the client. Attached *after* `.pipe()`
+  // so pipe owns the consumer/backpressure relationship; this extra
+  // listener is observation-only — Node delivers every `data` event to
+  // every listener, so the byte counter sees the same chunks the parser
+  // does without altering flow control.
+  args.input.on("data", (chunk: Buffer | string) => {
+    bytesProcessed += typeof chunk === "string"
+      ? Buffer.byteLength(chunk)
+      : chunk.length;
+  });
+
   const reportProgress = async (): Promise<void> => {
     if (!args.onProgress) return;
     try {
-      await args.onProgress({ rowsParsed, rowsInserted });
+      await args.onProgress({ rowsParsed, rowsInserted, bytesProcessed });
     } catch (err) {
       logger.warn(
         { entity: args.entity, err: (err as Error).message },

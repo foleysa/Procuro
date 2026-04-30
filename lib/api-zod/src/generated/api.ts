@@ -1314,9 +1314,12 @@ Content-Length under 1 GB), the response Content-Type switches to
 `application/x-ndjson` and the server writes one JSON object per
 line, terminated by `\n`:
 
-  * `{"type":"progress","rowsParsed":N,"rowsInserted":M}` —
+  * `{"type":"progress","rowsParsed":N,"rowsInserted":M,"bytesProcessed":B}` —
     emitted after batch flushes, throttled to ~4/sec server-side so
-    multi-million-row files don't flood the wire.
+    multi-million-row files don't flood the wire. `bytesProcessed`
+    is optional and reports how many request-body bytes the server
+    has consumed so far; the client uses it (plus the file size) to
+    render a server-side progress bar and a rows/sec ETA.
   * `{"type":"result","entity":"...","rowsParsed":N,"rowsInserted":M,"durationMs":D}` —
     exactly one terminal success event whose payload matches
     `StreamCsvResult`.
