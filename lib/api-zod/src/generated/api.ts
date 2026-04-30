@@ -1144,6 +1144,25 @@ export const GetJobResponse = zod.object({
 });
 
 /**
+ * Enqueues a fresh job of the same kind and payload as the original.
+Only jobs in the `failed` state may be retried.
+
+ * @summary Re-enqueue a failed job as a new pending job
+ */
+export const RetryJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RetryJobHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
  * @summary Run the CSV adapter against an inline payload
  */
 export const ingestCsvBatchQueryAsyncDefault = false;

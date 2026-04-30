@@ -13,6 +13,7 @@ import Ooda from "./pages/ooda";
 import Results from "./pages/results";
 import Playbook from "./pages/playbook";
 import Collectors from "./pages/collectors";
+import System from "./pages/system";
 
 function Router() {
   return (
@@ -29,6 +30,7 @@ function Router() {
             <Route path="/results" component={Results} />
             <Route path="/playbook" component={Playbook} />
             <Route path="/collectors" component={Collectors} />
+            <Route path="/system" component={System} />
             <Route component={NotFound} />
           </Switch>
         </Layout>

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, jobsTable, type JobKind, type JobStatus } from "@workspace/db";
 import { and, desc, eq, isNull, or, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { enqueueJob } from "../lib/jobs/queue";
 
 const router: IRouter = Router();
 
@@ -84,6 +85,40 @@ router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
     return;
   }
   res.json(mapJob(row));
+});
+
+router.post("/jobs/:id/retry", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(
+      and(
+        eq(jobsTable.id, String(req.params.id)),
+        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+      ),
+    );
+  if (!row) {
+    res.status(404).json({ error: "Job not found" });
+    return;
+  }
+  if (row.status !== "failed") {
+    res.status(409).json({
+      error: `Only failed jobs can be retried (current status: ${row.status})`,
+    });
+    return;
+  }
+
+  const job = await enqueueJob({
+    kind: row.kind,
+    orgId: row.orgId,
+    payload: row.payload ?? {},
+  });
+  req.log.info(
+    { originalJobId: row.id, retryJobId: job.id, kind: job.kind },
+    "Retried failed job",
+  );
+  res.status(202).json({ jobId: job.id, status: job.status });
 });
 
 export default router;

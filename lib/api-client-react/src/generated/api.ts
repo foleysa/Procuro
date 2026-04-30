@@ -2164,6 +2164,93 @@ export function useGetJob<
 }
 
 /**
+ * Enqueues a fresh job of the same kind and payload as the original.
+Only jobs in the `failed` state may be retried.
+
+ * @summary Re-enqueue a failed job as a new pending job
+ */
+export const getRetryJobUrl = (id: string) => {
+  return `/api/jobs/${id}/retry`;
+};
+
+export const retryJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<JobAccepted> => {
+  return customFetch<JobAccepted>(getRetryJobUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRetryJobMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof retryJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["retryJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof retryJob>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return retryJob(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RetryJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof retryJob>>
+>;
+
+export type RetryJobMutationError = ErrorType<void>;
+
+/**
+ * @summary Re-enqueue a failed job as a new pending job
+ */
+export const useRetryJob = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof retryJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRetryJobMutationOptions(options));
+};
+
+/**
  * @summary Run the CSV adapter against an inline payload
  */
 export const getIngestCsvBatchUrl = (params?: IngestCsvBatchParams) => {

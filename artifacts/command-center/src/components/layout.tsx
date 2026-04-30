@@ -7,6 +7,7 @@ import {
   TrendingUp,
   BookOpen,
   Radar,
+  Server,
   Workflow,
 } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
@@ -27,6 +28,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/results", label: "Results & Billing", icon: TrendingUp },
     { href: "/playbook", label: "Playbook", icon: BookOpen },
     { href: "/collectors", label: "Collectors", icon: Radar },
+    { href: "/system", label: "System / Jobs", icon: Server },
   ];
 
   return (

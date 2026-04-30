@@ -524,6 +524,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/Job"
 
+  /jobs/{id}/retry:
+    post:
+      operationId: retryJob
+      tags: [jobs]
+      summary: Re-enqueue a failed job as a new pending job
+      description: |
+        Enqueues a fresh job of the same kind and payload as the original.
+        Only jobs in the `failed` state may be retried.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "202":
+          description: Retry job enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "404":
+          description: Job not found
+        "409":
+          description: Job is not in a retryable state
+
   /ingest/csv:
     post:
       operationId: ingestCsvBatch
