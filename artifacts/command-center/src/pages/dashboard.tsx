@@ -9,6 +9,7 @@ import {
   useListCollectors,
   useListMarketSignals,
   useRunNextCycle,
+  useGetAlertsSummary,
   getGetSpendOverviewQueryKey,
   getGetBillingSummaryQueryKey,
   getListOpportunitiesQueryKey,
@@ -16,6 +17,7 @@ import {
   getListJobsQueryKey,
   getListCollectorsQueryKey,
   getListMarketSignalsQueryKey,
+  getGetAlertsSummaryQueryKey,
 } from "@workspace/api-client-react";
 import type { Opportunity, OpportunityStatus } from "@workspace/api-client-react";
 import {
@@ -31,6 +33,7 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  Bell,
   CheckCircle2,
   CircleDot,
   Clock,
@@ -156,6 +159,12 @@ export default function Dashboard() {
       refetchInterval: POLL_MS,
     },
   });
+  const alertsSummaryQ = useGetAlertsSummary({
+    query: {
+      queryKey: getGetAlertsSummaryQueryKey(),
+      refetchInterval: POLL_MS,
+    },
+  });
 
   const refreshAll = () => {
     qc.invalidateQueries();
@@ -255,6 +264,9 @@ export default function Dashboard() {
   const activePipelineValue =
     buckets.proposed.value + buckets.approved.value + buckets.executing.value;
 
+  const openCriticalOrHighAlerts = alertsSummaryQ.data?.openCriticalOrHigh ?? 0;
+  const openAlertsTotal = alertsSummaryQ.data?.byState?.open ?? 0;
+
   const attentionItems = buildAttentionItems({
     highConfProposed,
     staleProposed,
@@ -269,6 +281,8 @@ export default function Dashboard() {
     daysSinceLastCycle,
     realizedValue: buckets.realized.value,
     pipelineValue: activePipelineValue,
+    openCriticalOrHighAlerts,
+    openAlertsTotal,
   });
 
   // Top open opportunities (still actionable: proposed/approved/executing)
@@ -526,6 +540,25 @@ export default function Dashboard() {
               }
               tone={staleCollectors.length > 0 ? "amber" : "green"}
               href="/collectors"
+            />
+            <PulseRow
+              icon={Bell}
+              label="Alerts inbox"
+              value={
+                alertsSummaryQ.isLoading
+                  ? "…"
+                  : openAlertsTotal > 0
+                    ? `${openAlertsTotal} open · ${openCriticalOrHighAlerts} crit/high`
+                    : "All clear"
+              }
+              tone={
+                openCriticalOrHighAlerts > 0
+                  ? "red"
+                  : openAlertsTotal > 0
+                    ? "amber"
+                    : "green"
+              }
+              href="/alerts"
             />
             <PulseRow
               icon={CircleDot}
@@ -891,8 +924,31 @@ function buildAttentionItems(args: {
   daysSinceLastCycle: number | null;
   realizedValue: number;
   pipelineValue: number;
+  openCriticalOrHighAlerts: number;
+  openAlertsTotal: number;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
+
+  if (args.openCriticalOrHighAlerts > 0) {
+    items.push({
+      id: "open-critical-alerts",
+      severity: "danger",
+      title: `${args.openCriticalOrHighAlerts} critical or high‑severity alerts open`,
+      detail:
+        "Acknowledge or resolve in the alerts inbox so they stop escalating",
+      cta: "Open inbox",
+      href: "/alerts",
+    });
+  } else if (args.openAlertsTotal > 0) {
+    items.push({
+      id: "open-alerts",
+      severity: "warn",
+      title: `${args.openAlertsTotal} open alerts in the inbox`,
+      detail: "No criticals — but worth a triage pass",
+      cta: "Open inbox",
+      href: "/alerts",
+    });
+  }
 
   if (args.highConfProposed.length > 0) {
     const total = args.highConfProposed.reduce(

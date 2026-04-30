@@ -48,6 +48,15 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // tenant on each scheduler tick. Pure DB work — same retry budget as
   // the renewal scan.
   analysis_cycle_fanout: 3,
+  // Alert delivery talks to upstream channels (SMTP/HTTP) which are flaky;
+  // give it a slightly larger budget so a single rate-limit / 5xx blip
+  // doesn't drop a notification on the floor.
+  deliver_alerts: 5,
+  // Escalation walks the open alerts table and re-fans-out to channels;
+  // a transient DB hiccup is the only realistic failure mode.
+  escalate_alerts: 3,
+  // Synthesizer is internal — same reasoning as the pruner.
+  synthesize_operational_alerts: 3,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */

@@ -83,6 +83,16 @@ export const GetMeResponse = zod.object({
     createdAt: zod.coerce.date(),
   }),
   actorEmail: zod.string().optional(),
+  user: zod
+    .object({
+      id: zod.string(),
+      email: zod.string(),
+      name: zod.string(),
+      role: zod.enum(["admin", "buyer", "approver", "viewer"]).optional(),
+    })
+    .describe(
+      "The acting user inside the resolved tenant. The server upserts a\nusers row keyed by `(orgId, email)` on every `\/me` request so that\ndownstream tables with a hard FK to `users.id` (alert\nsubscriptions, watchlists) always have a valid target. The `id`\nis opaque; clients should treat it as a string handle.\n",
+    ),
 });
 
 /**
@@ -148,6 +158,16 @@ export const PatchMeSettingsResponse = zod.object({
     createdAt: zod.coerce.date(),
   }),
   actorEmail: zod.string().optional(),
+  user: zod
+    .object({
+      id: zod.string(),
+      email: zod.string(),
+      name: zod.string(),
+      role: zod.enum(["admin", "buyer", "approver", "viewer"]).optional(),
+    })
+    .describe(
+      "The acting user inside the resolved tenant. The server upserts a\nusers row keyed by `(orgId, email)` on every `\/me` request so that\ndownstream tables with a hard FK to `users.id` (alert\nsubscriptions, watchlists) always have a valid target. The `id`\nis opaque; clients should treat it as a string handle.\n",
+    ),
 });
 
 /**
@@ -4787,4 +4807,1056 @@ export const SubmitDefensePackFeedbackBody = zod.object({
     ])
     .optional(),
   comment: zod.string().max(submitDefensePackFeedbackBodyCommentMax).optional(),
+});
+
+/**
+ * @summary List alerts (inbox)
+ */
+export const listAlertsQueryLimitDefault = 50;
+export const listAlertsQueryLimitMax = 200;
+
+export const ListAlertsQueryParams = zod.object({
+  state: zod.enum(["open", "acknowledged", "snoozed", "resolved"]).optional(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]).optional(),
+  source: zod
+    .enum([
+      "sanctions",
+      "corporate_filing",
+      "disruption_event",
+      "natural_hazard",
+      "risk_screening",
+      "operational_job_failed",
+      "operational_collector_stale",
+      "operational_collector_never_run",
+      "operational_high_confidence_opportunity",
+      "rule_match",
+      "manual",
+    ])
+    .optional(),
+  supplierId: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listAlertsQueryLimitMax)
+    .default(listAlertsQueryLimitDefault),
+});
+
+export const ListAlertsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+      source: zod.enum([
+        "sanctions",
+        "corporate_filing",
+        "disruption_event",
+        "natural_hazard",
+        "risk_screening",
+        "operational_job_failed",
+        "operational_collector_stale",
+        "operational_collector_never_run",
+        "operational_high_confidence_opportunity",
+        "rule_match",
+        "manual",
+      ]),
+      kind: zod.string(),
+      title: zod.string(),
+      summary: zod.string(),
+      dedupeKey: zod.string().nullish(),
+      occurrences: zod.number(),
+      payload: zod.record(zod.string(), zod.unknown()).optional(),
+      entityUid: zod.string().nullish(),
+      supplierId: zod.string().nullish(),
+      contractId: zod.string().nullish(),
+      opportunityId: zod.string().nullish(),
+      state: zod.enum(["open", "acknowledged", "snoozed", "resolved"]),
+      assignedToUserId: zod.string().nullish(),
+      acknowledgedAt: zod.coerce.date().nullish(),
+      acknowledgedBy: zod.string().nullish(),
+      snoozedUntil: zod.coerce.date().nullish(),
+      resolvedAt: zod.coerce.date().nullish(),
+      resolvedBy: zod.string().nullish(),
+      deliveredAt: zod.coerce.date().nullish(),
+      escalatedAt: zod.coerce.date().nullish(),
+      firstSeenAt: zod.coerce.date(),
+      lastSeenAt: zod.coerce.date(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create an alert manually
+ */
+export const CreateManualAlertHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const CreateManualAlertBody = zod.object({
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+  source: zod
+    .enum([
+      "sanctions",
+      "corporate_filing",
+      "disruption_event",
+      "natural_hazard",
+      "risk_screening",
+      "operational_job_failed",
+      "operational_collector_stale",
+      "operational_collector_never_run",
+      "operational_high_confidence_opportunity",
+      "rule_match",
+      "manual",
+    ])
+    .optional(),
+  kind: zod.string(),
+  title: zod.string(),
+  summary: zod.string().optional(),
+  dedupeKey: zod.string().optional(),
+  payload: zod.record(zod.string(), zod.unknown()).optional(),
+  entityUid: zod.string().nullish(),
+  supplierId: zod.string().nullish(),
+  contractId: zod.string().nullish(),
+  opportunityId: zod.string().nullish(),
+});
+
+/**
+ * @summary Aggregate counts of alerts by state and severity
+ */
+export const GetAlertsSummaryHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetAlertsSummaryResponse = zod.object({
+  byState: zod.record(zod.string(), zod.number()),
+  bySeverity: zod.record(zod.string(), zod.number()),
+  openCriticalOrHigh: zod.number(),
+});
+
+/**
+ * @summary Get one alert
+ */
+export const GetAlertParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetAlertHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetAlertResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+  source: zod.enum([
+    "sanctions",
+    "corporate_filing",
+    "disruption_event",
+    "natural_hazard",
+    "risk_screening",
+    "operational_job_failed",
+    "operational_collector_stale",
+    "operational_collector_never_run",
+    "operational_high_confidence_opportunity",
+    "rule_match",
+    "manual",
+  ]),
+  kind: zod.string(),
+  title: zod.string(),
+  summary: zod.string(),
+  dedupeKey: zod.string().nullish(),
+  occurrences: zod.number(),
+  payload: zod.record(zod.string(), zod.unknown()).optional(),
+  entityUid: zod.string().nullish(),
+  supplierId: zod.string().nullish(),
+  contractId: zod.string().nullish(),
+  opportunityId: zod.string().nullish(),
+  state: zod.enum(["open", "acknowledged", "snoozed", "resolved"]),
+  assignedToUserId: zod.string().nullish(),
+  acknowledgedAt: zod.coerce.date().nullish(),
+  acknowledgedBy: zod.string().nullish(),
+  snoozedUntil: zod.coerce.date().nullish(),
+  resolvedAt: zod.coerce.date().nullish(),
+  resolvedBy: zod.string().nullish(),
+  deliveredAt: zod.coerce.date().nullish(),
+  escalatedAt: zod.coerce.date().nullish(),
+  firstSeenAt: zod.coerce.date(),
+  lastSeenAt: zod.coerce.date(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Audit-trail events on an alert
+ */
+export const ListAlertEventsParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ListAlertEventsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertEventsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      alertId: zod.string(),
+      eventType: zod.enum([
+        "created",
+        "occurrence",
+        "acknowledged",
+        "snoozed",
+        "resolved",
+        "reopened",
+        "assigned",
+        "comment",
+        "delivered",
+        "escalated",
+        "delivery_failed",
+      ]),
+      actor: zod.string().nullish(),
+      note: zod.string().nullish(),
+      metadata: zod.record(zod.string(), zod.unknown()),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Per-(subscription,channel) delivery attempts for an alert
+ */
+export const ListAlertDeliveriesParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ListAlertDeliveriesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertDeliveriesResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      alertId: zod.string(),
+      subscriptionId: zod.string(),
+      channelId: zod.string(),
+      state: zod.enum(["pending", "sent", "failed", "skipped"]),
+      attempts: zod.number(),
+      lastError: zod.string().nullish(),
+      sentAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Acknowledge / snooze / resolve / reopen / assign / comment
+ */
+export const TransitionAlertParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const TransitionAlertHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const TransitionAlertBody = zod.object({
+  action: zod.enum(["ack", "snooze", "resolve", "reopen", "assign", "comment"]),
+  note: zod.string().optional(),
+  snoozedUntil: zod.coerce.date().optional(),
+  assignedToUserId: zod.string().nullish(),
+});
+
+export const TransitionAlertResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+  source: zod.enum([
+    "sanctions",
+    "corporate_filing",
+    "disruption_event",
+    "natural_hazard",
+    "risk_screening",
+    "operational_job_failed",
+    "operational_collector_stale",
+    "operational_collector_never_run",
+    "operational_high_confidence_opportunity",
+    "rule_match",
+    "manual",
+  ]),
+  kind: zod.string(),
+  title: zod.string(),
+  summary: zod.string(),
+  dedupeKey: zod.string().nullish(),
+  occurrences: zod.number(),
+  payload: zod.record(zod.string(), zod.unknown()).optional(),
+  entityUid: zod.string().nullish(),
+  supplierId: zod.string().nullish(),
+  contractId: zod.string().nullish(),
+  opportunityId: zod.string().nullish(),
+  state: zod.enum(["open", "acknowledged", "snoozed", "resolved"]),
+  assignedToUserId: zod.string().nullish(),
+  acknowledgedAt: zod.coerce.date().nullish(),
+  acknowledgedBy: zod.string().nullish(),
+  snoozedUntil: zod.coerce.date().nullish(),
+  resolvedAt: zod.coerce.date().nullish(),
+  resolvedBy: zod.string().nullish(),
+  deliveredAt: zod.coerce.date().nullish(),
+  escalatedAt: zod.coerce.date().nullish(),
+  firstSeenAt: zod.coerce.date(),
+  lastSeenAt: zod.coerce.date(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary List notification channels
+ */
+export const ListAlertChannelsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertChannelsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      kind: zod.enum(["email", "webhook", "slack", "teams"]),
+      name: zod.string(),
+      config: zod
+        .record(zod.string(), zod.unknown())
+        .describe(
+          "Channel-kind-specific configuration. Secret fields (e.g.\nwebhook signing secret) are redacted to a short hint.\n",
+        ),
+      enabled: zod.boolean(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a notification channel
+ */
+export const CreateAlertChannelHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const CreateAlertChannelBody = zod.object({
+  kind: zod.enum(["email", "webhook", "slack", "teams"]),
+  name: zod.string(),
+  config: zod.record(zod.string(), zod.unknown()),
+  enabled: zod.boolean().optional(),
+});
+
+/**
+ * @summary Update channel name / config / enabled
+ */
+export const PatchAlertChannelParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchAlertChannelHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchAlertChannelBody = zod.object({
+  name: zod.string().optional(),
+  config: zod.record(zod.string(), zod.unknown()).optional(),
+  enabled: zod.boolean().optional(),
+});
+
+export const PatchAlertChannelResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  kind: zod.enum(["email", "webhook", "slack", "teams"]),
+  name: zod.string(),
+  config: zod
+    .record(zod.string(), zod.unknown())
+    .describe(
+      "Channel-kind-specific configuration. Secret fields (e.g.\nwebhook signing secret) are redacted to a short hint.\n",
+    ),
+  enabled: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete a channel
+ */
+export const DeleteAlertChannelParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteAlertChannelHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary Send a smoke-test alert through the channel adapter
+ */
+export const TestAlertChannelParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const TestAlertChannelHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const TestAlertChannelResponse = zod.object({
+  status: zod.enum(["delivered", "failed", "simulated", "skipped"]),
+  providerMessageId: zod.string().nullish(),
+  httpStatus: zod.number().nullish(),
+  error: zod.string().nullish(),
+  payload: zod.record(zod.string(), zod.unknown()).nullish(),
+});
+
+/**
+ * @summary List subscriptions
+ */
+export const ListAlertSubscriptionsQueryParams = zod.object({
+  userId: zod.coerce.string().optional(),
+});
+
+export const ListAlertSubscriptionsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertSubscriptionsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      userId: zod.string(),
+      channelId: zod.string(),
+      severityThreshold: zod.enum([
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical",
+      ]),
+      sources: zod
+        .array(
+          zod.enum([
+            "sanctions",
+            "corporate_filing",
+            "disruption_event",
+            "natural_hazard",
+            "risk_screening",
+            "operational_job_failed",
+            "operational_collector_stale",
+            "operational_collector_never_run",
+            "operational_high_confidence_opportunity",
+            "rule_match",
+            "manual",
+          ]),
+        )
+        .nullish(),
+      watchlistId: zod.string().nullish(),
+      digest: zod.enum(["realtime", "daily"]),
+      enabled: zod.boolean(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a subscription
+ */
+export const CreateAlertSubscriptionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const CreateAlertSubscriptionBody = zod.object({
+  userId: zod.string(),
+  channelId: zod.string(),
+  severityThreshold: zod
+    .enum(["info", "low", "medium", "high", "critical"])
+    .optional(),
+  sources: zod
+    .array(
+      zod.enum([
+        "sanctions",
+        "corporate_filing",
+        "disruption_event",
+        "natural_hazard",
+        "risk_screening",
+        "operational_job_failed",
+        "operational_collector_stale",
+        "operational_collector_never_run",
+        "operational_high_confidence_opportunity",
+        "rule_match",
+        "manual",
+      ]),
+    )
+    .nullish(),
+  watchlistId: zod.string().nullish(),
+  digest: zod.enum(["realtime", "daily"]).optional(),
+  enabled: zod.boolean().optional(),
+});
+
+/**
+ * @summary Update a subscription
+ */
+export const PatchAlertSubscriptionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchAlertSubscriptionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchAlertSubscriptionBody = zod.object({
+  channelId: zod.string().optional(),
+  severityThreshold: zod
+    .enum(["info", "low", "medium", "high", "critical"])
+    .optional(),
+  sources: zod
+    .array(
+      zod.enum([
+        "sanctions",
+        "corporate_filing",
+        "disruption_event",
+        "natural_hazard",
+        "risk_screening",
+        "operational_job_failed",
+        "operational_collector_stale",
+        "operational_collector_never_run",
+        "operational_high_confidence_opportunity",
+        "rule_match",
+        "manual",
+      ]),
+    )
+    .nullish(),
+  watchlistId: zod.string().nullish(),
+  digest: zod.enum(["realtime", "daily"]).optional(),
+  enabled: zod.boolean().optional(),
+});
+
+export const PatchAlertSubscriptionResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  userId: zod.string(),
+  channelId: zod.string(),
+  severityThreshold: zod.enum(["info", "low", "medium", "high", "critical"]),
+  sources: zod
+    .array(
+      zod.enum([
+        "sanctions",
+        "corporate_filing",
+        "disruption_event",
+        "natural_hazard",
+        "risk_screening",
+        "operational_job_failed",
+        "operational_collector_stale",
+        "operational_collector_never_run",
+        "operational_high_confidence_opportunity",
+        "rule_match",
+        "manual",
+      ]),
+    )
+    .nullish(),
+  watchlistId: zod.string().nullish(),
+  digest: zod.enum(["realtime", "daily"]),
+  enabled: zod.boolean(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete a subscription
+ */
+export const DeleteAlertSubscriptionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteAlertSubscriptionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary List watchlists
+ */
+export const ListWatchlistsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListWatchlistsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      userId: zod.string().nullish(),
+      name: zod.string(),
+      scope: zod.enum(["personal", "team"]),
+      description: zod.string(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a watchlist
+ */
+export const CreateWatchlistHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const CreateWatchlistBody = zod.object({
+  name: zod.string(),
+  scope: zod.enum(["personal", "team"]).optional(),
+  description: zod.string().optional(),
+  userId: zod.string().nullish(),
+});
+
+/**
+ * @summary Get a watchlist with its members
+ */
+export const GetWatchlistParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetWatchlistHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetWatchlistResponse = zod
+  .object({
+    id: zod.string(),
+    orgId: zod.string(),
+    userId: zod.string().nullish(),
+    name: zod.string(),
+    scope: zod.enum(["personal", "team"]),
+    description: zod.string(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  })
+  .and(
+    zod.object({
+      members: zod.array(
+        zod.object({
+          id: zod.string(),
+          watchlistId: zod.string(),
+          supplierId: zod.string().nullish(),
+          entityUid: zod.string().nullish(),
+          addedAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * @summary Rename or re-describe a watchlist
+ */
+export const PatchWatchlistParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchWatchlistHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchWatchlistBody = zod.object({
+  name: zod.string().optional(),
+  description: zod.string().optional(),
+});
+
+export const PatchWatchlistResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  userId: zod.string().nullish(),
+  name: zod.string(),
+  scope: zod.enum(["personal", "team"]),
+  description: zod.string(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete a watchlist
+ */
+export const DeleteWatchlistParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteWatchlistHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary Add a supplier or entity_uid to a watchlist
+ */
+export const AddWatchlistMemberParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const AddWatchlistMemberHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const AddWatchlistMemberBody = zod.object({
+  supplierId: zod.string().optional(),
+  entityUid: zod.string().optional(),
+});
+
+/**
+ * @summary Remove a member
+ */
+export const RemoveWatchlistMemberParams = zod.object({
+  id: zod.coerce.string(),
+  memberId: zod.coerce.string(),
+});
+
+export const RemoveWatchlistMemberHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary List alert rules
+ */
+export const ListAlertRulesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAlertRulesResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      name: zod.string(),
+      description: zod.string(),
+      enabled: zod.boolean(),
+      severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+      condition: zod.record(zod.string(), zod.unknown()),
+      watchlistId: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create an alert rule
+ */
+export const CreateAlertRuleHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const CreateAlertRuleBody = zod.object({
+  name: zod.string(),
+  description: zod.string().optional(),
+  enabled: zod.boolean().optional(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]).optional(),
+  condition: zod.record(zod.string(), zod.unknown()).optional(),
+  watchlistId: zod.string().nullish(),
+});
+
+/**
+ * @summary Update an alert rule
+ */
+export const PatchAlertRuleParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchAlertRuleHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const PatchAlertRuleBody = zod.object({
+  name: zod.string().optional(),
+  description: zod.string().optional(),
+  enabled: zod.boolean().optional(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]).optional(),
+  condition: zod.record(zod.string(), zod.unknown()).optional(),
+  watchlistId: zod.string().nullish(),
+});
+
+export const PatchAlertRuleResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  name: zod.string(),
+  description: zod.string(),
+  enabled: zod.boolean(),
+  severity: zod.enum(["info", "low", "medium", "high", "critical"]),
+  condition: zod.record(zod.string(), zod.unknown()),
+  watchlistId: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete an alert rule
+ */
+export const DeleteAlertRuleParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteAlertRuleHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary List escalation policies
+ */
+export const ListEscalationPoliciesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListEscalationPoliciesResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      name: zod.string(),
+      enabled: zod.boolean(),
+      severityAtLeast: zod.enum(["info", "low", "medium", "high", "critical"]),
+      unackedHours: zod.number(),
+      escalateToUserId: zod.string().nullish(),
+      channelId: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create an escalation policy
+ */
+export const CreateEscalationPolicyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const createEscalationPolicyBodyUnackedHoursMax = 720;
+
+export const CreateEscalationPolicyBody = zod.object({
+  name: zod.string(),
+  enabled: zod.boolean().optional(),
+  severityAtLeast: zod
+    .enum(["info", "low", "medium", "high", "critical"])
+    .optional(),
+  unackedHours: zod
+    .number()
+    .min(1)
+    .max(createEscalationPolicyBodyUnackedHoursMax)
+    .optional(),
+  escalateToUserId: zod.string().nullish(),
+  channelId: zod.string().nullish(),
+});
+
+/**
+ * @summary Update an escalation policy
+ */
+export const PatchEscalationPolicyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const PatchEscalationPolicyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const patchEscalationPolicyBodyUnackedHoursMax = 720;
+
+export const PatchEscalationPolicyBody = zod.object({
+  name: zod.string().optional(),
+  enabled: zod.boolean().optional(),
+  severityAtLeast: zod
+    .enum(["info", "low", "medium", "high", "critical"])
+    .optional(),
+  unackedHours: zod
+    .number()
+    .min(1)
+    .max(patchEscalationPolicyBodyUnackedHoursMax)
+    .optional(),
+  escalateToUserId: zod.string().nullish(),
+  channelId: zod.string().nullish(),
+});
+
+export const PatchEscalationPolicyResponse = zod.object({
+  id: zod.string(),
+  orgId: zod.string(),
+  name: zod.string(),
+  enabled: zod.boolean(),
+  severityAtLeast: zod.enum(["info", "low", "medium", "high", "critical"]),
+  unackedHours: zod.number(),
+  escalateToUserId: zod.string().nullish(),
+  channelId: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete an escalation policy
+ */
+export const DeleteEscalationPolicyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteEscalationPolicyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
 });

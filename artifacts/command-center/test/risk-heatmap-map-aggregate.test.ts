@@ -19,7 +19,7 @@ function cell(
 ): IntelligenceRiskHeatmapCell {
   return {
     country,
-    dimension,
+    dimension: dimension as IntelligenceRiskHeatmapCell["dimension"],
     band,
     score,
     signalCount,

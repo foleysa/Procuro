@@ -62,9 +62,34 @@ Defaults to 90 when not explicitly set in `orgs.settings`.
   createdAt: string;
 }
 
+export type MeUserRole = (typeof MeUserRole)[keyof typeof MeUserRole];
+
+export const MeUserRole = {
+  admin: "admin",
+  buyer: "buyer",
+  approver: "approver",
+  viewer: "viewer",
+} as const;
+
+/**
+ * The acting user inside the resolved tenant. The server upserts a
+users row keyed by `(orgId, email)` on every `/me` request so that
+downstream tables with a hard FK to `users.id` (alert
+subscriptions, watchlists) always have a valid target. The `id`
+is opaque; clients should treat it as a string handle.
+
+ */
+export interface MeUser {
+  id: string;
+  email: string;
+  name: string;
+  role?: MeUserRole;
+}
+
 export interface MeResponse {
   org: Org;
   actorEmail?: string;
+  user: MeUser;
 }
 
 /**
@@ -2468,6 +2493,209 @@ the active tenant; the server returns 400 otherwise.
   notes?: string;
 }
 
+/**
+ * What the Defense Pack is defending or attacking. At least one
+of `contractId+lineItem`, `categoryCode`, or `materialCode`
+must be provided so the evidence pool can be scoped beyond
+"every signal that ever mentioned this supplier".
+
+ */
+export interface DefensePackTarget {
+  supplierId: string;
+  supplierName: string;
+  contractId?: string | null;
+  lineItem?: string | null;
+  categoryCode?: string | null;
+  materialCode?: string | null;
+}
+
+export type DefensePackPosition =
+  (typeof DefensePackPosition)[keyof typeof DefensePackPosition];
+
+export const DefensePackPosition = {
+  defend_against_increase: "defend_against_increase",
+  attack_for_decrease: "attack_for_decrease",
+  justify_index_relink: "justify_index_relink",
+} as const;
+
+export type DefensePackLength =
+  (typeof DefensePackLength)[keyof typeof DefensePackLength];
+
+export const DefensePackLength = {
+  exec_one_pager: "exec_one_pager",
+  three_page_brief: "three_page_brief",
+  full_pack: "full_pack",
+} as const;
+
+export type DefensePackStatus =
+  (typeof DefensePackStatus)[keyof typeof DefensePackStatus];
+
+export const DefensePackStatus = {
+  generating: "generating",
+  ready: "ready",
+  insufficient_evidence: "insufficient_evidence",
+  failed: "failed",
+} as const;
+
+/**
+ * One LLM-emitted claim, verified to point at a real signal in
+the frozen evidence snapshot. The verifier drops claims whose
+cited `valueQuoted` disagrees with the snapshot value beyond
+the rounding tolerance.
+
+ */
+export interface DefensePackClaim {
+  text: string;
+  signalId: string;
+  valueQuoted: string;
+}
+
+export type DefensePackSectionKey =
+  (typeof DefensePackSectionKey)[keyof typeof DefensePackSectionKey];
+
+export const DefensePackSectionKey = {
+  position: "position",
+  market_context: "market_context",
+  cost_drivers: "cost_drivers",
+  comparable_benchmarks: "comparable_benchmarks",
+  recommended_counter_position: "recommended_counter_position",
+  walk_away_considerations: "walk_away_considerations",
+  proprietary_signal_context: "proprietary_signal_context",
+} as const;
+
+export interface DefensePackSection {
+  key: DefensePackSectionKey;
+  title: string;
+  narrative: string;
+  claims: DefensePackClaim[];
+}
+
+export type DefensePackEvidenceSnapshotItemTier =
+  (typeof DefensePackEvidenceSnapshotItemTier)[keyof typeof DefensePackEvidenceSnapshotItemTier];
+
+export const DefensePackEvidenceSnapshotItemTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export type DefensePackEvidenceSnapshotItemScope = {
+  materialCode?: string | null;
+  categoryCode?: string | null;
+  supplierName?: string | null;
+  laneKey?: string | null;
+  sku?: string | null;
+};
+
+/**
+ * One row of the frozen evidence pool the LLM was given. The
+Evidence Room view renders this list verbatim, even after the
+live `marketSignalsTable` rows move.
+
+ */
+export interface DefensePackEvidenceSnapshotItem {
+  signalId: string;
+  collectorId: string;
+  collectorName: string;
+  signalType: string;
+  tier: DefensePackEvidenceSnapshotItemTier;
+  scope?: DefensePackEvidenceSnapshotItemScope;
+  value: number;
+  unit: string;
+  currency: string;
+  observedAt: string;
+  sourceUrl: string;
+  posture: string;
+}
+
+/**
+ * Listing-row view of a Defense Pack. Sections + evidenceSnapshot
+are excluded for payload size.
+
+ */
+export interface DefensePackSummary {
+  id: string;
+  orgId: string;
+  target: DefensePackTarget;
+  position: DefensePackPosition;
+  length: DefensePackLength;
+  status: DefensePackStatus;
+  statusReason?: string | null;
+  disclosurePolicy: DisclosurePolicy;
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCostUsd?: number | null;
+  generatedBy: string;
+  permalink: string;
+  generatedAt?: string | null;
+  createdAt: string;
+  verifiedClaimCount?: number;
+  evidencePoolSize?: number;
+}
+
+export type DefensePack = DefensePackSummary & {
+  sections: DefensePackSection[];
+  evidenceSnapshot: DefensePackEvidenceSnapshotItem[];
+};
+
+export interface DefensePackListResponse {
+  items: DefensePackSummary[];
+}
+
+export interface CreateDefensePackRequest {
+  target: DefensePackTarget;
+  position: DefensePackPosition;
+  length: DefensePackLength;
+  /**
+   * Free-text buyer note describing the negotiation context
+(e.g. "supplier wants 8% increase effective Q1, citing
+steel cost"). Sanitised server-side before being added to
+the LLM prompt.
+
+   * @maxLength 2000
+   */
+  positionNote?: string;
+}
+
+export type DefensePackOutcomeUsed =
+  (typeof DefensePackOutcomeUsed)[keyof typeof DefensePackOutcomeUsed];
+
+export const DefensePackOutcomeUsed = {
+  yes: "yes",
+  no: "no",
+  unknown: "unknown",
+} as const;
+
+export type DefensePackOutcomeCategory =
+  (typeof DefensePackOutcomeCategory)[keyof typeof DefensePackOutcomeCategory];
+
+export const DefensePackOutcomeCategory = {
+  supplier_held_price: "supplier_held_price",
+  supplier_reduced_price: "supplier_reduced_price",
+  deferred: "deferred",
+  deal_lost: "deal_lost",
+  other: "other",
+} as const;
+
+export interface DefensePackOutcome {
+  id: string;
+  packId: string;
+  used: DefensePackOutcomeUsed;
+  outcomeCategory?: DefensePackOutcomeCategory | null;
+  comment?: string | null;
+  submittedBy: string;
+  createdAt: string;
+}
+
+export interface SubmitDefensePackFeedbackRequest {
+  used: DefensePackOutcomeUsed;
+  outcomeCategory?: DefensePackOutcomeCategory;
+  /** @maxLength 2000 */
+  comment?: string;
+}
+
 export interface TrustTenant {
   orgId: string;
   orgName: string;
@@ -2666,6 +2894,449 @@ export interface TrustSummary {
   audit: TrustAudit;
   identity: TrustIdentity;
   compliance: TrustCompliance;
+}
+
+export type AlertSeverity = (typeof AlertSeverity)[keyof typeof AlertSeverity];
+
+export const AlertSeverity = {
+  info: "info",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertSource = (typeof AlertSource)[keyof typeof AlertSource];
+
+export const AlertSource = {
+  sanctions: "sanctions",
+  corporate_filing: "corporate_filing",
+  disruption_event: "disruption_event",
+  natural_hazard: "natural_hazard",
+  risk_screening: "risk_screening",
+  operational_job_failed: "operational_job_failed",
+  operational_collector_stale: "operational_collector_stale",
+  operational_collector_never_run: "operational_collector_never_run",
+  operational_high_confidence_opportunity:
+    "operational_high_confidence_opportunity",
+  rule_match: "rule_match",
+  manual: "manual",
+} as const;
+
+export type AlertState = (typeof AlertState)[keyof typeof AlertState];
+
+export const AlertState = {
+  open: "open",
+  acknowledged: "acknowledged",
+  snoozed: "snoozed",
+  resolved: "resolved",
+} as const;
+
+export type AlertChannelKind =
+  (typeof AlertChannelKind)[keyof typeof AlertChannelKind];
+
+export const AlertChannelKind = {
+  email: "email",
+  webhook: "webhook",
+  slack: "slack",
+  teams: "teams",
+} as const;
+
+export type AlertDigestMode =
+  (typeof AlertDigestMode)[keyof typeof AlertDigestMode];
+
+export const AlertDigestMode = {
+  realtime: "realtime",
+  daily: "daily",
+} as const;
+
+export type AlertDeliveryState =
+  (typeof AlertDeliveryState)[keyof typeof AlertDeliveryState];
+
+export const AlertDeliveryState = {
+  pending: "pending",
+  sent: "sent",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export type AlertEventType =
+  (typeof AlertEventType)[keyof typeof AlertEventType];
+
+export const AlertEventType = {
+  created: "created",
+  occurrence: "occurrence",
+  acknowledged: "acknowledged",
+  snoozed: "snoozed",
+  resolved: "resolved",
+  reopened: "reopened",
+  assigned: "assigned",
+  comment: "comment",
+  delivered: "delivered",
+  escalated: "escalated",
+  delivery_failed: "delivery_failed",
+} as const;
+
+export type WatchlistScope =
+  (typeof WatchlistScope)[keyof typeof WatchlistScope];
+
+export const WatchlistScope = {
+  personal: "personal",
+  team: "team",
+} as const;
+
+export type AlertPayload = { [key: string]: unknown };
+
+export interface Alert {
+  id: string;
+  orgId: string;
+  severity: AlertSeverity;
+  source: AlertSource;
+  kind: string;
+  title: string;
+  summary: string;
+  dedupeKey?: string | null;
+  occurrences: number;
+  payload?: AlertPayload;
+  entityUid?: string | null;
+  supplierId?: string | null;
+  contractId?: string | null;
+  opportunityId?: string | null;
+  state: AlertState;
+  assignedToUserId?: string | null;
+  acknowledgedAt?: string | null;
+  acknowledgedBy?: string | null;
+  snoozedUntil?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  deliveredAt?: string | null;
+  escalatedAt?: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertList {
+  items: Alert[];
+}
+
+export type AlertSummaryByState = { [key: string]: number };
+
+export type AlertSummaryBySeverity = { [key: string]: number };
+
+export interface AlertSummary {
+  byState: AlertSummaryByState;
+  bySeverity: AlertSummaryBySeverity;
+  openCriticalOrHigh: number;
+}
+
+export type AlertEventMetadata = { [key: string]: unknown };
+
+export interface AlertEvent {
+  id: string;
+  alertId: string;
+  eventType: AlertEventType;
+  actor?: string | null;
+  note?: string | null;
+  metadata: AlertEventMetadata;
+  createdAt: string;
+}
+
+export interface AlertEventList {
+  items: AlertEvent[];
+}
+
+export interface AlertDelivery {
+  id: string;
+  alertId: string;
+  subscriptionId: string;
+  channelId: string;
+  state: AlertDeliveryState;
+  attempts: number;
+  lastError?: string | null;
+  sentAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertDeliveryList {
+  items: AlertDelivery[];
+}
+
+export type TransitionAlertRequestAction =
+  (typeof TransitionAlertRequestAction)[keyof typeof TransitionAlertRequestAction];
+
+export const TransitionAlertRequestAction = {
+  ack: "ack",
+  snooze: "snooze",
+  resolve: "resolve",
+  reopen: "reopen",
+  assign: "assign",
+  comment: "comment",
+} as const;
+
+export interface TransitionAlertRequest {
+  action: TransitionAlertRequestAction;
+  note?: string;
+  snoozedUntil?: string;
+  assignedToUserId?: string | null;
+}
+
+export type CreateManualAlertRequestPayload = { [key: string]: unknown };
+
+export interface CreateManualAlertRequest {
+  severity: AlertSeverity;
+  source?: AlertSource;
+  kind: string;
+  title: string;
+  summary?: string;
+  dedupeKey?: string;
+  payload?: CreateManualAlertRequestPayload;
+  entityUid?: string | null;
+  supplierId?: string | null;
+  contractId?: string | null;
+  opportunityId?: string | null;
+}
+
+export type CreateManualAlertResponseOutcome =
+  (typeof CreateManualAlertResponseOutcome)[keyof typeof CreateManualAlertResponseOutcome];
+
+export const CreateManualAlertResponseOutcome = {
+  created: "created",
+  bumped: "bumped",
+} as const;
+
+export interface CreateManualAlertResponse {
+  alert: Alert;
+  outcome: CreateManualAlertResponseOutcome;
+}
+
+/**
+ * Channel-kind-specific configuration. Secret fields (e.g.
+webhook signing secret) are redacted to a short hint.
+
+ */
+export type AlertChannelConfig = { [key: string]: unknown };
+
+export interface AlertChannel {
+  id: string;
+  orgId: string;
+  kind: AlertChannelKind;
+  name: string;
+  /** Channel-kind-specific configuration. Secret fields (e.g.
+webhook signing secret) are redacted to a short hint.
+ */
+  config: AlertChannelConfig;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertChannelList {
+  items: AlertChannel[];
+}
+
+export type CreateAlertChannelRequestConfig = { [key: string]: unknown };
+
+export interface CreateAlertChannelRequest {
+  kind: AlertChannelKind;
+  name: string;
+  config: CreateAlertChannelRequestConfig;
+  enabled?: boolean;
+}
+
+export type PatchAlertChannelRequestConfig = { [key: string]: unknown };
+
+export interface PatchAlertChannelRequest {
+  name?: string;
+  config?: PatchAlertChannelRequestConfig;
+  enabled?: boolean;
+}
+
+export type ChannelTestResultStatus =
+  (typeof ChannelTestResultStatus)[keyof typeof ChannelTestResultStatus];
+
+export const ChannelTestResultStatus = {
+  delivered: "delivered",
+  failed: "failed",
+  simulated: "simulated",
+  skipped: "skipped",
+} as const;
+
+export type ChannelTestResultPayload = { [key: string]: unknown } | null;
+
+export interface ChannelTestResult {
+  status: ChannelTestResultStatus;
+  providerMessageId?: string | null;
+  httpStatus?: number | null;
+  error?: string | null;
+  payload?: ChannelTestResultPayload;
+}
+
+export interface AlertSubscription {
+  id: string;
+  orgId: string;
+  userId: string;
+  channelId: string;
+  severityThreshold: AlertSeverity;
+  sources?: AlertSource[] | null;
+  watchlistId?: string | null;
+  digest: AlertDigestMode;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertSubscriptionList {
+  items: AlertSubscription[];
+}
+
+export interface CreateAlertSubscriptionRequest {
+  userId: string;
+  channelId: string;
+  severityThreshold?: AlertSeverity;
+  sources?: AlertSource[] | null;
+  watchlistId?: string | null;
+  digest?: AlertDigestMode;
+  enabled?: boolean;
+}
+
+export interface PatchAlertSubscriptionRequest {
+  channelId?: string;
+  severityThreshold?: AlertSeverity;
+  sources?: AlertSource[] | null;
+  watchlistId?: string | null;
+  digest?: AlertDigestMode;
+  enabled?: boolean;
+}
+
+export interface Watchlist {
+  id: string;
+  orgId: string;
+  userId?: string | null;
+  name: string;
+  scope: WatchlistScope;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WatchlistList {
+  items: Watchlist[];
+}
+
+export interface WatchlistMember {
+  id: string;
+  watchlistId: string;
+  supplierId?: string | null;
+  entityUid?: string | null;
+  addedAt: string;
+}
+
+export type WatchlistDetail = Watchlist & {
+  members: WatchlistMember[];
+};
+
+export interface CreateWatchlistRequest {
+  name: string;
+  scope?: WatchlistScope;
+  description?: string;
+  userId?: string | null;
+}
+
+export interface PatchWatchlistRequest {
+  name?: string;
+  description?: string;
+}
+
+export interface AddWatchlistMemberRequest {
+  supplierId?: string;
+  entityUid?: string;
+}
+
+export type AlertRuleCondition = { [key: string]: unknown };
+
+export interface AlertRule {
+  id: string;
+  orgId: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  severity: AlertSeverity;
+  condition: AlertRuleCondition;
+  watchlistId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertRuleList {
+  items: AlertRule[];
+}
+
+export type CreateAlertRuleRequestCondition = { [key: string]: unknown };
+
+export interface CreateAlertRuleRequest {
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  severity?: AlertSeverity;
+  condition?: CreateAlertRuleRequestCondition;
+  watchlistId?: string | null;
+}
+
+export type PatchAlertRuleRequestCondition = { [key: string]: unknown };
+
+export interface PatchAlertRuleRequest {
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  severity?: AlertSeverity;
+  condition?: PatchAlertRuleRequestCondition;
+  watchlistId?: string | null;
+}
+
+export interface EscalationPolicy {
+  id: string;
+  orgId: string;
+  name: string;
+  enabled: boolean;
+  severityAtLeast: AlertSeverity;
+  unackedHours: number;
+  escalateToUserId?: string | null;
+  channelId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EscalationPolicyList {
+  items: EscalationPolicy[];
+}
+
+export interface CreateEscalationPolicyRequest {
+  name: string;
+  enabled?: boolean;
+  severityAtLeast?: AlertSeverity;
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  unackedHours?: number;
+  escalateToUserId?: string | null;
+  channelId?: string | null;
+}
+
+export interface PatchEscalationPolicyRequest {
+  name?: string;
+  enabled?: boolean;
+  severityAtLeast?: AlertSeverity;
+  /**
+   * @minimum 1
+   * @maximum 720
+   */
+  unackedHours?: number;
+  escalateToUserId?: string | null;
+  channelId?: string | null;
 }
 
 /**
@@ -3018,4 +3689,28 @@ export const ListContractsStatus = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
+};
+
+export type ListDefensePacksParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type ListAlertsParams = {
+  state?: AlertState;
+  severity?: AlertSeverity;
+  source?: AlertSource;
+  supplierId?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+};
+
+export type ListAlertSubscriptionsParams = {
+  userId?: string;
 };

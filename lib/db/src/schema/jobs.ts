@@ -27,6 +27,9 @@ export const jobKindValues = [
   "sync_erp_connection",
   "prune_jobs",
   "renewal_alert_scan",
+  "deliver_alerts",
+  "escalate_alerts",
+  "synthesize_operational_alerts",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 

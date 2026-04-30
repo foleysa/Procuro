@@ -19,6 +19,7 @@ import {
   Eye,
   Atom,
   Shield,
+  Bell,
 } from "lucide-react";
 import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
@@ -44,6 +45,8 @@ export function Layout({ children }: LayoutProps) {
     { href: "/contracts", label: "Contracts", icon: FileText },
     { href: "/approvals", label: "Approvals", icon: CheckSquare },
     { href: "/fusion", label: "Intelligence Fusion", icon: Atom },
+    { href: "/alerts", label: "Alerts", icon: Bell },
+    { href: "/watchlists", label: "Watchlists", icon: Eye },
     { href: "/results", label: "Results & Billing", icon: TrendingUp },
     { href: "/playbook", label: "Playbook", icon: BookOpen },
     { href: "/collectors", label: "Collector Workbench", icon: Radar },

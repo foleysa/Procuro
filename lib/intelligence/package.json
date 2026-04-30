@@ -11,6 +11,7 @@
     "./entities": "./src/entities/index.ts",
     "./tier": "./src/tier/index.ts",
     "./scoring": "./src/scoring/composite.ts",
+    "./alerts": "./src/alerts/index.ts",
     "./config": "./src/config.ts"
   },
   "dependencies": {

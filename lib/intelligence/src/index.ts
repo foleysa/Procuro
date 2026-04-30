@@ -67,3 +67,17 @@ export {
   type ScoreContribution,
   type ScoreResult,
 } from "./scoring/composite.js";
+export {
+  createAlert,
+  transitionAlert,
+  appendAlertEvent,
+  evaluateRulesForSignal,
+  wakeExpiredSnoozes,
+  severityAtLeast,
+  isAlertSeverity,
+  type CreateAlertInput,
+  type CreateAlertResult,
+  type TransitionAlertInput,
+  type AlertCandidate,
+  type RuleMatch,
+} from "./alerts/index.js";

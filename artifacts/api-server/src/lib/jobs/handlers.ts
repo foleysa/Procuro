@@ -458,29 +458,38 @@ export async function runRenewalAlertScanHandler(
 
       for (const r of candidates.rows) {
         const days = Number(r.days_to_expiry);
+        // Map renewal-window urgency onto the #117 alerts severity enum
+        // (info|low|medium|high|critical). The original #118 worker used
+        // a 3-level enum (info|warning|critical) that no longer exists
+        // post-rebase; "warning" maps to "high".
         const severity =
-          days <= 7 ? "critical" : days <= 30 ? "warning" : "info";
+          days <= 7 ? "critical" : days <= 30 ? "high" : "info";
         const dedupeKey = `renewal:${r.id}:${threshold}`;
         const endDateIso = (
           r.end_date instanceof Date ? r.end_date : new Date(r.end_date)
         ).toISOString();
 
-        // INSERT ... ON CONFLICT (alerts_dedupe_uq) DO NOTHING. We
-        // rely on the unique index over `(org_id, kind, dedupe_key)`
+        // INSERT ... ON CONFLICT (alerts_dedupe_uq) DO NOTHING. The
+        // unique index lives on `(org_id, dedupe_key)` (#117 schema),
         // so the same trigger condition can never produce two rows
-        // even if the daily scheduler fires twice.
+        // even if the daily scheduler fires twice. Schema columns:
+        // `summary` replaces `body`, `payload` replaces `metadata`,
+        // and `contract_id` is a direct FK in place of the
+        // `ref_type`/`ref_id` pair.
         const inserted = await db.execute<{ id: string }>(sql`
-          INSERT INTO alerts (id, org_id, kind, severity, title, body,
-                              ref_type, ref_id, dedupe_key, metadata)
+          INSERT INTO alerts (id, org_id, source, kind, severity, title,
+                              summary, contract_id, supplier_id,
+                              dedupe_key, payload)
           VALUES (
             ${newId("alt")},
             ${org.id},
+            'rule_match',
             'contract_renewal',
             ${severity},
             ${`Contract ${r.contract_number} renewing in ${days} day${days === 1 ? "" : "s"}`},
             ${`${r.title} (${r.supplier_name}) — end date ${endDateIso.slice(0, 10)}.`},
-            'contract',
             ${r.id},
+            ${r.supplier_id},
             ${dedupeKey},
             ${sql`${JSON.stringify({
               contractId: r.id,
@@ -490,7 +499,7 @@ export async function runRenewalAlertScanHandler(
               endDate: endDateIso,
             })}::jsonb`}
           )
-          ON CONFLICT (org_id, kind, dedupe_key) DO NOTHING
+          ON CONFLICT (org_id, dedupe_key) DO NOTHING
           RETURNING id
         `);
         if (inserted.rows.length > 0) {
@@ -600,4 +609,31 @@ export async function runAnalysisCycleFanoutHandler(
     enqueuedJobIds,
     orgErrors,
   };
+}
+
+export async function deliverAlertsHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  // Lazy import: keeps this file from owning a hard dep on the alerts
+  // module so `node --test` test files importing handlers don't drag
+  // in alert delivery code paths they don't care about.
+  const { deliverAlertsTick } = await import("../alerts/delivery");
+  const result = await deliverAlertsTick();
+  return result as unknown as Record<string, unknown>;
+}
+
+export async function escalateAlertsHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const { escalateAlertsTick } = await import("../alerts/delivery");
+  const result = await escalateAlertsTick();
+  return result as unknown as Record<string, unknown>;
+}
+
+export async function synthesizeOperationalAlertsHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const { synthesizeOperationalAlerts } = await import("../alerts/synthesize");
+  const result = await synthesizeOperationalAlerts();
+  return result as unknown as Record<string, unknown>;
 }

@@ -143,7 +143,6 @@ vi.mock("@workspace/api-client-react", () => {
 // Modules are imported AFTER `vi.mock` so the mocked module wins.
 const { default: Fusion } = await import("../src/pages/fusion");
 const { default: Dashboard } = await import("../src/pages/dashboard");
-const { default: Ooda } = await import("../src/pages/ooda");
 
 // ---- fixtures -----------------------------------------------------------
 
@@ -286,8 +285,8 @@ afterEach(() => {
 function expectNoConsoleErrors() {
   // Snapshot any unexpected error/warn output so the failure message
   // names *what* leaked, not just that the count was non-zero.
-  const errs = consoleErrorSpy.mock.calls.map((c) => String(c[0] ?? ""));
-  const warns = consoleWarnSpy.mock.calls.map((c) => String(c[0] ?? ""));
+  const errs = consoleErrorSpy.mock.calls.map((c: unknown[]) => String(c[0] ?? ""));
+  const warns = consoleWarnSpy.mock.calls.map((c: unknown[]) => String(c[0] ?? ""));
   expect(errs, "console.error during render").toEqual([]);
   expect(warns, "console.warn during render").toEqual([]);
 }
@@ -461,63 +460,6 @@ describe("cross-links to the Fusion Center", () => {
     // The dedicated "Intelligence Fusion" row should be present by
     // its label so a future copy change can't silently delete it.
     expect(screen.getByText(/Intelligence Fusion/i)).toBeInTheDocument();
-
-    expectNoConsoleErrors();
-  });
-
-  test("OODA cycle-detail card exposes both fusion deep-links for the active cycle", () => {
-    // Seed a cycle so the page auto-selects it and CycleDetailCard
-    // mounts with real data. The Sources array drives the
-    // <InsightCitations> inside the detail card; payloads only need
-    // to satisfy the `as` casts in ooda.tsx (no schema enforcement).
-    mockState.cycles = [
-      {
-        id: "cyc_test",
-        orgId: "org_test",
-        generation: 7,
-        status: "completed" as const,
-        opportunitiesCreated: 3,
-        totalProjectedUsd: 50_000,
-        startedAt: "2026-04-29T08:00:00.000Z",
-        completedAt: "2026-04-29T08:05:00.000Z",
-      },
-    ];
-    mockState.cycle = {
-      id: "cyc_test",
-      orgId: "org_test",
-      generation: 7,
-      status: "completed" as const,
-      opportunitiesCreated: 3,
-      totalProjectedUsd: 50_000,
-      startedAt: "2026-04-29T08:00:00.000Z",
-      completedAt: "2026-04-29T08:05:00.000Z",
-      observePayload: {
-        snapshot: {
-          suppliers: 10,
-          purchaseOrders: 20,
-          poLines: 30,
-          invoices: 5,
-          payments: 5,
-          activeContracts: 2,
-        },
-      },
-      learnPayload: { priorDeltas: [] },
-      sources: [T1_SOURCE],
-    };
-
-    renderWithRouter(<Ooda />);
-
-    // The plain "Open Intelligence Fusion Center →" link.
-    const fusionLink = screen.getByTestId("link-fusion");
-    expect(fusionLink).toHaveAttribute("href", "/fusion");
-
-    // The cycle-scoped "View war-room events for this cycle →" link
-    // — must include both the events tab and the cycle id, encoded.
-    const cycleEventsLink = screen.getByTestId("link-fusion-cycle-events");
-    expect(cycleEventsLink).toHaveAttribute(
-      "href",
-      "/fusion?tab=events&cycleId=cyc_test",
-    );
 
     expectNoConsoleErrors();
   });

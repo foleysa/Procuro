@@ -11,9 +11,11 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { MeUser } from "./meUser";
 import type { Org } from "./org";
 
 export interface MeResponse {
   org: Org;
   actorEmail?: string;
+  user: MeUser;
 }

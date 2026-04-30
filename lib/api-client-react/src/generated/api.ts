@@ -24,6 +24,18 @@ import type {
 
 import type {
   AddWatchedIssuerRequest,
+  AddWatchlistMemberRequest,
+  Alert,
+  AlertChannel,
+  AlertChannelList,
+  AlertDeliveryList,
+  AlertEventList,
+  AlertList,
+  AlertRule,
+  AlertRuleList,
+  AlertSubscription,
+  AlertSubscriptionList,
+  AlertSummary,
   ApproveOpportunityRequest,
   BillingCurrencyOverrideRequest,
   BillingCurrencyOverrideResponse,
@@ -31,6 +43,7 @@ import type {
   BroadcastCollectorPosturePreview,
   BroadcastCollectorPostureRequest,
   BroadcastCollectorPostureResult,
+  ChannelTestResult,
   Collector,
   CollectorAuditEntry,
   CollectorBackfillResult,
@@ -42,8 +55,15 @@ import type {
   CollectorRunResult,
   ContractDetail,
   ContractListResponse,
+  CreateAlertChannelRequest,
+  CreateAlertRuleRequest,
+  CreateAlertSubscriptionRequest,
   CreateDefensePackRequest,
   CreateErpConnectionRequest,
+  CreateEscalationPolicyRequest,
+  CreateManualAlertRequest,
+  CreateManualAlertResponse,
+  CreateWatchlistRequest,
   CsvIngestRequest,
   Cycle,
   CycleDetail,
@@ -54,6 +74,8 @@ import type {
   ErpConnectionListResponse,
   ErpConnectionResponse,
   ErrorResponse,
+  EscalationPolicy,
+  EscalationPolicyList,
   GetCollectorCost200,
   GetCollectorCostParams,
   GetIntelligenceCoverageGapsParams,
@@ -73,6 +95,8 @@ import type {
   JobCancelled,
   JobKindSetting,
   LearnedPrior,
+  ListAlertSubscriptionsParams,
+  ListAlertsParams,
   ListCollectorCatalog200,
   ListCollectorRunsAndErrors200,
   ListCollectorRunsAndErrorsParams,
@@ -97,11 +121,16 @@ import type {
   OpportunityListResponse,
   Org,
   OverrideSupplierBillingCurrency400,
+  PatchAlertChannelRequest,
+  PatchAlertRuleRequest,
+  PatchAlertSubscriptionRequest,
   PatchCollectorPostureRequest,
   PatchCollectorRequest,
   PatchContractRequest,
+  PatchEscalationPolicyRequest,
   PatchMeSettingsRequest,
   PatchSupplierRequest,
+  PatchWatchlistRequest,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
@@ -117,11 +146,16 @@ import type {
   SystemCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
+  TransitionAlertRequest,
   TrustSummary,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
   WatchedIssuer,
   WatchedIssuerListResponse,
+  Watchlist,
+  WatchlistDetail,
+  WatchlistList,
+  WatchlistMember,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -7506,4 +7540,2643 @@ export const useSubmitDefensePackFeedback = <
   TContext
 > => {
   return useMutation(getSubmitDefensePackFeedbackMutationOptions(options));
+};
+
+/**
+ * @summary List alerts (inbox)
+ */
+export const getListAlertsUrl = (params?: ListAlertsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/alerts?${stringifiedParams}`
+    : `/api/alerts`;
+};
+
+export const listAlerts = async (
+  params?: ListAlertsParams,
+  options?: RequestInit,
+): Promise<AlertList> => {
+  return customFetch<AlertList>(getListAlertsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAlertsQueryKey = (params?: ListAlertsParams) => {
+  return [`/api/alerts`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAlertsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlerts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlertsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlerts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAlertsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlerts>>> = ({
+    signal,
+  }) => listAlerts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlerts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlerts>>
+>;
+export type ListAlertsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List alerts (inbox)
+ */
+
+export function useListAlerts<
+  TData = Awaited<ReturnType<typeof listAlerts>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlertsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlerts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an alert manually
+ */
+export const getCreateManualAlertUrl = () => {
+  return `/api/alerts`;
+};
+
+export const createManualAlert = async (
+  createManualAlertRequest: CreateManualAlertRequest,
+  options?: RequestInit,
+): Promise<CreateManualAlertResponse> => {
+  return customFetch<CreateManualAlertResponse>(getCreateManualAlertUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createManualAlertRequest),
+  });
+};
+
+export const getCreateManualAlertMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createManualAlert>>,
+    TError,
+    { data: BodyType<CreateManualAlertRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createManualAlert>>,
+  TError,
+  { data: BodyType<CreateManualAlertRequest> },
+  TContext
+> => {
+  const mutationKey = ["createManualAlert"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createManualAlert>>,
+    { data: BodyType<CreateManualAlertRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createManualAlert(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateManualAlertMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createManualAlert>>
+>;
+export type CreateManualAlertMutationBody = BodyType<CreateManualAlertRequest>;
+export type CreateManualAlertMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an alert manually
+ */
+export const useCreateManualAlert = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createManualAlert>>,
+    TError,
+    { data: BodyType<CreateManualAlertRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createManualAlert>>,
+  TError,
+  { data: BodyType<CreateManualAlertRequest> },
+  TContext
+> => {
+  return useMutation(getCreateManualAlertMutationOptions(options));
+};
+
+/**
+ * @summary Aggregate counts of alerts by state and severity
+ */
+export const getGetAlertsSummaryUrl = () => {
+  return `/api/alerts/summary`;
+};
+
+export const getAlertsSummary = async (
+  options?: RequestInit,
+): Promise<AlertSummary> => {
+  return customFetch<AlertSummary>(getGetAlertsSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAlertsSummaryQueryKey = () => {
+  return [`/api/alerts/summary`] as const;
+};
+
+export const getGetAlertsSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAlertsSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAlertsSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAlertsSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAlertsSummary>>
+  > = ({ signal }) => getAlertsSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAlertsSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAlertsSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAlertsSummary>>
+>;
+export type GetAlertsSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregate counts of alerts by state and severity
+ */
+
+export function useGetAlertsSummary<
+  TData = Awaited<ReturnType<typeof getAlertsSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAlertsSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAlertsSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get one alert
+ */
+export const getGetAlertUrl = (id: string) => {
+  return `/api/alerts/${id}`;
+};
+
+export const getAlert = async (
+  id: string,
+  options?: RequestInit,
+): Promise<Alert> => {
+  return customFetch<Alert>(getGetAlertUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAlertQueryKey = (id: string) => {
+  return [`/api/alerts/${id}`] as const;
+};
+
+export const getGetAlertQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAlert>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAlert>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAlertQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAlert>>> = ({
+    signal,
+  }) => getAlert(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getAlert>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetAlertQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAlert>>
+>;
+export type GetAlertQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Get one alert
+ */
+
+export function useGetAlert<
+  TData = Awaited<ReturnType<typeof getAlert>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAlert>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAlertQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Audit-trail events on an alert
+ */
+export const getListAlertEventsUrl = (id: string) => {
+  return `/api/alerts/${id}/events`;
+};
+
+export const listAlertEvents = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AlertEventList> => {
+  return customFetch<AlertEventList>(getListAlertEventsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAlertEventsQueryKey = (id: string) => {
+  return [`/api/alerts/${id}/events`] as const;
+};
+
+export const getListAlertEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlertEvents>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAlertEventsQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertEvents>>> = ({
+    signal,
+  }) => listAlertEvents(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlertEvents>>
+>;
+export type ListAlertEventsQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Audit-trail events on an alert
+ */
+
+export function useListAlertEvents<
+  TData = Awaited<ReturnType<typeof listAlertEvents>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertEventsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Per-(subscription,channel) delivery attempts for an alert
+ */
+export const getListAlertDeliveriesUrl = (id: string) => {
+  return `/api/alerts/${id}/deliveries`;
+};
+
+export const listAlertDeliveries = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AlertDeliveryList> => {
+  return customFetch<AlertDeliveryList>(getListAlertDeliveriesUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAlertDeliveriesQueryKey = (id: string) => {
+  return [`/api/alerts/${id}/deliveries`] as const;
+};
+
+export const getListAlertDeliveriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlertDeliveries>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertDeliveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAlertDeliveriesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAlertDeliveries>>
+  > = ({ signal }) => listAlertDeliveries(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertDeliveries>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertDeliveriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlertDeliveries>>
+>;
+export type ListAlertDeliveriesQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Per-(subscription,channel) delivery attempts for an alert
+ */
+
+export function useListAlertDeliveries<
+  TData = Awaited<ReturnType<typeof listAlertDeliveries>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertDeliveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertDeliveriesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Acknowledge / snooze / resolve / reopen / assign / comment
+ */
+export const getTransitionAlertUrl = (id: string) => {
+  return `/api/alerts/${id}/transitions`;
+};
+
+export const transitionAlert = async (
+  id: string,
+  transitionAlertRequest: TransitionAlertRequest,
+  options?: RequestInit,
+): Promise<Alert> => {
+  return customFetch<Alert>(getTransitionAlertUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(transitionAlertRequest),
+  });
+};
+
+export const getTransitionAlertMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof transitionAlert>>,
+    TError,
+    { id: string; data: BodyType<TransitionAlertRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof transitionAlert>>,
+  TError,
+  { id: string; data: BodyType<TransitionAlertRequest> },
+  TContext
+> => {
+  const mutationKey = ["transitionAlert"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof transitionAlert>>,
+    { id: string; data: BodyType<TransitionAlertRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return transitionAlert(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TransitionAlertMutationResult = NonNullable<
+  Awaited<ReturnType<typeof transitionAlert>>
+>;
+export type TransitionAlertMutationBody = BodyType<TransitionAlertRequest>;
+export type TransitionAlertMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Acknowledge / snooze / resolve / reopen / assign / comment
+ */
+export const useTransitionAlert = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof transitionAlert>>,
+    TError,
+    { id: string; data: BodyType<TransitionAlertRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof transitionAlert>>,
+  TError,
+  { id: string; data: BodyType<TransitionAlertRequest> },
+  TContext
+> => {
+  return useMutation(getTransitionAlertMutationOptions(options));
+};
+
+/**
+ * @summary List notification channels
+ */
+export const getListAlertChannelsUrl = () => {
+  return `/api/alert-channels`;
+};
+
+export const listAlertChannels = async (
+  options?: RequestInit,
+): Promise<AlertChannelList> => {
+  return customFetch<AlertChannelList>(getListAlertChannelsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAlertChannelsQueryKey = () => {
+  return [`/api/alert-channels`] as const;
+};
+
+export const getListAlertChannelsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlertChannels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertChannels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAlertChannelsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAlertChannels>>
+  > = ({ signal }) => listAlertChannels({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertChannels>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertChannelsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlertChannels>>
+>;
+export type ListAlertChannelsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List notification channels
+ */
+
+export function useListAlertChannels<
+  TData = Awaited<ReturnType<typeof listAlertChannels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertChannels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertChannelsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a notification channel
+ */
+export const getCreateAlertChannelUrl = () => {
+  return `/api/alert-channels`;
+};
+
+export const createAlertChannel = async (
+  createAlertChannelRequest: CreateAlertChannelRequest,
+  options?: RequestInit,
+): Promise<AlertChannel> => {
+  return customFetch<AlertChannel>(getCreateAlertChannelUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAlertChannelRequest),
+  });
+};
+
+export const getCreateAlertChannelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertChannel>>,
+    TError,
+    { data: BodyType<CreateAlertChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAlertChannel>>,
+  TError,
+  { data: BodyType<CreateAlertChannelRequest> },
+  TContext
+> => {
+  const mutationKey = ["createAlertChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAlertChannel>>,
+    { data: BodyType<CreateAlertChannelRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAlertChannel(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAlertChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAlertChannel>>
+>;
+export type CreateAlertChannelMutationBody =
+  BodyType<CreateAlertChannelRequest>;
+export type CreateAlertChannelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a notification channel
+ */
+export const useCreateAlertChannel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertChannel>>,
+    TError,
+    { data: BodyType<CreateAlertChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAlertChannel>>,
+  TError,
+  { data: BodyType<CreateAlertChannelRequest> },
+  TContext
+> => {
+  return useMutation(getCreateAlertChannelMutationOptions(options));
+};
+
+/**
+ * @summary Update channel name / config / enabled
+ */
+export const getPatchAlertChannelUrl = (id: string) => {
+  return `/api/alert-channels/${id}`;
+};
+
+export const patchAlertChannel = async (
+  id: string,
+  patchAlertChannelRequest: PatchAlertChannelRequest,
+  options?: RequestInit,
+): Promise<AlertChannel> => {
+  return customFetch<AlertChannel>(getPatchAlertChannelUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchAlertChannelRequest),
+  });
+};
+
+export const getPatchAlertChannelMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertChannel>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchAlertChannel>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertChannelRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchAlertChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchAlertChannel>>,
+    { id: string; data: BodyType<PatchAlertChannelRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchAlertChannel(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchAlertChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchAlertChannel>>
+>;
+export type PatchAlertChannelMutationBody = BodyType<PatchAlertChannelRequest>;
+export type PatchAlertChannelMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Update channel name / config / enabled
+ */
+export const usePatchAlertChannel = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertChannel>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertChannelRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchAlertChannel>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertChannelRequest> },
+  TContext
+> => {
+  return useMutation(getPatchAlertChannelMutationOptions(options));
+};
+
+/**
+ * @summary Delete a channel
+ */
+export const getDeleteAlertChannelUrl = (id: string) => {
+  return `/api/alert-channels/${id}`;
+};
+
+export const deleteAlertChannel = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAlertChannelUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAlertChannelMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertChannel>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAlertChannel>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAlertChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAlertChannel>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteAlertChannel(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAlertChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAlertChannel>>
+>;
+
+export type DeleteAlertChannelMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete a channel
+ */
+export const useDeleteAlertChannel = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertChannel>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAlertChannel>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteAlertChannelMutationOptions(options));
+};
+
+/**
+ * @summary Send a smoke-test alert through the channel adapter
+ */
+export const getTestAlertChannelUrl = (id: string) => {
+  return `/api/alert-channels/${id}/test`;
+};
+
+export const testAlertChannel = async (
+  id: string,
+  options?: RequestInit,
+): Promise<ChannelTestResult> => {
+  return customFetch<ChannelTestResult>(getTestAlertChannelUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getTestAlertChannelMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testAlertChannel>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testAlertChannel>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["testAlertChannel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testAlertChannel>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return testAlertChannel(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestAlertChannelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testAlertChannel>>
+>;
+
+export type TestAlertChannelMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Send a smoke-test alert through the channel adapter
+ */
+export const useTestAlertChannel = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testAlertChannel>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testAlertChannel>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getTestAlertChannelMutationOptions(options));
+};
+
+/**
+ * @summary List subscriptions
+ */
+export const getListAlertSubscriptionsUrl = (
+  params?: ListAlertSubscriptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/alert-subscriptions?${stringifiedParams}`
+    : `/api/alert-subscriptions`;
+};
+
+export const listAlertSubscriptions = async (
+  params?: ListAlertSubscriptionsParams,
+  options?: RequestInit,
+): Promise<AlertSubscriptionList> => {
+  return customFetch<AlertSubscriptionList>(
+    getListAlertSubscriptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListAlertSubscriptionsQueryKey = (
+  params?: ListAlertSubscriptionsParams,
+) => {
+  return [`/api/alert-subscriptions`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAlertSubscriptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlertSubscriptions>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlertSubscriptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertSubscriptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListAlertSubscriptionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAlertSubscriptions>>
+  > = ({ signal }) =>
+    listAlertSubscriptions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertSubscriptions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertSubscriptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlertSubscriptions>>
+>;
+export type ListAlertSubscriptionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List subscriptions
+ */
+
+export function useListAlertSubscriptions<
+  TData = Awaited<ReturnType<typeof listAlertSubscriptions>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAlertSubscriptionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAlertSubscriptions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertSubscriptionsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a subscription
+ */
+export const getCreateAlertSubscriptionUrl = () => {
+  return `/api/alert-subscriptions`;
+};
+
+export const createAlertSubscription = async (
+  createAlertSubscriptionRequest: CreateAlertSubscriptionRequest,
+  options?: RequestInit,
+): Promise<AlertSubscription> => {
+  return customFetch<AlertSubscription>(getCreateAlertSubscriptionUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAlertSubscriptionRequest),
+  });
+};
+
+export const getCreateAlertSubscriptionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertSubscription>>,
+    TError,
+    { data: BodyType<CreateAlertSubscriptionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAlertSubscription>>,
+  TError,
+  { data: BodyType<CreateAlertSubscriptionRequest> },
+  TContext
+> => {
+  const mutationKey = ["createAlertSubscription"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAlertSubscription>>,
+    { data: BodyType<CreateAlertSubscriptionRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAlertSubscription(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAlertSubscriptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAlertSubscription>>
+>;
+export type CreateAlertSubscriptionMutationBody =
+  BodyType<CreateAlertSubscriptionRequest>;
+export type CreateAlertSubscriptionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a subscription
+ */
+export const useCreateAlertSubscription = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertSubscription>>,
+    TError,
+    { data: BodyType<CreateAlertSubscriptionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAlertSubscription>>,
+  TError,
+  { data: BodyType<CreateAlertSubscriptionRequest> },
+  TContext
+> => {
+  return useMutation(getCreateAlertSubscriptionMutationOptions(options));
+};
+
+/**
+ * @summary Update a subscription
+ */
+export const getPatchAlertSubscriptionUrl = (id: string) => {
+  return `/api/alert-subscriptions/${id}`;
+};
+
+export const patchAlertSubscription = async (
+  id: string,
+  patchAlertSubscriptionRequest: PatchAlertSubscriptionRequest,
+  options?: RequestInit,
+): Promise<AlertSubscription> => {
+  return customFetch<AlertSubscription>(getPatchAlertSubscriptionUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchAlertSubscriptionRequest),
+  });
+};
+
+export const getPatchAlertSubscriptionMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertSubscription>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertSubscriptionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchAlertSubscription>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertSubscriptionRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchAlertSubscription"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchAlertSubscription>>,
+    { id: string; data: BodyType<PatchAlertSubscriptionRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchAlertSubscription(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchAlertSubscriptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchAlertSubscription>>
+>;
+export type PatchAlertSubscriptionMutationBody =
+  BodyType<PatchAlertSubscriptionRequest>;
+export type PatchAlertSubscriptionMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Update a subscription
+ */
+export const usePatchAlertSubscription = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertSubscription>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertSubscriptionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchAlertSubscription>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertSubscriptionRequest> },
+  TContext
+> => {
+  return useMutation(getPatchAlertSubscriptionMutationOptions(options));
+};
+
+/**
+ * @summary Delete a subscription
+ */
+export const getDeleteAlertSubscriptionUrl = (id: string) => {
+  return `/api/alert-subscriptions/${id}`;
+};
+
+export const deleteAlertSubscription = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAlertSubscriptionUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAlertSubscriptionMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertSubscription>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAlertSubscription>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAlertSubscription"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAlertSubscription>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteAlertSubscription(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAlertSubscriptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAlertSubscription>>
+>;
+
+export type DeleteAlertSubscriptionMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete a subscription
+ */
+export const useDeleteAlertSubscription = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertSubscription>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAlertSubscription>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteAlertSubscriptionMutationOptions(options));
+};
+
+/**
+ * @summary List watchlists
+ */
+export const getListWatchlistsUrl = () => {
+  return `/api/watchlists`;
+};
+
+export const listWatchlists = async (
+  options?: RequestInit,
+): Promise<WatchlistList> => {
+  return customFetch<WatchlistList>(getListWatchlistsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListWatchlistsQueryKey = () => {
+  return [`/api/watchlists`] as const;
+};
+
+export const getListWatchlistsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWatchlists>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listWatchlists>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListWatchlistsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listWatchlists>>> = ({
+    signal,
+  }) => listWatchlists({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWatchlists>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWatchlistsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWatchlists>>
+>;
+export type ListWatchlistsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List watchlists
+ */
+
+export function useListWatchlists<
+  TData = Awaited<ReturnType<typeof listWatchlists>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listWatchlists>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWatchlistsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a watchlist
+ */
+export const getCreateWatchlistUrl = () => {
+  return `/api/watchlists`;
+};
+
+export const createWatchlist = async (
+  createWatchlistRequest: CreateWatchlistRequest,
+  options?: RequestInit,
+): Promise<Watchlist> => {
+  return customFetch<Watchlist>(getCreateWatchlistUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createWatchlistRequest),
+  });
+};
+
+export const getCreateWatchlistMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWatchlist>>,
+    TError,
+    { data: BodyType<CreateWatchlistRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createWatchlist>>,
+  TError,
+  { data: BodyType<CreateWatchlistRequest> },
+  TContext
+> => {
+  const mutationKey = ["createWatchlist"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createWatchlist>>,
+    { data: BodyType<CreateWatchlistRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createWatchlist(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateWatchlistMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createWatchlist>>
+>;
+export type CreateWatchlistMutationBody = BodyType<CreateWatchlistRequest>;
+export type CreateWatchlistMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a watchlist
+ */
+export const useCreateWatchlist = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWatchlist>>,
+    TError,
+    { data: BodyType<CreateWatchlistRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createWatchlist>>,
+  TError,
+  { data: BodyType<CreateWatchlistRequest> },
+  TContext
+> => {
+  return useMutation(getCreateWatchlistMutationOptions(options));
+};
+
+/**
+ * @summary Get a watchlist with its members
+ */
+export const getGetWatchlistUrl = (id: string) => {
+  return `/api/watchlists/${id}`;
+};
+
+export const getWatchlist = async (
+  id: string,
+  options?: RequestInit,
+): Promise<WatchlistDetail> => {
+  return customFetch<WatchlistDetail>(getGetWatchlistUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetWatchlistQueryKey = (id: string) => {
+  return [`/api/watchlists/${id}`] as const;
+};
+
+export const getGetWatchlistQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWatchlist>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getWatchlist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetWatchlistQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWatchlist>>> = ({
+    signal,
+  }) => getWatchlist(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWatchlist>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetWatchlistQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWatchlist>>
+>;
+export type GetWatchlistQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Get a watchlist with its members
+ */
+
+export function useGetWatchlist<
+  TData = Awaited<ReturnType<typeof getWatchlist>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getWatchlist>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetWatchlistQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Rename or re-describe a watchlist
+ */
+export const getPatchWatchlistUrl = (id: string) => {
+  return `/api/watchlists/${id}`;
+};
+
+export const patchWatchlist = async (
+  id: string,
+  patchWatchlistRequest: PatchWatchlistRequest,
+  options?: RequestInit,
+): Promise<Watchlist> => {
+  return customFetch<Watchlist>(getPatchWatchlistUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchWatchlistRequest),
+  });
+};
+
+export const getPatchWatchlistMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchWatchlist>>,
+    TError,
+    { id: string; data: BodyType<PatchWatchlistRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchWatchlist>>,
+  TError,
+  { id: string; data: BodyType<PatchWatchlistRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchWatchlist"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchWatchlist>>,
+    { id: string; data: BodyType<PatchWatchlistRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchWatchlist(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchWatchlistMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchWatchlist>>
+>;
+export type PatchWatchlistMutationBody = BodyType<PatchWatchlistRequest>;
+export type PatchWatchlistMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Rename or re-describe a watchlist
+ */
+export const usePatchWatchlist = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchWatchlist>>,
+    TError,
+    { id: string; data: BodyType<PatchWatchlistRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchWatchlist>>,
+  TError,
+  { id: string; data: BodyType<PatchWatchlistRequest> },
+  TContext
+> => {
+  return useMutation(getPatchWatchlistMutationOptions(options));
+};
+
+/**
+ * @summary Delete a watchlist
+ */
+export const getDeleteWatchlistUrl = (id: string) => {
+  return `/api/watchlists/${id}`;
+};
+
+export const deleteWatchlist = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteWatchlistUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteWatchlistMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWatchlist>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteWatchlist>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteWatchlist"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteWatchlist>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteWatchlist(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteWatchlistMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteWatchlist>>
+>;
+
+export type DeleteWatchlistMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete a watchlist
+ */
+export const useDeleteWatchlist = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWatchlist>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteWatchlist>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteWatchlistMutationOptions(options));
+};
+
+/**
+ * @summary Add a supplier or entity_uid to a watchlist
+ */
+export const getAddWatchlistMemberUrl = (id: string) => {
+  return `/api/watchlists/${id}/members`;
+};
+
+export const addWatchlistMember = async (
+  id: string,
+  addWatchlistMemberRequest: AddWatchlistMemberRequest,
+  options?: RequestInit,
+): Promise<WatchlistMember> => {
+  return customFetch<WatchlistMember>(getAddWatchlistMemberUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addWatchlistMemberRequest),
+  });
+};
+
+export const getAddWatchlistMemberMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addWatchlistMember>>,
+    TError,
+    { id: string; data: BodyType<AddWatchlistMemberRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addWatchlistMember>>,
+  TError,
+  { id: string; data: BodyType<AddWatchlistMemberRequest> },
+  TContext
+> => {
+  const mutationKey = ["addWatchlistMember"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addWatchlistMember>>,
+    { id: string; data: BodyType<AddWatchlistMemberRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addWatchlistMember(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddWatchlistMemberMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addWatchlistMember>>
+>;
+export type AddWatchlistMemberMutationBody =
+  BodyType<AddWatchlistMemberRequest>;
+export type AddWatchlistMemberMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add a supplier or entity_uid to a watchlist
+ */
+export const useAddWatchlistMember = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addWatchlistMember>>,
+    TError,
+    { id: string; data: BodyType<AddWatchlistMemberRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addWatchlistMember>>,
+  TError,
+  { id: string; data: BodyType<AddWatchlistMemberRequest> },
+  TContext
+> => {
+  return useMutation(getAddWatchlistMemberMutationOptions(options));
+};
+
+/**
+ * @summary Remove a member
+ */
+export const getRemoveWatchlistMemberUrl = (id: string, memberId: string) => {
+  return `/api/watchlists/${id}/members/${memberId}`;
+};
+
+export const removeWatchlistMember = async (
+  id: string,
+  memberId: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveWatchlistMemberUrl(id, memberId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveWatchlistMemberMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeWatchlistMember>>,
+    TError,
+    { id: string; memberId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeWatchlistMember>>,
+  TError,
+  { id: string; memberId: string },
+  TContext
+> => {
+  const mutationKey = ["removeWatchlistMember"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeWatchlistMember>>,
+    { id: string; memberId: string }
+  > = (props) => {
+    const { id, memberId } = props ?? {};
+
+    return removeWatchlistMember(id, memberId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveWatchlistMemberMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeWatchlistMember>>
+>;
+
+export type RemoveWatchlistMemberMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Remove a member
+ */
+export const useRemoveWatchlistMember = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeWatchlistMember>>,
+    TError,
+    { id: string; memberId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeWatchlistMember>>,
+  TError,
+  { id: string; memberId: string },
+  TContext
+> => {
+  return useMutation(getRemoveWatchlistMemberMutationOptions(options));
+};
+
+/**
+ * @summary List alert rules
+ */
+export const getListAlertRulesUrl = () => {
+  return `/api/alert-rules`;
+};
+
+export const listAlertRules = async (
+  options?: RequestInit,
+): Promise<AlertRuleList> => {
+  return customFetch<AlertRuleList>(getListAlertRulesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAlertRulesQueryKey = () => {
+  return [`/api/alert-rules`] as const;
+};
+
+export const getListAlertRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAlertRules>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertRules>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAlertRulesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertRules>>> = ({
+    signal,
+  }) => listAlertRules({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertRules>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAlertRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAlertRules>>
+>;
+export type ListAlertRulesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List alert rules
+ */
+
+export function useListAlertRules<
+  TData = Awaited<ReturnType<typeof listAlertRules>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAlertRules>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAlertRulesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an alert rule
+ */
+export const getCreateAlertRuleUrl = () => {
+  return `/api/alert-rules`;
+};
+
+export const createAlertRule = async (
+  createAlertRuleRequest: CreateAlertRuleRequest,
+  options?: RequestInit,
+): Promise<AlertRule> => {
+  return customFetch<AlertRule>(getCreateAlertRuleUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAlertRuleRequest),
+  });
+};
+
+export const getCreateAlertRuleMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertRule>>,
+    TError,
+    { data: BodyType<CreateAlertRuleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAlertRule>>,
+  TError,
+  { data: BodyType<CreateAlertRuleRequest> },
+  TContext
+> => {
+  const mutationKey = ["createAlertRule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAlertRule>>,
+    { data: BodyType<CreateAlertRuleRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAlertRule(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAlertRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAlertRule>>
+>;
+export type CreateAlertRuleMutationBody = BodyType<CreateAlertRuleRequest>;
+export type CreateAlertRuleMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an alert rule
+ */
+export const useCreateAlertRule = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAlertRule>>,
+    TError,
+    { data: BodyType<CreateAlertRuleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAlertRule>>,
+  TError,
+  { data: BodyType<CreateAlertRuleRequest> },
+  TContext
+> => {
+  return useMutation(getCreateAlertRuleMutationOptions(options));
+};
+
+/**
+ * @summary Update an alert rule
+ */
+export const getPatchAlertRuleUrl = (id: string) => {
+  return `/api/alert-rules/${id}`;
+};
+
+export const patchAlertRule = async (
+  id: string,
+  patchAlertRuleRequest: PatchAlertRuleRequest,
+  options?: RequestInit,
+): Promise<AlertRule> => {
+  return customFetch<AlertRule>(getPatchAlertRuleUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchAlertRuleRequest),
+  });
+};
+
+export const getPatchAlertRuleMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertRule>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertRuleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchAlertRule>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertRuleRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchAlertRule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchAlertRule>>,
+    { id: string; data: BodyType<PatchAlertRuleRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchAlertRule(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchAlertRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchAlertRule>>
+>;
+export type PatchAlertRuleMutationBody = BodyType<PatchAlertRuleRequest>;
+export type PatchAlertRuleMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Update an alert rule
+ */
+export const usePatchAlertRule = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchAlertRule>>,
+    TError,
+    { id: string; data: BodyType<PatchAlertRuleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchAlertRule>>,
+  TError,
+  { id: string; data: BodyType<PatchAlertRuleRequest> },
+  TContext
+> => {
+  return useMutation(getPatchAlertRuleMutationOptions(options));
+};
+
+/**
+ * @summary Delete an alert rule
+ */
+export const getDeleteAlertRuleUrl = (id: string) => {
+  return `/api/alert-rules/${id}`;
+};
+
+export const deleteAlertRule = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAlertRuleUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAlertRuleMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertRule>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAlertRule>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAlertRule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAlertRule>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteAlertRule(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAlertRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAlertRule>>
+>;
+
+export type DeleteAlertRuleMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete an alert rule
+ */
+export const useDeleteAlertRule = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAlertRule>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAlertRule>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteAlertRuleMutationOptions(options));
+};
+
+/**
+ * @summary List escalation policies
+ */
+export const getListEscalationPoliciesUrl = () => {
+  return `/api/escalation-policies`;
+};
+
+export const listEscalationPolicies = async (
+  options?: RequestInit,
+): Promise<EscalationPolicyList> => {
+  return customFetch<EscalationPolicyList>(getListEscalationPoliciesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListEscalationPoliciesQueryKey = () => {
+  return [`/api/escalation-policies`] as const;
+};
+
+export const getListEscalationPoliciesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEscalationPolicies>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listEscalationPolicies>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListEscalationPoliciesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEscalationPolicies>>
+  > = ({ signal }) => listEscalationPolicies({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEscalationPolicies>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListEscalationPoliciesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEscalationPolicies>>
+>;
+export type ListEscalationPoliciesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List escalation policies
+ */
+
+export function useListEscalationPolicies<
+  TData = Awaited<ReturnType<typeof listEscalationPolicies>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listEscalationPolicies>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListEscalationPoliciesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create an escalation policy
+ */
+export const getCreateEscalationPolicyUrl = () => {
+  return `/api/escalation-policies`;
+};
+
+export const createEscalationPolicy = async (
+  createEscalationPolicyRequest: CreateEscalationPolicyRequest,
+  options?: RequestInit,
+): Promise<EscalationPolicy> => {
+  return customFetch<EscalationPolicy>(getCreateEscalationPolicyUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createEscalationPolicyRequest),
+  });
+};
+
+export const getCreateEscalationPolicyMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEscalationPolicy>>,
+    TError,
+    { data: BodyType<CreateEscalationPolicyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEscalationPolicy>>,
+  TError,
+  { data: BodyType<CreateEscalationPolicyRequest> },
+  TContext
+> => {
+  const mutationKey = ["createEscalationPolicy"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEscalationPolicy>>,
+    { data: BodyType<CreateEscalationPolicyRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createEscalationPolicy(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateEscalationPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEscalationPolicy>>
+>;
+export type CreateEscalationPolicyMutationBody =
+  BodyType<CreateEscalationPolicyRequest>;
+export type CreateEscalationPolicyMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an escalation policy
+ */
+export const useCreateEscalationPolicy = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEscalationPolicy>>,
+    TError,
+    { data: BodyType<CreateEscalationPolicyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createEscalationPolicy>>,
+  TError,
+  { data: BodyType<CreateEscalationPolicyRequest> },
+  TContext
+> => {
+  return useMutation(getCreateEscalationPolicyMutationOptions(options));
+};
+
+/**
+ * @summary Update an escalation policy
+ */
+export const getPatchEscalationPolicyUrl = (id: string) => {
+  return `/api/escalation-policies/${id}`;
+};
+
+export const patchEscalationPolicy = async (
+  id: string,
+  patchEscalationPolicyRequest: PatchEscalationPolicyRequest,
+  options?: RequestInit,
+): Promise<EscalationPolicy> => {
+  return customFetch<EscalationPolicy>(getPatchEscalationPolicyUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchEscalationPolicyRequest),
+  });
+};
+
+export const getPatchEscalationPolicyMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchEscalationPolicy>>,
+    TError,
+    { id: string; data: BodyType<PatchEscalationPolicyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchEscalationPolicy>>,
+  TError,
+  { id: string; data: BodyType<PatchEscalationPolicyRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchEscalationPolicy"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchEscalationPolicy>>,
+    { id: string; data: BodyType<PatchEscalationPolicyRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchEscalationPolicy(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchEscalationPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchEscalationPolicy>>
+>;
+export type PatchEscalationPolicyMutationBody =
+  BodyType<PatchEscalationPolicyRequest>;
+export type PatchEscalationPolicyMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Update an escalation policy
+ */
+export const usePatchEscalationPolicy = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchEscalationPolicy>>,
+    TError,
+    { id: string; data: BodyType<PatchEscalationPolicyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchEscalationPolicy>>,
+  TError,
+  { id: string; data: BodyType<PatchEscalationPolicyRequest> },
+  TContext
+> => {
+  return useMutation(getPatchEscalationPolicyMutationOptions(options));
+};
+
+/**
+ * @summary Delete an escalation policy
+ */
+export const getDeleteEscalationPolicyUrl = (id: string) => {
+  return `/api/escalation-policies/${id}`;
+};
+
+export const deleteEscalationPolicy = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteEscalationPolicyUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteEscalationPolicyMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteEscalationPolicy>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteEscalationPolicy>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteEscalationPolicy"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteEscalationPolicy>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteEscalationPolicy(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteEscalationPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteEscalationPolicy>>
+>;
+
+export type DeleteEscalationPolicyMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete an escalation policy
+ */
+export const useDeleteEscalationPolicy = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteEscalationPolicy>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteEscalationPolicy>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteEscalationPolicyMutationOptions(options));
 };

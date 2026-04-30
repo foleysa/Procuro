@@ -34,6 +34,8 @@ import Admin from "./pages/admin";
 import TrustPage from "./pages/trust";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
+import Alerts from "./pages/alerts";
+import Watchlists from "./pages/watchlists";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -207,6 +209,8 @@ function AppRoutes() {
             <Route path="/contracts/:id" component={ContractDetail} />
             <Route path="/approvals" component={Approvals} />
             <Route path="/fusion" component={Fusion} />
+            <Route path="/alerts" component={Alerts} />
+            <Route path="/watchlists" component={Watchlists} />
             <Route path="/results" component={Results} />
             <Route path="/playbook" component={Playbook} />
             <Route path="/collectors" component={Collectors} />

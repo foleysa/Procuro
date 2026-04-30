@@ -28,6 +28,8 @@ import {
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
+  deliverAlertsHandler,
+  escalateAlertsHandler,
   ingestCsvHandler,
   ingestMockErpHandler,
   pruneJobsHandler,
@@ -36,9 +38,15 @@ import {
   runCollectorHandler,
   syncErpConnectionHandler,
   runRenewalAlertScanHandler,
+  synthesizeOperationalAlertsHandler,
 } from "./lib/jobs/handlers";
 import { registerErpConnector } from "./lib/connectors/erp-connector";
 import { coupaConnector } from "./lib/connectors/coupa/adapter";
+import {
+  startAlertsDeliveryScheduler,
+  startAlertsEscalationScheduler,
+  startOperationalSynthScheduler,
+} from "./lib/alerts/schedulers";
 
 const rawPort = process.env["PORT"];
 
@@ -133,6 +141,12 @@ registerJobHandler("prune_jobs", pruneJobsHandler);
 registerJobHandler("sync_erp_connection", syncErpConnectionHandler);
 registerJobHandler("renewal_alert_scan", runRenewalAlertScanHandler);
 registerJobHandler("analysis_cycle_fanout", runAnalysisCycleFanoutHandler);
+registerJobHandler("deliver_alerts", deliverAlertsHandler);
+registerJobHandler("escalate_alerts", escalateAlertsHandler);
+registerJobHandler(
+  "synthesize_operational_alerts",
+  synthesizeOperationalAlertsHandler,
+);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -150,9 +164,12 @@ app.listen(port, (err) => {
   startJobPruner();
   startRenewalScanScheduler();
   startAnalysisCycleScheduler();
+  startAlertsDeliveryScheduler();
+  startAlertsEscalationScheduler();
+  startOperationalSynthScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan + analysis-cycle schedulers started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers started",
   );
 
   void seedCollectorRegistry().then(

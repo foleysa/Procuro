@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
-import { db, orgsTable } from "@workspace/db";
+import { db, orgsTable, type UserRow } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { readRenewalAlertDays } from "../lib/contract-settings";
+import { getOrCreateUserByEmail } from "../lib/users";
 
 const router: IRouter = Router();
 
@@ -17,6 +18,7 @@ const router: IRouter = Router();
 function serializeMe(
   org: typeof orgsTable.$inferSelect,
   actorEmail: string | undefined,
+  user: UserRow,
 ) {
   return GetMeResponse.parse({
     org: {
@@ -29,6 +31,12 @@ function serializeMe(
       createdAt: org.createdAt,
     },
     actorEmail: actorEmail ?? "system@procuro.ai",
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
   });
 }
 
@@ -39,7 +47,11 @@ router.get("/me", tenantMiddleware, async (req, res) => {
     res.status(404).json({ error: "Org not found" });
     return;
   }
-  res.json(serializeMe(org, req.actorEmail));
+  const user = await getOrCreateUserByEmail(
+    orgId,
+    req.actorEmail ?? "system@procuro.ai",
+  );
+  res.json(serializeMe(org, req.actorEmail, user));
 });
 
 /**
@@ -90,7 +102,11 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     return;
   }
 
-  res.json(serializeMe(updated, req.actorEmail));
+  const user = await getOrCreateUserByEmail(
+    orgId,
+    req.actorEmail ?? "system@procuro.ai",
+  );
+  res.json(serializeMe(updated, req.actorEmail, user));
 });
 
 export default router;

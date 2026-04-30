@@ -18,6 +18,7 @@ import {
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
+import { fanOutCollectorAlerts } from "../alerts/collector-fanout";
 import {
   collectorContract,
   type IntelligenceCollector,
@@ -547,6 +548,33 @@ export async function runCollector(
           "BigQuery collector_runs record failed; ignoring",
         );
       }
+    }
+
+    // Tenant alert fan-out for signal types that warrant operator
+    // attention (sanctions, hazards, disruption events, …). Best-effort:
+    // a fan-out failure is logged and swallowed because the collector
+    // run has already succeeded and we never want a flaky alerts table
+    // to block intelligence ingestion.
+    try {
+      await fanOutCollectorAlerts({
+        collector: reg,
+        drafts: validDrafts.map((d) => ({
+          signalType: d.signalType,
+          scopeSupplierName: d.scopeSupplierName ?? null,
+          entityUid: d.entityUid ?? null,
+          observedAt:
+            d.observedAt instanceof Date ? d.observedAt : new Date(d.observedAt),
+          sourceUrl: d.sourceUrl,
+          metadata: d.metadata ?? null,
+          value: d.value,
+          unit: d.unit,
+        })),
+      });
+    } catch (e) {
+      logger.warn(
+        { collectorId, runId, err: (e as Error).message },
+        "Alert fan-out failed; collector run unaffected",
+      );
     }
 
     await audit(collectorId, "fetch_succeeded", {
