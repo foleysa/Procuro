@@ -21,7 +21,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const BOOTSTRAP_VERSION = "v3-procuro";
+const BOOTSTRAP_VERSION = "v4-procuro-reseed";
 
 function Bootstrap() {
   const [ready, setReady] = useState(false);

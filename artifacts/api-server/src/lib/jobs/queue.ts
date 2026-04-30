@@ -123,27 +123,38 @@ export async function claimNextJob(): Promise<JobRow | null> {
   //
   // Per-tenant starvation is bounded by MAX_PENDING_JOBS_PER_ORG: at most
   // that many jobs from one org can sit ahead of a newly-arriving tenant.
+  // Postgres forbids FOR UPDATE in a query containing window functions, even
+  // when those windows are inside a subquery — `ERROR: FOR UPDATE is not
+  // allowed with window functions`. We split the work across two CTEs:
+  //   `candidate` runs the window query with no lock to pick the next job,
+  //   `locked` then re-fetches that specific id with FOR UPDATE SKIP LOCKED
+  //   on a window-free query, so concurrent workers safely skip claimed rows.
+  // If a peer worker grabs the row between the two CTEs, `locked` returns
+  // empty and the UPDATE matches 0 rows — same retry-on-next-poll behaviour.
   const result = await db.execute(sql`
-    UPDATE jobs SET status = 'running', started_at = NOW(), attempts = attempts + 1
-    WHERE id = (
-      SELECT j.id
-      FROM jobs j
-      JOIN (
-        SELECT id
-        FROM (
-          SELECT id,
-                 ROW_NUMBER() OVER (PARTITION BY org_id ORDER BY enqueued_at ASC) AS rn,
-                 MIN(enqueued_at) OVER (PARTITION BY org_id) AS org_earliest
-          FROM jobs
-          WHERE status = 'pending'
-        ) ranked
-        WHERE rn = 1
-        ORDER BY org_earliest ASC
-        LIMIT 1
-      ) chosen ON j.id = chosen.id
-      WHERE j.status = 'pending'
+    WITH candidate AS MATERIALIZED (
+      SELECT id
+      FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (PARTITION BY org_id ORDER BY enqueued_at ASC) AS rn,
+               MIN(enqueued_at) OVER (PARTITION BY org_id) AS org_earliest
+        FROM jobs
+        WHERE status = 'pending'
+      ) ranked
+      WHERE rn = 1
+      ORDER BY org_earliest ASC
+      LIMIT 1
+    ),
+    locked AS (
+      SELECT id
+      FROM jobs
+      WHERE id = (SELECT id FROM candidate)
+        AND status = 'pending'
       FOR UPDATE SKIP LOCKED
     )
+    UPDATE jobs
+    SET status = 'running', started_at = NOW(), attempts = attempts + 1
+    WHERE id = (SELECT id FROM locked)
     RETURNING *
   `);
   const rows = (result.rows ?? []) as Array<Record<string, unknown>>;
