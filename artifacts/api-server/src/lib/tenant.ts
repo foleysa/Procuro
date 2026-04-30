@@ -46,9 +46,6 @@ export const tenantMiddleware: RequestHandler = async (
   res: Response,
   next: NextFunction,
 ) => {
-  const actorEmail = req.header("x-actor-email") ?? "system@procuro.ai";
-  req.actorEmail = actorEmail;
-
   const bearer = extractBearerToken(req);
   const headerOrgId = req.header("x-org-id");
   // SECURE-BY-DEFAULT: dev fallback requires explicit positive opt-in and
@@ -70,6 +67,7 @@ export const tenantMiddleware: RequestHandler = async (
     }
     req.orgId = tokenOrgId;
     req.authMode = "token";
+    req.actorEmail = "system@procuro.ai";
     next();
     return;
   }
@@ -86,6 +84,7 @@ export const tenantMiddleware: RequestHandler = async (
     }
     req.orgId = resolved;
     req.authMode = "dev-header";
+    req.actorEmail = "system@procuro.ai";
     next();
     return;
   }
@@ -99,6 +98,7 @@ export const tenantMiddleware: RequestHandler = async (
     if (first) {
       req.orgId = first.id;
       req.authMode = "dev-fallback";
+      req.actorEmail = "system@procuro.ai";
       next();
       return;
     }
