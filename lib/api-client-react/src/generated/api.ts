@@ -61,7 +61,6 @@ import type {
   RunCycleResponse,
   RunNextCycleParams,
   SpendOverview,
-  StreamCsvResult,
   SupplierListResponse,
   SyncResultResponse,
 } from "./api.schemas";
@@ -2369,6 +2368,29 @@ The endpoint accepts either:
 
 Hard limit: 1 GB per upload.
 
+**Response is NDJSON streamed live as the server processes the
+upload.** Once pre-flight validation passes (entity name, declared
+Content-Length under 1 GB), the response Content-Type switches to
+`application/x-ndjson` and the server writes one JSON object per
+line, terminated by `\n`:
+
+  * `{"type":"progress","rowsParsed":N,"rowsInserted":M}` —
+    emitted after batch flushes, throttled to ~4/sec server-side so
+    multi-million-row files don't flood the wire.
+  * `{"type":"result","entity":"...","rowsParsed":N,"rowsInserted":M,"durationMs":D}` —
+    exactly one terminal success event whose payload matches
+    `StreamCsvResult`.
+  * `{"type":"error","error":"..."}` — exactly one terminal failure
+    event for errors that occurred mid-stream after headers were
+    sent. (Pre-flight failures still surface as conventional 4xx
+    JSON responses with an `error` body.)
+
+Clients should read the response body incrementally (browser XHR
+`onprogress` + `responseText`, or fetch `body.getReader()`),
+split on `\n`, and parse each non-empty line as JSON. The same
+approach used by the Data Ingest page's `uploadCsvStream` helper
+works in any modern browser without extra dependencies.
+
  * @summary Stream a single-entity CSV file (bounded-memory ingest)
  */
 export const getIngestCsvStreamUrl = (params: IngestCsvStreamParams) => {
@@ -2391,13 +2413,20 @@ export const ingestCsvStream = async (
   ingestCsvStreamBody: IngestCsvStreamBodyOne | Blob,
   params: IngestCsvStreamParams,
   options?: RequestInit,
-): Promise<StreamCsvResult> => {
+): Promise<Response> => {
   // Patched by lib/api-spec/scripts/patch-codegen.mjs.
   // orval emits `JSON.stringify` for binary/multipart bodies, which would
   // serialize a Blob/File to "{}" and silently upload an empty file. We
   // instead pick the right BodyInit based on the input shape, matching the
   // two transports the server route supports (multipart/form-data with a
   // `file` part, or a raw `text/csv` body).
+  //
+  // The endpoint streams an NDJSON response (one event per line:
+  // `progress` lines followed by a terminal `result` or `error`),
+  // so this helper returns the raw `Response` and leaves
+  // chunk-by-chunk parsing to the caller. The Data Ingest page uses XHR
+  // directly so it can also surface upload-bytes progress; this fetch
+  // helper is kept for completeness.
   let body: BodyInit;
   let inferredContentType: string | undefined;
   if (typeof Blob !== "undefined" && ingestCsvStreamBody instanceof Blob) {
@@ -2415,12 +2444,20 @@ export const ingestCsvStream = async (
   if (inferredContentType && !headers.has("content-type")) {
     headers.set("content-type", inferredContentType);
   }
+  if (!headers.has("accept")) {
+    headers.set("accept", "application/x-ndjson");
+  }
 
-  return customFetch<StreamCsvResult>(getIngestCsvStreamUrl(params), {
+  // `responseType: "raw"` tells customFetch to bypass body parsing and
+  // return the unconsumed Response (so callers can read the NDJSON stream
+  // off `response.body`). Non-2xx responses still throw an ApiError with
+  // the parsed pre-flight error JSON, matching the rest of the client.
+  return customFetch<Response>(getIngestCsvStreamUrl(params), {
     ...options,
     method: "POST",
     headers,
     body,
+    responseType: "raw",
   });
 };
 

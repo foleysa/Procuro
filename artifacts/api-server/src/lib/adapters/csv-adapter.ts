@@ -580,12 +580,25 @@ export interface StreamCsvResult {
   durationMs: number;
 }
 
+export interface StreamCsvProgress {
+  rowsParsed: number;
+  rowsInserted: number;
+}
+
 interface StreamCsvArgs {
   orgId: string;
   entity: CsvEntity;
   input: Readable;
   /** Override default batch size (default 1000). */
   batchSize?: number;
+  /**
+   * Called after every batch flush with the running totals. Used by the
+   * `/ingest/csv-stream` route to forward incremental progress to the
+   * client as NDJSON events while the server is still processing the file.
+   * Throwing or rejecting from this callback is caught and logged but does
+   * not abort the ingest (progress reporting is best-effort).
+   */
+  onProgress?: (progress: StreamCsvProgress) => void | Promise<void>;
 }
 
 /**
@@ -611,12 +624,25 @@ export async function streamCsvEntity(
     }),
   );
 
+  const reportProgress = async (): Promise<void> => {
+    if (!args.onProgress) return;
+    try {
+      await args.onProgress({ rowsParsed, rowsInserted });
+    } catch (err) {
+      logger.warn(
+        { entity: args.entity, err: (err as Error).message },
+        "streamCsvEntity onProgress callback threw; ignoring",
+      );
+    }
+  };
+
   const flush = async (): Promise<void> => {
     if (buffer.length === 0) return;
     const chunk = buffer;
     buffer = [];
     const inserted = await flushBatch(args.orgId, args.entity, chunk);
     rowsInserted += inserted;
+    await reportProgress();
   };
 
   try {

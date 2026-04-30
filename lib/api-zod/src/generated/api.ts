@@ -1213,6 +1213,29 @@ The endpoint accepts either:
 
 Hard limit: 1 GB per upload.
 
+**Response is NDJSON streamed live as the server processes the
+upload.** Once pre-flight validation passes (entity name, declared
+Content-Length under 1 GB), the response Content-Type switches to
+`application/x-ndjson` and the server writes one JSON object per
+line, terminated by `\n`:
+
+  * `{"type":"progress","rowsParsed":N,"rowsInserted":M}` —
+    emitted after batch flushes, throttled to ~4/sec server-side so
+    multi-million-row files don't flood the wire.
+  * `{"type":"result","entity":"...","rowsParsed":N,"rowsInserted":M,"durationMs":D}` —
+    exactly one terminal success event whose payload matches
+    `StreamCsvResult`.
+  * `{"type":"error","error":"..."}` — exactly one terminal failure
+    event for errors that occurred mid-stream after headers were
+    sent. (Pre-flight failures still surface as conventional 4xx
+    JSON responses with an `error` body.)
+
+Clients should read the response body incrementally (browser XHR
+`onprogress` + `responseText`, or fetch `body.getReader()`),
+split on `\n`, and parse each non-empty line as JSON. The same
+approach used by the Data Ingest page's `uploadCsvStream` helper
+works in any modern browser without extra dependencies.
+
  * @summary Stream a single-entity CSV file (bounded-memory ingest)
  */
 export const IngestCsvStreamQueryParams = zod.object({
@@ -1241,22 +1264,6 @@ export const IngestCsvStreamHeader = zod.object({
 
 export const IngestCsvStreamBody = zod.object({
   file: zod.instanceof(File).describe("The CSV file to stream-ingest."),
-});
-
-export const IngestCsvStreamResponse = zod.object({
-  entity: zod.enum([
-    "suppliers",
-    "categories",
-    "items",
-    "purchase_orders",
-    "po_lines",
-    "invoices",
-    "payments",
-    "shipments",
-  ]),
-  rowsParsed: zod.number(),
-  rowsInserted: zod.number(),
-  durationMs: zod.number(),
 });
 
 /**

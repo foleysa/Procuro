@@ -1,5 +1,5 @@
 export type CustomFetchOptions = RequestInit & {
-  responseType?: "json" | "text" | "blob" | "auto";
+  responseType?: "json" | "text" | "blob" | "auto" | "raw";
 };
 
 export type ErrorType<T = unknown> = ApiError<T>;
@@ -292,9 +292,17 @@ function inferResponseType(response: Response): "json" | "text" | "blob" {
 
 async function parseSuccessBody(
   response: Response,
-  responseType: "json" | "text" | "blob" | "auto",
+  responseType: "json" | "text" | "blob" | "auto" | "raw",
   requestInfo: { method: string; url: string },
 ): Promise<unknown> {
+  // "raw" returns the unconsumed Response so callers can read the body as a
+  // stream (used for NDJSON / SSE / chunked responses such as the streaming
+  // CSV ingest endpoint). Skip the empty-body short-circuit so the caller
+  // still receives a Response object even on 204/etc.
+  if (responseType === "raw") {
+    return response;
+  }
+
   if (hasNoBody(response, requestInfo.method)) {
     return null;
   }

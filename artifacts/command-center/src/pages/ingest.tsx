@@ -729,10 +729,38 @@ interface UploadProgress {
   total: number;
 }
 
+export interface ServerProgress {
+  rowsParsed: number;
+  rowsInserted: number;
+}
+
+/**
+ * NDJSON event line shape emitted by `POST /api/ingest/csv-stream`.
+ *
+ * The endpoint switches the response body to `application/x-ndjson` and
+ * writes one event per line: any number of `progress` events (throttled to
+ * ~4/sec server-side) followed by exactly one terminal `result` or `error`
+ * event. This lets the page show live "X parsed / Y inserted" counters
+ * during the server-side processing tail of a large upload.
+ */
+type StreamCsvEvent =
+  | { type: "progress"; rowsParsed: number; rowsInserted: number }
+  | ({ type: "result" } & StreamCsvResult)
+  | { type: "error"; error: string };
+
 /**
  * Stream-upload a single File to `/api/ingest/csv-stream` using XHR so we get
- * upload progress events (the orval-generated `ingestCsvStream` uses fetch
- * which has no upload progress in browsers).
+ * both directions of progress:
+ *
+ *   * `onUploadProgress` — bytes shipped to the server (XHR upload events)
+ *   * `onServerProgress` — `rowsParsed` / `rowsInserted` published by the
+ *     server as NDJSON `progress` events read incrementally from
+ *     `xhr.responseText` as chunks arrive (download events).
+ *
+ * The download channel is what fills the "silent tail" between
+ * upload-bytes-100% and the final result for multi-million-row files: the
+ * server keeps writing progress events while it drains its parse buffer
+ * and flushes the last batches to the database.
  *
  * Sends `multipart/form-data` with a `file` part, matching the OpenAPI
  * contract. Content-Type is left unset so the browser fills in the
@@ -741,31 +769,95 @@ interface UploadProgress {
 function uploadCsvStream(args: {
   file: File;
   entity: IngestCsvStreamEntity;
-  onProgress?: (p: UploadProgress) => void;
+  onUploadProgress?: (p: UploadProgress) => void;
+  onServerProgress?: (p: ServerProgress) => void;
 }): Promise<StreamCsvResult> {
   return new Promise((resolve, reject) => {
     const url = getIngestCsvStreamUrl({ entity: args.entity });
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url, true);
-    xhr.responseType = "json";
+    // Default responseType ("") gives us incremental access to responseText
+    // on each `progress` event — required for NDJSON streaming.
     const orgId = localStorage.getItem("activeOrgId") ?? "";
     if (orgId) xhr.setRequestHeader("x-org-id", orgId);
+    xhr.setRequestHeader("Accept", "application/x-ndjson");
+
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && args.onProgress) {
-        args.onProgress({ loaded: e.loaded, total: e.total });
+      if (e.lengthComputable && args.onUploadProgress) {
+        args.onUploadProgress({ loaded: e.loaded, total: e.total });
       }
     };
+
+    let processedChars = 0;
+    let finalResult: StreamCsvResult | null = null;
+    let serverError: string | null = null;
+
+    const drainResponseText = (): void => {
+      const text = xhr.responseText;
+      while (true) {
+        const nlIdx = text.indexOf("\n", processedChars);
+        if (nlIdx < 0) break;
+        const line = text.slice(processedChars, nlIdx).trim();
+        processedChars = nlIdx + 1;
+        if (!line) continue;
+        let evt: StreamCsvEvent;
+        try {
+          evt = JSON.parse(line) as StreamCsvEvent;
+        } catch {
+          // Skip malformed lines; the rest of the stream may still be valid.
+          continue;
+        }
+        if (evt.type === "progress") {
+          args.onServerProgress?.({
+            rowsParsed: evt.rowsParsed,
+            rowsInserted: evt.rowsInserted,
+          });
+        } else if (evt.type === "result") {
+          // Strip the discriminator before exposing the final value.
+          finalResult = {
+            entity: evt.entity,
+            rowsParsed: evt.rowsParsed,
+            rowsInserted: evt.rowsInserted,
+            durationMs: evt.durationMs,
+          };
+          // Final per-batch counts are always present in the result event,
+          // even when intermediate progress events were throttled.
+          args.onServerProgress?.({
+            rowsParsed: evt.rowsParsed,
+            rowsInserted: evt.rowsInserted,
+          });
+        } else if (evt.type === "error") {
+          serverError = evt.error;
+        }
+      }
+    };
+
+    xhr.onprogress = () => drainResponseText();
+
     xhr.onload = () => {
+      // The HTTP layer succeeded for any 2xx; pre-flight failures (entity
+      // validation, oversized Content-Length) still come back as 4xx with a
+      // conventional `{ error }` JSON body.
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as StreamCsvResult);
+        drainResponseText();
+        if (serverError) {
+          reject(new Error(serverError));
+        } else if (finalResult) {
+          resolve(finalResult);
+        } else {
+          reject(
+            new Error("Streaming upload completed without a result event"),
+          );
+        }
         return;
       }
-      const errMsg =
-        (xhr.response &&
-          typeof xhr.response === "object" &&
-          (xhr.response as { error?: string }).error) ||
-        (typeof xhr.response === "string" ? xhr.response : null) ||
-        `HTTP ${xhr.status} ${xhr.statusText}`;
+      let errMsg = `HTTP ${xhr.status} ${xhr.statusText}`;
+      try {
+        const parsed = JSON.parse(xhr.responseText) as { error?: string };
+        if (parsed?.error) errMsg = parsed.error;
+      } catch {
+        if (xhr.responseText) errMsg = xhr.responseText;
+      }
       reject(new Error(errMsg));
     };
     xhr.onerror = () => reject(new Error("Network error during upload"));
@@ -795,6 +887,13 @@ export default function Ingest() {
   const [streamProgress, setStreamProgress] = useState<
     Partial<Record<EntityKey, UploadProgress>>
   >({});
+  // Live server-side row counts emitted by the streaming endpoint as it
+  // parses and inserts batches. Populated independently of `streamProgress`
+  // (which tracks request bytes shipped) so the UI can show "X parsed /
+  // Y inserted" updates during the long server-side tail of a large upload.
+  const [serverProgress, setServerProgress] = useState<
+    Partial<Record<EntityKey, ServerProgress>>
+  >({});
   const [isStreaming, setIsStreaming] = useState(false);
 
   const ingestM = useIngestCsvBatch();
@@ -803,6 +902,7 @@ export default function Ingest() {
     setResult(null);
     setApiError(null);
     setStreamProgress({});
+    setServerProgress({});
     if (!file) {
       const next = { ...parsed };
       delete next[entity.key];
@@ -821,6 +921,11 @@ export default function Ingest() {
     setResult(null);
     setApiError(null);
     setStreamProgress((prev) => {
+      const n = { ...prev };
+      delete n[key];
+      return n;
+    });
+    setServerProgress((prev) => {
       const n = { ...prev };
       delete n[key];
       return n;
@@ -868,6 +973,7 @@ export default function Ingest() {
     setResult(null);
     setApiError(null);
     setStreamProgress({});
+    setServerProgress({});
 
     // 1. Aggregate non-streaming entities into a single JSON ingest call.
     const jsonPayload: CsvIngestRequest = {};
@@ -928,8 +1034,10 @@ export default function Ingest() {
           uploadCsvStream({
             file: s.file,
             entity: s.streamEntity,
-            onProgress: (p) =>
+            onUploadProgress: (p) =>
               setStreamProgress((prev) => ({ ...prev, [s.key]: p })),
+            onServerProgress: (p) =>
+              setServerProgress((prev) => ({ ...prev, [s.key]: p })),
           }).then((r) => {
             aggregate.recordsProcessed += r.rowsParsed;
             aggregate.recordsCreated += r.rowsInserted;
@@ -1038,6 +1146,7 @@ export default function Ingest() {
                 entity={e}
                 parsed={parsed[e.key]}
                 progress={streamProgress[e.key]}
+                serverProgress={serverProgress[e.key]}
                 isUploading={isPending}
                 onPick={(f) => onPickFile(e, f)}
                 onClear={() => clearEntity(e.key)}
@@ -1092,6 +1201,7 @@ function EntityRow({
   entity,
   parsed,
   progress,
+  serverProgress,
   isUploading,
   onPick,
   onClear,
@@ -1099,6 +1209,7 @@ function EntityRow({
   entity: EntityDef;
   parsed?: ParsedFile;
   progress?: UploadProgress;
+  serverProgress?: ServerProgress;
   isUploading: boolean;
   onPick: (f: File | null) => void;
   onClear: () => void;
@@ -1115,6 +1226,8 @@ function EntityRow({
     progress && progress.total > 0
       ? Math.round((progress.loaded / progress.total) * 100)
       : 0;
+  const uploadComplete =
+    !!progress && progress.total > 0 && progress.loaded >= progress.total;
 
   return (
     <div
@@ -1244,7 +1357,19 @@ function EntityRow({
             {progress
               ? `${formatBytes(progress.loaded)} / ${formatBytes(progress.total)} · ${progressPct}%`
               : "Uploading…"}
+            {uploadComplete && !serverProgress && (
+              <span className="ml-2 italic">processing on server…</span>
+            )}
           </div>
+          {serverProgress && (
+            <div
+              className="text-[11px] text-muted-foreground tabular-nums"
+              data-testid={`server-progress-${entity.key}`}
+            >
+              {serverProgress.rowsParsed.toLocaleString()} rows parsed ·{" "}
+              {serverProgress.rowsInserted.toLocaleString()} inserted
+            </div>
+          )}
         </div>
       )}
 

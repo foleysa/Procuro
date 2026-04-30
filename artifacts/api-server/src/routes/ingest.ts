@@ -7,6 +7,7 @@ import {
   streamCsvEntity,
   type CsvPayload,
   type CsvEntity,
+  type StreamCsvProgress,
 } from "../lib/adapters/csv-adapter";
 import {
   mockErpSourceAdapter,
@@ -191,6 +192,104 @@ function attachByteLimit(
   return { destroyed: () => killed };
 }
 
+/**
+ * Minimum interval between NDJSON `progress` events emitted to the client.
+ * The streaming adapter calls `onProgress` after every batch flush (default
+ * 1000 rows). For multi-million-row files this would produce thousands of
+ * progress events; throttling keeps the response stream cheap to render
+ * while still feeling live (~4 updates/sec). The final per-batch totals are
+ * always present in the trailing `result` event regardless of throttling.
+ */
+const PROGRESS_EMIT_INTERVAL_MS = 250;
+
+/**
+ * Run the multipart busboy path and resolve with the streamCsvEntity result.
+ * Extracted out of the route handler so the response-streaming wrapper can
+ * treat the multipart and raw paths uniformly.
+ */
+function runMultipartIngest(args: {
+  req: Request;
+  orgId: string;
+  entity: CsvEntity;
+  onProgress: StreamCsvArgsOnProgress;
+}): Promise<Awaited<ReturnType<typeof streamCsvEntity>>> {
+  const { req, orgId, entity, onProgress } = args;
+  return new Promise((resolve, reject) => {
+    let busboy: ReturnType<typeof Busboy>;
+    try {
+      busboy = Busboy({
+        headers: req.headers as Record<string, string>,
+        limits: {
+          fileSize: MAX_STREAM_BYTES,
+          files: 1,
+        },
+      });
+    } catch (e) {
+      reject(e instanceof Error ? e : new Error(String(e)));
+      return;
+    }
+
+    let handled = false;
+    let limitTriggered = false;
+
+    busboy.on("file", (_name, fileStream, _info) => {
+      if (handled) {
+        fileStream.resume(); // drain ignored extra files
+        return;
+      }
+      handled = true;
+
+      fileStream.on("limit", () => {
+        limitTriggered = true;
+        req.log.warn(
+          { entity, orgId },
+          "Multipart CSV upload exceeded byte limit; destroying request",
+        );
+        fileStream.destroy(
+          new Error(
+            `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
+          ),
+        );
+        req.unpipe(busboy);
+        req.destroy();
+      });
+
+      streamCsvEntity({ orgId, entity, input: fileStream, onProgress }).then(
+        (r) => {
+          if (limitTriggered) {
+            reject(
+              new Error(
+                `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
+              ),
+            );
+          } else {
+            resolve(r);
+          }
+        },
+        (err) => reject(err),
+      );
+    });
+
+    busboy.on("error", (err: unknown) => {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+
+    busboy.on("close", () => {
+      if (!handled) {
+        reject(
+          new Error(
+            "multipart/form-data request did not include a `file` part",
+          ),
+        );
+      }
+    });
+
+    req.pipe(busboy);
+  });
+}
+
+type StreamCsvArgsOnProgress = (p: StreamCsvProgress) => void;
+
 router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const entity = String(req.query["entity"] ?? "") as CsvEntity;
@@ -217,118 +316,66 @@ router.post("/ingest/csv-stream", tenantMiddleware, async (req, res) => {
     req.log.warn({ entity, orgId }, "Streaming CSV upload aborted by client");
   });
 
+  // -- Begin NDJSON streaming response. ------------------------------------
+  // Pre-flight checks above already failed fast with conventional 4xx JSON
+  // responses. Once we start writing the body we cannot change the status
+  // code, so any error during streaming is reported as a `{ type: "error" }`
+  // NDJSON line on a 200 response — the client treats event-level errors
+  // distinctly from HTTP-level errors.
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Cache-Control", "no-store");
+  // Disable proxy buffering so progress events reach the browser promptly.
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  let lastEmit = 0;
+  const writeEvent = (event: Record<string, unknown>): void => {
+    if (res.writableEnded) return;
+    res.write(`${JSON.stringify(event)}\n`);
+  };
+
+  const onProgress: StreamCsvArgsOnProgress = ({ rowsParsed, rowsInserted }) => {
+    const now = Date.now();
+    if (now - lastEmit < PROGRESS_EMIT_INTERVAL_MS) return;
+    lastEmit = now;
+    writeEvent({ type: "progress", rowsParsed, rowsInserted });
+  };
+
   try {
+    let result: Awaited<ReturnType<typeof streamCsvEntity>>;
     if (isMultipart(req)) {
-      // Pipe the first file field straight into streamCsvEntity. Busboy emits
-      // the part as a Readable, so memory stays bounded by the part stream's
-      // highWaterMark — we never buffer the whole file.
-      const result = await new Promise(
-        (resolve: (v: Awaited<ReturnType<typeof streamCsvEntity>>) => void, reject) => {
-          let busboy: ReturnType<typeof Busboy>;
-          try {
-            busboy = Busboy({
-              headers: req.headers as Record<string, string>,
-              limits: {
-                fileSize: MAX_STREAM_BYTES,
-                files: 1,
-              },
-            });
-          } catch (e) {
-            reject(e instanceof Error ? e : new Error(String(e)));
-            return;
-          }
-
-          let handled = false;
-          let limitTriggered = false;
-
-          busboy.on("file", (_name, fileStream, _info) => {
-            if (handled) {
-              fileStream.resume(); // drain ignored extra files
-              return;
-            }
-            handled = true;
-
-            fileStream.on("limit", () => {
-              limitTriggered = true;
-              req.log.warn(
-                { entity, orgId },
-                "Multipart CSV upload exceeded byte limit; destroying request",
-              );
-              fileStream.destroy(
-                new Error(
-                  `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
-                ),
-              );
-              req.unpipe(busboy);
-              req.destroy();
-            });
-
-            streamCsvEntity({ orgId, entity, input: fileStream }).then(
-              (r) => {
-                if (limitTriggered) {
-                  reject(
-                    new Error(
-                      `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
-                    ),
-                  );
-                } else {
-                  resolve(r);
-                }
-              },
-              (err) => reject(err),
-            );
-          });
-
-          busboy.on("error", (err: unknown) => {
-            reject(err instanceof Error ? err : new Error(String(err)));
-          });
-
-          busboy.on("close", () => {
-            if (!handled) {
-              reject(
-                new Error(
-                  "multipart/form-data request did not include a `file` part",
-                ),
-              );
-            }
-          });
-
-          req.pipe(busboy);
-        },
-      );
-      res.json(result);
-      return;
-    }
-
-    // Raw text/csv path — defense-in-depth byte counter and pipe req directly.
-    let exceeded = false;
-    attachByteLimit(req, MAX_STREAM_BYTES, () => {
-      exceeded = true;
-      req.log.warn(
-        { entity, orgId },
-        "Raw CSV upload exceeded byte limit; destroying request",
-      );
-    });
-    const result = await streamCsvEntity({ orgId, entity, input: req });
-    if (exceeded) {
-      res.status(413).json({
-        error: `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
+      result = await runMultipartIngest({ req, orgId, entity, onProgress });
+    } else {
+      // Raw text/csv path — defense-in-depth byte counter and pipe req directly.
+      let exceeded = false;
+      attachByteLimit(req, MAX_STREAM_BYTES, () => {
+        exceeded = true;
+        req.log.warn(
+          { entity, orgId },
+          "Raw CSV upload exceeded byte limit; destroying request",
+        );
       });
-      return;
+      result = await streamCsvEntity({ orgId, entity, input: req, onProgress });
+      if (exceeded) {
+        throw new Error(
+          `Upload exceeded ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit`,
+        );
+      }
     }
-    res.json(result);
+    writeEvent({ type: "result", ...result });
   } catch (err) {
     const msg = (err as Error).message;
     req.log.error(
       { err: msg, entity, orgId },
       "Streaming CSV ingest failed",
     );
-    if (!res.headersSent) {
-      const status = msg.includes("per-request limit") ? 413 : 400;
-      res.status(status).json({
-        error: `CSV stream ingest failed: ${msg}`,
-      });
-    }
+    writeEvent({
+      type: "error",
+      error: `CSV stream ingest failed: ${msg}`,
+    });
+  } finally {
+    if (!res.writableEnded) res.end();
   }
 });
 

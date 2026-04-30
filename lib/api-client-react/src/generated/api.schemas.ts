@@ -393,6 +393,86 @@ export interface StreamCsvResult {
   durationMs: number;
 }
 
+export type StreamCsvProgressEventType =
+  (typeof StreamCsvProgressEventType)[keyof typeof StreamCsvProgressEventType];
+
+export const StreamCsvProgressEventType = {
+  progress: "progress",
+} as const;
+
+/**
+ * Intermediate progress event emitted (throttled to ~4/sec) while the
+server is still parsing and inserting rows.
+
+ */
+export interface StreamCsvProgressEvent {
+  type: StreamCsvProgressEventType;
+  rowsParsed: number;
+  rowsInserted: number;
+}
+
+export type StreamCsvResultEventType =
+  (typeof StreamCsvResultEventType)[keyof typeof StreamCsvResultEventType];
+
+export const StreamCsvResultEventType = {
+  result: "result",
+} as const;
+
+export type StreamCsvResultEventEntity =
+  (typeof StreamCsvResultEventEntity)[keyof typeof StreamCsvResultEventEntity];
+
+export const StreamCsvResultEventEntity = {
+  suppliers: "suppliers",
+  categories: "categories",
+  items: "items",
+  purchase_orders: "purchase_orders",
+  po_lines: "po_lines",
+  invoices: "invoices",
+  payments: "payments",
+  shipments: "shipments",
+} as const;
+
+/**
+ * Terminal success event emitted exactly once at the end of a
+successful stream. Carries the rolled-up counts.
+
+ */
+export interface StreamCsvResultEvent {
+  type: StreamCsvResultEventType;
+  entity: StreamCsvResultEventEntity;
+  rowsParsed: number;
+  rowsInserted: number;
+  durationMs: number;
+}
+
+export type StreamCsvErrorEventType =
+  (typeof StreamCsvErrorEventType)[keyof typeof StreamCsvErrorEventType];
+
+export const StreamCsvErrorEventType = {
+  error: "error",
+} as const;
+
+/**
+ * Terminal failure event emitted exactly once when an error occurs
+after response headers have already been flushed (so the HTTP
+status cannot change). The HTTP status is still 200 in this case.
+
+ */
+export interface StreamCsvErrorEvent {
+  type: StreamCsvErrorEventType;
+  error: string;
+}
+
+/**
+ * One NDJSON line emitted by `POST /ingest/csv-stream`.
+Use the `type` field to discriminate.
+
+ */
+export type StreamCsvEvent =
+  | StreamCsvProgressEvent
+  | StreamCsvResultEvent
+  | StreamCsvErrorEvent;
+
 export type CsvIngestRequestSuppliersItem = { [key: string]: unknown };
 
 export type CsvIngestRequestCategoriesItem = { [key: string]: unknown };

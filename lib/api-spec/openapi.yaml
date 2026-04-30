@@ -595,6 +595,29 @@ paths:
           * `text/csv` raw body (convenient for `curl --data-binary` and back-compat).
 
         Hard limit: 1 GB per upload.
+
+        **Response is NDJSON streamed live as the server processes the
+        upload.** Once pre-flight validation passes (entity name, declared
+        Content-Length under 1 GB), the response Content-Type switches to
+        `application/x-ndjson` and the server writes one JSON object per
+        line, terminated by `\n`:
+
+          * `{"type":"progress","rowsParsed":N,"rowsInserted":M}` —
+            emitted after batch flushes, throttled to ~4/sec server-side so
+            multi-million-row files don't flood the wire.
+          * `{"type":"result","entity":"...","rowsParsed":N,"rowsInserted":M,"durationMs":D}` —
+            exactly one terminal success event whose payload matches
+            `StreamCsvResult`.
+          * `{"type":"error","error":"..."}` — exactly one terminal failure
+            event for errors that occurred mid-stream after headers were
+            sent. (Pre-flight failures still surface as conventional 4xx
+            JSON responses with an `error` body.)
+
+        Clients should read the response body incrementally (browser XHR
+        `onprogress` + `responseText`, or fetch `body.getReader()`),
+        split on `\n`, and parse each non-empty line as JSON. The same
+        approach used by the Data Ingest page's `uploadCsvStream` helper
+        works in any modern browser without extra dependencies.
       parameters:
         - $ref: "#/components/parameters/OrgIdHeader"
         - in: query
@@ -630,19 +653,27 @@ paths:
               format: binary
       responses:
         "200":
-          description: Stream ingest result
+          description: |
+            NDJSON stream. Each line is a JSON object whose `type` field
+            discriminates between `progress` (zero or more, throttled),
+            `result` (exactly one, terminal success), or `error` (exactly
+            one, terminal mid-stream failure).
           content:
-            application/json:
+            application/x-ndjson:
               schema:
-                $ref: "#/components/schemas/StreamCsvResult"
+                $ref: "#/components/schemas/StreamCsvEvent"
         "400":
-          description: Invalid entity or stream parse error
+          description: Invalid entity name (pre-flight rejection, JSON body)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: Upload exceeds the 1 GB per-request size limit
+          description: |
+            Pre-flight rejection: declared Content-Length exceeds the 1 GB
+            per-request size limit. Mid-stream limit hits surface as an
+            in-stream `{"type":"error",...}` NDJSON event on a 200 response
+            instead, since the response headers have already been sent.
           content:
             application/json:
               schema:
@@ -1190,6 +1221,73 @@ components:
         rowsParsed: { type: integer }
         rowsInserted: { type: integer }
         durationMs: { type: integer }
+
+    StreamCsvProgressEvent:
+      type: object
+      description: |
+        Intermediate progress event emitted (throttled to ~4/sec) while the
+        server is still parsing and inserting rows.
+      required: [type, rowsParsed, rowsInserted]
+      properties:
+        type:
+          type: string
+          enum: [progress]
+        rowsParsed: { type: integer }
+        rowsInserted: { type: integer }
+
+    StreamCsvResultEvent:
+      type: object
+      description: |
+        Terminal success event emitted exactly once at the end of a
+        successful stream. Carries the rolled-up counts.
+      required: [type, entity, rowsParsed, rowsInserted, durationMs]
+      properties:
+        type:
+          type: string
+          enum: [result]
+        entity:
+          type: string
+          enum:
+            - suppliers
+            - categories
+            - items
+            - purchase_orders
+            - po_lines
+            - invoices
+            - payments
+            - shipments
+        rowsParsed: { type: integer }
+        rowsInserted: { type: integer }
+        durationMs: { type: integer }
+
+    StreamCsvErrorEvent:
+      type: object
+      description: |
+        Terminal failure event emitted exactly once when an error occurs
+        after response headers have already been flushed (so the HTTP
+        status cannot change). The HTTP status is still 200 in this case.
+      required: [type, error]
+      properties:
+        type:
+          type: string
+          enum: [error]
+        error:
+          type: string
+
+    StreamCsvEvent:
+      description: |
+        One NDJSON line emitted by `POST /ingest/csv-stream`.
+        Use the `type` field to discriminate.
+      oneOf:
+        - $ref: "#/components/schemas/StreamCsvProgressEvent"
+        - $ref: "#/components/schemas/StreamCsvResultEvent"
+        - $ref: "#/components/schemas/StreamCsvErrorEvent"
+      discriminator:
+        propertyName: type
+        mapping:
+          progress: "#/components/schemas/StreamCsvProgressEvent"
+          result: "#/components/schemas/StreamCsvResultEvent"
+          error: "#/components/schemas/StreamCsvErrorEvent"
 
     CsvIngestRequest:
       type: object
