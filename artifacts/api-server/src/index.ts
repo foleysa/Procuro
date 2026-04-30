@@ -10,6 +10,14 @@ import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-e
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
 import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
 import { blsEconomicIndexCollector } from "./lib/intelligence/collectors/bls-economic-index";
+import { secEdgarCollector } from "./lib/intelligence/collectors/sec-edgar";
+import { gdeltEventsCollector } from "./lib/intelligence/collectors/gdelt-events";
+import { governmentSanctionsCollector } from "./lib/intelligence/collectors/government-sanctions";
+import { opensanctionsCollector } from "./lib/intelligence/collectors/opensanctions";
+import { gleifLeiCollector } from "./lib/intelligence/collectors/gleif-lei";
+import { climateTraceCollector } from "./lib/intelligence/collectors/climate-trace";
+import { naturalHazardsCollector } from "./lib/intelligence/collectors/natural-hazards";
+import { companiesHouseCollector } from "./lib/intelligence/collectors/companies-house";
 import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
@@ -50,6 +58,15 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   eiaEnergyCollector,
   worldBankPinkSheetCollector,
   blsEconomicIndexCollector,
+  // Phase 2 (task #78) — high-ROI free public-API collectors.
+  secEdgarCollector,
+  gdeltEventsCollector,
+  governmentSanctionsCollector,
+  opensanctionsCollector,
+  gleifLeiCollector,
+  climateTraceCollector,
+  naturalHazardsCollector,
+  companiesHouseCollector,
 ];
 
 for (const c of COLLECTORS) {

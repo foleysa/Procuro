@@ -30,6 +30,7 @@ const baseDraftShape = {
   observedAt: z.union([z.date(), z.string().datetime()]),
   sourceUrl: z.string().url(),
   confidence: z.number().min(0).max(1).optional(),
+  entityUid: z.string().min(1).nullable().optional(),
 } as const;
 
 /**

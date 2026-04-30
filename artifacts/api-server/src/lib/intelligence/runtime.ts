@@ -33,6 +33,27 @@ import {
   fetchFredBackfillDrafts,
   FRED_SERIES,
 } from "./collectors/fred-economic-index";
+import {
+  SEC_EDGAR_COLLECTOR_ID,
+  fetchEdgarBackfillDrafts,
+  type SecIssuerRef,
+} from "./collectors/sec-edgar";
+import {
+  OPENSANCTIONS_COLLECTOR_ID,
+  fetchOpenSanctionsBackfillDrafts,
+} from "./collectors/opensanctions";
+import {
+  GLEIF_LEI_COLLECTOR_ID,
+  fetchGleifBackfillDrafts,
+} from "./collectors/gleif-lei";
+import {
+  CLIMATE_TRACE_COLLECTOR_ID,
+  fetchClimateTraceBackfillDrafts,
+} from "./collectors/climate-trace";
+import {
+  COMPANIES_HOUSE_COLLECTOR_ID,
+  fetchCompaniesHouseBackfillDrafts,
+} from "./collectors/companies-house";
 
 /**
  * Inference target matching the unique *index* defined in
@@ -408,7 +429,14 @@ export async function runCollector(
       sourceUrl: d.sourceUrl,
       posture: reg.posture,
       confidence: String(d.confidence ?? 0.7),
-      metadata: d.metadata ?? {},
+      // Mirror the resolved entity_uid into the legacy Postgres
+      // `metadata.entityUid` slot so cross-source joins on the
+      // existing pg signal stream still work; BigQuery gets the
+      // first-class column below.
+      metadata:
+        d.entityUid !== null && d.entityUid !== undefined
+          ? { ...(d.metadata ?? {}), entityUid: d.entityUid }
+          : (d.metadata ?? {}),
     }));
     const { inserted, duplicates } = await insertSignalsWithDedupe(rows);
 
@@ -444,7 +472,7 @@ export async function runCollector(
           disclosureTier: collector.disclosureTier,
           jurisdiction: collector.jurisdiction,
           confidence: String(d.confidence ?? 0.7),
-          entityUidNullable: null,
+          entityUidNullable: d.entityUid ?? null,
           stableSignalKey: collector.stableSignalKey(d),
           validFrom:
             d.observedAt instanceof Date ? d.observedAt : new Date(d.observedAt),
@@ -692,7 +720,10 @@ async function insertSignalsIdempotent(
       sourceUrl: d.sourceUrl,
       posture: collectorRow.posture,
       confidence: String(d.confidence ?? 0.7),
-      metadata: d.metadata ?? {},
+      metadata:
+        d.entityUid !== null && d.entityUid !== undefined
+          ? { ...(d.metadata ?? {}), entityUid: d.entityUid }
+          : (d.metadata ?? {}),
     });
   }
 
@@ -867,6 +898,182 @@ export async function runFredEconomicIndexBackfill(
     await audit(collectorId, "backfill_failed", {}, e.message);
     throw e;
   }
+}
+
+/**
+ * Generic backfill skeleton — kill-switch + approval gating + audit
+ * trail + idempotent insert. Per-collector wrappers below supply
+ * `fetchDrafts` and any per-source labeling. Lives next to
+ * `runEcbFxRatesBackfill` / `runFredEconomicIndexBackfill` (which
+ * predate this helper); migration of those two to the generic shape
+ * is a follow-up so we don't churn passing tests in this task.
+ */
+async function runGenericBackfill(args: {
+  collectorId: string;
+  startedMeta?: Record<string, unknown>;
+  fetchDrafts: () => Promise<{
+    drafts: MarketSignalDraft[];
+    extraSucceededMeta?: Record<string, unknown>;
+  }>;
+  force?: boolean;
+}): Promise<BackfillResult> {
+  const start = Date.now();
+  const { collectorId } = args;
+  const [reg] = await db
+    .select()
+    .from(collectorsTable)
+    .where(eq(collectorsTable.id, collectorId))
+    .limit(1);
+  if (!reg) throw new Error(`Collector ${collectorId} not registered`);
+  if (reg.killSwitch === 1) {
+    await audit(collectorId, "backfill_skipped_kill_switch");
+    throw new Error("Collector is killed; release the kill switch first.");
+  }
+  if (reg.status !== "approved" && !args.force) {
+    await audit(collectorId, "backfill_skipped_not_approved", {
+      status: reg.status,
+    });
+    throw new Error(
+      `Collector status is ${reg.status}; approve it before backfilling.`,
+    );
+  }
+  await audit(collectorId, "backfill_started", args.startedMeta ?? {});
+  try {
+    const { drafts, extraSucceededMeta } = await args.fetchDrafts();
+    const days = new Set(
+      drafts.map((d) =>
+        (d.observedAt instanceof Date ? d.observedAt : new Date(d.observedAt))
+          .toISOString()
+          .slice(0, 10),
+      ),
+    ).size;
+    const { inserted, skipped } = await insertSignalsIdempotent(reg, drafts);
+    const result: BackfillResult = {
+      collectorId,
+      daysWritten: days,
+      signalsInserted: inserted,
+      signalsSkipped: skipped,
+      durationMs: Date.now() - start,
+    };
+    await audit(collectorId, "backfill_succeeded", {
+      days,
+      inserted,
+      skipped,
+      drafts: drafts.length,
+      ...(extraSucceededMeta ?? {}),
+    });
+    logger.info(
+      { collectorId, days, inserted, skipped, drafts: drafts.length },
+      "Backfill completed",
+    );
+    return result;
+  } catch (err) {
+    const e = err as Error;
+    await audit(collectorId, "backfill_failed", {}, e.message);
+    throw e;
+  }
+}
+
+/** Backfill the SEC EDGAR collector. */
+export async function runSecEdgarBackfill(
+  opts: { force?: boolean; issuers?: readonly SecIssuerRef[] } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: SEC_EDGAR_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { issuers: opts.issuers?.length ?? "default" },
+    fetchDrafts: async () => {
+      const { drafts, failedIssuers } = await fetchEdgarBackfillDrafts(
+        opts.issuers ? { issuers: opts.issuers } : {},
+      );
+      return {
+        drafts,
+        extraSucceededMeta: { failedIssuers: failedIssuers.length },
+      };
+    },
+  });
+}
+
+/** Backfill the OpenSanctions collector (lifts the per-tick row cap). */
+export async function runOpenSanctionsBackfill(
+  opts: { force?: boolean; cap?: number } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: OPENSANCTIONS_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { cap: opts.cap ?? null },
+    fetchDrafts: async () => {
+      const { drafts } = await fetchOpenSanctionsBackfillDrafts(
+        opts.cap ? { cap: opts.cap } : {},
+      );
+      return { drafts };
+    },
+  });
+}
+
+/** Backfill the GLEIF LEI collector. */
+export async function runGleifLeiBackfill(
+  opts: { force?: boolean; maxPages?: number; pageSize?: number } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: GLEIF_LEI_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { maxPages: opts.maxPages ?? null, pageSize: opts.pageSize ?? null },
+    fetchDrafts: async () => {
+      const { drafts, pagesFetched } = await fetchGleifBackfillDrafts({
+        ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
+        ...(opts.pageSize !== undefined ? { pageSize: opts.pageSize } : {}),
+      });
+      return { drafts, extraSucceededMeta: { pagesFetched } };
+    },
+  });
+}
+
+/** Backfill the ClimateTRACE collector. */
+export async function runClimateTraceBackfill(
+  opts: {
+    force?: boolean;
+    maxPages?: number;
+    pageSize?: number;
+    sector?: string;
+    country?: string;
+  } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: CLIMATE_TRACE_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: {
+      sector: opts.sector ?? null,
+      country: opts.country ?? null,
+      maxPages: opts.maxPages ?? null,
+    },
+    fetchDrafts: async () => {
+      const { drafts, pagesFetched } = await fetchClimateTraceBackfillDrafts({
+        ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
+        ...(opts.pageSize !== undefined ? { pageSize: opts.pageSize } : {}),
+        ...(opts.sector !== undefined ? { sector: opts.sector } : {}),
+        ...(opts.country !== undefined ? { country: opts.country } : {}),
+      });
+      return { drafts, extraSucceededMeta: { pagesFetched } };
+    },
+  });
+}
+
+/** Backfill the Companies House collector. */
+export async function runCompaniesHouseBackfill(
+  opts: { force?: boolean; numbers?: readonly string[] } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { numbers: opts.numbers?.length ?? "default" },
+    fetchDrafts: async () => {
+      const { drafts, failed } = await fetchCompaniesHouseBackfillDrafts(
+        opts.numbers ? { numbers: opts.numbers } : {},
+      );
+      return { drafts, extraSucceededMeta: { failed: failed.length } };
+    },
+  });
 }
 
 export async function setKillSwitch(

@@ -36,9 +36,19 @@ import {
   listCollectorAudit,
   runEcbFxRatesBackfill,
   runFredEconomicIndexBackfill,
+  runSecEdgarBackfill,
+  runOpenSanctionsBackfill,
+  runGleifLeiBackfill,
+  runClimateTraceBackfill,
+  runCompaniesHouseBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
+import { SEC_EDGAR_COLLECTOR_ID } from "../lib/intelligence/collectors/sec-edgar";
+import { OPENSANCTIONS_COLLECTOR_ID } from "../lib/intelligence/collectors/opensanctions";
+import { GLEIF_LEI_COLLECTOR_ID } from "../lib/intelligence/collectors/gleif-lei";
+import { CLIMATE_TRACE_COLLECTOR_ID } from "../lib/intelligence/collectors/climate-trace";
+import { COMPANIES_HOUSE_COLLECTOR_ID } from "../lib/intelligence/collectors/companies-house";
 import { getWorkbenchMeta } from "../lib/intelligence/workbench-meta";
 import {
   buildLineageGraph,
@@ -323,6 +333,137 @@ router.post(
       throw err;
     }
   },
+);
+
+/**
+ * Generic backfill endpoint factory — every Phase 2 collector that
+ * supports historical replay (EDGAR, OpenSanctions, GLEIF, ClimateTRACE,
+ * Companies House) shares the same response shape and the same
+ * preflight error handling (kill switch / not-approved / missing API
+ * key all map to 409). Avoids the copy-pasted block we had for ECB +
+ * FRED.
+ */
+function mountBackfillRoute<TOpts extends { force?: boolean }>(
+  path: string,
+  collectorId: string,
+  run: (opts: TOpts) => Promise<{
+    collectorId: string;
+    daysWritten: number;
+    signalsInserted: number;
+    signalsSkipped: number;
+    durationMs: number;
+  }>,
+  parseBody: (req: { body?: unknown }) => TOpts,
+): void {
+  router.post(path, requirePlatformAdmin, async (req, res) => {
+    try {
+      const opts = parseBody(req);
+      const result = await run(opts);
+      res.json({
+        collectorId: result.collectorId,
+        daysWritten: result.daysWritten,
+        signalsInserted: result.signalsInserted,
+        signalsSkipped: result.signalsSkipped,
+        durationMs: result.durationMs,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        message.includes("kill switch") ||
+        message.includes("approved") ||
+        message.includes("approve") ||
+        message.includes("API_KEY") ||
+        message.includes("USER_AGENT")
+      ) {
+        res.status(409).json({ error: message, collectorId });
+        return;
+      }
+      throw err;
+    }
+  });
+}
+
+const SecEdgarBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    issuers: z
+      .array(
+        z.object({
+          cik: z.string().min(1),
+          name: z.string().min(1),
+          lei: z.string().optional(),
+          ticker: z.string().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/sec-edgar/backfill",
+  SEC_EDGAR_COLLECTOR_ID,
+  runSecEdgarBackfill,
+  (req) => SecEdgarBackfillSchema.parse(req.body) ?? {},
+);
+
+const OpenSanctionsBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    cap: z.number().int().positive().max(2_000_000).optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/opensanctions/backfill",
+  OPENSANCTIONS_COLLECTOR_ID,
+  runOpenSanctionsBackfill,
+  (req) => OpenSanctionsBackfillSchema.parse(req.body) ?? {},
+);
+
+const GleifBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    maxPages: z.number().int().positive().max(500).optional(),
+    pageSize: z.number().int().positive().max(200).optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/gleif-lei/backfill",
+  GLEIF_LEI_COLLECTOR_ID,
+  runGleifLeiBackfill,
+  (req) => GleifBackfillSchema.parse(req.body) ?? {},
+);
+
+const ClimateTraceBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    maxPages: z.number().int().positive().max(100).optional(),
+    pageSize: z.number().int().positive().max(500).optional(),
+    sector: z.string().min(1).max(120).optional(),
+    country: z.string().min(2).max(120).optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/climate-trace/backfill",
+  CLIMATE_TRACE_COLLECTOR_ID,
+  runClimateTraceBackfill,
+  (req) => ClimateTraceBackfillSchema.parse(req.body) ?? {},
+);
+
+const CompaniesHouseBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    numbers: z.array(z.string().min(1).max(20)).max(500).optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/companies-house/backfill",
+  COMPANIES_HOUSE_COLLECTOR_ID,
+  runCompaniesHouseBackfill,
+  (req) => CompaniesHouseBackfillSchema.parse(req.body) ?? {},
 );
 
 router.post("/collectors/:id/run", requirePlatformAdmin, async (req, res) => {

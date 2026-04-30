@@ -1,0 +1,324 @@
+/**
+ * Companies House (UK) collector — corporate-filing stream for UK
+ * registered entities.
+ *
+ * Pulls per-company filing histories via
+ *   https://api.company-information.service.gov.uk/company/{COMPANY_NUMBER}/filing-history
+ * for a curated set of company numbers. Companies House requires an
+ * API key (free) sent as HTTP basic-auth user with empty password —
+ * we read the key from `COMPANIES_HOUSE_API_KEY`.
+ *
+ * Each filing → one `corporate_filing` MarketSignal:
+ *   - scope_supplier_name = company name (looked up once per number)
+ *   - scope_sku           = transaction id (per-filing identifier)
+ *   - scope_lane_key      = "GB"
+ *   - value               = filing-category code (1 = accounts, 2 =
+ *     confirmation-statement, 3 = officers, 4 = capital, 5 =
+ *     mortgage, 6 = insolvency, 7 = address, 0 = other)
+ *
+ * Posture: `public_api`, tier `T1`. Companies House data is open and
+ * citable.
+ *
+ * Default schedule: every 12 hours (Companies House publishes daily).
+ */
+
+import { z } from "zod";
+import {
+  buildSignalDraftSchema,
+  defaultStableSignalKey,
+} from "../contractHelpers";
+import type {
+  CollectWithRawResult,
+  IntelligenceCollector,
+  MarketSignalDraft,
+  RawPayload,
+} from "../collector";
+import { logger } from "../../logger";
+import { resolveDraftEntities } from "./_entity-resolver";
+
+export const COMPANIES_HOUSE_COLLECTOR_ID = "companies-house";
+
+const CH_BASE_URL = "https://api.company-information.service.gov.uk";
+
+export const COMPANIES_HOUSE_DEFAULT_NUMBERS: readonly string[] = [
+  "00006245", // BP P.L.C.
+  "02099500", // Vodafone Group Plc
+  "00041424", // Diageo plc
+  "00010892", // Tesco PLC
+  "02366963", // Rolls-Royce Holdings plc
+  "00102498", // Unilever PLC
+  "00345700", // GlaxoSmithKline plc
+  "01777777", // National Grid plc
+];
+
+export const FILING_CATEGORY_CODES: Record<string, number> = {
+  accounts: 1,
+  "confirmation-statement": 2,
+  "annual-return": 2,
+  officers: 3,
+  capital: 4,
+  mortgage: 5,
+  "gazette-insolvency": 6,
+  insolvency: 6,
+  "address": 7,
+  "registered-office-address": 7,
+  incorporation: 8,
+  "change-of-name": 9,
+  resolution: 10,
+};
+
+export interface ChCompanyProfile {
+  company_number?: string;
+  company_name?: string;
+  jurisdiction?: string;
+  company_status?: string;
+  type?: string;
+}
+
+export interface ChFilingItem {
+  transaction_id?: string;
+  category?: string;
+  description?: string;
+  type?: string;
+  date?: string;
+  action_date?: string;
+  links?: { self?: string; document_metadata?: string };
+}
+
+export interface ChFilingHistory {
+  total_count?: number;
+  items?: ChFilingItem[];
+}
+
+/** Build the Authorization header for Companies House (basic auth, key as user). */
+function authHeader(apiKey: string): string {
+  return `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`;
+}
+
+/**
+ * Convert one filing history item + its parent company info into a
+ * MarketSignalDraft.
+ */
+export function filingToDraft(
+  company: ChCompanyProfile,
+  filing: ChFilingItem,
+): MarketSignalDraft | null {
+  const txId = filing.transaction_id;
+  const date = filing.date ?? filing.action_date;
+  if (!txId || !date) return null;
+  const observedAt = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(observedAt.getTime())) return null;
+  const category = filing.category ?? "other";
+  const value = FILING_CATEGORY_CODES[category] ?? 0;
+  const companyName = company.company_name ?? company.company_number ?? "Unknown";
+  const sourceUrl = filing.links?.self
+    ? `https://find-and-update.company-information.service.gov.uk${filing.links.self}`
+    : `https://find-and-update.company-information.service.gov.uk/company/${company.company_number}`;
+  return {
+    signalType: "corporate_filing",
+    scopeSupplierName: companyName,
+    scopeSku: txId,
+    scopeLaneKey: company.jurisdiction ?? "gb",
+    value,
+    unit: "filing_category_code",
+    currency: "GBP",
+    observedAt,
+    sourceUrl,
+    confidence: 0.99,
+    // entityUid is populated by the collector's resolver pass.
+    metadata: {
+      companyNumber: company.company_number ?? null,
+      companyName,
+      companyStatus: company.company_status ?? null,
+      companyType: company.type ?? null,
+      transactionId: txId,
+      category,
+      description: filing.description ?? null,
+      type: filing.type ?? null,
+      jurisdiction: company.jurisdiction ?? null,
+    },
+  };
+}
+
+export function parseFilingHistory(
+  company: ChCompanyProfile,
+  history: ChFilingHistory,
+): MarketSignalDraft[] {
+  const drafts: MarketSignalDraft[] = [];
+  for (const item of history.items ?? []) {
+    const d = filingToDraft(company, item);
+    if (d) drafts.push(d);
+  }
+  return drafts;
+}
+
+const chMetadataSchema = z
+  .object({
+    companyNumber: z.string().nullable(),
+    companyName: z.string().min(1),
+    companyStatus: z.string().nullable(),
+    companyType: z.string().nullable(),
+    transactionId: z.string().min(1),
+    category: z.string().min(1),
+    description: z.string().nullable(),
+    type: z.string().nullable(),
+    jurisdiction: z.string().nullable(),
+  })
+  .passthrough();
+
+const chSignalSchema = buildSignalDraftSchema(chMetadataSchema);
+
+async function fetchChJson<T>(
+  path: string,
+  apiKey: string,
+): Promise<{ url: string; body: string; parsed: T }> {
+  const url = `${CH_BASE_URL}${path}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: authHeader(apiKey),
+      Accept: "application/json",
+    },
+  });
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(`Companies House HTTP ${res.status} ${path}: ${body.slice(0, 200)}`);
+  }
+  return { url, body, parsed: JSON.parse(body) as T };
+}
+
+async function pullCompany(
+  number: string,
+  apiKey: string,
+): Promise<{
+  drafts: MarketSignalDraft[];
+  rawPayloads: RawPayload[];
+}> {
+  const profile = await fetchChJson<ChCompanyProfile>(`/company/${number}`, apiKey);
+  const history = await fetchChJson<ChFilingHistory>(
+    `/company/${number}/filing-history?items_per_page=100`,
+    apiKey,
+  );
+  const drafts = parseFilingHistory(profile.parsed, history.parsed);
+  const rawPayloads: RawPayload[] = [
+    {
+      name: `company-${number}`,
+      contentType: "application/json",
+      body: profile.body,
+      sourceUrl: profile.url,
+      metadata: { companyNumber: number, kind: "profile" },
+    },
+    {
+      name: `filing-history-${number}`,
+      contentType: "application/json",
+      body: history.body,
+      sourceUrl: history.url,
+      metadata: { companyNumber: number, kind: "filing-history" },
+    },
+  ];
+  return { drafts, rawPayloads };
+}
+
+async function attachChEntityUids(
+  drafts: MarketSignalDraft[],
+): Promise<MarketSignalDraft[]> {
+  const inputs = drafts.map((d) => {
+    const md = (d.metadata ?? {}) as {
+      companyNumber?: string | null;
+      jurisdiction?: string | null;
+    };
+    return {
+      collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
+      name: d.scopeSupplierName ?? "",
+      country: "GB",
+      ...(md.companyNumber
+        ? { identifiers: { companies_house: md.companyNumber } }
+        : {}),
+    };
+  });
+  const uids = await resolveDraftEntities(inputs);
+  return drafts.map((d, i) => (uids[i] ? { ...d, entityUid: uids[i]! } : d));
+}
+
+export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchema> = {
+  id: COMPANIES_HOUSE_COLLECTOR_ID,
+  name: "UK Companies House Filings",
+  description:
+    "Polls the Companies House REST API for the recent filing history of a curated set of UK company numbers and emits one corporate_filing MarketSignal per filing (transaction id in scope_sku, filing-category code in value).",
+  posture: "public-api",
+  sourceUrl: "https://developer.company-information.service.gov.uk/",
+  defaultRateLimitRpm: 60,
+  // Companies House registers most filings overnight UK time. Daily at
+  // 06:00 UTC catches the previous day's transactions without spending
+  // the rate budget on intra-day no-op polls.
+  defaultScheduleCron: "0 6 * * *",
+  postureClass: "public_api",
+  disclosureTier: "T1",
+  jurisdiction: "GB",
+  retentionDays: 1095,
+  tenantOptInDefault: true,
+  signalSchema: chSignalSchema,
+  stableSignalKey(draft) {
+    return defaultStableSignalKey(COMPANIES_HOUSE_COLLECTOR_ID, draft);
+  },
+  async collect(): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null })).drafts;
+  },
+  async collectWithRaw(): Promise<CollectWithRawResult> {
+    const apiKey = process.env["COMPANIES_HOUSE_API_KEY"];
+    if (!apiKey) {
+      throw new Error(
+        "COMPANIES_HOUSE_API_KEY is not set. Get a free key at https://developer.company-information.service.gov.uk/.",
+      );
+    }
+    const drafts: MarketSignalDraft[] = [];
+    const rawPayloads: RawPayload[] = [];
+    const failures: string[] = [];
+    for (const number of COMPANIES_HOUSE_DEFAULT_NUMBERS) {
+      try {
+        const r = await pullCompany(number, apiKey);
+        for (const x of r.drafts) drafts.push(x);
+        for (const p of r.rawPayloads) rawPayloads.push(p);
+      } catch (err) {
+        failures.push(`${number}: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(
+          { collectorId: COMPANIES_HOUSE_COLLECTOR_ID, number, err },
+          "Companies House pull failed",
+        );
+      }
+    }
+    if (
+      drafts.length === 0 &&
+      failures.length === COMPANIES_HOUSE_DEFAULT_NUMBERS.length
+    ) {
+      throw new Error(
+        `companies-house: all ${COMPANIES_HOUSE_DEFAULT_NUMBERS.length} companies failed. Sample: ${failures.slice(0, 2).join("; ")}`,
+      );
+    }
+    const enriched = await attachChEntityUids(drafts);
+    return { drafts: enriched, rawPayloads };
+  },
+};
+
+/** Backfill — caller supplies an arbitrary set of company numbers. */
+export async function fetchCompaniesHouseBackfillDrafts(opts?: {
+  numbers?: readonly string[];
+}): Promise<{
+  drafts: MarketSignalDraft[];
+  failed: Array<{ number: string; error: string }>;
+}> {
+  const apiKey = process.env["COMPANIES_HOUSE_API_KEY"];
+  if (!apiKey) throw new Error("COMPANIES_HOUSE_API_KEY is not set");
+  const numbers = opts?.numbers ?? COMPANIES_HOUSE_DEFAULT_NUMBERS;
+  const drafts: MarketSignalDraft[] = [];
+  const failed: Array<{ number: string; error: string }> = [];
+  for (const number of numbers) {
+    try {
+      const r = await pullCompany(number, apiKey);
+      for (const x of r.drafts) drafts.push(x);
+    } catch (err) {
+      failed.push({ number, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const enriched = await attachChEntityUids(drafts);
+  return { drafts: enriched, failed };
+}

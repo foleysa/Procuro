@@ -53,6 +53,17 @@ export interface MarketSignalDraft {
   /** [0..1] */
   confidence?: number;
   metadata?: Record<string, unknown>;
+  /**
+   * Optional pre-resolved canonical `entity_uid` (from
+   * `@workspace/intelligence/entities → resolveEntity`). When set, the
+   * runtime threads it into the BigQuery `entity_uid_nullable` column
+   * (and mirrors it into Postgres `metadata.entityUid`) so downstream
+   * graph traversals and Fusion Center surfaces can join cross-source
+   * signals on the same canonical entity. Collectors that touch named
+   * organisations (suppliers, sanctioned parties, facilities, issuers)
+   * should populate this whenever resolution succeeds.
+   */
+  entityUid?: string | null;
 }
 
 export interface CollectorRunResult {

@@ -128,6 +128,24 @@ export const marketSignalTypes = [
   "services_rate_card",
   "economic_index",
   "fx_rate",
+  // Phase 2 collectors (EDGAR, GDELT, sanctions, OpenSanctions, GLEIF,
+  // ClimateTRACE, hazards, Companies House) emit one of:
+  /** SEC EDGAR, Companies House, and similar regulatory filings. */
+  "corporate_filing",
+  /** GDELT 2.0 events (geocoded global event firehose). */
+  "event_geocoded",
+  /** GDELT GKG / news-as-event surface for an entity. */
+  "entity_news_event",
+  /** OFAC SDN, EU/UK/UN consolidated sanctions list match. */
+  "sanctions_match",
+  /** OpenSanctions broader risk corpus match (PEPs, debarments, ...). */
+  "risk_screening_match",
+  /** GLEIF entity-registry observation (LEI golden-copy upsert). */
+  "entity_registry",
+  /** ClimateTRACE facility-level emissions snapshot. */
+  "facility_emissions",
+  /** USGS / NOAA / NASA EONET / GDACS natural hazard observation. */
+  "natural_hazard",
 ] as const;
 export type MarketSignalType = (typeof marketSignalTypes)[number];
 
