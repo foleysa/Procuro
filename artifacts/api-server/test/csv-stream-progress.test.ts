@@ -66,6 +66,25 @@ const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
  * test stays fast.
  */
 const ROW_COUNT = 20_000;
+/**
+ * Soft upper bound on the `first-progress → result` gap for a 20k-row
+ * suppliers upload. This is the wall-clock time between the first batch
+ * flush (after BATCH_SIZE=1000) and the terminal `result` event — i.e.
+ * roughly the cost of ~19 remaining batch flushes on the suppliers
+ * `flushBatch` branch (no FK lookup, single bulk upsert per batch).
+ *
+ * Sized at roughly 4–6× the observed p95 on local + CI hardware so
+ * transient noise (cold DB, contended runner, GC pause) does not flake,
+ * while a 5–10× throughput regression — the kind that turns a 30-second
+ * upload into a 5-minute one — does fail loudly here instead of in a
+ * customer's browser. See the matching ceiling map in
+ * `csv-stream-progress-entities.test.ts` and the documented per-entity
+ * p95 table in `routes/ingest.ts`.
+ *
+ * 8000 ms covers ~19 batch flushes ≈ 420 ms each, which is generous
+ * relative to the ~1500 ms total gap typically observed for suppliers.
+ */
+const MAX_PROGRESS_TO_RESULT_GAP_MS = 8_000;
 const HEADER =
   "externalId,name,countryCode,paymentTermsDays,isStrategic,isPreferred\n";
 const COUNTRY_POOL = ["US", "DE", "FR", "JP", "BR", "IN", "GB", "CA"];
@@ -349,6 +368,21 @@ test("streaming CSV ingest emits progress events before the terminal result", as
       `until end), but the gap was only ${progressToResultGapMs} ms.`,
   );
 
+  // Soft upper bound — catches a 5–10× throughput regression on the
+  // suppliers `flushBatch` branch before customers do. See the comment on
+  // MAX_PROGRESS_TO_RESULT_GAP_MS for sizing rationale.
+  assert.ok(
+    progressToResultGapMs <= MAX_PROGRESS_TO_RESULT_GAP_MS,
+    `first-progress→result gap of ${progressToResultGapMs} ms exceeded the ` +
+      `soft ceiling of ${MAX_PROGRESS_TO_RESULT_GAP_MS} ms for a ${ROW_COUNT}-row ` +
+      `suppliers upload (~19 post-first-batch flushes). This usually means ` +
+      `the suppliers flushBatch branch regressed: e.g. a per-row round-trip ` +
+      `introduced inside the batch, BATCH_SIZE shrunk, or the upsert lost ` +
+      `its index. Compare against the p95 table in ` +
+      `artifacts/api-server/src/routes/ingest.ts and update both numbers ` +
+      `together if this is a legitimate baseline shift.`,
+  );
+
   // Sanity check: progress totals should be monotonically non-decreasing
   // and never exceed the file's row count. Catches "stale snapshot" or
   // "zeros only" regressions in the progress payload.
@@ -371,9 +405,17 @@ test("streaming CSV ingest emits progress events before the terminal result", as
     prevInserted = ev.rowsInserted;
   }
 
+  // Lightweight throughput metric the team can grep CI logs for over time
+  // to spot trend drift well before it crosses the hard ceiling above.
+  const POST_FIRST_BATCH_ROWS = Math.max(ROW_COUNT - 1000, 1);
+  const rowsPerSec = Math.round(
+    (POST_FIRST_BATCH_ROWS * 1000) / Math.max(progressToResultGapMs, 1),
+  );
   console.log(
     `[progress] received ${progressEvents.length} progress event(s); ` +
       `final parsed=${prevParsed}, inserted=${prevInserted}; ` +
-      `first-progress→result gap=${progressToResultGapMs} ms`,
+      `first-progress→result gap=${progressToResultGapMs} ms ` +
+      `(ceiling ${MAX_PROGRESS_TO_RESULT_GAP_MS} ms, ` +
+      `~${rowsPerSec} rows/sec post-first-batch)`,
   );
 });

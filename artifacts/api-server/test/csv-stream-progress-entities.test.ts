@@ -72,6 +72,42 @@ type StreamEntity =
   | "payments"
   | "shipments";
 
+/**
+ * Soft per-entity upper bound on the `first-progress → result` gap for a
+ * 10k-row upload. This is the wall-clock time between the first batch
+ * flush (after BATCH_SIZE=1000 rows) and the terminal `result` event, i.e.
+ * roughly the cost of the remaining ~9 batch flushes. It's a proxy for
+ * server-side per-batch throughput on each entity's `flushBatch` branch.
+ *
+ * Why per-entity: the branches have very different shapes —
+ *   - `categories`, `items`           : no FK lookup, single upsert/batch
+ *   - `suppliers`, `purchase_orders`,
+ *     `payments`                      : 0–1 grouped FK lookup per batch
+ *   - `shipments`                     : dual optional FK lookups per batch
+ *   - `invoices`, `po_lines`          : grouped FK lookups before upsert
+ *
+ * Why these numbers: observed gaps on local + CI hardware sit in the
+ * 700–1900 ms range (see test logs and the p95 table documented in
+ * `routes/ingest.ts`). Ceilings are sized at roughly 3–5× the observed
+ * p95 so transient CI noise (cold DB, contended runner, GC pause) does
+ * not flake, while a 5–10× throughput regression — the kind of slowdown
+ * that turns a 30-second upload into a 5-minute one — does fail loudly
+ * here instead of in a customer's browser.
+ *
+ * Treat these as a regression alarm, not a SLO. If a legitimate change
+ * (schema, FK index, batch size) shifts the observed gap, update both
+ * this map and the p95 table in `routes/ingest.ts` together.
+ */
+const MAX_PROGRESS_TO_RESULT_GAP_MS_PER_ENTITY: Record<StreamEntity, number> = {
+  categories: 4_000,
+  items: 4_000,
+  purchase_orders: 5_000,
+  payments: 5_000,
+  shipments: 6_000,
+  invoices: 8_000,
+  po_lines: 8_000,
+};
+
 type ProgressEvent = {
   type: "progress";
   rowsParsed: number;
@@ -243,6 +279,22 @@ function assertProgressContract(args: {
       `but the gap was only ${progressToResultGapMs} ms.`,
   );
 
+  // Soft upper bound — catches a 5–10× throughput regression on this
+  // entity's `flushBatch` branch before customers do. See the comment on
+  // MAX_PROGRESS_TO_RESULT_GAP_MS_PER_ENTITY for sizing rationale.
+  const maxGapMs = MAX_PROGRESS_TO_RESULT_GAP_MS_PER_ENTITY[entity];
+  assert.ok(
+    progressToResultGapMs <= maxGapMs,
+    `[${entity}] first-progress→result gap of ${progressToResultGapMs} ms ` +
+      `exceeded the soft ceiling of ${maxGapMs} ms for a ${rowCount}-row ` +
+      `upload (~9 post-first-batch flushes). This usually means the ` +
+      `flushBatch branch for '${entity}' regressed: e.g. a missing index on ` +
+      `the FK lookup, a per-row round-trip introduced inside the batch, or ` +
+      `BATCH_SIZE shrunk. Compare against the p95 table in ` +
+      `artifacts/api-server/src/routes/ingest.ts and update both numbers ` +
+      `together if this is a legitimate baseline shift.`,
+  );
+
   let prevParsed = 0;
   let prevInserted = 0;
   for (const [i, ev] of progressEvents.entries()) {
@@ -274,10 +326,19 @@ function assertProgressContract(args: {
     `[${entity}] terminal result.rowsInserted=${result.rowsInserted} but ${rowCount} rows were written to the CSV`,
   );
 
+  // Lightweight throughput metric the team can grep CI logs for over time
+  // to spot trend drift well before it crosses the hard ceiling above.
+  // Estimates rows/sec on the post-first-batch portion (~rowCount-BATCH_SIZE
+  // rows over progressToResultGapMs).
+  const POST_FIRST_BATCH_ROWS = Math.max(rowCount - 1000, 1);
+  const rowsPerSec = Math.round(
+    (POST_FIRST_BATCH_ROWS * 1000) / Math.max(progressToResultGapMs, 1),
+  );
   console.log(
     `[${entity}] received ${progressEvents.length} progress event(s); ` +
       `final parsed=${prevParsed}, inserted=${prevInserted}; ` +
-      `first-progress→result gap=${progressToResultGapMs} ms`,
+      `first-progress→result gap=${progressToResultGapMs} ms ` +
+      `(ceiling ${maxGapMs} ms, ~${rowsPerSec} rows/sec post-first-batch)`,
   );
 }
 

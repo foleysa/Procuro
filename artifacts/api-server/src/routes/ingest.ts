@@ -203,6 +203,38 @@ function attachByteLimit(
 const PROGRESS_EMIT_INTERVAL_MS = 250;
 
 /**
+ * Expected p95 streaming-ingest throughput per entity, on the dev DB +
+ * a typical CI runner. Numbers are the wall-clock gap between the first
+ * `progress` event (after the 1st batch flush at 1000 rows) and the
+ * terminal `result` event for a fixture-driven 10k-row upload — i.e. the
+ * cost of ~9 remaining `flushBatch` round-trips. The corresponding
+ * normalized throughput is shown alongside.
+ *
+ * | entity          | flushBatch shape           | p95 gap (10k rows) | rows/sec |
+ * |-----------------|----------------------------|--------------------|----------|
+ * | categories      | no FK; single upsert       |  ~700–1000 ms      | ~9–12k   |
+ * | items           | no FK; single upsert       |  ~700–1100 ms      | ~8–12k   |
+ * | suppliers (20k) | no FK; single upsert       |  ~1500 ms (19k r.) | ~12k     |
+ * | purchase_orders | 1× grouped FK lookup       |  ~900–1400 ms      | ~6–10k   |
+ * | payments        | 1× grouped FK lookup       |  ~900–1400 ms      | ~6–10k   |
+ * | shipments       | 2× optional grouped FK     | ~1100–1700 ms      | ~5–8k    |
+ * | invoices        | 2× grouped FK + filter     | ~1200–1900 ms      | ~5–8k    |
+ * | po_lines        | 2× grouped FK + filter     | ~1200–1900 ms      | ~5–8k    |
+ *
+ * These are the baselines the `csv-stream-progress*.test.ts` tests
+ * enforce a soft ceiling against (currently 4–8 s, i.e. roughly 3–5×
+ * the p95 to absorb CI noise without flaking). A 5–10× regression in
+ * any of these numbers — the kind that turns a 30-second customer
+ * upload into a 5-minute one — should fail those tests in CI before it
+ * reaches a customer.
+ *
+ * If a legitimate change shifts these numbers (new index, schema
+ * change, batch-size tweak), update both this table and the ceiling
+ * map in `csv-stream-progress-entities.test.ts` (and the suppliers
+ * ceiling in `csv-stream-progress.test.ts`) together.
+ */
+
+/**
  * Run the multipart busboy path and resolve with the streamCsvEntity result.
  * Extracted out of the route handler so the response-streaming wrapper can
  * treat the multipart and raw paths uniformly.
