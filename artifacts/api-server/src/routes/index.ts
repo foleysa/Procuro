@@ -28,6 +28,7 @@ import trustRouter from "./trust";
 import alertsRouter from "./alerts";
 import readinessRouter from "./readiness";
 import onboardingRouter from "./onboarding";
+import funnelRouter from "./funnel";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(trustRouter);
 router.use(alertsRouter);
 router.use(readinessRouter);
 router.use(onboardingRouter);
+router.use(funnelRouter);
 
 export default router;

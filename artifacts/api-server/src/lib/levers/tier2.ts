@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import type { LeverAnalyzer, OpportunityDraft } from "./types";
+import type { AnalyzeResult, LeverAnalyzer, OpportunityDraft } from "./types";
 import {
   FRED_CATEGORY_SCOPE_CODES,
   fredSeriesForScopeCode,
@@ -287,8 +287,16 @@ export const spotVsContractLever: LeverAnalyzer = {
       collector_id: string;
       metadata: Record<string, unknown> | null;
     }>;
-    if (signals.length === 0) return [];
+    if (signals.length === 0) {
+      const empty: AnalyzeResult = {
+        drafts: [],
+        consultedSignalIds: [],
+        candidatesEvaluated: 0,
+      };
+      return empty;
+    }
 
+    const consultedSignalIds = signals.map((s) => s.id);
     const drafts: OpportunityDraft[] = [];
     for (const sig of signals) {
       // Match tenant categories on canonical code (case-insensitive — tenant
@@ -411,7 +419,21 @@ export const spotVsContractLever: LeverAnalyzer = {
         });
       }
     }
-    return drafts;
+    const result: AnalyzeResult = {
+      drafts,
+      consultedSignalIds,
+      candidatesEvaluated: signals.length,
+    };
+    return result;
+  },
+  cohortKey(draft: OpportunityDraft): string {
+    // Spot-vs-contract cohorts are identified by the canonical PPI
+    // category code (a single contract may be re-evaluated under
+    // multiple PPI series over time, but each draft is anchored to
+    // exactly one).
+    const inputs = draft.inputs as Record<string, unknown>;
+    const sig = inputs["marketSignal"] as Record<string, unknown> | undefined;
+    return String(sig?.["scopeCategoryCode"] ?? inputs["categoryCode"] ?? "");
   },
 };
 

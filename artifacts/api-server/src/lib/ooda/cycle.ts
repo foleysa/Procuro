@@ -22,7 +22,13 @@ import {
   type ExclusionDelta,
   type PriorMap,
 } from "./priors";
-import type { OpportunityDraft } from "../levers/types";
+import {
+  toAnalyzeResult,
+  type AnalyzeResult,
+  type LeverAnalyzer,
+  type OpportunityDraft,
+} from "../levers/types";
+import { captureFunnelSnapshot } from "./funnel";
 
 export interface RunCycleResult {
   cycleId: string;
@@ -127,11 +133,23 @@ export async function runAnalysisCycle(args: {
     // Per-lever analyzers are the slowest part of a typical cycle, so
     // checkpoint between each one to get sub-second cancel response on
     // big tenants.
-    const drafts: { draft: OpportunityDraft; rank: number }[] = [];
+    //
+    // We retain per-lever AnalyzeResult and the per-lever draft mapping
+    // so the funnel snapshot writer (downstream) can attribute signals
+    // → drafts → persisted opportunities along the actual lever lineage
+    // instead of guessing post-hoc from opportunity rows.
+    const leverResults: Array<{ lever: LeverAnalyzer; result: AnalyzeResult }> = [];
+    const drafts: {
+      lever: LeverAnalyzer;
+      draft: OpportunityDraft;
+      rank: number;
+    }[] = [];
     for (const lever of ALL_LEVERS) {
       await checkpoint();
-      const leverDrafts = await lever.analyze({ orgId, cycleId });
-      for (const d of leverDrafts) {
+      const rawResult = await lever.analyze({ orgId, cycleId });
+      const result = toAnalyzeResult(rawResult);
+      leverResults.push({ lever, result });
+      for (const d of result.drafts) {
         if (
           exclusions.some(
             (e) =>
@@ -146,6 +164,7 @@ export async function runAnalysisCycle(args: {
         const projected = d.rawProjectedSavingsUsd * prior.projectionMultiplier;
         const confidence = prior.confidenceWeight;
         drafts.push({
+          lever,
           draft: d,
           rank: projected * confidence,
         });
@@ -229,6 +248,20 @@ export async function runAnalysisCycle(args: {
       { orgId, cycleId, generation, created: created.length },
       "Cycle completed",
     );
+
+    // Capture the per-cycle funnel snapshot after the cycle has been
+    // marked completed. This is wrapped internally — a snapshot bug
+    // must NEVER fail the cycle (the value of the snapshot is purely
+    // observational; degrading it shouldn't degrade tenant analysis).
+    await captureFunnelSnapshot({
+      orgId,
+      cycleId,
+      cycleGeneration: generation,
+      leverResults,
+      draftsPostExclusion: drafts.map(({ lever, draft }) => ({ lever, draft })),
+      persistedOpps: created,
+      priorDeltas,
+    });
 
     return {
       cycleId,

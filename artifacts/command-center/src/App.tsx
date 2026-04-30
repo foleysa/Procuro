@@ -32,6 +32,7 @@ import Settings from "./pages/settings";
 import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
 import Admin from "./pages/admin";
+import AdminFunnel from "./pages/admin-funnel";
 import TrustPage from "./pages/trust";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
@@ -226,6 +227,11 @@ function AppRoutes() {
             <Route path="/admin">
               <AdminGuard>
                 <Admin />
+              </AdminGuard>
+            </Route>
+            <Route path="/admin/funnel">
+              <AdminGuard>
+                <AdminFunnel />
               </AdminGuard>
             </Route>
             <Route component={NotFound} />

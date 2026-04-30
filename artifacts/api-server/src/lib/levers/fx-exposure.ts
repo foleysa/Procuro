@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import type { LeverAnalyzer, OpportunityDraft } from "./types";
+import type { AnalyzeResult, LeverAnalyzer, OpportunityDraft } from "./types";
 import { getCollector } from "../intelligence/runtime";
 import { collectorContract } from "../intelligence/collector";
 import { buildInsightSource, type InsightSource } from "../insight-sources";
@@ -107,6 +107,13 @@ interface FxEndpointRow {
    * renderer can decide whether to surface it as a citation.
    */
   latest_collector_id: string;
+  /**
+   * Comma-joined `market_signals.id`s that contributed to this endpoint
+   * pair within the lookback window. Surfaced through `AnalyzeResult.
+   * consultedSignalIds` so the funnel substrate can attribute the
+   * Signals-Analyzed stage to specific signal rows (task #185).
+   */
+  signal_ids: string;
 }
 
 export const supplierFxExposureLever: LeverAnalyzer = {
@@ -226,7 +233,8 @@ export const supplierFxExposureLever: LeverAnalyzer = {
     //    or this tenant's signals only — never another tenant's series.
     const fxRows = (await db.execute(sql`
       WITH window_signals AS (
-        SELECT ms.scope_material_code AS pair,
+        SELECT ms.id                  AS signal_id,
+               ms.scope_material_code AS pair,
                (ms.metadata->>'base') AS base,
                ms.currency            AS quote,
                ms.value::numeric      AS value,
@@ -247,7 +255,8 @@ export const supplierFxExposureLever: LeverAnalyzer = {
              MIN(observed_at)::text AS earliest_at,
              MAX(observed_at)::text AS latest_at,
              COUNT(*)::text         AS observation_count,
-             (array_agg(collector_id ORDER BY observed_at DESC))[1] AS latest_collector_id
+             (array_agg(collector_id ORDER BY observed_at DESC))[1] AS latest_collector_id,
+             string_agg(signal_id, ',')                            AS signal_ids
       FROM window_signals
       GROUP BY pair, base, quote
       HAVING COUNT(*) >= 2
@@ -258,6 +267,15 @@ export const supplierFxExposureLever: LeverAnalyzer = {
     const fxByOrientation = new Map<string, FxEndpointRow>();
     for (const r of fxRows) {
       fxByOrientation.set(`${r.base}/${r.quote}`, r);
+    }
+
+    const consultedSignalIds = new Set<string>();
+    for (const r of fxRows) {
+      if (r.signal_ids) {
+        for (const id of r.signal_ids.split(",")) {
+          if (id) consultedSignalIds.add(id);
+        }
+      }
     }
 
     const drafts: OpportunityDraft[] = [];
@@ -365,7 +383,21 @@ export const supplierFxExposureLever: LeverAnalyzer = {
         },
       });
     }
-    return drafts;
+    const result: AnalyzeResult = {
+      drafts,
+      consultedSignalIds: Array.from(consultedSignalIds),
+      candidatesEvaluated: exposureRows.length,
+    };
+    return result;
+  },
+  cohortKey(draft: OpportunityDraft): string {
+    // FX cohorts are identified by the (base, billing) currency pair —
+    // a supplier with two billing currencies should appear in two
+    // distinct cohorts even though the supplier id is the same.
+    const inputs = draft.inputs as Record<string, unknown>;
+    const base = String(inputs["baseCurrency"] ?? "");
+    const billing = String(inputs["billingCurrency"] ?? "");
+    return base && billing ? `${base}/${billing}` : "";
   },
 };
 

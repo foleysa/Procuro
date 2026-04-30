@@ -16,6 +16,7 @@ export * from "./invoices";
 export * from "./shipments";
 export * from "./opportunities";
 export * from "./cycles";
+export * from "./funnel";
 export * from "./marketSignals";
 export * from "./jobs";
 export * from "./jobKindSettings";

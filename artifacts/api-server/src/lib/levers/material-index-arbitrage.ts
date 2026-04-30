@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import type { LeverAnalyzer, OpportunityDraft } from "./types";
+import type { AnalyzeResult, LeverAnalyzer, OpportunityDraft } from "./types";
 import {
   FRED_MATERIAL_SCOPE_CODES,
   MATERIAL_TO_CATEGORY_CODES,
@@ -86,6 +86,8 @@ interface MaterialEndpointRow {
   /** Most-recent collector for citation attribution. */
   latest_collector_id: string;
   latest_source_url: string | null;
+  /** Comma-joined `market_signals.id`s consulted for this material in window. */
+  signal_ids: string;
 }
 
 interface MatchedContractRow {
@@ -138,7 +140,8 @@ export const materialIndexArbitrageLever: LeverAnalyzer = {
     //    restricted to platform-wide or this tenant's signals only.
     const endpointRows = (await db.execute(sql`
       WITH window_signals AS (
-        SELECT ms.scope_material_code,
+        SELECT ms.id AS signal_id,
+               ms.scope_material_code,
                ms.value::numeric AS value,
                ms.observed_at,
                ms.collector_id,
@@ -158,13 +161,30 @@ export const materialIndexArbitrageLever: LeverAnalyzer = {
              MAX(observed_at)::text AS latest_at,
              COUNT(*)::text         AS observation_count,
              (array_agg(collector_id ORDER BY observed_at DESC))[1] AS latest_collector_id,
-             (array_agg(source_url ORDER BY observed_at DESC))[1] AS latest_source_url
+             (array_agg(source_url ORDER BY observed_at DESC))[1] AS latest_source_url,
+             string_agg(signal_id, ',')                            AS signal_ids
       FROM window_signals
       GROUP BY scope_material_code
       HAVING COUNT(*) >= 2
     `)).rows as unknown as MaterialEndpointRow[];
 
-    if (endpointRows.length === 0) return [];
+    const consultedSignalIds = new Set<string>();
+    for (const ep of endpointRows) {
+      if (ep.signal_ids) {
+        for (const id of ep.signal_ids.split(",")) {
+          if (id) consultedSignalIds.add(id);
+        }
+      }
+    }
+
+    if (endpointRows.length === 0) {
+      const empty: AnalyzeResult = {
+        drafts: [],
+        consultedSignalIds: [],
+        candidatesEvaluated: 0,
+      };
+      return empty;
+    }
 
     const drafts: OpportunityDraft[] = [];
     for (const ep of endpointRows) {
@@ -299,6 +319,17 @@ export const materialIndexArbitrageLever: LeverAnalyzer = {
         });
       }
     }
-    return drafts;
+    const result: AnalyzeResult = {
+      drafts,
+      consultedSignalIds: Array.from(consultedSignalIds),
+      candidatesEvaluated: endpointRows.length,
+    };
+    return result;
+  },
+  cohortKey(draft: OpportunityDraft): string {
+    // Material PPI cohorts are identified by the canonical material
+    // scope code (the FRED PPI series the lever consulted).
+    const inputs = draft.inputs as Record<string, unknown>;
+    return String(inputs["materialScopeCode"] ?? "");
   },
 };
