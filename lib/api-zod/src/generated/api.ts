@@ -2114,6 +2114,244 @@ export const CancelJobHeader = zod.object({
 });
 
 /**
+ * Returns the registered ERP/source-system adapters with their
+T-tier disclosure metadata. Org-Admin gated.
+
+ * @summary List ERP adapter catalog (static metadata)
+ */
+export const ListErpAdaptersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListErpAdaptersResponse = zod.object({
+  adapters: zod.array(
+    zod.object({
+      key: zod.enum(["coupa"]),
+      label: zod.string(),
+      description: zod.string(),
+      postureClass: zod.string(),
+      disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+      jurisdiction: zod.string(),
+      retentionDays: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * @summary List ERP connections for the active tenant
+ */
+export const ListErpConnectionsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListErpConnectionsResponse = zod.object({
+  connections: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string(),
+      label: zod.string(),
+      adapterKey: zod.enum(["coupa"]),
+      status: zod.enum(["active", "paused", "error"]),
+      settings: zod.record(zod.string(), zod.unknown()),
+      watermarks: zod.record(zod.string(), zod.string()),
+      credentialFields: zod
+        .array(zod.string())
+        .describe(
+          "Names of the credential fields stored encrypted at rest. The\nvalues are never returned.\n",
+        ),
+      lastSyncedAt: zod.coerce.date().nullish(),
+      lastError: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * Credentials are AES-GCM encrypted at rest using
+`ERP_CREDENTIAL_ENCRYPTION_KEY` and never round-trip back over
+the wire. The response only exposes the field names (e.g.
+`clientId`, `clientSecret`) via `credentialFields`.
+
+ * @summary Create a new ERP connection
+ */
+export const CreateErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const createErpConnectionBodyLabelMax = 120;
+
+export const CreateErpConnectionBody = zod.object({
+  label: zod.string().min(1).max(createErpConnectionBodyLabelMax),
+  adapterKey: zod.enum(["coupa"]),
+  credentials: zod
+    .record(zod.string(), zod.unknown())
+    .describe(
+      "Adapter-specific credentials. For Coupa: `clientId` and\n`clientSecret` (both required, non-empty strings).\n",
+    ),
+  settings: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      "Adapter-specific settings. For Coupa: `instanceUrl`\n(required, https URL), optional `pageSize` (1-1000,\ndefault 200), optional `scope` (defaults to all read\nscopes).\n",
+    ),
+});
+
+/**
+ * @summary Get a single ERP connection
+ */
+export const GetErpConnectionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetErpConnectionResponse = zod.object({
+  connection: zod.object({
+    id: zod.string(),
+    orgId: zod.string(),
+    label: zod.string(),
+    adapterKey: zod.enum(["coupa"]),
+    status: zod.enum(["active", "paused", "error"]),
+    settings: zod.record(zod.string(), zod.unknown()),
+    watermarks: zod.record(zod.string(), zod.string()),
+    credentialFields: zod
+      .array(zod.string())
+      .describe(
+        "Names of the credential fields stored encrypted at rest. The\nvalues are never returned.\n",
+      ),
+    lastSyncedAt: zod.coerce.date().nullish(),
+    lastError: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+});
+
+/**
+ * @summary Update label / status / credentials / settings
+ */
+export const UpdateErpConnectionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const UpdateErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const updateErpConnectionBodyLabelMax = 120;
+
+export const UpdateErpConnectionBody = zod.object({
+  label: zod.string().min(1).max(updateErpConnectionBodyLabelMax).optional(),
+  status: zod.enum(["active", "paused", "error"]).optional(),
+  credentials: zod.record(zod.string(), zod.unknown()).optional(),
+  settings: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const UpdateErpConnectionResponse = zod.object({
+  connection: zod.object({
+    id: zod.string(),
+    orgId: zod.string(),
+    label: zod.string(),
+    adapterKey: zod.enum(["coupa"]),
+    status: zod.enum(["active", "paused", "error"]),
+    settings: zod.record(zod.string(), zod.unknown()),
+    watermarks: zod.record(zod.string(), zod.string()),
+    credentialFields: zod
+      .array(zod.string())
+      .describe(
+        "Names of the credential fields stored encrypted at rest. The\nvalues are never returned.\n",
+      ),
+    lastSyncedAt: zod.coerce.date().nullish(),
+    lastError: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+});
+
+/**
+ * @summary Delete an ERP connection
+ */
+export const DeleteErpConnectionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary Trigger a `sync_erp_connection` job for this connection
+ */
+export const SyncErpConnectionParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const SyncErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * @summary Validate adapter credentials without persisting them
+ */
+export const TestErpConnectionHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const TestErpConnectionBody = zod.object({
+  adapterKey: zod.enum(["coupa"]),
+  credentials: zod.record(zod.string(), zod.unknown()),
+  settings: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const TestErpConnectionResponse = zod.object({
+  ok: zod.boolean(),
+  error: zod.string().optional(),
+  details: zod.unknown().optional(),
+});
+
+/**
  * @summary Run the CSV adapter against an inline payload
  */
 export const ingestCsvBatchQueryAsyncDefault = false;

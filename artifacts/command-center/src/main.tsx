@@ -7,8 +7,12 @@ import "./index.css";
 const originalFetch = window.fetch;
 window.fetch = (input, init = {}) => {
   const orgId = localStorage.getItem("activeOrgId") ?? "";
+  const orgAdminToken = localStorage.getItem("orgAdminToken") ?? "";
   const headers = new Headers(init.headers);
   if (orgId && !headers.has("x-org-id")) headers.set("x-org-id", orgId);
+  if (orgAdminToken && !headers.has("x-org-admin-token")) {
+    headers.set("x-org-admin-token", orgAdminToken);
+  }
   return originalFetch(input, { ...init, headers });
 };
 

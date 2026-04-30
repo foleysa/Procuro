@@ -22,6 +22,7 @@ export const jobKindValues = [
   "ingest_mock_erp",
   "run_analysis_cycle",
   "run_collector",
+  "sync_erp_connection",
   "prune_jobs",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];

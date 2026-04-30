@@ -32,6 +32,10 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   ingest_mock_erp: 3,
   run_analysis_cycle: 3,
   run_collector: 5,
+  // Live ERP syncs hit upstream OAuth-gated REST APIs (Coupa, etc.)
+  // whose dominant failure mode is the same transient 429/5xx blip the
+  // collectors face, so they get the same slightly larger budget.
+  sync_erp_connection: 5,
   // The pruner is internal housekeeping with no upstream API calls; if a
   // single run trips on a transient DB hiccup it's fine to retry once or
   // twice, but the next scheduled run will catch up regardless, so the

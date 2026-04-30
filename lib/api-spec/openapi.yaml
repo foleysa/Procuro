@@ -34,6 +34,8 @@ tags:
     description: Async job runner
   - name: ingest
     description: Ingestion endpoints (CSV / mock-ERP)
+  - name: integrations
+    description: ERP / source-system connectors (Org-Admin gated)
 
 paths:
   /healthz:
@@ -1050,6 +1052,178 @@ paths:
           description: Job not found
         "409":
           description: Job is already in a terminal state
+
+  /integrations/adapters:
+    get:
+      operationId: listErpAdapters
+      tags: [integrations]
+      summary: List ERP adapter catalog (static metadata)
+      description: |
+        Returns the registered ERP/source-system adapters with their
+        T-tier disclosure metadata. Org-Admin gated.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Adapter catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpAdapterListResponse"
+        "403":
+          description: Caller is not an Org Admin
+
+  /integrations/connections:
+    get:
+      operationId: listErpConnections
+      tags: [integrations]
+      summary: List ERP connections for the active tenant
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Connections
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpConnectionListResponse"
+        "403":
+          description: Caller is not an Org Admin
+    post:
+      operationId: createErpConnection
+      tags: [integrations]
+      summary: Create a new ERP connection
+      description: |
+        Credentials are AES-GCM encrypted at rest using
+        `ERP_CREDENTIAL_ENCRYPTION_KEY` and never round-trip back over
+        the wire. The response only exposes the field names (e.g.
+        `clientId`, `clientSecret`) via `credentialFields`.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateErpConnectionRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpConnectionResponse"
+        "400":
+          description: Invalid body / unknown adapter
+        "403":
+          description: Caller is not an Org Admin
+        "409":
+          description: Duplicate label for this tenant
+
+  /integrations/connections/{id}:
+    get:
+      operationId: getErpConnection
+      tags: [integrations]
+      summary: Get a single ERP connection
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpConnectionResponse"
+        "404":
+          description: Connection not found
+    patch:
+      operationId: updateErpConnection
+      tags: [integrations]
+      summary: Update label / status / credentials / settings
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateErpConnectionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpConnectionResponse"
+        "400":
+          description: Invalid body
+        "404":
+          description: Connection not found
+    delete:
+      operationId: deleteErpConnection
+      tags: [integrations]
+      summary: Delete an ERP connection
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Connection not found
+
+  /integrations/connections/{id}/sync:
+    post:
+      operationId: syncErpConnection
+      tags: [integrations]
+      summary: Trigger a `sync_erp_connection` job for this connection
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "404":
+          description: Connection not found
+        "409":
+          description: Connection is paused
+        "429":
+          description: Per-org job quota exceeded
+
+  /integrations/test:
+    post:
+      operationId: testErpConnection
+      tags: [integrations]
+      summary: Validate adapter credentials without persisting them
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestErpConnectionRequest"
+      responses:
+        "200":
+          description: Connection succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestErpConnectionResult"
+        "400":
+          description: Invalid body
+        "502":
+          description: Connection failed (adapter returned error)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestErpConnectionResult"
 
   /ingest/csv:
     post:
@@ -2560,3 +2734,148 @@ components:
         licenseNote: { type: string }
         tosUrl: { type: string }
         lastRefreshedAt: { type: string, format: date-time, nullable: true }
+
+    ErpAdapterDescriptor:
+      type: object
+      required:
+        [
+          key,
+          label,
+          description,
+          postureClass,
+          disclosureTier,
+          jurisdiction,
+          retentionDays,
+        ]
+      properties:
+        key: { type: string, enum: [coupa] }
+        label: { type: string }
+        description: { type: string }
+        postureClass: { type: string }
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        jurisdiction: { type: string }
+        retentionDays: { type: integer }
+
+    ErpAdapterListResponse:
+      type: object
+      required: [adapters]
+      properties:
+        adapters:
+          type: array
+          items: { $ref: "#/components/schemas/ErpAdapterDescriptor" }
+
+    ErpConnection:
+      type: object
+      required:
+        [
+          id,
+          orgId,
+          label,
+          adapterKey,
+          status,
+          settings,
+          watermarks,
+          credentialFields,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: string }
+        orgId: { type: string }
+        label: { type: string }
+        adapterKey: { type: string, enum: [coupa] }
+        status:
+          type: string
+          enum: [active, paused, error]
+        settings:
+          type: object
+          additionalProperties: true
+        watermarks:
+          type: object
+          additionalProperties: { type: string }
+        credentialFields:
+          type: array
+          items: { type: string }
+          description: |
+            Names of the credential fields stored encrypted at rest. The
+            values are never returned.
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ErpConnectionResponse:
+      type: object
+      required: [connection]
+      properties:
+        connection: { $ref: "#/components/schemas/ErpConnection" }
+
+    ErpConnectionListResponse:
+      type: object
+      required: [connections]
+      properties:
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/ErpConnection" }
+
+    CreateErpConnectionRequest:
+      type: object
+      required: [label, adapterKey, credentials]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 120 }
+        adapterKey: { type: string, enum: [coupa] }
+        credentials:
+          type: object
+          additionalProperties: true
+          description: |
+            Adapter-specific credentials. For Coupa: `clientId` and
+            `clientSecret` (both required, non-empty strings).
+        settings:
+          type: object
+          additionalProperties: true
+          description: |
+            Adapter-specific settings. For Coupa: `instanceUrl`
+            (required, https URL), optional `pageSize` (1-1000,
+            default 200), optional `scope` (defaults to all read
+            scopes).
+
+    UpdateErpConnectionRequest:
+      type: object
+      properties:
+        label: { type: string, minLength: 1, maxLength: 120 }
+        status:
+          type: string
+          enum: [active, paused, error]
+        credentials:
+          type: object
+          additionalProperties: true
+        settings:
+          type: object
+          additionalProperties: true
+
+    TestErpConnectionRequest:
+      type: object
+      required: [adapterKey, credentials]
+      properties:
+        adapterKey: { type: string, enum: [coupa] }
+        credentials:
+          type: object
+          additionalProperties: true
+        settings:
+          type: object
+          additionalProperties: true
+
+    TestErpConnectionResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        error: { type: string }
+        details: {}

@@ -12,6 +12,7 @@ import jobsRouter from "./jobs";
 import ingestRouter from "./ingest";
 import billingRouter from "./billing";
 import watchedIssuersRouter from "./watched-issuers";
+import integrationsRouter from "./integrations";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(jobsRouter);
 router.use(ingestRouter);
 router.use(billingRouter);
 router.use(watchedIssuersRouter);
+router.use(integrationsRouter);
 
 export default router;

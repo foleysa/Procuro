@@ -1,4 +1,6 @@
 import type { JobRow } from "@workspace/db";
+import { db, erpConnectionsTable, type ErpWatermarks } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 import { runAnalysisCycle } from "../ooda/cycle";
 import {
@@ -9,6 +11,9 @@ import {
   mockErpSourceAdapter,
   type MockErpConfig,
 } from "../adapters/mock-erp-adapter";
+import { writeIngestPayload } from "../adapters/ingest-writer";
+import { getErpConnector } from "../connectors/erp-connector";
+import { decryptCredentials } from "../erp/crypto";
 import { runCollector } from "../intelligence/runtime";
 import { isJobCancelRequested, pruneOldJobs } from "./queue";
 import { UnrecoverableJobError } from "./queue";
@@ -201,4 +206,158 @@ export async function pruneJobsHandler(
 ): Promise<Record<string, unknown>> {
   const result = await pruneOldJobs();
   return result as unknown as Record<string, unknown>;
+}
+
+/**
+ * Sync a single tenant ERP connection. Reads the connection row,
+ * decrypts credentials, runs the registered adapter from the per-entity
+ * watermark forward, hands the resulting `IngestPayload` to the shared
+ * structured writer, and — only on success — advances the watermark
+ * map and clears any stored last-error. Failures leave watermarks
+ * untouched so the next attempt resumes from the same point.
+ *
+ * Job payload shape: `{ connectionId: string }`. Auth is enforced at
+ * the route layer (`requireOrgAdmin`) — by the time the worker picks
+ * the job up the connection's `org_id` already equals the requester.
+ */
+export async function syncErpConnectionHandler(
+  job: JobRow,
+): Promise<Record<string, unknown>> {
+  const orgId = requireOrgId(job, "sync_erp_connection");
+  const connectionIdRaw = job.payload?.["connectionId"];
+  if (
+    typeof connectionIdRaw !== "string" ||
+    connectionIdRaw.trim() === ""
+  ) {
+    throw new UnrecoverableJobError(
+      "sync_erp_connection payload.connectionId must be a non-empty string",
+    );
+  }
+
+  const connRows = await db
+    .select()
+    .from(erpConnectionsTable)
+    .where(eq(erpConnectionsTable.id, connectionIdRaw))
+    .limit(1);
+  const conn = connRows[0];
+  if (!conn) {
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: connection ${connectionIdRaw} not found`,
+    );
+  }
+  if (conn.orgId !== orgId) {
+    // Worker enqueue should only happen via a tenant-scoped admin
+    // route, so if we ever see a cross-tenant mismatch it's a bug or
+    // a tampered queue entry — fail loudly instead of silently
+    // syncing the wrong tenant.
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: connection ${connectionIdRaw} belongs to a different org`,
+    );
+  }
+  if (conn.status === "paused") {
+    return {
+      skipped: true,
+      reason: "connection paused",
+      connectionId: conn.id,
+    };
+  }
+
+  const connector = getErpConnector(conn.adapterKey);
+  if (!connector) {
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: no adapter registered for "${conn.adapterKey}"`,
+    );
+  }
+
+  let credentials: unknown;
+  try {
+    credentials = decryptCredentials(conn.credentialsCipher);
+  } catch (err) {
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: failed to decrypt credentials for ${conn.id}`,
+      { cause: err },
+    );
+  }
+
+  const credsParsed = connector.credentialsSchema.safeParse(credentials);
+  if (!credsParsed.success) {
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: stored credentials for ${conn.id} fail adapter validation`,
+      { cause: credsParsed.error },
+    );
+  }
+  const settingsParsed = connector.settingsSchema.safeParse(conn.settings);
+  if (!settingsParsed.success) {
+    throw new UnrecoverableJobError(
+      `sync_erp_connection: stored settings for ${conn.id} fail adapter validation`,
+      { cause: settingsParsed.error },
+    );
+  }
+
+  try {
+    const fetchResult = await connector.fetchAll({
+      orgId,
+      connectionId: conn.id,
+      credentials: credsParsed.data,
+      settings: settingsParsed.data,
+      watermarks: conn.watermarks,
+      isCancelled: () => isJobCancelRequested(job.id),
+    });
+    const writeResult = await writeIngestPayload({
+      orgId,
+      sourceSystem: `erp_${conn.adapterKey}`,
+      payload: fetchResult.payload,
+      isCancelled: () => isJobCancelRequested(job.id),
+    });
+
+    // Merge so partial-entity coverage in this pass doesn't blow away
+    // a still-good watermark on an entity the adapter didn't touch.
+    const mergedWatermarks: ErpWatermarks = {
+      ...conn.watermarks,
+    };
+    for (const [entity, ts] of Object.entries(fetchResult.nextWatermarks)) {
+      if (typeof ts === "string" && ts.length > 0) {
+        mergedWatermarks[entity] = ts;
+      }
+    }
+
+    await db
+      .update(erpConnectionsTable)
+      .set({
+        watermarks: mergedWatermarks,
+        lastSyncedAt: new Date(),
+        lastError: null,
+        status: "active",
+        updatedAt: new Date(),
+      })
+      .where(eq(erpConnectionsTable.id, conn.id));
+
+    return {
+      connectionId: conn.id,
+      adapter: conn.adapterKey,
+      pagesByEntity: fetchResult.pagesByEntity,
+      recordsByEntity: fetchResult.recordsByEntity,
+      writer: writeResult as unknown as Record<string, unknown>,
+      watermarks: mergedWatermarks,
+    };
+  } catch (err) {
+    // Surface the failure on the connection row so the Integrations
+    // UI shows the operator what went wrong without forcing them into
+    // the Jobs table. Status flips to "error" but watermarks stay
+    // exactly where they were so a retry resumes mid-feed.
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      await db
+        .update(erpConnectionsTable)
+        .set({
+          lastError: message.slice(0, 2000),
+          status: "error",
+          updatedAt: new Date(),
+        })
+        .where(eq(erpConnectionsTable.id, conn.id));
+    } catch {
+      // Don't mask the original error if the status update itself fails.
+    }
+    wrapStructuralError(err);
+  }
 }

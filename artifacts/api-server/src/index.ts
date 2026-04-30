@@ -31,7 +31,10 @@ import {
   pruneJobsHandler,
   runAnalysisCycleHandler,
   runCollectorHandler,
+  syncErpConnectionHandler,
 } from "./lib/jobs/handlers";
+import { registerErpConnector } from "./lib/connectors/erp-connector";
+import { coupaConnector } from "./lib/connectors/coupa/adapter";
 
 const rawPort = process.env["PORT"];
 
@@ -123,6 +126,13 @@ registerJobHandler("ingest_csv", ingestCsvHandler);
 registerJobHandler("ingest_mock_erp", ingestMockErpHandler);
 registerJobHandler("run_collector", runCollectorHandler);
 registerJobHandler("prune_jobs", pruneJobsHandler);
+registerJobHandler("sync_erp_connection", syncErpConnectionHandler);
+
+// Register live ERP connectors. Same pattern as the intelligence
+// collectors above — registry is in-memory and adapter keys are
+// constrained at the schema level (`erpAdapterKeyValues`) so we can't
+// register a connector that no DB row could ever reference.
+registerErpConnector(coupaConnector);
 
 app.listen(port, (err) => {
   if (err) {

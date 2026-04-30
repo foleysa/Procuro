@@ -34,9 +34,13 @@ import type {
   CollectorMutationResult,
   CollectorPostureResult,
   CollectorRunResult,
+  CreateErpConnectionRequest,
   CsvIngestRequest,
   Cycle,
   CycleDetail,
+  ErpAdapterListResponse,
+  ErpConnectionListResponse,
+  ErpConnectionResponse,
   ErrorResponse,
   GetCollectorCost200,
   GetCollectorCostParams,
@@ -80,6 +84,9 @@ import type {
   SupplierIntelligenceResponse,
   SupplierListResponse,
   SyncResultResponse,
+  TestErpConnectionRequest,
+  TestErpConnectionResult,
+  UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
 } from "./api.schemas";
 
@@ -3816,6 +3823,681 @@ export const useCancelJob = <
   TContext
 > => {
   return useMutation(getCancelJobMutationOptions(options));
+};
+
+/**
+ * Returns the registered ERP/source-system adapters with their
+T-tier disclosure metadata. Org-Admin gated.
+
+ * @summary List ERP adapter catalog (static metadata)
+ */
+export const getListErpAdaptersUrl = () => {
+  return `/api/integrations/adapters`;
+};
+
+export const listErpAdapters = async (
+  options?: RequestInit,
+): Promise<ErpAdapterListResponse> => {
+  return customFetch<ErpAdapterListResponse>(getListErpAdaptersUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListErpAdaptersQueryKey = () => {
+  return [`/api/integrations/adapters`] as const;
+};
+
+export const getListErpAdaptersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listErpAdapters>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listErpAdapters>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListErpAdaptersQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listErpAdapters>>> = ({
+    signal,
+  }) => listErpAdapters({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listErpAdapters>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListErpAdaptersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listErpAdapters>>
+>;
+export type ListErpAdaptersQueryError = ErrorType<void>;
+
+/**
+ * @summary List ERP adapter catalog (static metadata)
+ */
+
+export function useListErpAdapters<
+  TData = Awaited<ReturnType<typeof listErpAdapters>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listErpAdapters>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListErpAdaptersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List ERP connections for the active tenant
+ */
+export const getListErpConnectionsUrl = () => {
+  return `/api/integrations/connections`;
+};
+
+export const listErpConnections = async (
+  options?: RequestInit,
+): Promise<ErpConnectionListResponse> => {
+  return customFetch<ErpConnectionListResponse>(getListErpConnectionsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListErpConnectionsQueryKey = () => {
+  return [`/api/integrations/connections`] as const;
+};
+
+export const getListErpConnectionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listErpConnections>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listErpConnections>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListErpConnectionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listErpConnections>>
+  > = ({ signal }) => listErpConnections({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listErpConnections>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListErpConnectionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listErpConnections>>
+>;
+export type ListErpConnectionsQueryError = ErrorType<void>;
+
+/**
+ * @summary List ERP connections for the active tenant
+ */
+
+export function useListErpConnections<
+  TData = Awaited<ReturnType<typeof listErpConnections>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listErpConnections>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListErpConnectionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Credentials are AES-GCM encrypted at rest using
+`ERP_CREDENTIAL_ENCRYPTION_KEY` and never round-trip back over
+the wire. The response only exposes the field names (e.g.
+`clientId`, `clientSecret`) via `credentialFields`.
+
+ * @summary Create a new ERP connection
+ */
+export const getCreateErpConnectionUrl = () => {
+  return `/api/integrations/connections`;
+};
+
+export const createErpConnection = async (
+  createErpConnectionRequest: CreateErpConnectionRequest,
+  options?: RequestInit,
+): Promise<ErpConnectionResponse> => {
+  return customFetch<ErpConnectionResponse>(getCreateErpConnectionUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createErpConnectionRequest),
+  });
+};
+
+export const getCreateErpConnectionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createErpConnection>>,
+    TError,
+    { data: BodyType<CreateErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createErpConnection>>,
+  TError,
+  { data: BodyType<CreateErpConnectionRequest> },
+  TContext
+> => {
+  const mutationKey = ["createErpConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createErpConnection>>,
+    { data: BodyType<CreateErpConnectionRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createErpConnection(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateErpConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createErpConnection>>
+>;
+export type CreateErpConnectionMutationBody =
+  BodyType<CreateErpConnectionRequest>;
+export type CreateErpConnectionMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a new ERP connection
+ */
+export const useCreateErpConnection = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createErpConnection>>,
+    TError,
+    { data: BodyType<CreateErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createErpConnection>>,
+  TError,
+  { data: BodyType<CreateErpConnectionRequest> },
+  TContext
+> => {
+  return useMutation(getCreateErpConnectionMutationOptions(options));
+};
+
+/**
+ * @summary Get a single ERP connection
+ */
+export const getGetErpConnectionUrl = (id: string) => {
+  return `/api/integrations/connections/${id}`;
+};
+
+export const getErpConnection = async (
+  id: string,
+  options?: RequestInit,
+): Promise<ErpConnectionResponse> => {
+  return customFetch<ErpConnectionResponse>(getGetErpConnectionUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetErpConnectionQueryKey = (id: string) => {
+  return [`/api/integrations/connections/${id}`] as const;
+};
+
+export const getGetErpConnectionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getErpConnection>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getErpConnection>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetErpConnectionQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getErpConnection>>
+  > = ({ signal }) => getErpConnection(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getErpConnection>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetErpConnectionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getErpConnection>>
+>;
+export type GetErpConnectionQueryError = ErrorType<void>;
+
+/**
+ * @summary Get a single ERP connection
+ */
+
+export function useGetErpConnection<
+  TData = Awaited<ReturnType<typeof getErpConnection>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getErpConnection>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetErpConnectionQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update label / status / credentials / settings
+ */
+export const getUpdateErpConnectionUrl = (id: string) => {
+  return `/api/integrations/connections/${id}`;
+};
+
+export const updateErpConnection = async (
+  id: string,
+  updateErpConnectionRequest: UpdateErpConnectionRequest,
+  options?: RequestInit,
+): Promise<ErpConnectionResponse> => {
+  return customFetch<ErpConnectionResponse>(getUpdateErpConnectionUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateErpConnectionRequest),
+  });
+};
+
+export const getUpdateErpConnectionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateErpConnection>>,
+    TError,
+    { id: string; data: BodyType<UpdateErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateErpConnection>>,
+  TError,
+  { id: string; data: BodyType<UpdateErpConnectionRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateErpConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateErpConnection>>,
+    { id: string; data: BodyType<UpdateErpConnectionRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateErpConnection(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateErpConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateErpConnection>>
+>;
+export type UpdateErpConnectionMutationBody =
+  BodyType<UpdateErpConnectionRequest>;
+export type UpdateErpConnectionMutationError = ErrorType<void>;
+
+/**
+ * @summary Update label / status / credentials / settings
+ */
+export const useUpdateErpConnection = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateErpConnection>>,
+    TError,
+    { id: string; data: BodyType<UpdateErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateErpConnection>>,
+  TError,
+  { id: string; data: BodyType<UpdateErpConnectionRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateErpConnectionMutationOptions(options));
+};
+
+/**
+ * @summary Delete an ERP connection
+ */
+export const getDeleteErpConnectionUrl = (id: string) => {
+  return `/api/integrations/connections/${id}`;
+};
+
+export const deleteErpConnection = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteErpConnectionUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteErpConnectionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteErpConnection>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteErpConnection>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteErpConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteErpConnection>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteErpConnection(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteErpConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteErpConnection>>
+>;
+
+export type DeleteErpConnectionMutationError = ErrorType<void>;
+
+/**
+ * @summary Delete an ERP connection
+ */
+export const useDeleteErpConnection = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteErpConnection>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteErpConnection>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteErpConnectionMutationOptions(options));
+};
+
+/**
+ * @summary Trigger a `sync_erp_connection` job for this connection
+ */
+export const getSyncErpConnectionUrl = (id: string) => {
+  return `/api/integrations/connections/${id}/sync`;
+};
+
+export const syncErpConnection = async (
+  id: string,
+  options?: RequestInit,
+): Promise<JobAccepted> => {
+  return customFetch<JobAccepted>(getSyncErpConnectionUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSyncErpConnectionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncErpConnection>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof syncErpConnection>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["syncErpConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof syncErpConnection>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return syncErpConnection(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SyncErpConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof syncErpConnection>>
+>;
+
+export type SyncErpConnectionMutationError = ErrorType<void>;
+
+/**
+ * @summary Trigger a `sync_erp_connection` job for this connection
+ */
+export const useSyncErpConnection = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncErpConnection>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof syncErpConnection>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getSyncErpConnectionMutationOptions(options));
+};
+
+/**
+ * @summary Validate adapter credentials without persisting them
+ */
+export const getTestErpConnectionUrl = () => {
+  return `/api/integrations/test`;
+};
+
+export const testErpConnection = async (
+  testErpConnectionRequest: TestErpConnectionRequest,
+  options?: RequestInit,
+): Promise<TestErpConnectionResult> => {
+  return customFetch<TestErpConnectionResult>(getTestErpConnectionUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(testErpConnectionRequest),
+  });
+};
+
+export const getTestErpConnectionMutationOptions = <
+  TError = ErrorType<void | TestErpConnectionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testErpConnection>>,
+    TError,
+    { data: BodyType<TestErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testErpConnection>>,
+  TError,
+  { data: BodyType<TestErpConnectionRequest> },
+  TContext
+> => {
+  const mutationKey = ["testErpConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testErpConnection>>,
+    { data: BodyType<TestErpConnectionRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return testErpConnection(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestErpConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testErpConnection>>
+>;
+export type TestErpConnectionMutationBody = BodyType<TestErpConnectionRequest>;
+export type TestErpConnectionMutationError =
+  ErrorType<void | TestErpConnectionResult>;
+
+/**
+ * @summary Validate adapter credentials without persisting them
+ */
+export const useTestErpConnection = <
+  TError = ErrorType<void | TestErpConnectionResult>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testErpConnection>>,
+    TError,
+    { data: BodyType<TestErpConnectionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testErpConnection>>,
+  TError,
+  { data: BodyType<TestErpConnectionRequest> },
+  TContext
+> => {
+  return useMutation(getTestErpConnectionMutationOptions(options));
 };
 
 /**

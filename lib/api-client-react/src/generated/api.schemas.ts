@@ -1336,6 +1336,172 @@ export interface ClientDataSource {
   lastRefreshedAt?: string | null;
 }
 
+export type ErpAdapterDescriptorKey =
+  (typeof ErpAdapterDescriptorKey)[keyof typeof ErpAdapterDescriptorKey];
+
+export const ErpAdapterDescriptorKey = {
+  coupa: "coupa",
+} as const;
+
+export type ErpAdapterDescriptorDisclosureTier =
+  (typeof ErpAdapterDescriptorDisclosureTier)[keyof typeof ErpAdapterDescriptorDisclosureTier];
+
+export const ErpAdapterDescriptorDisclosureTier = {
+  T1: "T1",
+  T2: "T2",
+  T3: "T3",
+  T4: "T4",
+} as const;
+
+export interface ErpAdapterDescriptor {
+  key: ErpAdapterDescriptorKey;
+  label: string;
+  description: string;
+  postureClass: string;
+  disclosureTier: ErpAdapterDescriptorDisclosureTier;
+  jurisdiction: string;
+  retentionDays: number;
+}
+
+export interface ErpAdapterListResponse {
+  adapters: ErpAdapterDescriptor[];
+}
+
+export type ErpConnectionAdapterKey =
+  (typeof ErpConnectionAdapterKey)[keyof typeof ErpConnectionAdapterKey];
+
+export const ErpConnectionAdapterKey = {
+  coupa: "coupa",
+} as const;
+
+export type ErpConnectionStatus =
+  (typeof ErpConnectionStatus)[keyof typeof ErpConnectionStatus];
+
+export const ErpConnectionStatus = {
+  active: "active",
+  paused: "paused",
+  error: "error",
+} as const;
+
+export type ErpConnectionSettings = { [key: string]: unknown };
+
+export type ErpConnectionWatermarks = { [key: string]: string };
+
+export interface ErpConnection {
+  id: string;
+  orgId: string;
+  label: string;
+  adapterKey: ErpConnectionAdapterKey;
+  status: ErpConnectionStatus;
+  settings: ErpConnectionSettings;
+  watermarks: ErpConnectionWatermarks;
+  /** Names of the credential fields stored encrypted at rest. The
+values are never returned.
+ */
+  credentialFields: string[];
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ErpConnectionResponse {
+  connection: ErpConnection;
+}
+
+export interface ErpConnectionListResponse {
+  connections: ErpConnection[];
+}
+
+export type CreateErpConnectionRequestAdapterKey =
+  (typeof CreateErpConnectionRequestAdapterKey)[keyof typeof CreateErpConnectionRequestAdapterKey];
+
+export const CreateErpConnectionRequestAdapterKey = {
+  coupa: "coupa",
+} as const;
+
+/**
+ * Adapter-specific credentials. For Coupa: `clientId` and
+`clientSecret` (both required, non-empty strings).
+
+ */
+export type CreateErpConnectionRequestCredentials = { [key: string]: unknown };
+
+/**
+ * Adapter-specific settings. For Coupa: `instanceUrl`
+(required, https URL), optional `pageSize` (1-1000,
+default 200), optional `scope` (defaults to all read
+scopes).
+
+ */
+export type CreateErpConnectionRequestSettings = { [key: string]: unknown };
+
+export interface CreateErpConnectionRequest {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  label: string;
+  adapterKey: CreateErpConnectionRequestAdapterKey;
+  /** Adapter-specific credentials. For Coupa: `clientId` and
+`clientSecret` (both required, non-empty strings).
+ */
+  credentials: CreateErpConnectionRequestCredentials;
+  /** Adapter-specific settings. For Coupa: `instanceUrl`
+(required, https URL), optional `pageSize` (1-1000,
+default 200), optional `scope` (defaults to all read
+scopes).
+ */
+  settings?: CreateErpConnectionRequestSettings;
+}
+
+export type UpdateErpConnectionRequestStatus =
+  (typeof UpdateErpConnectionRequestStatus)[keyof typeof UpdateErpConnectionRequestStatus];
+
+export const UpdateErpConnectionRequestStatus = {
+  active: "active",
+  paused: "paused",
+  error: "error",
+} as const;
+
+export type UpdateErpConnectionRequestCredentials = { [key: string]: unknown };
+
+export type UpdateErpConnectionRequestSettings = { [key: string]: unknown };
+
+export interface UpdateErpConnectionRequest {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  label?: string;
+  status?: UpdateErpConnectionRequestStatus;
+  credentials?: UpdateErpConnectionRequestCredentials;
+  settings?: UpdateErpConnectionRequestSettings;
+}
+
+export type TestErpConnectionRequestAdapterKey =
+  (typeof TestErpConnectionRequestAdapterKey)[keyof typeof TestErpConnectionRequestAdapterKey];
+
+export const TestErpConnectionRequestAdapterKey = {
+  coupa: "coupa",
+} as const;
+
+export type TestErpConnectionRequestCredentials = { [key: string]: unknown };
+
+export type TestErpConnectionRequestSettings = { [key: string]: unknown };
+
+export interface TestErpConnectionRequest {
+  adapterKey: TestErpConnectionRequestAdapterKey;
+  credentials: TestErpConnectionRequestCredentials;
+  settings?: TestErpConnectionRequestSettings;
+}
+
+export interface TestErpConnectionResult {
+  ok: boolean;
+  error?: string;
+  details?: unknown;
+}
+
 /**
  * Not found
  */

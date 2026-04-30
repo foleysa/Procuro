@@ -22,6 +22,7 @@ const jobKindAllow = new Set<JobKind>([
   "ingest_csv",
   "ingest_mock_erp",
   "run_collector",
+  "sync_erp_connection",
 ]);
 
 /**
@@ -34,6 +35,7 @@ const configurableKinds: readonly JobKind[] = [
   "ingest_mock_erp",
   "run_analysis_cycle",
   "run_collector",
+  "sync_erp_connection",
 ];
 const configurableKindSet = new Set<JobKind>(configurableKinds);
 

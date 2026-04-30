@@ -30,6 +30,7 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **`lib/source-adapters` (Ingestion Abstraction):**
     - Defines `SourceAdapter` and `IntelligenceCollector` interfaces for data ingestion.
     - Includes built-in collectors like `publishedCommodityIndexCollector` and `blsEconomicIndexCollector` for market signals.
+    - **`lib/connectors/erp-connector` + Coupa adapter:** ERP connector framework with a per-tenant `erp_connections` table (AES-GCM encrypted credentials via `ERP_CREDENTIAL_ENCRYPTION_KEY`, per-entity `watermarks` JSON). The shared `ingest-writer.ts` is reused so CSV and ERP adapters share idempotent upsert logic; ERP rows are tagged `source_system="erp_<key>"`. Coupa is the first adapter (OAuth2 client_credentials, paged REST fetch with `?updated-at[gt]=` watermarks, T2 disclosure / US / 365d retention). Sync runs as the `sync_erp_connection` job kind; failures land in `last_error` and flip status to `error`. Routes live under `/api/integrations/...` and are gated by `requireOrgAdmin` (the `x-org-admin-token` header).
 - **`lib/analyzers` (Tier-1 Lever Analyzers):**
     - Seven shipped analyzers: `sku_price_benchmark`, `maverick_spend`, `contract_leakage`, `duplicate_payment`, `missed_volume_threshold`, `payment_term_extension`, `tail_spend_rationalization`.
     - Emits typed `Opportunity` rows. `spot_vs_contract` analyzer integrates market signals with procurement spend.

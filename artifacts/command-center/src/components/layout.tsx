@@ -12,6 +12,7 @@ import {
   Workflow,
   Upload,
   Database,
+  Plug,
   Settings,
 } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
@@ -36,6 +37,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/data-sources", label: "Data Sources", icon: Database },
     { href: "/system", label: "System / Jobs", icon: Server },
     { href: "/ingest", label: "Data Ingest", icon: Upload },
+    { href: "/integrations", label: "Integrations", icon: Plug },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
