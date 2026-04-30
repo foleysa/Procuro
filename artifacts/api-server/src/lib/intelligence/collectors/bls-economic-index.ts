@@ -1,13 +1,23 @@
 /**
- * BLS PPI + ECI economic-index collector.
+ * BLS PPI + CPI + ECI economic-index collector.
  *
  * Pulls a curated set of Producer Price Index (PPI) sub-series for commonly
- * procured material categories, plus the four headline Employment Cost Index
- * (ECI) series, from the BLS Public Data API v2. Each series produces one
- * `economic_index` `MarketSignalDraft` carrying the latest observation.
+ * procured material categories, a curated set of Consumer Price Index (CPI)
+ * sub-series for consumer-facing supplier categories (food at home, energy,
+ * apparel, household furnishings, transportation services, medical care
+ * services, etc.), plus the four headline Employment Cost Index (ECI) series,
+ * from the BLS Public Data API v2. Each series produces one `economic_index`
+ * `MarketSignalDraft` carrying the latest observation.
  *
- * BLS series naturally publish monthly (PPI) or quarterly (ECI); the runtime
- * polls daily so we land each release within ~24h of publication.
+ * CPI is intentionally limited to a handful of sub-indexes (NOT headline
+ * CPI-U): suppliers in retail / hospitality / consumer-goods regularly cite
+ * CPI when asking for price increases, and we want the appropriate sub-index
+ * on hand to push back ("you're invoking CPI but the food-at-home sub-index
+ * actually fell last quarter") rather than the headline number, which is too
+ * coarse to be useful in category-level negotiations.
+ *
+ * BLS series naturally publish monthly (PPI, CPI) or quarterly (ECI); the
+ * runtime polls daily so we land each release within ~24h of publication.
  *
  * `BLS_API_KEY` is optional. With a key, the v2 endpoint allows up to 50
  * series per request and 20 years per request. Without one, the same endpoint
@@ -51,8 +61,15 @@ interface SeriesRef {
 
 /**
  * Curated BLS series. PPI commodity series (WPU prefix) cover materials
- * commonly procured at scale; ECI series (CIU prefix) anchor services
- * rate-card negotiations. Overlap with FRED PPI is intentional.
+ * commonly procured at scale; CPI sub-series (CUUR prefix, NSA, US city
+ * average, base 1982-84=100) cover consumer-facing categories suppliers
+ * cite when pushing for price increases; ECI series (CIU prefix) anchor
+ * services rate-card negotiations. Overlap with FRED PPI is intentional.
+ *
+ * Note: this list is sized to stay within the BLS unauthenticated tier's
+ * 25-series-per-request cap (authenticated tier allows 50). Adding more
+ * series past 25 will require splitting into multiple POSTs or requiring
+ * an API key.
  */
 const SERIES: SeriesRef[] = [
   // --- PPI commodity sub-series (monthly, WPU = PPI commodity not seasonally adjusted) ---
@@ -158,6 +175,76 @@ const SERIES: SeriesRef[] = [
     scopeCategoryCode: "FREIGHT",
     unit: "index_2009=100",
     baseYear: "2009",
+    periodicity: "monthly",
+  },
+
+  // --- CPI consumer sub-series (monthly, CUUR = CPI-U, NSA, U.S. city avg, base 1982-84=100) ---
+  // These exist to defend against supplier "we need to raise prices, look at CPI"
+  // asks on consumer-facing categories. We deliberately exclude headline CPI-U
+  // (SA0) — too coarse to negotiate on — and stick to sub-indexes that map to
+  // procurement categories where suppliers actually cite CPI.
+  {
+    seriesId: "CUUR0000SAF11",
+    label: "CPI: Food at home",
+    scopeCategoryCode: "FOOD_AT_HOME",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SEFV",
+    label: "CPI: Food away from home",
+    scopeCategoryCode: "FOOD_AWAY_FROM_HOME",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SA0E",
+    label: "CPI: Energy (all types)",
+    scopeCategoryCode: "ENERGY",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SEHF01",
+    label: "CPI: Electricity",
+    scopeCategoryCode: "ELECTRICITY_RETAIL",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SAA",
+    label: "CPI: Apparel",
+    scopeCategoryCode: "APPAREL",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SAH3",
+    label: "CPI: Household furnishings and operations",
+    scopeCategoryCode: "HOUSEHOLD_FURNISHINGS",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SAS4",
+    label: "CPI: Transportation services",
+    scopeCategoryCode: "TRANSPORTATION_SERVICES",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "CUUR0000SAM2",
+    label: "CPI: Medical care services",
+    scopeCategoryCode: "MEDICAL_SERVICES",
+    unit: "index_1982-84=100",
+    baseYear: "1982-1984",
     periodicity: "monthly",
   },
 
@@ -285,9 +372,9 @@ async function recordWarning(
 
 export const blsEconomicIndexCollector: IntelligenceCollector = {
   id: "bls-economic-index",
-  name: "BLS PPI & ECI Index",
+  name: "BLS PPI, CPI & ECI Index",
   description:
-    "Bureau of Labor Statistics PPI commodity sub-series and ECI headline series. PPI gives material-category cost trends; ECI is the standard reference for services rate-card negotiations.",
+    "Bureau of Labor Statistics PPI commodity sub-series, CPI consumer sub-series, and ECI headline series. PPI gives material-category cost trends; CPI sub-indexes (food at home, energy, apparel, household furnishings, transportation services, medical care services, etc.) defend against supplier price-increase asks on consumer-facing categories; ECI is the standard reference for services rate-card negotiations.",
   posture: "public-api",
   sourceUrl: "https://www.bls.gov/developers/",
   // BLS quotas are per-day, not per-minute; cap RPM modestly so a stuck loop
