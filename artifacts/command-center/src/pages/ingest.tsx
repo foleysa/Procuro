@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Papa from "papaparse";
+import JSZip from "jszip";
 import {
   useIngestCsvBatch,
   type CsvIngestRequest,
@@ -669,21 +670,38 @@ async function parseCsvFileFully(file: File): Promise<{
   });
 }
 
-function downloadEntityTemplate(entity: EntityDef) {
+function buildEntityTemplateCsv(entity: EntityDef): string {
   const headers = [...entity.required, ...entity.optional];
-  const csv = Papa.unparse({
+  return Papa.unparse({
     fields: headers,
     data: entity.examples.map((row) => headers.map((h) => row[h] ?? "")),
   });
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+}
+
+function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${entity.key}-template.csv`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function downloadEntityTemplate(entity: EntityDef) {
+  const csv = buildEntityTemplateCsv(entity);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  triggerDownload(blob, `${entity.key}-template.csv`);
+}
+
+async function downloadAllTemplates() {
+  const zip = new JSZip();
+  for (const entity of ENTITIES) {
+    zip.file(`${entity.key}-template.csv`, buildEntityTemplateCsv(entity));
+  }
+  const blob = await zip.generateAsync({ type: "blob" });
+  triggerDownload(blob, "procuro-csv-templates.zip");
 }
 
 async function parseCsvFile(
@@ -1124,8 +1142,22 @@ export default function Ingest() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Datasets</span>
+          <CardTitle className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span>Datasets</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void downloadAllTemplates();
+                }}
+                data-testid="btn-download-all-templates"
+              >
+                <Download className="w-3 h-3 mr-1" />
+                Download all templates
+              </Button>
+            </div>
             <span className="text-sm font-normal text-muted-foreground">
               {selectedCount} file{selectedCount === 1 ? "" : "s"} ·{" "}
               {totalRows.toLocaleString()} rows
