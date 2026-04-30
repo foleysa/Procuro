@@ -44,7 +44,7 @@ Multi‑tenant: every domain row carries `tenant_id`, `source_system`, `source_e
 6. `payment_term_extension`
 7. `tail_spend_rationalization`
 
-Tier‑2 starters (`supplier_consolidation`, `contract_renegotiation_trigger`) wired into the OODA cycle. Each analyzer emits typed `Opportunity` rows with rationale + supporting refs.
+Tier‑2 starters (`supplier_consolidation`, `contract_renegotiation_trigger`, `spot_vs_contract`) wired into the OODA cycle. Each analyzer emits typed `Opportunity` rows with rationale + supporting refs. `spot_vs_contract` is the join point between `IntelligenceCollector` output and procurement spend: it reads `market_signals` scoped by canonical procurement codes (see `artifacts/api-server/src/lib/intelligence/scope-taxonomy.ts`) and matches them to tenant `categories` by `code`, surfacing active contracts with material recent spend as PPI‑defended renegotiation candidates. The taxonomy module is the single source of truth for the FRED PPI series → canonical scope mapping (collectors and analyzers both import it).
 
 ### `lib/ooda` — cycle runner
 `runAnalysisCycle(tenantId)` executes Observe → Orient (apply learned priors) → Decide (rank by EV × confidence) → Act (write opportunities) → Learn (update priors from prior‑cycle outcomes). Each step's payload is persisted on `analysis_cycles`. Generation counter increments per cycle. Calibration tracked via per‑lever `projection_multiplier` and `confidence_weight` in `learned_priors`.

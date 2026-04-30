@@ -1,0 +1,229 @@
+/**
+ * Canonical procurement scope taxonomy.
+ *
+ * `market_signals` rows are scoped by one of:
+ *   - `scope_material_code` (e.g. raw inputs like steel, resin, lumber)
+ *   - `scope_category_code` (e.g. service / logistics categories)
+ *
+ * Each tenant ingests their own `categories` rows (via CSV / ERP sync), but
+ * the *codes* come from the same canonical taxonomy. A tenant whose category
+ * `code = "FREIGHT_TRUCKING_TL"` is automatically matched to a FRED PPI
+ * signal scoped to the same code, so analyzers can do a stable string-match
+ * join without per-tenant configuration.
+ *
+ * This file is the single source of truth for:
+ *
+ *   1. The canonical scope codes used across collectors AND analyzers.
+ *   2. The FRED series → canonical scope mapping (so the collector and the
+ *      `spot_vs_contract` lever can never disagree about what "IRON_STEEL"
+ *      means).
+ *
+ * Adding a new FRED series: add an entry to `FRED_SERIES_CATALOG` with the
+ * canonical scope; the collector picks it up automatically.
+ *
+ * Adding a new collector that wants to emit canonical scope codes: import
+ * `CANONICAL_MATERIAL_CODES` / `CANONICAL_CATEGORY_CODES` and use them
+ * directly so signals from different feeds line up on the same codes.
+ */
+
+/** Canonical material codes used as `market_signals.scope_material_code`. */
+export const CANONICAL_MATERIAL_CODES = [
+  // Metals
+  "IRON_STEEL",
+  "STEEL_MILL_PRODUCTS",
+  "NONFERROUS_METALS",
+  // Chemicals & polymers
+  "INDUSTRIAL_CHEMICALS",
+  "PLASTIC_RESINS",
+  // Wood & paper
+  "LUMBER",
+  "PULP_PAPER",
+  // Energy
+  "CRUDE_PETROLEUM",
+  "NATURAL_GAS_INDUSTRIAL",
+  "FUELS_AND_POWER",
+] as const;
+export type CanonicalMaterialCode = (typeof CANONICAL_MATERIAL_CODES)[number];
+
+/** Canonical category codes used as `market_signals.scope_category_code`. */
+export const CANONICAL_CATEGORY_CODES = [
+  // Freight & logistics (services-side PCU codes — scoped as categories)
+  "FREIGHT_TRUCKING_TL",
+  "FREIGHT_TRUCKING_LTL",
+  "RAIL_FREIGHT",
+  "WAREHOUSING_STORAGE",
+  "FREIGHT_BROKERAGE",
+] as const;
+export type CanonicalCategoryCode = (typeof CANONICAL_CATEGORY_CODES)[number];
+
+/** The kind of scope this code populates on a market_signal row. */
+export type CanonicalScope =
+  | { kind: "material"; code: CanonicalMaterialCode }
+  | { kind: "category"; code: CanonicalCategoryCode };
+
+interface FredSeriesEntry {
+  /** FRED series id (e.g. "WPU101"). */
+  seriesId: string;
+  /** Human-readable label (also used in collector audit + opportunity rationale). */
+  label: string;
+  /** Canonical procurement scope this series maps to. */
+  scope: CanonicalScope;
+  /** Unit reported in the market_signals row. FRED PPIs are index numbers. */
+  unit: string;
+}
+
+/**
+ * Curated FRED PPI series → canonical procurement scope mapping.
+ *
+ * Selection criteria: each series is a stable, widely-cited PPI sub-index
+ * with a clear procurement mapping (raw material category or service /
+ * logistics category). Material codes line up with raw inputs; PCU
+ * (industry) codes line up with service categories.
+ *
+ * This list is the only place where FRED series ids live — the collector
+ * iterates over it, and the `spot_vs_contract` analyzer derives its set of
+ * "canonical FRED scope codes" from it.
+ */
+export const FRED_SERIES_CATALOG: readonly FredSeriesEntry[] = [
+  // Metals
+  {
+    seriesId: "WPU101",
+    label: "PPI: Iron and steel",
+    scope: { kind: "material", code: "IRON_STEEL" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU1017",
+    label: "PPI: Steel mill products",
+    scope: { kind: "material", code: "STEEL_MILL_PRODUCTS" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU102",
+    label: "PPI: Nonferrous metals",
+    scope: { kind: "material", code: "NONFERROUS_METALS" },
+    unit: "index",
+  },
+  // Chemicals & polymers
+  {
+    seriesId: "WPU0571",
+    label: "PPI: Industrial chemicals",
+    scope: { kind: "material", code: "INDUSTRIAL_CHEMICALS" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU072",
+    label: "PPI: Plastic resins and materials",
+    scope: { kind: "material", code: "PLASTIC_RESINS" },
+    unit: "index",
+  },
+  // Wood & paper
+  {
+    seriesId: "WPU0911",
+    label: "PPI: Lumber",
+    scope: { kind: "material", code: "LUMBER" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU0913",
+    label: "PPI: Pulp, paper, and allied products",
+    scope: { kind: "material", code: "PULP_PAPER" },
+    unit: "index",
+  },
+  // Energy
+  {
+    seriesId: "WPU0561",
+    label: "PPI: Crude petroleum (domestic production)",
+    scope: { kind: "material", code: "CRUDE_PETROLEUM" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU057303",
+    label: "PPI: Natural gas to industrial users",
+    scope: { kind: "material", code: "NATURAL_GAS_INDUSTRIAL" },
+    unit: "index",
+  },
+  {
+    seriesId: "WPU061",
+    label: "PPI: Fuels and related products and power",
+    scope: { kind: "material", code: "FUELS_AND_POWER" },
+    unit: "index",
+  },
+  // Freight & logistics
+  {
+    seriesId: "PCU484121484121",
+    label: "PPI: General freight trucking, long-distance, truckload",
+    scope: { kind: "category", code: "FREIGHT_TRUCKING_TL" },
+    unit: "index",
+  },
+  {
+    seriesId: "PCU484122484122",
+    label: "PPI: General freight trucking, long-distance, less than truckload",
+    scope: { kind: "category", code: "FREIGHT_TRUCKING_LTL" },
+    unit: "index",
+  },
+  {
+    seriesId: "PCU482111482111",
+    label: "PPI: Line-haul railroads",
+    scope: { kind: "category", code: "RAIL_FREIGHT" },
+    unit: "index",
+  },
+  {
+    seriesId: "PCU493110493110",
+    label: "PPI: Warehousing and storage",
+    scope: { kind: "category", code: "WAREHOUSING_STORAGE" },
+    unit: "index",
+  },
+  {
+    seriesId: "PCU488510488510",
+    label: "PPI: Freight transportation arrangement",
+    scope: { kind: "category", code: "FREIGHT_BROKERAGE" },
+    unit: "index",
+  },
+];
+
+/**
+ * Canonical category codes that a FRED PPI series currently scopes to.
+ * Analyzers use this as the LHS of a category.code equality join.
+ */
+export const FRED_CATEGORY_SCOPE_CODES: readonly CanonicalCategoryCode[] =
+  Array.from(
+    new Set(
+      FRED_SERIES_CATALOG.filter(
+        (e): e is FredSeriesEntry & { scope: { kind: "category"; code: CanonicalCategoryCode } } =>
+          e.scope.kind === "category",
+      ).map((e) => e.scope.code),
+    ),
+  );
+
+/**
+ * Canonical material codes that a FRED PPI series currently scopes to.
+ * Analyzers use this for material-level matches (e.g. items with a tag).
+ */
+export const FRED_MATERIAL_SCOPE_CODES: readonly CanonicalMaterialCode[] =
+  Array.from(
+    new Set(
+      FRED_SERIES_CATALOG.filter(
+        (e): e is FredSeriesEntry & { scope: { kind: "material"; code: CanonicalMaterialCode } } =>
+          e.scope.kind === "material",
+      ).map((e) => e.scope.code),
+    ),
+  );
+
+/** Look up the canonical scope for a FRED series id. */
+export function fredScopeForSeriesId(
+  seriesId: string,
+): CanonicalScope | undefined {
+  return FRED_SERIES_CATALOG.find((e) => e.seriesId === seriesId)?.scope;
+}
+
+/**
+ * Look up FRED series entries that map to a given canonical scope code.
+ * Used by analyzers to surface the FRED label/series id alongside the
+ * matched market_signal in opportunity rationale.
+ */
+export function fredSeriesForScopeCode(
+  code: string,
+): readonly FredSeriesEntry[] {
+  return FRED_SERIES_CATALOG.filter((e) => e.scope.code === code);
+}

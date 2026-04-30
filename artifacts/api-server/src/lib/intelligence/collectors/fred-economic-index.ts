@@ -22,134 +22,22 @@ import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
-
-export interface FredSeriesRef {
-  /** FRED series id, e.g. "WPU101". */
-  seriesId: string;
-  /** Human-readable label for ops/docs. */
-  label: string;
-  /**
-   * Procurement scope key. Material codes for raw inputs (steel, resin,
-   * lumber); category codes for service/transport categories.
-   */
-  scope:
-    | { kind: "material"; code: string }
-    | { kind: "category"; code: string };
-  /**
-   * FRED PPI series are index numbers (varying base years). We tag the
-   * unit "index" and surface the FRED-reported series id in metadata so
-   * downstream analyzers can resolve the base period from FRED if needed.
-   */
-  unit: string;
-}
+import { FRED_SERIES_CATALOG } from "../scope-taxonomy";
 
 /**
- * Initial curated set of procurement-relevant FRED PPI sub-series.
- * Kept inline (matching the `published-commodity-index` pattern) so changes
- * are code-reviewed rather than hidden in admin UI state.
- *
- * Selection criteria: each series is a stable, widely-cited PPI sub-index
- * with a clear procurement mapping (raw material category or service /
- * logistics category). Material codes line up with raw inputs; PCU
- * (industry) codes line up with service categories.
+ * FRED series shape exposed to the runtime + tests. Derived from the
+ * canonical catalog so the two cannot drift.
  */
-export const FRED_SERIES: FredSeriesRef[] = [
-  // Metals
-  {
-    seriesId: "WPU101",
-    label: "PPI: Iron and steel",
-    scope: { kind: "material", code: "IRON_STEEL" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU1017",
-    label: "PPI: Steel mill products",
-    scope: { kind: "material", code: "STEEL_MILL_PRODUCTS" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU102",
-    label: "PPI: Nonferrous metals",
-    scope: { kind: "material", code: "NONFERROUS_METALS" },
-    unit: "index",
-  },
-  // Chemicals & polymers
-  {
-    seriesId: "WPU0571",
-    label: "PPI: Industrial chemicals",
-    scope: { kind: "material", code: "INDUSTRIAL_CHEMICALS" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU072",
-    label: "PPI: Plastic resins and materials",
-    scope: { kind: "material", code: "PLASTIC_RESINS" },
-    unit: "index",
-  },
-  // Wood & paper
-  {
-    seriesId: "WPU0911",
-    label: "PPI: Lumber",
-    scope: { kind: "material", code: "LUMBER" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU0913",
-    label: "PPI: Pulp, paper, and allied products",
-    scope: { kind: "material", code: "PULP_PAPER" },
-    unit: "index",
-  },
-  // Energy
-  {
-    seriesId: "WPU0561",
-    label: "PPI: Crude petroleum (domestic production)",
-    scope: { kind: "material", code: "CRUDE_PETROLEUM" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU057303",
-    label: "PPI: Natural gas to industrial users",
-    scope: { kind: "material", code: "NATURAL_GAS_INDUSTRIAL" },
-    unit: "index",
-  },
-  {
-    seriesId: "WPU061",
-    label: "PPI: Fuels and related products and power",
-    scope: { kind: "material", code: "FUELS_AND_POWER" },
-    unit: "index",
-  },
-  // Freight & logistics (services-side PCU codes — scoped as categories)
-  {
-    seriesId: "PCU484121484121",
-    label: "PPI: General freight trucking, long-distance, truckload",
-    scope: { kind: "category", code: "FREIGHT_TRUCKING_TL" },
-    unit: "index",
-  },
-  {
-    seriesId: "PCU484122484122",
-    label: "PPI: General freight trucking, long-distance, less than truckload",
-    scope: { kind: "category", code: "FREIGHT_TRUCKING_LTL" },
-    unit: "index",
-  },
-  {
-    seriesId: "PCU482111482111",
-    label: "PPI: Line-haul railroads",
-    scope: { kind: "category", code: "RAIL_FREIGHT" },
-    unit: "index",
-  },
-  {
-    seriesId: "PCU493110493110",
-    label: "PPI: Warehousing and storage",
-    scope: { kind: "category", code: "WAREHOUSING_STORAGE" },
-    unit: "index",
-  },
-  {
-    seriesId: "PCU488510488510",
-    label: "PPI: Freight transportation arrangement",
-    scope: { kind: "category", code: "FREIGHT_BROKERAGE" },
-    unit: "index",
-  },
-];
+export type FredSeriesRef = (typeof FRED_SERIES_CATALOG)[number];
+
+/**
+ * The curated FRED series → canonical procurement scope mapping lives in
+ * `../scope-taxonomy` so the collector and the lever analyzers that consume
+ * these signals are guaranteed to agree on what each scope code means.
+ *
+ * To add or change a series, edit `FRED_SERIES_CATALOG` in scope-taxonomy.ts.
+ */
+export const FRED_SERIES: readonly FredSeriesRef[] = FRED_SERIES_CATALOG;
 
 const FRED_API_BASE = "https://api.stlouisfed.org/fred";
 

@@ -1,6 +1,10 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import type { LeverAnalyzer, OpportunityDraft } from "./types";
+import {
+  FRED_CATEGORY_SCOPE_CODES,
+  fredSeriesForScopeCode,
+} from "../intelligence/scope-taxonomy";
 
 const dollars = (n: number) => Math.round(n * 100) / 100;
 
@@ -170,7 +174,171 @@ export const contractRenegotiationTriggerLever: LeverAnalyzer = {
   },
 };
 
+/**
+ * Lever 10 — Spot vs contract benchmark (FRED PPI).
+ *
+ * Pulls recently observed FRED economic-index signals scoped to canonical
+ * procurement categories (`FREIGHT_TRUCKING_TL`, `RAIL_FREIGHT`, etc.) and,
+ * for each tenant category whose `code` matches the canonical scope, surfaces
+ * any active contract with material 12-month spend as a renegotiation
+ * candidate that can be defended with the public PPI as the spot benchmark.
+ *
+ * This is the join point that turns `IntelligenceCollector` output into real
+ * Tier-2 opportunity scoring: the canonical scope code in `market_signals`
+ * matches `categories.code` exactly (the taxonomy lives in
+ * `lib/intelligence/scope-taxonomy.ts`).
+ */
+export const spotVsContractLever: LeverAnalyzer = {
+  leverId: "spot_vs_contract",
+  tier: 2,
+  label: "Spot vs Contract Benchmark (PPI)",
+  description:
+    "Active contracts in categories where the public PPI (FRED) gives an independent spot benchmark. Surface as renegotiation candidates with the PPI series cited in the rationale.",
+  async analyze({ orgId }) {
+    const scopeCodes = FRED_CATEGORY_SCOPE_CODES;
+    if (scopeCodes.length === 0) return [];
+
+    // Most-recent economic_index / commodity_index signal per category scope
+    // (org-specific overrides global; window keeps stale signals out).
+    const signalRows = await db.execute(sql`
+      WITH ranked AS (
+        SELECT ms.id,
+               ms.scope_category_code,
+               ms.value::numeric AS value,
+               ms.unit,
+               ms.observed_at,
+               ms.source_url,
+               ms.collector_id,
+               ms.metadata,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ms.scope_category_code
+                 ORDER BY (ms.org_id IS NOT NULL) DESC, ms.observed_at DESC
+               ) AS rn
+        FROM market_signals ms
+        WHERE ms.signal_type IN ('economic_index', 'commodity_index')
+          AND ms.scope_category_code = ANY(${sql.raw(
+            `ARRAY[${scopeCodes.map((c) => `'${c}'`).join(",")}]::text[]`,
+          )})
+          AND (ms.org_id IS NULL OR ms.org_id = ${orgId})
+          AND ms.observed_at >= NOW() - INTERVAL '180 days'
+      )
+      SELECT id, scope_category_code, value, unit, observed_at,
+             source_url, collector_id, metadata
+      FROM ranked
+      WHERE rn = 1
+    `);
+
+    const signals = signalRows.rows as Array<{
+      id: string;
+      scope_category_code: string;
+      value: string;
+      unit: string;
+      observed_at: string;
+      source_url: string;
+      collector_id: string;
+      metadata: Record<string, unknown> | null;
+    }>;
+    if (signals.length === 0) return [];
+
+    const drafts: OpportunityDraft[] = [];
+    for (const sig of signals) {
+      // Match tenant categories on canonical code (case-insensitive — tenant
+      // ingestion may casefold differently, but the taxonomy uses ALL_CAPS).
+      const contractRows = await db.execute(sql`
+        WITH cat_match AS (
+          SELECT id AS category_id, name AS category_name
+          FROM categories
+          WHERE org_id = ${orgId}
+            AND UPPER(code) = ${sig.scope_category_code}
+        ),
+        actuals AS (
+          SELECT po.contract_id,
+                 SUM(pol.extended_usd::numeric) AS spend
+          FROM po_lines pol
+          JOIN purchase_orders po ON po.id = pol.po_id
+          JOIN cat_match cm ON cm.category_id = pol.category_id
+          WHERE pol.org_id = ${orgId}
+            AND pol.order_date >= NOW() - INTERVAL '365 days'
+            AND po.contract_id IS NOT NULL
+          GROUP BY po.contract_id
+        )
+        SELECT c.id AS contract_id,
+               c.contract_number,
+               c.title,
+               c.supplier_id,
+               c.category_id,
+               cm.category_name,
+               s.name AS supplier_name,
+               COALESCE(a.spend, 0) AS actual_12mo_spend
+        FROM contracts c
+        JOIN suppliers s ON s.id = c.supplier_id
+        JOIN cat_match cm ON cm.category_id = c.category_id
+        LEFT JOIN actuals a ON a.contract_id = c.id
+        WHERE c.org_id = ${orgId}
+          AND c.status = 'active'
+          AND COALESCE(a.spend, 0) > 25000
+        ORDER BY COALESCE(a.spend, 0) DESC
+        LIMIT 10
+      `);
+
+      const fredSeries = fredSeriesForScopeCode(sig.scope_category_code);
+      const fredLabels = fredSeries.map((f) => `${f.label} (${f.seriesId})`);
+      const observedDate = new Date(sig.observed_at).toISOString().slice(0, 10);
+      const indexValue = Number(sig.value);
+
+      for (const r of contractRows.rows as Array<{
+        contract_id: string;
+        contract_number: string;
+        title: string;
+        supplier_id: string;
+        category_id: string;
+        category_name: string;
+        supplier_name: string;
+        actual_12mo_spend: string;
+      }>) {
+        const actual = Number(r.actual_12mo_spend);
+        // Conservative: 3% on the contract's actual 12-month spend. Widely
+        // used "PPI defended" renegotiation savings range is 3–6%; the OODA
+        // priors learner will calibrate from realized outcomes.
+        const savings = actual * 0.03;
+        if (savings < 750) continue;
+        drafts.push({
+          leverId: "spot_vs_contract",
+          title: `Renegotiate ${r.contract_number} (${r.category_name}) using public PPI as spot benchmark`,
+          rationale: `Active contract ${r.contract_number} (${r.title}) with ${r.supplier_name} in ${r.category_name} ran $${actual.toFixed(0)} of spend in the last 12 months. The public producer-price benchmark (${fredLabels.join("; ") || sig.scope_category_code}) was ${indexValue.toFixed(2)} as of ${observedDate} and gives an independent reference for the next negotiation.`,
+          recommendedAction: `Open a fact-based renegotiation citing the FRED PPI for ${r.category_name} as the spot benchmark; target a 3% reduction off current contracted rates.`,
+          supplierId: r.supplier_id,
+          categoryId: r.category_id,
+          rawProjectedSavingsUsd: dollars(savings),
+          inputs: {
+            contractId: r.contract_id,
+            categoryId: r.category_id,
+            supplierId: r.supplier_id,
+            actual12moUsd: actual,
+            assumedSavingsPct: 3,
+            marketSignal: {
+              id: sig.id,
+              collectorId: sig.collector_id,
+              scopeCategoryCode: sig.scope_category_code,
+              value: indexValue,
+              unit: sig.unit,
+              observedAt: sig.observed_at,
+              sourceUrl: sig.source_url,
+              fredSeries: fredSeries.map((f) => ({
+                seriesId: f.seriesId,
+                label: f.label,
+              })),
+            },
+          },
+        });
+      }
+    }
+    return drafts;
+  },
+};
+
 export const TIER_2_LEVERS: LeverAnalyzer[] = [
   supplierConsolidationLever,
   contractRenegotiationTriggerLever,
+  spotVsContractLever,
 ];
