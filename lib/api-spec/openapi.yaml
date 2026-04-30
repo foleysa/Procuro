@@ -52,6 +52,8 @@ tags:
       negotiations. Every cited claim is traced back to a frozen
       `marketSignalsTable` row at generation time so the Evidence Room
       replay matches what the buyer took into the conversation.
+  - name: trust
+    description: Customer-facing trust posture (live controls, citations, compliance)
 
 paths:
   /healthz:
@@ -122,6 +124,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MeResponse"
+
+  /trust/summary:
+    get:
+      operationId: getTrustSummary
+      tags: [trust]
+      summary: Live trust posture for the active tenant
+      description: |
+        Returns the live data the in-app Trust Center page renders so a
+        prospect's compliance reviewer can self-serve a security review
+        without a sales call. Tenant-scoped: every count, list, and
+        status reflects the active org only — never cross-tenant
+        aggregates. Available to every authenticated user (read).
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Trust posture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustSummary"
 
   /spend/overview:
     get:
@@ -4658,3 +4681,238 @@ components:
         comment:
           type: string
           maxLength: 2000
+
+    TrustSummary:
+      type: object
+      required:
+        - tenant
+        - dataSources
+        - operationalControls
+        - provenance
+        - audit
+        - identity
+        - compliance
+        - generatedAt
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+          description: Server time when this snapshot was assembled.
+        tenant:
+          $ref: "#/components/schemas/TrustTenant"
+        dataSources:
+          $ref: "#/components/schemas/TrustDataSources"
+        operationalControls:
+          $ref: "#/components/schemas/TrustOperationalControls"
+        provenance:
+          $ref: "#/components/schemas/TrustProvenance"
+        audit:
+          $ref: "#/components/schemas/TrustAudit"
+        identity:
+          $ref: "#/components/schemas/TrustIdentity"
+        compliance:
+          $ref: "#/components/schemas/TrustCompliance"
+
+    TrustTenant:
+      type: object
+      required: [orgId, orgName, disclosurePolicy]
+      properties:
+        orgId: { type: string }
+        orgName: { type: string }
+        disclosurePolicy:
+          $ref: "#/components/schemas/DisclosurePolicy"
+
+    TrustDataSources:
+      type: object
+      required: [enabledCount, totalCount, byTier, collectors]
+      properties:
+        enabledCount: { type: integer }
+        totalCount: { type: integer }
+        byTier:
+          type: object
+          description: Count of enabled, tenant-opted-in collectors per disclosure tier.
+          required: [T1, T2, T3, T4]
+          properties:
+            T1: { type: integer }
+            T2: { type: integer }
+            T3: { type: integer }
+            T4: { type: integer }
+        collectors:
+          type: array
+          description: |
+            One entry per collector visible to the active tenant. Filtered
+            by the per-tenant opt-in matrix; never includes collectors a
+            tenant has explicitly opted out of.
+          items:
+            $ref: "#/components/schemas/TrustCollectorSummary"
+
+    TrustCollectorSummary:
+      type: object
+      required:
+        - id
+        - name
+        - posture
+        - postureClass
+        - disclosureTier
+        - status
+        - killSwitch
+        - tenantOptedIn
+      properties:
+        id: { type: string }
+        name: { type: string }
+        posture:
+          type: string
+          enum:
+            [public-api, published-data, respect-robots-crawl, aggressive-crawl]
+        postureClass:
+          type: string
+          enum: [public_api, tos_restricted, gray_hat]
+        disclosureTier:
+          type: string
+          enum: [T1, T2, T3, T4]
+        status:
+          type: string
+          enum: [enabled, disabled, killed]
+        killSwitch: { type: boolean }
+        jurisdiction: { type: string }
+        retentionDays: { type: integer, nullable: true }
+        tenantOptedIn: { type: boolean, nullable: true }
+
+    TrustOperationalControls:
+      type: object
+      required:
+        - killSwitch
+        - schemaDrift
+        - retryBudgets
+      properties:
+        killSwitch:
+          type: object
+          required: [killedCount, killedCollectors]
+          properties:
+            killedCount: { type: integer }
+            killedCollectors:
+              type: array
+              items:
+                type: object
+                required: [id, name]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+        schemaDrift:
+          type: object
+          required: [recentEventCount, recentEvents]
+          properties:
+            recentEventCount:
+              type: integer
+              description: Drift events recorded in the last 30 days, platform-wide.
+            recentEvents:
+              type: array
+              description: Up to 10 most recent drift events.
+              items:
+                type: object
+                required: [id, collectorId, message, occurrences, createdAt]
+                properties:
+                  id: { type: string }
+                  collectorId: { type: string }
+                  fieldPath: { type: string, nullable: true }
+                  message: { type: string }
+                  occurrences: { type: integer }
+                  createdAt: { type: string, format: date-time }
+        retryBudgets:
+          type: array
+          description: Effective per-job-kind retry budgets for the active tenant.
+          items:
+            type: object
+            required: [kind, maxAttempts, defaultMaxAttempts, isOverride]
+            properties:
+              kind: { type: string }
+              maxAttempts: { type: integer }
+              defaultMaxAttempts: { type: integer }
+              isOverride: { type: boolean }
+
+    TrustProvenance:
+      type: object
+      required:
+        - opportunitiesTotal
+        - opportunitiesWithCitations
+        - opportunitiesUnverified
+        - coveragePct
+      properties:
+        opportunitiesTotal: { type: integer }
+        opportunitiesWithCitations:
+          type: integer
+          description: |
+            Opportunities whose `inputs.sources` array contains at least
+            one source descriptor that the tier renderer would surface.
+        opportunitiesUnverified:
+          type: integer
+          description: opportunitiesTotal − opportunitiesWithCitations.
+        coveragePct:
+          type: number
+          description: opportunitiesWithCitations / opportunitiesTotal (0..1).
+
+    TrustAudit:
+      type: object
+      required: [retentionDays, eventCount30d, lastEventAt, exportFormats]
+      properties:
+        retentionDays:
+          type: integer
+          description: Days admin-audit-log entries are retained for the active tenant.
+        eventCount30d: { type: integer }
+        lastEventAt: { type: string, format: date-time, nullable: true }
+        exportFormats:
+          type: array
+          items: { type: string }
+          description: e.g. ["csv"]; SIEM webhook is roadmap.
+
+    TrustIdentity:
+      type: object
+      required: [sso, scimEnabled, roles]
+      properties:
+        sso:
+          type: object
+          required: [enabled]
+          properties:
+            enabled: { type: boolean }
+            protocol: { type: string, nullable: true }
+            idpName: { type: string, nullable: true }
+            emailDomains:
+              type: array
+              items: { type: string }
+        scimEnabled: { type: boolean }
+        roles:
+          type: array
+          description: Fixed role catalogue with the permissions each role holds.
+          items:
+            type: object
+            required: [role, permissions]
+            properties:
+              role: { type: string }
+              permissions:
+                type: array
+                items: { type: string }
+
+    TrustCompliance:
+      type: object
+      required: [attestations, dpaUrl, subProcessorsUrl, securityContact]
+      properties:
+        attestations:
+          type: array
+          items:
+            type: object
+            required: [name, status]
+            properties:
+              name: { type: string }
+              status:
+                type: string
+                enum: [in_progress, attested, planned, not_applicable]
+              detail: { type: string, nullable: true }
+              asOf: { type: string, format: date-time, nullable: true }
+        dpaUrl: { type: string, nullable: true }
+        subProcessorsUrl: { type: string, nullable: true }
+        securityContact:
+          type: object
+          required: [email]
+          properties:
+            email: { type: string }
+            pgpKeyUrl: { type: string, nullable: true }

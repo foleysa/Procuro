@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -948,6 +949,17 @@ export default function AdminPage() {
         <p className="text-muted-foreground mt-1">
           Manage members, single sign-on, API keys, tenant settings, and the
           admin audit trail.
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Sharing posture with a customer or auditor? Send them to the{" "}
+          <Link
+            href="/trust"
+            className="text-primary underline-offset-2 hover:underline"
+            data-testid="link-admin-trust"
+          >
+            Trust Center
+          </Link>
+          {" "}— it's the same data, formatted for review.
         </p>
       </div>
 

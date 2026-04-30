@@ -30,6 +30,7 @@ import Integrations from "./pages/integrations";
 import Settings from "./pages/settings";
 import WatchedCompanies from "./pages/watched-companies";
 import Admin from "./pages/admin";
+import TrustPage from "./pages/trust";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
 
@@ -163,7 +164,30 @@ function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 
+/**
+ * `/trust?print=1` renders without the Layout chrome so the page is
+ * suitable for printing or PDF capture by a procurement reviewer.
+ * Reading from `window.location` here (rather than wouter's `useSearch`)
+ * keeps the conditional out of the React render tree — the route
+ * remounts on navigation anyway.
+ */
+function isTrustPrintMode(): boolean {
+  if (typeof window === "undefined") return false;
+  if (!window.location.pathname.replace(basePath, "").startsWith("/trust")) {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).get("print") === "1";
+}
+
 function AppRoutes() {
+  if (isTrustPrintMode()) {
+    return (
+      <Switch>
+        <Route path="/trust" component={TrustPage} />
+        <Route component={NotFound} />
+      </Switch>
+    );
+  }
   return (
     <Switch>
       <Route path="/landing" component={Landing} />
@@ -189,6 +213,7 @@ function AppRoutes() {
             <Route path="/ingest" component={Ingest} />
             <Route path="/integrations" component={Integrations} />
             <Route path="/watched-companies" component={WatchedCompanies} />
+            <Route path="/trust" component={TrustPage} />
             <Route path="/settings" component={Settings} />
             <Route path="/admin">
               <AdminGuard>

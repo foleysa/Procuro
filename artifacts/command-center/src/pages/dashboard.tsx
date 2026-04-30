@@ -338,6 +338,16 @@ export default function Dashboard() {
           <p className="text-muted-foreground mt-1">
             {me?.org.name ?? "—"} · live view of every Procuro signal · auto‑refreshes every 30s
           </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Reviewing security?{" "}
+            <Link
+              href="/trust"
+              className="text-primary underline-offset-2 hover:underline"
+              data-testid="link-dashboard-trust"
+            >
+              See your live Trust Center →
+            </Link>
+          </p>
         </div>
         <Button
           variant="outline"

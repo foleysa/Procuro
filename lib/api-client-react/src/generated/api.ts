@@ -115,6 +115,7 @@ import type {
   SystemCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
+  TrustSummary,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
   WatchedIssuer,
@@ -423,6 +424,87 @@ export const usePatchMeSettings = <
 > => {
   return useMutation(getPatchMeSettingsMutationOptions(options));
 };
+
+/**
+ * Returns the live data the in-app Trust Center page renders so a
+prospect's compliance reviewer can self-serve a security review
+without a sales call. Tenant-scoped: every count, list, and
+status reflects the active org only — never cross-tenant
+aggregates. Available to every authenticated user (read).
+
+ * @summary Live trust posture for the active tenant
+ */
+export const getGetTrustSummaryUrl = () => {
+  return `/api/trust/summary`;
+};
+
+export const getTrustSummary = async (
+  options?: RequestInit,
+): Promise<TrustSummary> => {
+  return customFetch<TrustSummary>(getGetTrustSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTrustSummaryQueryKey = () => {
+  return [`/api/trust/summary`] as const;
+};
+
+export const getGetTrustSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTrustSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTrustSummaryQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrustSummary>>> = ({
+    signal,
+  }) => getTrustSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTrustSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTrustSummary>>
+>;
+export type GetTrustSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Live trust posture for the active tenant
+ */
+
+export function useGetTrustSummary<
+  TData = Awaited<ReturnType<typeof getTrustSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTrustSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Spend overview (last 12 months)

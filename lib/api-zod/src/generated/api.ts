@@ -151,6 +151,178 @@ export const PatchMeSettingsResponse = zod.object({
 });
 
 /**
+ * Returns the live data the in-app Trust Center page renders so a
+prospect's compliance reviewer can self-serve a security review
+without a sales call. Tenant-scoped: every count, list, and
+status reflects the active org only — never cross-tenant
+aggregates. Available to every authenticated user (read).
+
+ * @summary Live trust posture for the active tenant
+ */
+export const GetTrustSummaryHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetTrustSummaryResponse = zod.object({
+  generatedAt: zod.coerce
+    .date()
+    .describe("Server time when this snapshot was assembled."),
+  tenant: zod.object({
+    orgId: zod.string(),
+    orgName: zod.string(),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .describe(
+        "Per-tenant insight-citation disclosure policy. Controls which\nintelligence-source tiers are surfaced when rendering an insight\nvia the disclosure-tier renderer. `conservative` only shows T1+T2\nattributions, `standard` adds T3 (class label + confidence) and\n`analyst` shows full provenance for every tier including T4.\n",
+      ),
+  }),
+  dataSources: zod.object({
+    enabledCount: zod.number(),
+    totalCount: zod.number(),
+    byTier: zod
+      .object({
+        T1: zod.number(),
+        T2: zod.number(),
+        T3: zod.number(),
+        T4: zod.number(),
+      })
+      .describe(
+        "Count of enabled, tenant-opted-in collectors per disclosure tier.",
+      ),
+    collectors: zod
+      .array(
+        zod.object({
+          id: zod.string(),
+          name: zod.string(),
+          posture: zod.enum([
+            "public-api",
+            "published-data",
+            "respect-robots-crawl",
+            "aggressive-crawl",
+          ]),
+          postureClass: zod.enum(["public_api", "tos_restricted", "gray_hat"]),
+          disclosureTier: zod.enum(["T1", "T2", "T3", "T4"]),
+          status: zod.enum(["enabled", "disabled", "killed"]),
+          killSwitch: zod.boolean(),
+          jurisdiction: zod.string().optional(),
+          retentionDays: zod.number().nullish(),
+          tenantOptedIn: zod.boolean().nullable(),
+        }),
+      )
+      .describe(
+        "One entry per collector visible to the active tenant. Filtered\nby the per-tenant opt-in matrix; never includes collectors a\ntenant has explicitly opted out of.\n",
+      ),
+  }),
+  operationalControls: zod.object({
+    killSwitch: zod.object({
+      killedCount: zod.number(),
+      killedCollectors: zod.array(
+        zod.object({
+          id: zod.string(),
+          name: zod.string(),
+        }),
+      ),
+    }),
+    schemaDrift: zod.object({
+      recentEventCount: zod
+        .number()
+        .describe("Drift events recorded in the last 30 days, platform-wide."),
+      recentEvents: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            collectorId: zod.string(),
+            fieldPath: zod.string().nullish(),
+            message: zod.string(),
+            occurrences: zod.number(),
+            createdAt: zod.coerce.date(),
+          }),
+        )
+        .describe("Up to 10 most recent drift events."),
+    }),
+    retryBudgets: zod
+      .array(
+        zod.object({
+          kind: zod.string(),
+          maxAttempts: zod.number(),
+          defaultMaxAttempts: zod.number(),
+          isOverride: zod.boolean(),
+        }),
+      )
+      .describe("Effective per-job-kind retry budgets for the active tenant."),
+  }),
+  provenance: zod.object({
+    opportunitiesTotal: zod.number(),
+    opportunitiesWithCitations: zod
+      .number()
+      .describe(
+        "Opportunities whose `inputs.sources` array contains at least\none source descriptor that the tier renderer would surface.\n",
+      ),
+    opportunitiesUnverified: zod
+      .number()
+      .describe("opportunitiesTotal − opportunitiesWithCitations."),
+    coveragePct: zod
+      .number()
+      .describe("opportunitiesWithCitations \/ opportunitiesTotal (0..1)."),
+  }),
+  audit: zod.object({
+    retentionDays: zod
+      .number()
+      .describe(
+        "Days admin-audit-log entries are retained for the active tenant.",
+      ),
+    eventCount30d: zod.number(),
+    lastEventAt: zod.coerce.date().nullable(),
+    exportFormats: zod
+      .array(zod.string())
+      .describe('e.g. [\"csv\"]; SIEM webhook is roadmap.'),
+  }),
+  identity: zod.object({
+    sso: zod.object({
+      enabled: zod.boolean(),
+      protocol: zod.string().nullish(),
+      idpName: zod.string().nullish(),
+      emailDomains: zod.array(zod.string()).optional(),
+    }),
+    scimEnabled: zod.boolean(),
+    roles: zod
+      .array(
+        zod.object({
+          role: zod.string(),
+          permissions: zod.array(zod.string()),
+        }),
+      )
+      .describe("Fixed role catalogue with the permissions each role holds."),
+  }),
+  compliance: zod.object({
+    attestations: zod.array(
+      zod.object({
+        name: zod.string(),
+        status: zod.enum([
+          "in_progress",
+          "attested",
+          "planned",
+          "not_applicable",
+        ]),
+        detail: zod.string().nullish(),
+        asOf: zod.coerce.date().nullish(),
+      }),
+    ),
+    dpaUrl: zod.string().nullable(),
+    subProcessorsUrl: zod.string().nullable(),
+    securityContact: zod.object({
+      email: zod.string(),
+      pgpKeyUrl: zod.string().nullish(),
+    }),
+  }),
+});
+
+/**
  * @summary Spend overview (last 12 months)
  */
 export const GetSpendOverviewHeader = zod.object({

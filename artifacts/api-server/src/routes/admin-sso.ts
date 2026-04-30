@@ -42,7 +42,7 @@ const DEFAULT_SSO: SsoConfig = {
   scimEnabled: false,
 };
 
-function readSsoConfig(settings: unknown): SsoConfig {
+export function readSsoConfig(settings: unknown): SsoConfig {
   if (!settings || typeof settings !== "object") return DEFAULT_SSO;
   const raw = (settings as Record<string, unknown>)["sso"];
   if (!raw) return DEFAULT_SSO;

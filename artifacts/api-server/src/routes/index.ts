@@ -24,6 +24,7 @@ import scimRouter from "./scim";
 import contractsRouter from "./contracts";
 import systemRouter from "./system";
 import defensePacksRouter from "./defense-packs";
+import trustRouter from "./trust";
 
 const router: IRouter = Router();
 
@@ -52,5 +53,6 @@ router.use(scimRouter);
 router.use(contractsRouter);
 router.use(systemRouter);
 router.use(defensePacksRouter);
+router.use(trustRouter);
 
 export default router;

@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Eye,
   Atom,
+  Shield,
 } from "lucide-react";
 import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
@@ -49,6 +50,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/ingest", label: "Data Ingest", icon: Upload },
     { href: "/integrations", label: "Integrations", icon: Plug },
     { href: "/watched-companies", label: "Watched Companies", icon: Eye },
+    { href: "/trust", label: "Trust Center", icon: Shield },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
   const navItems = isOrgAdmin

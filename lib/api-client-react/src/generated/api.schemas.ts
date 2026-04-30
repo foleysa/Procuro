@@ -2377,207 +2377,204 @@ the active tenant; the server returns 400 otherwise.
   notes?: string;
 }
 
-/**
- * What the Defense Pack is defending or attacking. At least one
-of `contractId+lineItem`, `categoryCode`, or `materialCode`
-must be provided so the evidence pool can be scoped beyond
-"every signal that ever mentioned this supplier".
-
- */
-export interface DefensePackTarget {
-  supplierId: string;
-  supplierName: string;
-  contractId?: string | null;
-  lineItem?: string | null;
-  categoryCode?: string | null;
-  materialCode?: string | null;
+export interface TrustTenant {
+  orgId: string;
+  orgName: string;
+  disclosurePolicy: DisclosurePolicy;
 }
 
-export type DefensePackPosition =
-  (typeof DefensePackPosition)[keyof typeof DefensePackPosition];
+export type TrustCollectorSummaryPosture =
+  (typeof TrustCollectorSummaryPosture)[keyof typeof TrustCollectorSummaryPosture];
 
-export const DefensePackPosition = {
-  defend_against_increase: "defend_against_increase",
-  attack_for_decrease: "attack_for_decrease",
-  justify_index_relink: "justify_index_relink",
+export const TrustCollectorSummaryPosture = {
+  "public-api": "public-api",
+  "published-data": "published-data",
+  "respect-robots-crawl": "respect-robots-crawl",
+  "aggressive-crawl": "aggressive-crawl",
 } as const;
 
-export type DefensePackLength =
-  (typeof DefensePackLength)[keyof typeof DefensePackLength];
+export type TrustCollectorSummaryPostureClass =
+  (typeof TrustCollectorSummaryPostureClass)[keyof typeof TrustCollectorSummaryPostureClass];
 
-export const DefensePackLength = {
-  exec_one_pager: "exec_one_pager",
-  three_page_brief: "three_page_brief",
-  full_pack: "full_pack",
+export const TrustCollectorSummaryPostureClass = {
+  public_api: "public_api",
+  tos_restricted: "tos_restricted",
+  gray_hat: "gray_hat",
 } as const;
 
-export type DefensePackStatus =
-  (typeof DefensePackStatus)[keyof typeof DefensePackStatus];
+export type TrustCollectorSummaryDisclosureTier =
+  (typeof TrustCollectorSummaryDisclosureTier)[keyof typeof TrustCollectorSummaryDisclosureTier];
 
-export const DefensePackStatus = {
-  generating: "generating",
-  ready: "ready",
-  insufficient_evidence: "insufficient_evidence",
-  failed: "failed",
-} as const;
-
-/**
- * One LLM-emitted claim, verified to point at a real signal in
-the frozen evidence snapshot. The verifier drops claims whose
-cited `valueQuoted` disagrees with the snapshot value beyond
-the rounding tolerance.
-
- */
-export interface DefensePackClaim {
-  text: string;
-  signalId: string;
-  valueQuoted: string;
-}
-
-export type DefensePackSectionKey =
-  (typeof DefensePackSectionKey)[keyof typeof DefensePackSectionKey];
-
-export const DefensePackSectionKey = {
-  position: "position",
-  market_context: "market_context",
-  cost_drivers: "cost_drivers",
-  comparable_benchmarks: "comparable_benchmarks",
-  recommended_counter_position: "recommended_counter_position",
-  walk_away_considerations: "walk_away_considerations",
-  proprietary_signal_context: "proprietary_signal_context",
-} as const;
-
-export interface DefensePackSection {
-  key: DefensePackSectionKey;
-  title: string;
-  narrative: string;
-  claims: DefensePackClaim[];
-}
-
-export type DefensePackEvidenceSnapshotItemTier =
-  (typeof DefensePackEvidenceSnapshotItemTier)[keyof typeof DefensePackEvidenceSnapshotItemTier];
-
-export const DefensePackEvidenceSnapshotItemTier = {
+export const TrustCollectorSummaryDisclosureTier = {
   T1: "T1",
   T2: "T2",
   T3: "T3",
   T4: "T4",
 } as const;
 
-export type DefensePackEvidenceSnapshotItemScope = {
-  materialCode?: string | null;
-  categoryCode?: string | null;
-  supplierName?: string | null;
-  laneKey?: string | null;
-  sku?: string | null;
-};
+export type TrustCollectorSummaryStatus =
+  (typeof TrustCollectorSummaryStatus)[keyof typeof TrustCollectorSummaryStatus];
+
+export const TrustCollectorSummaryStatus = {
+  enabled: "enabled",
+  disabled: "disabled",
+  killed: "killed",
+} as const;
+
+export interface TrustCollectorSummary {
+  id: string;
+  name: string;
+  posture: TrustCollectorSummaryPosture;
+  postureClass: TrustCollectorSummaryPostureClass;
+  disclosureTier: TrustCollectorSummaryDisclosureTier;
+  status: TrustCollectorSummaryStatus;
+  killSwitch: boolean;
+  jurisdiction?: string;
+  retentionDays?: number | null;
+  tenantOptedIn: boolean | null;
+}
 
 /**
- * One row of the frozen evidence pool the LLM was given. The
-Evidence Room view renders this list verbatim, even after the
-live `marketSignalsTable` rows move.
-
+ * Count of enabled, tenant-opted-in collectors per disclosure tier.
  */
-export interface DefensePackEvidenceSnapshotItem {
-  signalId: string;
+export type TrustDataSourcesByTier = {
+  T1: number;
+  T2: number;
+  T3: number;
+  T4: number;
+};
+
+export interface TrustDataSources {
+  enabledCount: number;
+  totalCount: number;
+  /** Count of enabled, tenant-opted-in collectors per disclosure tier. */
+  byTier: TrustDataSourcesByTier;
+  /** One entry per collector visible to the active tenant. Filtered
+by the per-tenant opt-in matrix; never includes collectors a
+tenant has explicitly opted out of.
+ */
+  collectors: TrustCollectorSummary[];
+}
+
+export type TrustOperationalControlsKillSwitchKilledCollectorsItem = {
+  id: string;
+  name: string;
+};
+
+export type TrustOperationalControlsKillSwitch = {
+  killedCount: number;
+  killedCollectors: TrustOperationalControlsKillSwitchKilledCollectorsItem[];
+};
+
+export type TrustOperationalControlsSchemaDriftRecentEventsItem = {
+  id: string;
   collectorId: string;
-  collectorName: string;
-  signalType: string;
-  tier: DefensePackEvidenceSnapshotItemTier;
-  scope?: DefensePackEvidenceSnapshotItemScope;
-  value: number;
-  unit: string;
-  currency: string;
-  observedAt: string;
-  sourceUrl: string;
-  posture: string;
-}
-
-/**
- * Listing-row view of a Defense Pack. Sections + evidenceSnapshot
-are excluded for payload size.
-
- */
-export interface DefensePackSummary {
-  id: string;
-  orgId: string;
-  target: DefensePackTarget;
-  position: DefensePackPosition;
-  length: DefensePackLength;
-  status: DefensePackStatus;
-  statusReason?: string | null;
-  disclosurePolicy: DisclosurePolicy;
-  model?: string | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-  estimatedCostUsd?: number | null;
-  generatedBy: string;
-  permalink: string;
-  generatedAt?: string | null;
+  fieldPath?: string | null;
+  message: string;
+  occurrences: number;
   createdAt: string;
-  verifiedClaimCount?: number;
-  evidencePoolSize?: number;
-}
-
-export type DefensePack = DefensePackSummary & {
-  sections: DefensePackSection[];
-  evidenceSnapshot: DefensePackEvidenceSnapshotItem[];
 };
 
-export interface DefensePackListResponse {
-  items: DefensePackSummary[];
+export type TrustOperationalControlsSchemaDrift = {
+  /** Drift events recorded in the last 30 days, platform-wide. */
+  recentEventCount: number;
+  /** Up to 10 most recent drift events. */
+  recentEvents: TrustOperationalControlsSchemaDriftRecentEventsItem[];
+};
+
+export type TrustOperationalControlsRetryBudgetsItem = {
+  kind: string;
+  maxAttempts: number;
+  defaultMaxAttempts: number;
+  isOverride: boolean;
+};
+
+export interface TrustOperationalControls {
+  killSwitch: TrustOperationalControlsKillSwitch;
+  schemaDrift: TrustOperationalControlsSchemaDrift;
+  /** Effective per-job-kind retry budgets for the active tenant. */
+  retryBudgets: TrustOperationalControlsRetryBudgetsItem[];
 }
 
-export interface CreateDefensePackRequest {
-  target: DefensePackTarget;
-  position: DefensePackPosition;
-  length: DefensePackLength;
-  /**
-   * Free-text buyer note describing the negotiation context
-(e.g. "supplier wants 8% increase effective Q1, citing
-steel cost"). Sanitised server-side before being added to
-the LLM prompt.
-
-   * @maxLength 2000
-   */
-  positionNote?: string;
+export interface TrustProvenance {
+  opportunitiesTotal: number;
+  /** Opportunities whose `inputs.sources` array contains at least
+one source descriptor that the tier renderer would surface.
+ */
+  opportunitiesWithCitations: number;
+  /** opportunitiesTotal − opportunitiesWithCitations. */
+  opportunitiesUnverified: number;
+  /** opportunitiesWithCitations / opportunitiesTotal (0..1). */
+  coveragePct: number;
 }
 
-export type DefensePackOutcomeUsed =
-  (typeof DefensePackOutcomeUsed)[keyof typeof DefensePackOutcomeUsed];
+export interface TrustAudit {
+  /** Days admin-audit-log entries are retained for the active tenant. */
+  retentionDays: number;
+  eventCount30d: number;
+  lastEventAt: string | null;
+  /** e.g. ["csv"]; SIEM webhook is roadmap. */
+  exportFormats: string[];
+}
 
-export const DefensePackOutcomeUsed = {
-  yes: "yes",
-  no: "no",
-  unknown: "unknown",
+export type TrustIdentitySso = {
+  enabled: boolean;
+  protocol?: string | null;
+  idpName?: string | null;
+  emailDomains?: string[];
+};
+
+export type TrustIdentityRolesItem = {
+  role: string;
+  permissions: string[];
+};
+
+export interface TrustIdentity {
+  sso: TrustIdentitySso;
+  scimEnabled: boolean;
+  /** Fixed role catalogue with the permissions each role holds. */
+  roles: TrustIdentityRolesItem[];
+}
+
+export type TrustComplianceAttestationsItemStatus =
+  (typeof TrustComplianceAttestationsItemStatus)[keyof typeof TrustComplianceAttestationsItemStatus];
+
+export const TrustComplianceAttestationsItemStatus = {
+  in_progress: "in_progress",
+  attested: "attested",
+  planned: "planned",
+  not_applicable: "not_applicable",
 } as const;
 
-export type DefensePackOutcomeCategory =
-  (typeof DefensePackOutcomeCategory)[keyof typeof DefensePackOutcomeCategory];
+export type TrustComplianceAttestationsItem = {
+  name: string;
+  status: TrustComplianceAttestationsItemStatus;
+  detail?: string | null;
+  asOf?: string | null;
+};
 
-export const DefensePackOutcomeCategory = {
-  supplier_held_price: "supplier_held_price",
-  supplier_reduced_price: "supplier_reduced_price",
-  deferred: "deferred",
-  deal_lost: "deal_lost",
-  other: "other",
-} as const;
+export type TrustComplianceSecurityContact = {
+  email: string;
+  pgpKeyUrl?: string | null;
+};
 
-export interface DefensePackOutcome {
-  id: string;
-  packId: string;
-  used: DefensePackOutcomeUsed;
-  outcomeCategory?: DefensePackOutcomeCategory | null;
-  comment?: string | null;
-  submittedBy: string;
-  createdAt: string;
+export interface TrustCompliance {
+  attestations: TrustComplianceAttestationsItem[];
+  dpaUrl: string | null;
+  subProcessorsUrl: string | null;
+  securityContact: TrustComplianceSecurityContact;
 }
 
-export interface SubmitDefensePackFeedbackRequest {
-  used: DefensePackOutcomeUsed;
-  outcomeCategory?: DefensePackOutcomeCategory;
-  /** @maxLength 2000 */
-  comment?: string;
+export interface TrustSummary {
+  /** Server time when this snapshot was assembled. */
+  generatedAt: string;
+  tenant: TrustTenant;
+  dataSources: TrustDataSources;
+  operationalControls: TrustOperationalControls;
+  provenance: TrustProvenance;
+  audit: TrustAudit;
+  identity: TrustIdentity;
+  compliance: TrustCompliance;
 }
 
 /**
@@ -2922,12 +2919,4 @@ export const ListContractsStatus = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
-};
-
-export type ListDefensePacksParams = {
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
 };
