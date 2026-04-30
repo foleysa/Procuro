@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { ListContractsMissing } from "./listContractsMissing";
 import type { ListContractsStatus } from "./listContractsStatus";
 
 export type ListContractsParams = {
@@ -36,6 +37,10 @@ threshold).
    * Substring match on `owner`.
    */
   owner?: string;
+  /**
+   * Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored. `end_date` is intentionally omitted: the column is `NOT NULL` in the schema, so a missing-end-date filter could never return rows; the matching readiness rule links to /contracts without a `?missing=` param instead.
+   */
+  missing?: ListContractsMissing;
   /**
    * @minimum 1
    * @maximum 200

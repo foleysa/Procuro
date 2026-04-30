@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   useListSuppliers,
   type ListSuppliersParams,
@@ -13,6 +13,8 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
+  AlertCircle,
+  X,
 } from "lucide-react";
 import {
   Card,
@@ -34,6 +36,23 @@ import {
 } from "@/components/ui/table";
 
 /**
+ * `?missing=<field>` deep-link contract — kept narrow on purpose so the
+ * data-readiness card and this page agree on what each value means and
+ * unknown values are silently dropped instead of returning an unfiltered
+ * page that looks like the filter "did nothing".
+ */
+const MISSING_FIELDS = {
+  billing_currency: "Billing currency",
+  payment_terms_days: "Payment terms",
+} as const;
+type MissingField = keyof typeof MISSING_FIELDS;
+
+function readMissingParam(search: string): MissingField | null {
+  const v = new URLSearchParams(search).get("missing");
+  return v && v in MISSING_FIELDS ? (v as MissingField) : null;
+}
+
+/**
  * Supplier directory + entry point into the Supplier 360 detail page.
  * Mirrors the contracts list pagination model: cursor stack so going
  * "back" doesn't refetch from the start, search box debounce-free
@@ -46,19 +65,39 @@ export default function Suppliers() {
   const [cursorStack, setCursorStack] = useState<string[]>([""]);
   const currentCursor = cursorStack[cursorStack.length - 1] ?? "";
 
+  // Re-read the `?missing=` deep-link param on every wouter location
+  // change. Used by the data-readiness card so its "Fix this" links land
+  // on exactly the suppliers missing the field the blocker measured.
+  const searchString = useSearch();
+  const missing = readMissingParam(searchString);
+
   const params = useMemo<ListSuppliersParams>(() => {
     const p: ListSuppliersParams = { limit: 50 };
     if (search.trim()) p.search = search.trim();
+    if (missing) p.missing = missing;
     if (currentCursor) p.cursor = currentCursor;
     return p;
-  }, [search, currentCursor]);
+  }, [search, missing, currentCursor]);
 
   // Reset pagination whenever filters change so the user never lands
   // on a "page 3" of a freshly narrowed list.
   useEffect(() => {
     setCursorStack([""]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, missing]);
+
+  // Clearing the deep-link filter strips just the `missing` param so any
+  // unrelated query state (none today, but room for future filters)
+  // survives the reset.
+  const clearMissing = () => {
+    const sp = new URLSearchParams(window.location.search);
+    sp.delete("missing");
+    const next = sp.toString();
+    const path = `${window.location.pathname}${next ? `?${next}` : ""}`;
+    window.history.pushState({}, "", path);
+    // wouter reads from `popstate`; pushState alone won't notify it.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
 
   const { data, isLoading, isFetching, error } = useListSuppliers(params);
 
@@ -77,6 +116,35 @@ export default function Suppliers() {
           the Supplier 360 page.
         </p>
       </div>
+
+      {missing && (
+        <div
+          className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-center justify-between gap-3"
+          data-testid={`missing-banner-${missing}`}
+        >
+          <div className="flex items-start gap-2 text-sm">
+            <AlertCircle className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" />
+            <div>
+              <span className="font-medium">
+                Showing suppliers missing: {MISSING_FIELDS[missing]}
+              </span>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Linked from the data-readiness card. Open a supplier to fill the
+                missing field, or clear the filter to see everyone.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearMissing}
+            data-testid="btn-clear-missing"
+          >
+            <X className="w-3 h-3 mr-1" />
+            Clear filter
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import Papa from "papaparse";
 import JSZip from "jszip";
@@ -604,6 +605,26 @@ const ENTITIES: EntityDef[] = [
   },
 ];
 
+/**
+ * `?missing=<field>` deep-link → which entity row to highlight on the
+ * /ingest page. Linked from the data-readiness card so a "Fix this"
+ * click on, say, the dedup-key blocker scrolls the operator straight
+ * to the Invoices uploader instead of dropping them at the top of a
+ * 9-row entity grid.
+ *
+ * Keys come from `artifacts/api-server/src/lib/readiness/rules.ts` —
+ * keep the two in sync. Unknown values are ignored (the page just
+ * renders normally).
+ */
+const MISSING_TO_ENTITY: Record<string, EntityKey> = {
+  sku: "purchaseOrders",
+  item_id: "items",
+  dedup_key: "invoices",
+  purchase_orders: "purchaseOrders",
+  payments: "payments",
+  category_id: "categories",
+};
+
 // --- per-entity parsed state ------------------------------------------
 
 interface ParsedFile {
@@ -1167,6 +1188,17 @@ function deriveServerEta(
 export default function Ingest() {
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  // Deep-link from the data-readiness card: `?missing=<field>` selects
+  // a single entity row to scroll to and briefly highlight. We don't
+  // mutate the URL or strip the param afterwards — leaving it in place
+  // keeps the link copy-pasteable and means a refresh re-runs the
+  // highlight (which the operator may want if they scrolled away).
+  const search = useSearch();
+  const missing = new URLSearchParams(search).get("missing");
+  const highlightedEntity: EntityKey | null = missing
+    ? MISSING_TO_ENTITY[missing] ?? null
+    : null;
   const [parsed, setParsed] = useState<Partial<Record<EntityKey, ParsedFile>>>(
     {},
   );
@@ -1583,6 +1615,7 @@ export default function Ingest() {
                 isUploading={isPending}
                 inFlight={!!inFlight[e.key]}
                 cancelled={!!cancelled[e.key]}
+                highlighted={highlightedEntity === e.key}
                 onPick={(f) => onPickFile(e, f)}
                 onClear={() => clearEntity(e.key)}
                 onCancel={() => cancelEntity(e.key)}
@@ -1641,6 +1674,7 @@ function EntityRow({
   isUploading,
   inFlight,
   cancelled,
+  highlighted,
   onPick,
   onClear,
   onCancel,
@@ -1652,6 +1686,7 @@ function EntityRow({
   isUploading: boolean;
   inFlight: boolean;
   cancelled: boolean;
+  highlighted: boolean;
   onPick: (f: File | null) => void;
   onClear: () => void;
   onCancel: () => void;
@@ -1676,10 +1711,28 @@ function EntityRow({
   // is still streaming, producing a clickable but no-op button).
   const canCancel = inFlight && !!parsed?.streaming && !cancelled && !hasError;
 
+  // When deep-linked from the data-readiness card, scroll this row into
+  // view on mount and keep an amber outline so the operator immediately
+  // sees which uploader the blocker pointed at. The outline is a plain
+  // border style (not an animation) so it stays visible until they
+  // navigate elsewhere — pulsing rings are easy to miss while reading.
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!highlighted) return;
+    rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlighted]);
+
   return (
     <div
+      ref={rowRef}
       data-testid={`entity-row-${entity.key}`}
-      className="border rounded-md p-4 space-y-3"
+      data-highlighted={highlighted ? "true" : undefined}
+      className={
+        "border rounded-md p-4 space-y-3 " +
+        (highlighted
+          ? "border-amber-400 ring-2 ring-amber-300/60 bg-amber-50/40 dark:bg-amber-950/20"
+          : "")
+      }
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">

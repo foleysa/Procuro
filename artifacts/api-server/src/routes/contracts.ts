@@ -179,6 +179,7 @@ router.get("/contracts", tenantMiddleware, async (req, res) => {
   const categoryIdFilter = req.query.categoryId as string | undefined;
   const currencyFilter = req.query.currency as string | undefined;
   const ownerFilter = (req.query.owner as string | undefined)?.trim();
+  const missingFilter = (req.query.missing as string | undefined)?.trim();
 
   // Threshold is per-tenant — read once for the whole list so each row
   // gets the same `derivedStatus` boundary even if the request races
@@ -229,6 +230,33 @@ router.get("/contracts", tenantMiddleware, async (req, res) => {
   }
   if (ownerFilter) {
     where.push(ilike(contractsTable.owner, `%${ownerFilter}%`));
+  }
+  // `?missing=<field>` narrows to the rows the data-readiness card flagged
+  // so the operator lands on the exact gap. Unknown values are silently
+  // ignored so adding new readiness checks never 400s the existing list
+  // page if the FE/BE roll out is staggered.
+  //
+  // `end_date` is intentionally not handled here — the column is `NOT NULL`
+  // in the schema, so a filter for null end-dates would always be empty.
+  // The matching readiness rule sends operators to /contracts unfiltered.
+  if (missingFilter === "annual_baseline_usd") {
+    where.push(
+      or(
+        isNull(contractsTable.annualBaselineUsd),
+        sql`${contractsTable.annualBaselineUsd}::numeric <= 0`,
+      )!,
+    );
+  } else if (missingFilter === "owner") {
+    where.push(
+      or(isNull(contractsTable.owner), eq(contractsTable.owner, ""))!,
+    );
+  } else if (missingFilter === "reference_index") {
+    where.push(
+      or(
+        isNull(contractsTable.referenceIndex),
+        eq(contractsTable.referenceIndex, ""),
+      )!,
+    );
   }
   if (cursor) {
     const decoded = decodeContractCursor(cursor);

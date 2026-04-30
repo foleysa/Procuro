@@ -11,9 +11,14 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { ListSuppliersMissing } from "./listSuppliersMissing";
 
 export type ListSuppliersParams = {
   search?: string;
+  /**
+   * Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored.
+   */
+  missing?: ListSuppliersMissing;
   /**
    * @minimum 1
    * @maximum 200

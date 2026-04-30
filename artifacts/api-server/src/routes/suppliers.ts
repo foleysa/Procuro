@@ -54,6 +54,7 @@ function mapSupplier(s: SupplierRow): Record<string, unknown> {
 router.get("/suppliers", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const search = (req.query.search as string | undefined)?.trim();
+  const missing = (req.query.missing as string | undefined)?.trim();
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "50", 10) || 50, 1),
     200,
@@ -62,6 +63,20 @@ router.get("/suppliers", tenantMiddleware, async (req, res) => {
 
   const where = [eq(suppliersTable.orgId, orgId)];
   if (search) where.push(ilike(suppliersTable.name, `%${search}%`));
+  // `?missing=<field>` narrows to the rows the data-readiness card flagged
+  // so the operator lands on the exact gap. Unknown values are silently
+  // ignored so adding new readiness checks never 400s the existing list
+  // page if the FE/BE roll out is staggered.
+  if (missing === "billing_currency") {
+    where.push(
+      or(
+        isNull(suppliersTable.billingCurrency),
+        eq(suppliersTable.billingCurrency, ""),
+      )!,
+    );
+  } else if (missing === "payment_terms_days") {
+    where.push(isNull(suppliersTable.paymentTermsDays));
+  }
   if (cursor) where.push(gt(suppliersTable.id, cursor));
 
   const rows = await db

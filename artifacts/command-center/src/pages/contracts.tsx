@@ -18,10 +18,11 @@
  * typical mid-market spend.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   useListContracts,
   ListContractsStatus,
+  ListContractsMissing,
   type Contract,
   type ListContractsParams,
 } from "@workspace/api-client-react";
@@ -49,6 +50,8 @@ import {
   CalendarDays,
   List as ListIcon,
   Bell,
+  AlertCircle,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +63,27 @@ const STATUS_OPTS = [
   { v: ListContractsStatus.expired, l: "Expired" },
   { v: ListContractsStatus.cancelled, l: "Cancelled" },
 ];
+
+/**
+ * `?missing=<field>` deep-link contract — used by the data-readiness
+ * card so its "Fix this" links land on exactly the contracts that
+ * triggered each blocker. Mapped to short labels for the inline banner;
+ * unknown values fall through and the page renders unfiltered.
+ *
+ * Note: `end_date` is intentionally absent — the column is `NOT NULL`
+ * in the schema, so a missing-end-date filter could never match. The
+ * matching readiness rule deep-links to /contracts unfiltered instead.
+ */
+const MISSING_LABELS: Record<ListContractsMissing, string> = {
+  annual_baseline_usd: "Annual baseline",
+  owner: "Owner",
+  reference_index: "Reference index",
+};
+
+function readMissingParam(search: string): ListContractsMissing | null {
+  const v = new URLSearchParams(search).get("missing");
+  return v && v in MISSING_LABELS ? (v as ListContractsMissing) : null;
+}
 
 type ViewMode = "list" | "calendar";
 
@@ -96,6 +120,12 @@ export default function Contracts() {
   const [currencyFilter, setCurrencyFilter] = useState<string>("");
   const [ownerFilter, setOwnerFilter] = useState<string>("");
 
+  // Re-read the `?missing=` deep-link param on every wouter location
+  // change. Used by the data-readiness card so its "Fix this" links land
+  // on exactly the contracts missing the field the blocker measured.
+  const searchString = useSearch();
+  const missing = readMissingParam(searchString);
+
   // Cursor stack: each push is the cursor that yielded the *next* page,
   // so to go back we pop the current cursor and use the one underneath.
   // The empty-string sentinel means "first page (no cursor)".
@@ -112,15 +142,44 @@ export default function Contracts() {
     }
     if (currencyFilter.trim()) p.currency = currencyFilter.trim().toUpperCase();
     if (ownerFilter.trim()) p.owner = ownerFilter.trim();
+    if (missing) p.missing = missing;
     if (view !== "calendar" && currentCursor) p.cursor = currentCursor;
     return p;
-  }, [search, statusFilter, currencyFilter, ownerFilter, currentCursor, view]);
+  }, [
+    search,
+    statusFilter,
+    currencyFilter,
+    ownerFilter,
+    missing,
+    currentCursor,
+    view,
+  ]);
 
   const { data, isLoading, error, isFetching } = useListContracts(params);
 
   // Reset pagination whenever filters change so the operator never sees
   // a "page 3" of a freshly narrowed result set.
   const resetPagination = () => setCursorStack([""]);
+
+  // Reset pagination when the deep-link filter changes too (the user
+  // could navigate from `?missing=owner` to `?missing=end_date` via the
+  // dashboard card without ever touching the in-page filters).
+  useEffect(() => {
+    resetPagination();
+  }, [missing]);
+
+  // Clearing the deep-link filter strips just the `missing` param so any
+  // unrelated query state (e.g. `view=calendar`) survives the reset.
+  const clearMissing = () => {
+    const sp = new URLSearchParams(window.location.search);
+    sp.delete("missing");
+    const next = sp.toString();
+    const path = `${window.location.pathname}${next ? `?${next}` : ""}`;
+    window.history.pushState({}, "", path);
+    // wouter's useSearch only re-renders on `popstate`; pushState alone
+    // won't notify it.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
 
   return (
     <div className="p-8 space-y-6 max-w-7xl">
@@ -170,6 +229,35 @@ export default function Contracts() {
           </Link>
         </div>
       </div>
+
+      {missing && (
+        <div
+          className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-center justify-between gap-3"
+          data-testid={`missing-banner-${missing}`}
+        >
+          <div className="flex items-start gap-2 text-sm">
+            <AlertCircle className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" />
+            <div>
+              <span className="font-medium">
+                Showing contracts missing: {MISSING_LABELS[missing]}
+              </span>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Linked from the data-readiness card. Open a contract to fill the
+                missing field, or clear the filter to see everyone.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearMissing}
+            data-testid="btn-clear-missing"
+          >
+            <X className="w-3 h-3 mr-1" />
+            Clear filter
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-4 gap-3">

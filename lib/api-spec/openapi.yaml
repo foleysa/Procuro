@@ -196,6 +196,16 @@ paths:
         schema:
           type: string
       - in: query
+        name: missing
+        description: 'Filter to rows that are missing the named field. Used by the
+          data-readiness card so its deep-links land on the exact gap. Unknown
+          values are ignored.'
+        schema:
+          type: string
+          enum:
+          - billing_currency
+          - payment_terms_days
+      - in: query
         name: limit
         schema:
           type: integer
@@ -2178,6 +2188,20 @@ paths:
         description: Substring match on `owner`.
         schema:
           type: string
+      - in: query
+        name: missing
+        description: 'Filter to rows that are missing the named field. Used by the
+          data-readiness card so its deep-links land on the exact gap. Unknown
+          values are ignored. `end_date` is intentionally omitted: the column
+          is `NOT NULL` in the schema, so a missing-end-date filter could
+          never return rows; the matching readiness rule links to /contracts
+          without a `?missing=` param instead.'
+        schema:
+          type: string
+          enum:
+          - annual_baseline_usd
+          - owner
+          - reference_index
       - in: query
         name: limit
         schema:

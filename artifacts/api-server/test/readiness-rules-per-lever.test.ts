@@ -93,6 +93,67 @@ describe("readiness rules — per-lever behaviour against seeded data", () => {
     assert.equal(rules.length, 12, `expected 12 rules, saw ${rules.length}`);
   });
 
+  it("blocker fixUrls carry the matching ?missing= deep-link param", async () => {
+    // The data-readiness card builds "Fix this" links from `fixUrl`, and
+    // the suppliers/contracts/ingest pages pre-filter by the param. If a
+    // rule drops the param the card silently regresses to landing on the
+    // top of an unfiltered list, so pin the contract here.
+    const report = await readReport();
+
+    // Each entry is [blockerId, expected `?missing=…` substring]. We
+    // intentionally pin the substring (not `endsWith`) so adding extra
+    // query params later doesn't spuriously break this test.
+    //
+    // Three field-check blockers are intentionally omitted because they
+    // use `hardWhenEmpty: false` and don't fire on an empty org:
+    // `po_lines.item_id`, `contracts.owner`, and
+    // `purchase_orders.contract_id` (the last is also covered by the
+    // "no missing= param" assertion below).
+    const expectations: Array<[string, string]> = [
+      ["po_lines.sku", "/ingest?missing=sku"],
+      ["contracts.annual_baseline_usd", "/contracts?missing=annual_baseline_usd"],
+      ["invoices.dedup_key", "/ingest?missing=dedup_key"],
+      ["purchase_orders.exists", "/ingest?missing=purchase_orders"],
+      ["suppliers.payment_terms_days", "/suppliers?missing=payment_terms_days"],
+      ["payments.exists", "/ingest?missing=payments"],
+      ["po_lines.category_id", "/ingest?missing=category_id"],
+      ["suppliers.billing_currency", "/suppliers?missing=billing_currency"],
+      ["contracts.reference_index", "/contracts?missing=reference_index"],
+    ];
+
+    const allBlockers = report.levers.flatMap((l) => l.blockers);
+    for (const [blockerId, needle] of expectations) {
+      const b = allBlockers.find((x) => x.id === blockerId);
+      assert.ok(
+        b,
+        `blocker ${blockerId} should be present on the empty org so we can verify its fixUrl`,
+      );
+      assert.ok(
+        b.fixUrl?.includes(needle),
+        `blocker ${blockerId} fixUrl should contain "${needle}", got ${b.fixUrl ?? "<none>"}`,
+      );
+    }
+
+    // And conversely: the blockers we *deliberately* leave un-deep-linked
+    // should not pick up an unrelated `?missing=` param by accident.
+    // `contracts.end_date` is here because the column is `NOT NULL` in
+    // the schema — a missing-end-date filter would always be empty, so
+    // the rule sends operators to /contracts unfiltered.
+    const noParamIds = [
+      "purchase_orders.contract_id",
+      "contracts.exists",
+      "contracts.end_date",
+    ];
+    for (const id of noParamIds) {
+      const b = allBlockers.find((x) => x.id === id);
+      if (!b) continue;
+      assert.ok(
+        !b.fixUrl?.includes("missing="),
+        `blocker ${id} should not carry a ?missing= param, got ${b.fixUrl}`,
+      );
+    }
+  });
+
   it("empty org → contract_leakage / maverick_spend / duplicate_payment all hard-block at 0", async () => {
     const report = await readReport();
     for (const id of [

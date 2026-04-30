@@ -400,6 +400,12 @@ export const listSuppliersQueryLimitMax = 200;
 
 export const ListSuppliersQueryParams = zod.object({
   search: zod.coerce.string().optional(),
+  missing: zod
+    .enum(["billing_currency", "payment_terms_days"])
+    .optional()
+    .describe(
+      "Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored.",
+    ),
   limit: zod.coerce
     .number()
     .min(1)
@@ -3957,6 +3963,12 @@ export const ListContractsQueryParams = zod.object({
     .optional()
     .describe("Filter by `billingCurrency` (ISO 4217)."),
   owner: zod.coerce.string().optional().describe("Substring match on `owner`."),
+  missing: zod
+    .enum(["annual_baseline_usd", "owner", "reference_index"])
+    .optional()
+    .describe(
+      "Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored. `end_date` is intentionally omitted: the column is `NOT NULL` in the schema, so a missing-end-date filter could never return rows; the matching readiness rule links to \/contracts without a `?missing=` param instead.",
+    ),
   limit: zod.coerce
     .number()
     .min(1)

@@ -3480,12 +3480,24 @@ export type OrgIdHeaderParameter = string;
 export type ListSuppliersParams = {
   search?: string;
   /**
+   * Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored.
+   */
+  missing?: ListSuppliersMissing;
+  /**
    * @minimum 1
    * @maximum 200
    */
   limit?: number;
   cursor?: string;
 };
+
+export type ListSuppliersMissing =
+  (typeof ListSuppliersMissing)[keyof typeof ListSuppliersMissing];
+
+export const ListSuppliersMissing = {
+  billing_currency: "billing_currency",
+  payment_terms_days: "payment_terms_days",
+} as const;
 
 export type OverrideSupplierBillingCurrency400 = {
   error?: string;
@@ -3793,6 +3805,10 @@ threshold).
    */
   owner?: string;
   /**
+   * Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored. `end_date` is intentionally omitted: the column is `NOT NULL` in the schema, so a missing-end-date filter could never return rows; the matching readiness rule links to /contracts without a `?missing=` param instead.
+   */
+  missing?: ListContractsMissing;
+  /**
    * @minimum 1
    * @maximum 200
    */
@@ -3809,6 +3825,15 @@ export const ListContractsStatus = {
   expired: "expired",
   cancelled: "cancelled",
   expiring: "expiring",
+} as const;
+
+export type ListContractsMissing =
+  (typeof ListContractsMissing)[keyof typeof ListContractsMissing];
+
+export const ListContractsMissing = {
+  annual_baseline_usd: "annual_baseline_usd",
+  owner: "owner",
+  reference_index: "reference_index",
 } as const;
 
 export type ListWatchedIssuersParams = {

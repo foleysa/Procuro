@@ -37,9 +37,24 @@ interface LeverRuleSpec {
   rule: RuleFn;
 }
 
-function fix(basePath: string | undefined, route: string): string {
+/**
+ * Build a deep-link URL the readiness card hands to the operator.
+ *
+ * The optional `missingField` is appended as a `?missing=<field>` query
+ * param so the destination page can pre-filter to the exact rows the
+ * blocker measured (e.g. `/suppliers?missing=billing_currency` shows
+ * only the suppliers with no billing currency on file). Page-level
+ * handlers silently ignore unknown values so the link still resolves
+ * gracefully if the FE rolls out behind the BE.
+ */
+function fix(
+  basePath: string | undefined,
+  route: string,
+  missingField?: string,
+): string {
   const bp = basePath && basePath !== "/" ? basePath.replace(/\/$/, "") : "";
-  return `${bp}${route.startsWith("/") ? route : `/${route}`}`;
+  const url = `${bp}${route.startsWith("/") ? route : `/${route}`}`;
+  return missingField ? `${url}?missing=${encodeURIComponent(missingField)}` : url;
 }
 
 interface CountRow {
@@ -133,7 +148,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "PO line SKU",
         message:
           "PO lines need a SKU to group like-for-like buys across sites and time.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "sku"),
       });
       if (noSku) blockers.push(noSku);
       const noItem = await fieldCheck({
@@ -145,7 +160,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Item match",
         message:
           "PO lines aren't matched to a normalised item record — benchmarks group by item, not raw SKU text.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "item_id"),
         hardWhenEmpty: false,
       });
       if (noItem) blockers.push(noItem);
@@ -166,6 +181,11 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "PO → contract link",
         message:
           "POs without a contract reference can't be classified as on- or off-contract.",
+        // No `?missing=` here: the contracts list page can't filter on a
+        // *PO* column. The fix is a re-import of POs with the contract
+        // reference set, which lives on /ingest, but we keep the link
+        // pointing at /contracts so the operator first verifies the
+        // contract they meant to reference actually exists.
         fixUrl: fix(ctx.basePath, "/contracts"),
         hardWhenEmpty: false,
       });
@@ -200,7 +220,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Contract annual baseline",
         message:
           "Contract leakage can't be sized without an annual baseline value on each contract.",
-        fixUrl: fix(ctx.basePath, "/contracts"),
+        fixUrl: fix(ctx.basePath, "/contracts", "annual_baseline_usd"),
       });
       if (noBaseline) blockers.push(noBaseline);
       return { blockers };
@@ -219,7 +239,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Invoice dedup key",
         message:
           "Invoices need a populated dedup key (supplier + amount + date hash) to flag duplicates.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "dedup_key"),
       });
       if (noDedup) blockers.push(noDedup);
       return { blockers };
@@ -240,7 +260,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Contract annual baseline",
         message:
           "Volume thresholds compare actual spend vs. the contract's annual baseline.",
-        fixUrl: fix(ctx.basePath, "/contracts"),
+        fixUrl: fix(ctx.basePath, "/contracts", "annual_baseline_usd"),
       });
       if (noBaseline) blockers.push(noBaseline);
       const noPos = await fieldCheck({
@@ -251,7 +271,7 @@ const RULES: LeverRuleSpec[] = [
         blockerId: "purchase_orders.exists",
         fieldLabel: "Purchase orders loaded",
         message: "No POs loaded — actual spend can't be measured.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "purchase_orders"),
       });
       if (noPos) blockers.push(noPos);
       return { blockers };
@@ -270,7 +290,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Supplier payment terms",
         message:
           "Supplier payment terms (days) drive the working-capital uplift estimate.",
-        fixUrl: fix(ctx.basePath, "/suppliers"),
+        fixUrl: fix(ctx.basePath, "/suppliers", "payment_terms_days"),
       });
       if (noTerms) blockers.push(noTerms);
       const noPayments = await fieldCheck({
@@ -282,7 +302,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Payments loaded",
         message:
           "No payment records loaded — the analyzer can't size DPO uplift without paid-date data.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "payments"),
       });
       if (noPayments) blockers.push(noPayments);
       return { blockers };
@@ -302,7 +322,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "PO line category",
         message:
           "PO lines need a category to bucket the long tail of small suppliers.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "category_id"),
       });
       if (noCat) blockers.push(noCat);
       return { blockers };
@@ -322,7 +342,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "PO line category",
         message:
           "Consolidation candidates need PO lines grouped by category to find duplicate suppliers.",
-        fixUrl: fix(ctx.basePath, "/ingest"),
+        fixUrl: fix(ctx.basePath, "/ingest", "category_id"),
       });
       if (noCat) blockers.push(noCat);
       const noSup = await fieldCheck({
@@ -353,6 +373,11 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Contract end date",
         message:
           "Renewal triggers fire X days before contract end — end date is required.",
+        // No `?missing=end_date` deep-link: `contracts.end_date` is
+        // `NOT NULL` in the schema, so a list filtered on null end-dates
+        // could never return rows. In practice this blocker only fires
+        // in the empty-table case, where /contracts (unfiltered) is the
+        // right destination so the operator sees the empty state.
         fixUrl: fix(ctx.basePath, "/contracts"),
       });
       if (noEnd) blockers.push(noEnd);
@@ -364,7 +389,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Contract owner",
         message:
           "Renewal alerts route to the contract owner — without one, alerts have no recipient.",
-        fixUrl: fix(ctx.basePath, "/contracts"),
+        fixUrl: fix(ctx.basePath, "/contracts", "owner"),
         hardWhenEmpty: false,
       });
       if (noOwner) blockers.push(noOwner);
@@ -405,7 +430,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Supplier billing currency",
         message:
           "FX exposure needs each supplier's billing currency (or a country code we can infer it from).",
-        fixUrl: fix(ctx.basePath, "/suppliers"),
+        fixUrl: fix(ctx.basePath, "/suppliers", "billing_currency"),
       });
       if (noCcy) blockers.push(noCcy);
       return { blockers };
@@ -424,7 +449,7 @@ const RULES: LeverRuleSpec[] = [
         fieldLabel: "Contract reference index",
         message:
           "Index-arbitrage compares your contract escalator vs. the public index — set a reference index per contract.",
-        fixUrl: fix(ctx.basePath, "/contracts"),
+        fixUrl: fix(ctx.basePath, "/contracts", "reference_index"),
       });
       if (noIdx) blockers.push(noIdx);
       return { blockers };
