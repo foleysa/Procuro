@@ -1,9 +1,15 @@
 /**
- * Pins the streaming-progress contract for the higher-risk non-`suppliers`
- * entities — `invoices` and `po_lines` — whose per-batch logic includes
- * grouped FK lookups against parent tables before the upsert. Mirrors the
- * shape of `csv-stream-progress.test.ts` (suppliers) so a regression that
- * silently drops `onProgress` only on the slow-batch path is caught.
+ * Pins the streaming-progress contract for every non-`suppliers` CSV entity
+ * accepted by `POST /api/ingest/csv-stream`:
+ *   - `invoices`, `po_lines`        — grouped FK lookups before the upsert
+ *   - `purchase_orders`, `payments` — single grouped FK lookup per batch
+ *   - `shipments`                   — dual optional FK lookups per batch
+ *   - `categories`, `items`         — no FK lookup (fast batch path)
+ *
+ * Mirrors the shape of `csv-stream-progress.test.ts` (which covers
+ * `suppliers`) so a regression that silently drops `onProgress` on any one
+ * entity branch — fast OR slow — is caught instead of leaving the upload
+ * UI's progress bar dark for that entity until a customer notices.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,11 +28,17 @@ import {
   openAsBlob,
   pickOrgId,
   seedCategories,
+  seedInvoices,
   seedPurchaseOrders,
   seedSuppliers,
   startServer,
+  writeCategoriesCsvSync,
   writeInvoicesCsvSync,
+  writeItemsCsvSync,
+  writePaymentsCsvSync,
   writePoLinesCsvSync,
+  writePurchaseOrdersCsvSync,
+  writeShipmentsCsvSync,
 } from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `csvstreamprogressentities-${Date.now()}-${process.pid}`;
@@ -35,12 +47,24 @@ const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
 const PARENT_SUPPLIERS = 50;
 const PARENT_POS = 50;
 const PARENT_CATEGORIES = 5;
+const PARENT_INVOICES = 50;
 
 // 10k rows == 10 BATCH_SIZE flushes; with FK lookups on each batch this
 // comfortably exceeds the route's 250 ms PROGRESS_EMIT_INTERVAL_MS throttle
 // while staying well under the 10 MB workload of csv-stream-large-entities.
+// Even for the fastest variants (no FK lookup) the 10 per-batch round-trips
+// still take well above the MIN_PROGRESS_TO_RESULT_GAP_MS gap below.
 const ROW_COUNT = 10_000;
 const MIN_PROGRESS_TO_RESULT_GAP_MS = 50;
+
+type StreamEntity =
+  | "invoices"
+  | "po_lines"
+  | "categories"
+  | "items"
+  | "purchase_orders"
+  | "payments"
+  | "shipments";
 
 type ProgressEvent = {
   type: "progress";
@@ -66,7 +90,7 @@ type StreamEvent = ProgressEvent | ResultEvent | ErrorEvent;
 async function uploadAndCollectProgressStream(args: {
   baseUrl: string;
   orgId: string;
-  entity: "invoices" | "po_lines";
+  entity: StreamEntity;
   csvFile: string;
   formFilename: string;
 }): Promise<{
@@ -150,7 +174,7 @@ async function uploadAndCollectProgressStream(args: {
 }
 
 function assertProgressContract(args: {
-  entity: "invoices" | "po_lines";
+  entity: StreamEntity;
   rowCount: number;
   events: StreamEvent[];
   firstProgressLineMs: number | null;
@@ -251,7 +275,7 @@ function assertProgressContract(args: {
   );
 }
 
-test("streaming CSV ingest emits progress events for invoices and po_lines uploads", async (t) => {
+test("streaming CSV ingest emits progress events for every non-suppliers entity", async (t) => {
   if (!process.env["DATABASE_URL"]) {
     throw new Error("DATABASE_URL is required to run this integration test.");
   }
@@ -284,20 +308,42 @@ test("streaming CSV ingest emits progress events for invoices and po_lines uploa
   await deleteFixtureRowsByPrefix(EXTERNAL_ID_PREFIX);
 
   type Variant = {
-    entity: "invoices" | "po_lines";
+    entity: StreamEntity;
     prepare: () => Promise<{ writeArgs: unknown }>;
     writeCsv: (filePath: string, args: unknown) => number;
+  };
+
+  // Lazy supplier seeding — multiple variants need supplier parents and
+  // there's no reason to pay the seed cost more than once per test run.
+  const ensureSeededSuppliers = async (): Promise<{
+    supplierExternalIds: string[];
+    supplierIds: string[];
+  }> => {
+    let supplierIdMap = await loadSupplierIdMapByPrefix(
+      orgId,
+      EXTERNAL_ID_PREFIX,
+    );
+    if (supplierIdMap.size === 0) {
+      await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+      supplierIdMap = await loadSupplierIdMapByPrefix(
+        orgId,
+        EXTERNAL_ID_PREFIX,
+      );
+    }
+    const supplierIds = Array.from(supplierIdMap.values());
+    const supplierExternalIds = Array.from(supplierIdMap.keys());
+    assert.ok(
+      supplierIds.length > 0,
+      "expected at least one seeded supplier",
+    );
+    return { supplierExternalIds, supplierIds };
   };
 
   const variants: Variant[] = [
     {
       entity: "invoices",
       prepare: async () => {
-        const supplierExternalIds = await seedSuppliers(
-          orgId,
-          PARENT_SUPPLIERS,
-          EXTERNAL_ID_PREFIX,
-        );
+        const { supplierExternalIds } = await ensureSeededSuppliers();
         return { writeArgs: { supplierExternalIds } };
       },
       writeCsv: (filePath, args) => {
@@ -314,23 +360,7 @@ test("streaming CSV ingest emits progress events for invoices and po_lines uploa
     {
       entity: "po_lines",
       prepare: async () => {
-        // Reuse supplier seeds from the invoices variant if present.
-        let supplierIdMap = await loadSupplierIdMapByPrefix(
-          orgId,
-          EXTERNAL_ID_PREFIX,
-        );
-        if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
-          supplierIdMap = await loadSupplierIdMapByPrefix(
-            orgId,
-            EXTERNAL_ID_PREFIX,
-          );
-        }
-        const supplierIds = Array.from(supplierIdMap.values());
-        assert.ok(
-          supplierIds.length > 0,
-          "expected at least one seeded supplier for PO seeding",
-        );
+        const { supplierIds } = await ensureSeededSuppliers();
         const poExternalIds = await seedPurchaseOrders(
           orgId,
           PARENT_POS,
@@ -352,6 +382,97 @@ test("streaming CSV ingest emits progress events for invoices and po_lines uploa
         return writePoLinesCsvSync(filePath, {
           poExternalIds,
           categoryCodes,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "categories",
+      // No FK lookup; flushBatch upserts on (orgId, code).
+      prepare: async () => ({ writeArgs: {} }),
+      writeCsv: (filePath) =>
+        writeCategoriesCsvSync(filePath, {
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        }),
+    },
+    {
+      entity: "items",
+      // No FK lookup; flushBatch upserts on (orgId, source_system,
+      // source_external_id) with a (orgId, sku) unique side-constraint.
+      prepare: async () => ({ writeArgs: {} }),
+      writeCsv: (filePath) =>
+        writeItemsCsvSync(filePath, {
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        }),
+    },
+    {
+      entity: "purchase_orders",
+      prepare: async () => {
+        const { supplierExternalIds } = await ensureSeededSuppliers();
+        return { writeArgs: { supplierExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { supplierExternalIds } = args as {
+          supplierExternalIds: string[];
+        };
+        return writePurchaseOrdersCsvSync(filePath, {
+          supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "payments",
+      prepare: async () => {
+        const { supplierIds } = await ensureSeededSuppliers();
+        const invoiceExternalIds = await seedInvoices(
+          orgId,
+          PARENT_INVOICES,
+          supplierIds,
+          EXTERNAL_ID_PREFIX,
+        );
+        return { writeArgs: { invoiceExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { invoiceExternalIds } = args as {
+          invoiceExternalIds: string[];
+        };
+        return writePaymentsCsvSync(filePath, {
+          invoiceExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "shipments",
+      prepare: async () => {
+        const { supplierExternalIds, supplierIds } =
+          await ensureSeededSuppliers();
+        // Seed POs under a shipments-scoped sub-prefix so we don't collide
+        // with any POs the po_lines variant may have already seeded under
+        // the parent prefix. Both still get cleaned up by the parent prefix
+        // sweep in `deleteFixtureRowsByPrefix`.
+        const poExternalIds = await seedPurchaseOrders(
+          orgId,
+          PARENT_POS,
+          supplierIds,
+          `${EXTERNAL_ID_PREFIX}shp-`,
+        );
+        return { writeArgs: { poExternalIds, supplierExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { poExternalIds, supplierExternalIds } = args as {
+          poExternalIds: string[];
+          supplierExternalIds: string[];
+        };
+        return writeShipmentsCsvSync(filePath, {
+          poExternalIds,
+          supplierExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
           rowCount: ROW_COUNT,
         });

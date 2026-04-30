@@ -17,9 +17,12 @@ import {
   purchaseOrdersTable,
   poLinesTable,
   invoicesTable,
+  paymentsTable,
+  shipmentsTable,
+  itemsTable,
   categoriesTable,
 } from "@workspace/db";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, like, or } from "drizzle-orm";
 import type { Express } from "express";
 
 export const FIXTURE_SOURCE = "csv";
@@ -179,6 +182,44 @@ export async function seedCategories(
 }
 
 /**
+ * Seed N invoices linked round-robin to the given supplier ids. External IDs
+ * use the `${extIdPrefix}sinv-` namespace so they don't collide with the
+ * `${extIdPrefix}inv-` IDs used by the streaming `invoices` upload variant
+ * — both can coexist in the same test run without clashing on the
+ * (orgId, sourceSystem, sourceExternalId) unique index.
+ */
+export async function seedInvoices(
+  orgId: string,
+  count: number,
+  supplierIds: string[],
+  extIdPrefix: string,
+): Promise<string[]> {
+  if (supplierIds.length === 0) {
+    throw new Error("seedInvoices requires at least one supplier id");
+  }
+  const externalIds: string[] = [];
+  const rows: (typeof invoicesTable.$inferInsert)[] = [];
+  const today = new Date();
+  for (let i = 0; i < count; i++) {
+    const ext = `${extIdPrefix}sinv-${i}`;
+    externalIds.push(ext);
+    rows.push({
+      id: newId("inv"),
+      orgId,
+      invoiceNumber: `${extIdPrefix}SINV-${i}`,
+      supplierId: supplierIds[i % supplierIds.length]!,
+      invoiceDate: today,
+      amountUsd: (100 + (i % 1000)).toFixed(2),
+      dedupKey: `${ext}|seed`,
+      sourceSystem: FIXTURE_SOURCE,
+      sourceExternalId: ext,
+    });
+  }
+  await db.insert(invoicesTable).values(rows);
+  return externalIds;
+}
+
+/**
  * Write an `invoices` CSV referencing the seeded supplier external IDs in
  * round-robin order. Stops as soon as `minBytes` or `rowCount` is hit; one
  * of the two must be supplied. Returns the number of rows written.
@@ -283,16 +324,244 @@ export function writePoLinesCsvSync(
   }
 }
 
-/** Delete every fixture row under `extIdPrefix`, in foreign-key-safe order. */
+/**
+ * Write a `categories` CSV with prefix-namespaced codes. The streaming
+ * `categories` flushBatch upserts on `(orgId, code)` and does NOT set
+ * `sourceSystem` / `sourceExternalId`, so cleanup of these rows is by
+ * `code` prefix in `deleteFixtureRowsByPrefix`.
+ */
+export function writeCategoriesCsvSync(
+  filePath: string,
+  opts: { extIdPrefix: string; rowCount: number },
+): number {
+  const { extIdPrefix, rowCount } = opts;
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header = "code,name,class\n";
+    fs.writeSync(fd, header);
+    const classes = ["direct", "indirect", "service"] as const;
+    let rows = 0;
+    while (rows < rowCount) {
+      const code = `${extIdPrefix}upcat-${rows}`;
+      const name = `Uploaded Test Category ${rows}`;
+      const cls = classes[rows % classes.length]!;
+      fs.writeSync(fd, `${code},"${name}",${cls}\n`);
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write an `items` CSV. Each row gets a unique sku namespaced under
+ * `extIdPrefix` so the `(orgId, sku)` unique index never collides with seed
+ * data or other concurrent test runs.
+ */
+export function writeItemsCsvSync(
+  filePath: string,
+  opts: { extIdPrefix: string; rowCount: number },
+): number {
+  const { extIdPrefix, rowCount } = opts;
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,sku,description,normalizedKey,mfgPartNumber,uom\n";
+    fs.writeSync(fd, header);
+    const descPad = "z".repeat(48);
+    let rows = 0;
+    while (rows < rowCount) {
+      const ext = `${extIdPrefix}item-${rows}`;
+      const sku = `${extIdPrefix}SKU-${rows}`;
+      const desc = `Bulk Test Item ${rows} ${descPad}`;
+      const normKey = sku.toUpperCase();
+      const mpn = `MPN-${rows}`;
+      const uom = "EA";
+      fs.writeSync(
+        fd,
+        `${ext},${sku},"${desc}",${normKey},${mpn},${uom}\n`,
+      );
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `purchase_orders` CSV referencing seeded supplier external IDs in
+ * round-robin order. The streaming flushBatch performs a single grouped
+ * lookup against `suppliers` per batch — every row needs the supplier ext
+ * to resolve so the terminal `rowsInserted === rowCount` assertion holds.
+ */
+export function writePurchaseOrdersCsvSync(
+  filePath: string,
+  opts: {
+    supplierExternalIds: string[];
+    extIdPrefix: string;
+    rowCount: number;
+  },
+): number {
+  const { supplierExternalIds, extIdPrefix, rowCount } = opts;
+  if (supplierExternalIds.length === 0) {
+    throw new Error(
+      "writePurchaseOrdersCsvSync requires at least one supplier extId",
+    );
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,poNumber,supplierExternalId,businessUnit,site,status,orderDate,totalUsd\n";
+    fs.writeSync(fd, header);
+    let rows = 0;
+    while (rows < rowCount) {
+      const ext = `${extIdPrefix}upo-${rows}`;
+      const poNum = `${extIdPrefix}UPO-${rows}`;
+      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
+      const bu = `BU-${rows % 10}`;
+      const site = `Site-${rows % 5}`;
+      const total = (1000 + (rows % 5000)).toFixed(2);
+      fs.writeSync(
+        fd,
+        `${ext},${poNum},${supExt},${bu},${site},open,2025-01-15,${total}\n`,
+      );
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `payments` CSV referencing seeded invoice external IDs in
+ * round-robin order. Invoices must already be present in the DB so the
+ * per-batch grouped lookup resolves them — see `seedInvoices`.
+ */
+export function writePaymentsCsvSync(
+  filePath: string,
+  opts: {
+    invoiceExternalIds: string[];
+    extIdPrefix: string;
+    rowCount: number;
+  },
+): number {
+  const { invoiceExternalIds, extIdPrefix, rowCount } = opts;
+  if (invoiceExternalIds.length === 0) {
+    throw new Error("writePaymentsCsvSync requires at least one invoice extId");
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,invoiceExternalId,paidDate,amountUsd,paymentTermsDays\n";
+    fs.writeSync(fd, header);
+    let rows = 0;
+    while (rows < rowCount) {
+      const ext = `${extIdPrefix}pay-${rows}`;
+      const invExt = invoiceExternalIds[rows % invoiceExternalIds.length]!;
+      const amt = (50 + (rows % 1000)).toFixed(2);
+      fs.writeSync(fd, `${ext},${invExt},2025-02-15,${amt},30\n`);
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `shipments` CSV. Both `poExternalId` and `supplierExternalId` are
+ * optional in the streaming flushBatch (`set null` on missing lookup hits),
+ * but supplying both round-robin exercises the dual grouped-lookup path.
+ */
+export function writeShipmentsCsvSync(
+  filePath: string,
+  opts: {
+    poExternalIds: string[];
+    supplierExternalIds: string[];
+    extIdPrefix: string;
+    rowCount: number;
+  },
+): number {
+  const { poExternalIds, supplierExternalIds, extIdPrefix, rowCount } = opts;
+  if (poExternalIds.length === 0) {
+    throw new Error("writeShipmentsCsvSync requires at least one PO extId");
+  }
+  if (supplierExternalIds.length === 0) {
+    throw new Error(
+      "writeShipmentsCsvSync requires at least one supplier extId",
+    );
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,poExternalId,supplierExternalId,carrier,mode,originCountry,destCountry,laneKey,weightKg,freightCostUsd,incoterms,shipDate\n";
+    fs.writeSync(fd, header);
+    const carriers = ["MAERSK", "FEDEX", "DHL", "UPS", "USPS"];
+    const modes = ["ocean", "air", "ltl", "tl", "parcel", "rail"] as const;
+    const countries = ["US", "DE", "CN", "JP", "BR"];
+    let rows = 0;
+    while (rows < rowCount) {
+      const ext = `${extIdPrefix}shp-${rows}`;
+      const poExt = poExternalIds[rows % poExternalIds.length]!;
+      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
+      const carrier = carriers[rows % carriers.length]!;
+      const mode = modes[rows % modes.length]!;
+      const orig = countries[rows % countries.length]!;
+      const dest = countries[(rows + 1) % countries.length]!;
+      const lane = `${orig}-${dest}`;
+      const wt = (50 + (rows % 1000)).toFixed(2);
+      const cost = (100 + (rows % 5000)).toFixed(2);
+      fs.writeSync(
+        fd,
+        `${ext},${poExt},${supExt},${carrier},${mode},${orig},${dest},${lane},${wt},${cost},DAP,2025-03-15\n`,
+      );
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Delete every fixture row under `extIdPrefix`, in foreign-key-safe order.
+ *
+ * Most child tables follow the `(sourceSystem='csv', sourceExternalId LIKE
+ * prefix%)` pattern. Categories are special: the streaming `categories`
+ * flushBatch does NOT set `sourceSystem` / `sourceExternalId` on uploaded
+ * rows (it upserts on `(orgId, code)`), so cleanup matches by `code` prefix
+ * to cover both seeded rows (whose code is also prefixed) and uploaded rows
+ * from the streaming `categories` test variant.
+ */
 export async function deleteFixtureRowsByPrefix(
   extIdPrefix: string,
 ): Promise<void> {
+  // Children of POs / invoices / suppliers first.
   await db
     .delete(poLinesTable)
     .where(
       and(
         eq(poLinesTable.sourceSystem, FIXTURE_SOURCE),
         like(poLinesTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(paymentsTable)
+    .where(
+      and(
+        eq(paymentsTable.sourceSystem, FIXTURE_SOURCE),
+        like(paymentsTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(shipmentsTable)
+    .where(
+      and(
+        eq(shipmentsTable.sourceSystem, FIXTURE_SOURCE),
+        like(shipmentsTable.sourceExternalId, `${extIdPrefix}%`),
       ),
     );
   await db
@@ -303,6 +572,17 @@ export async function deleteFixtureRowsByPrefix(
         like(invoicesTable.sourceExternalId, `${extIdPrefix}%`),
       ),
     );
+  // Items reference categories with set null, so they can be cleaned in any
+  // order relative to categories — but they must precede the pool drain.
+  await db
+    .delete(itemsTable)
+    .where(
+      and(
+        eq(itemsTable.sourceSystem, FIXTURE_SOURCE),
+        like(itemsTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  // Parents.
   await db
     .delete(purchaseOrdersTable)
     .where(
@@ -319,12 +599,20 @@ export async function deleteFixtureRowsByPrefix(
         like(suppliersTable.sourceExternalId, `${extIdPrefix}%`),
       ),
     );
+  // Categories: cover both seeded rows (sourceSystem='csv' + namespaced
+  // sourceExternalId) AND uploaded rows from the streaming `categories`
+  // variant (default sourceSystem='seed', no sourceExternalId, but `code`
+  // is prefix-namespaced). Matching either column is safe because every
+  // category code we generate in tests is namespaced under `extIdPrefix`.
   await db
     .delete(categoriesTable)
     .where(
-      and(
-        eq(categoriesTable.sourceSystem, FIXTURE_SOURCE),
-        like(categoriesTable.sourceExternalId, `${extIdPrefix}%`),
+      or(
+        like(categoriesTable.code, `${extIdPrefix}%`),
+        and(
+          eq(categoriesTable.sourceSystem, FIXTURE_SOURCE),
+          like(categoriesTable.sourceExternalId, `${extIdPrefix}%`),
+        ),
       ),
     );
 }
