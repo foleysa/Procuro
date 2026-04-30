@@ -23,6 +23,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddWatchedIssuerRequest,
   ApproveOpportunityRequest,
   BillingSummary,
   BroadcastCollectorPosturePreview,
@@ -70,6 +71,7 @@ import type {
   ListMarketSignalsParams,
   ListOpportunitiesParams,
   ListSuppliersParams,
+  ListWatchedIssuersParams,
   MarketSignal,
   MeResponse,
   MockErpIngestRequest,
@@ -95,6 +97,8 @@ import type {
   TestErpConnectionResult,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
+  WatchedIssuer,
+  WatchedIssuerListResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -5473,4 +5477,286 @@ export const usePatchContract = <
   TContext
 > => {
   return useMutation(getPatchContractMutationOptions(options));
+};
+
+/**
+ * Returns the rows the active tenant has added to the watched-issuer
+registry. Each row names one company (by SEC CIK or UK Companies
+House number) the corporate-filing collectors should poll on this
+tenant's behalf. When the union of all tenants' rows is empty for
+a given source, that collector falls back to its built-in default
+list.
+
+ * @summary List the tenant's watched corporate filers
+ */
+export const getListWatchedIssuersUrl = (params?: ListWatchedIssuersParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/watched-issuers?${stringifiedParams}`
+    : `/api/watched-issuers`;
+};
+
+export const listWatchedIssuers = async (
+  params?: ListWatchedIssuersParams,
+  options?: RequestInit,
+): Promise<WatchedIssuerListResponse> => {
+  return customFetch<WatchedIssuerListResponse>(
+    getListWatchedIssuersUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListWatchedIssuersQueryKey = (
+  params?: ListWatchedIssuersParams,
+) => {
+  return [`/api/watched-issuers`, ...(params ? [params] : [])] as const;
+};
+
+export const getListWatchedIssuersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWatchedIssuers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListWatchedIssuersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWatchedIssuers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListWatchedIssuersQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listWatchedIssuers>>
+  > = ({ signal }) => listWatchedIssuers(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWatchedIssuers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWatchedIssuersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWatchedIssuers>>
+>;
+export type ListWatchedIssuersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List the tenant's watched corporate filers
+ */
+
+export function useListWatchedIssuers<
+  TData = Awaited<ReturnType<typeof listWatchedIssuers>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListWatchedIssuersParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWatchedIssuers>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWatchedIssuersQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Identifiers are normalised on the way in (SEC CIK is zero-padded
+to 10 digits, Companies House numbers are zero-padded to 8 chars
+with prefix upper-cased). Re-posting the same `(source, identifier)`
+for the active tenant returns 409.
+
+ * @summary Add one company to the tenant's watch list
+ */
+export const getAddWatchedIssuerUrl = () => {
+  return `/api/watched-issuers`;
+};
+
+export const addWatchedIssuer = async (
+  addWatchedIssuerRequest: AddWatchedIssuerRequest,
+  options?: RequestInit,
+): Promise<WatchedIssuer> => {
+  return customFetch<WatchedIssuer>(getAddWatchedIssuerUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addWatchedIssuerRequest),
+  });
+};
+
+export const getAddWatchedIssuerMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addWatchedIssuer>>,
+    TError,
+    { data: BodyType<AddWatchedIssuerRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addWatchedIssuer>>,
+  TError,
+  { data: BodyType<AddWatchedIssuerRequest> },
+  TContext
+> => {
+  const mutationKey = ["addWatchedIssuer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addWatchedIssuer>>,
+    { data: BodyType<AddWatchedIssuerRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return addWatchedIssuer(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddWatchedIssuerMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addWatchedIssuer>>
+>;
+export type AddWatchedIssuerMutationBody = BodyType<AddWatchedIssuerRequest>;
+export type AddWatchedIssuerMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add one company to the tenant's watch list
+ */
+export const useAddWatchedIssuer = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addWatchedIssuer>>,
+    TError,
+    { data: BodyType<AddWatchedIssuerRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addWatchedIssuer>>,
+  TError,
+  { data: BodyType<AddWatchedIssuerRequest> },
+  TContext
+> => {
+  return useMutation(getAddWatchedIssuerMutationOptions(options));
+};
+
+/**
+ * @summary Remove a watched issuer from the tenant's list
+ */
+export const getRemoveWatchedIssuerUrl = (id: string) => {
+  return `/api/watched-issuers/${id}`;
+};
+
+export const removeWatchedIssuer = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveWatchedIssuerUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveWatchedIssuerMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeWatchedIssuer>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeWatchedIssuer>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["removeWatchedIssuer"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeWatchedIssuer>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return removeWatchedIssuer(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveWatchedIssuerMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeWatchedIssuer>>
+>;
+
+export type RemoveWatchedIssuerMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Remove a watched issuer from the tenant's list
+ */
+export const useRemoveWatchedIssuer = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeWatchedIssuer>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeWatchedIssuer>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRemoveWatchedIssuerMutationOptions(options));
 };

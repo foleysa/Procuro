@@ -1708,6 +1708,81 @@ export interface TestErpConnectionResult {
 }
 
 /**
+ * Upstream feed for this watched-issuer row.
+- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)
+- `companies_house`  — UK Companies House (identifier = company number)
+
+ */
+export type WatchedIssuerSource =
+  (typeof WatchedIssuerSource)[keyof typeof WatchedIssuerSource];
+
+export const WatchedIssuerSource = {
+  sec_edgar: "sec_edgar",
+  companies_house: "companies_house",
+} as const;
+
+export interface WatchedIssuer {
+  id: string;
+  source: WatchedIssuerSource;
+  /** Source-native identifier as stored after normalisation. SEC
+CIK is zero-padded to 10 digits; Companies House numbers are
+zero-padded to 8 chars with the prefix upper-cased.
+ */
+  identifier: string;
+  name: string;
+  lei?: string | null;
+  ticker?: string | null;
+  /** Optional foreign key into the tenant's supplier master.
+   */
+  supplierUid?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
+}
+
+export interface WatchedIssuerListResponse {
+  items: WatchedIssuer[];
+}
+
+export interface AddWatchedIssuerRequest {
+  source: WatchedIssuerSource;
+  /**
+   * Source-native identifier. The server normalises on the way in
+(SEC CIK zero-padded to 10 digits; Companies House numbers
+zero-padded to 8 chars).
+
+   * @minLength 1
+   * @maxLength 40
+   */
+  identifier: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  lei?: string;
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  ticker?: string;
+  /**
+   * Optional supplier ID to link this issuer to. Must belong to
+the active tenant; the server returns 400 otherwise.
+
+   * @minLength 1
+   * @maxLength 80
+   */
+  supplierUid?: string;
+  /** @maxLength 2000 */
+  notes?: string;
+}
+
+/**
  * Not found
  */
 export type NotFoundResponse = ErrorResponse;
@@ -1975,3 +2050,7 @@ export const ListContractsStatus = {
   cancelled: "cancelled",
   expiring: "expiring",
 } as const;
+
+export type ListWatchedIssuersParams = {
+  source?: WatchedIssuerSource;
+};

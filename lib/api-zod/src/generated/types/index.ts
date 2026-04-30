@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./addWatchedIssuerRequest";
 export * from "./approveOpportunityRequest";
 export * from "./billingSummary";
 export * from "./billingSummaryByLeverItem";
@@ -140,6 +141,7 @@ export * from "./listMarketSignalsParams";
 export * from "./listOpportunitiesParams";
 export * from "./listOpportunitiesStatus";
 export * from "./listSuppliersParams";
+export * from "./listWatchedIssuersParams";
 export * from "./marketSignal";
 export * from "./meResponse";
 export * from "./mockErpIngestRequest";
@@ -208,3 +210,6 @@ export * from "./updateErpConnectionRequestCredentials";
 export * from "./updateErpConnectionRequestSettings";
 export * from "./updateErpConnectionRequestStatus";
 export * from "./updateJobKindSettingRequest";
+export * from "./watchedIssuer";
+export * from "./watchedIssuerListResponse";
+export * from "./watchedIssuerSource";

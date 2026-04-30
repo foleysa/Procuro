@@ -38,6 +38,8 @@ tags:
     description: ERP / source-system connectors (Org-Admin gated)
   - name: contracts
     description: Contracts directory + renewal calendar
+  - name: watched-issuers
+    description: Tenant-curated list of corporate filers to poll (SEC EDGAR, UK Companies House)
 
 paths:
   /healthz:
@@ -1592,6 +1594,83 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContractDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /watched-issuers:
+    get:
+      operationId: listWatchedIssuers
+      tags: [watched-issuers]
+      summary: List the tenant's watched corporate filers
+      description: |
+        Returns the rows the active tenant has added to the watched-issuer
+        registry. Each row names one company (by SEC CIK or UK Companies
+        House number) the corporate-filing collectors should poll on this
+        tenant's behalf. When the union of all tenants' rows is empty for
+        a given source, that collector falls back to its built-in default
+        list.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: query
+          name: source
+          required: false
+          schema:
+            $ref: "#/components/schemas/WatchedIssuerSource"
+      responses:
+        "200":
+          description: Watched issuers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedIssuerListResponse"
+    post:
+      operationId: addWatchedIssuer
+      tags: [watched-issuers]
+      summary: Add one company to the tenant's watch list
+      description: |
+        Identifiers are normalised on the way in (SEC CIK is zero-padded
+        to 10 digits, Companies House numbers are zero-padded to 8 chars
+        with prefix upper-cased). Re-posting the same `(source, identifier)`
+        for the active tenant returns 409.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddWatchedIssuerRequest"
+      responses:
+        "201":
+          description: Watched issuer created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchedIssuer"
+        "400":
+          description: Invalid identifier shape or supplier link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Identifier is already on the tenant's watch list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /watched-issuers/{id}:
+    delete:
+      operationId: removeWatchedIssuer
+      tags: [watched-issuers]
+      summary: Remove a watched issuer from the tenant's list
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: Removed
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -3353,3 +3432,74 @@ components:
         ok: { type: boolean }
         error: { type: string }
         details: {}
+
+    WatchedIssuerSource:
+      type: string
+      description: |
+        Upstream feed for this watched-issuer row.
+        - `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)
+        - `companies_house`  — UK Companies House (identifier = company number)
+      enum: [sec_edgar, companies_house]
+
+    WatchedIssuer:
+      type: object
+      required: [id, source, identifier, name, createdAt]
+      properties:
+        id: { type: string }
+        source:
+          $ref: "#/components/schemas/WatchedIssuerSource"
+        identifier:
+          type: string
+          description: |
+            Source-native identifier as stored after normalisation. SEC
+            CIK is zero-padded to 10 digits; Companies House numbers are
+            zero-padded to 8 chars with the prefix upper-cased.
+        name: { type: string }
+        lei: { type: string, nullable: true }
+        ticker: { type: string, nullable: true }
+        supplierUid:
+          type: string
+          nullable: true
+          description: |
+            Optional foreign key into the tenant's supplier master.
+        notes: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string, nullable: true }
+
+    WatchedIssuerListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WatchedIssuer"
+
+    AddWatchedIssuerRequest:
+      type: object
+      required: [source, identifier, name]
+      properties:
+        source:
+          $ref: "#/components/schemas/WatchedIssuerSource"
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: |
+            Source-native identifier. The server normalises on the way in
+            (SEC CIK zero-padded to 10 digits; Companies House numbers
+            zero-padded to 8 chars).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        lei: { type: string, minLength: 1, maxLength: 40 }
+        ticker: { type: string, minLength: 1, maxLength: 20 }
+        supplierUid:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: |
+            Optional supplier ID to link this issuer to. Must belong to
+            the active tenant; the server returns 400 otherwise.
+        notes: { type: string, maxLength: 2000 }

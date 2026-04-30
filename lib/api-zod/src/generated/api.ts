@@ -3082,3 +3082,126 @@ export const PatchContractResponse = zod
       ),
     }),
   );
+
+/**
+ * Returns the rows the active tenant has added to the watched-issuer
+registry. Each row names one company (by SEC CIK or UK Companies
+House number) the corporate-filing collectors should poll on this
+tenant's behalf. When the union of all tenants' rows is empty for
+a given source, that collector falls back to its built-in default
+list.
+
+ * @summary List the tenant's watched corporate filers
+ */
+export const ListWatchedIssuersQueryParams = zod.object({
+  source: zod.enum(["sec_edgar", "companies_house"]).optional(),
+});
+
+export const ListWatchedIssuersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListWatchedIssuersResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      source: zod
+        .enum(["sec_edgar", "companies_house"])
+        .describe(
+          "Upstream feed for this watched-issuer row.\n- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)\n- `companies_house`  — UK Companies House (identifier = company number)\n",
+        ),
+      identifier: zod
+        .string()
+        .describe(
+          "Source-native identifier as stored after normalisation. SEC\nCIK is zero-padded to 10 digits; Companies House numbers are\nzero-padded to 8 chars with the prefix upper-cased.\n",
+        ),
+      name: zod.string(),
+      lei: zod.string().nullish(),
+      ticker: zod.string().nullish(),
+      supplierUid: zod
+        .string()
+        .nullish()
+        .describe("Optional foreign key into the tenant's supplier master.\n"),
+      notes: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+      createdBy: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * Identifiers are normalised on the way in (SEC CIK is zero-padded
+to 10 digits, Companies House numbers are zero-padded to 8 chars
+with prefix upper-cased). Re-posting the same `(source, identifier)`
+for the active tenant returns 409.
+
+ * @summary Add one company to the tenant's watch list
+ */
+export const AddWatchedIssuerHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const addWatchedIssuerBodyIdentifierMax = 40;
+
+export const addWatchedIssuerBodyNameMax = 200;
+
+export const addWatchedIssuerBodyLeiMax = 40;
+
+export const addWatchedIssuerBodyTickerMax = 20;
+
+export const addWatchedIssuerBodySupplierUidMax = 80;
+
+export const addWatchedIssuerBodyNotesMax = 2000;
+
+export const AddWatchedIssuerBody = zod.object({
+  source: zod
+    .enum(["sec_edgar", "companies_house"])
+    .describe(
+      "Upstream feed for this watched-issuer row.\n- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)\n- `companies_house`  — UK Companies House (identifier = company number)\n",
+    ),
+  identifier: zod
+    .string()
+    .min(1)
+    .max(addWatchedIssuerBodyIdentifierMax)
+    .describe(
+      "Source-native identifier. The server normalises on the way in\n(SEC CIK zero-padded to 10 digits; Companies House numbers\nzero-padded to 8 chars).\n",
+    ),
+  name: zod.string().min(1).max(addWatchedIssuerBodyNameMax),
+  lei: zod.string().min(1).max(addWatchedIssuerBodyLeiMax).optional(),
+  ticker: zod.string().min(1).max(addWatchedIssuerBodyTickerMax).optional(),
+  supplierUid: zod
+    .string()
+    .min(1)
+    .max(addWatchedIssuerBodySupplierUidMax)
+    .optional()
+    .describe(
+      "Optional supplier ID to link this issuer to. Must belong to\nthe active tenant; the server returns 400 otherwise.\n",
+    ),
+  notes: zod.string().max(addWatchedIssuerBodyNotesMax).optional(),
+});
+
+/**
+ * @summary Remove a watched issuer from the tenant's list
+ */
+export const RemoveWatchedIssuerParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RemoveWatchedIssuerHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});

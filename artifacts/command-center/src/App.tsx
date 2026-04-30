@@ -28,6 +28,7 @@ import System from "./pages/system";
 import Ingest from "./pages/ingest";
 import Integrations from "./pages/integrations";
 import Settings from "./pages/settings";
+import WatchedCompanies from "./pages/watched-companies";
 import Admin from "./pages/admin";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
@@ -187,6 +188,7 @@ function AppRoutes() {
             <Route path="/system" component={System} />
             <Route path="/ingest" component={Ingest} />
             <Route path="/integrations" component={Integrations} />
+            <Route path="/watched-companies" component={WatchedCompanies} />
             <Route path="/settings" component={Settings} />
             <Route path="/admin">
               <AdminGuard>
