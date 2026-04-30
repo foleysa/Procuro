@@ -12,6 +12,12 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * `cancelled` is a distinct terminal state from `failed` and is
+only used for operator-initiated cancellations (it never
+results from infrastructure errors or exhausted retries).
+
+ */
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 
 export const JobStatus = {
@@ -19,4 +25,5 @@ export const JobStatus = {
   running: "running",
   succeeded: "succeeded",
   failed: "failed",
+  cancelled: "cancelled",
 } as const;

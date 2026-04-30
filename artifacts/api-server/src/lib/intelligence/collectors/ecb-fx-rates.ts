@@ -158,9 +158,10 @@ function ecbObservedAt(date: string): Date {
   return new Date(`${date}T15:00:00Z`);
 }
 
-async function fetchEcbFeed(): Promise<string> {
+async function fetchEcbFeed(signal?: AbortSignal): Promise<string> {
   const res = await fetch(ECB_DAILY_FEED_URL, {
     headers: { Accept: "application/xml, text/xml, */*" },
+    signal,
   });
   if (!res.ok) {
     throw new Error(
@@ -170,13 +171,14 @@ async function fetchEcbFeed(): Promise<string> {
   return await res.text();
 }
 
-async function fetchEcbHistoricalFeed(): Promise<{
+async function fetchEcbHistoricalFeed(signal?: AbortSignal): Promise<{
   xml: string;
   lastModified: string | null;
   etag: string | null;
 }> {
   const res = await fetch(ECB_HISTORICAL_FEED_URL, {
     headers: { Accept: "application/xml, text/xml, */*" },
+    signal,
   });
   if (!res.ok) {
     throw new Error(
@@ -377,8 +379,8 @@ export const ecbFxRatesCollector: IntelligenceCollector<typeof ecbSignalSchema> 
   stableSignalKey(draft) {
     return defaultStableSignalKey(ECB_FX_RATES_COLLECTOR_ID, draft);
   },
-  async collect({ since: _since }): Promise<MarketSignalDraft[]> {
-    const xml = await fetchEcbFeed();
+  async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
+    const xml = await fetchEcbFeed(signal);
     const feed = parseEcbDailyFeed(xml);
     return buildEcbDraftsForDay(feed, "ecb-eurofxref-daily");
   },

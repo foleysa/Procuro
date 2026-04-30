@@ -200,11 +200,11 @@ export const opensanctionsCollector: IntelligenceCollector<typeof opensanctionsS
   stableSignalKey(draft) {
     return defaultStableSignalKey(OPENSANCTIONS_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
-    const res = await fetch(OPENSANCTIONS_DEFAULT_URL);
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
+    const res = await fetch(OPENSANCTIONS_DEFAULT_URL, { signal });
     if (!res.ok) {
       throw new Error(`OpenSanctions HTTP ${res.status}`);
     }

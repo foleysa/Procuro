@@ -15,16 +15,18 @@ import type { JobCancelledStatus } from "./jobCancelledStatus";
 
 export interface JobCancelled {
   jobId: string;
-  /** `failed` when the job was `pending` and was transitioned
+  /** `cancelled` when the job was `pending` and was transitioned
 immediately, `running` when the cancel flag was set on a
-running job (the worker will mark it failed when the
+running job (the worker will mark it cancelled when the
 handler returns).
  */
   status: JobCancelledStatus;
   /** Always true on a successful response. */
   cancelRequested: boolean;
-  /** True if the job was pending and is now marked failed; false
-if the job was running and the cancel flag was set.
+  /** True if the job was pending and is now marked cancelled;
+false if the job was running and the cancel flag was set
+(the worker will finalize the cancellation on the next safe
+checkpoint).
  */
   cancelledImmediately: boolean;
 }

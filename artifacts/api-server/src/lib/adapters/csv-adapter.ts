@@ -268,7 +268,30 @@ export async function streamCsvEntity(
     if (buffer.length === 0) return;
     const chunk = buffer;
     buffer = [];
+    // Per-batch latency log (#73). Emitted as a structured event so an
+    // operator (or the System page CSV throughput card) can chart
+    // p50 / p95 latency over time without scraping free-form log
+    // messages. We log at info on every batch — flushBatch already
+    // batches inserts so the volume is bounded by `batchSize`.
+    const batchStart = Date.now();
     const inserted = await flushBatch(args.orgId, args.entity, chunk);
+    const batchDurationMs = Date.now() - batchStart;
+    const rowsPerSecond =
+      batchDurationMs > 0
+        ? Math.round((chunk.length / batchDurationMs) * 1000)
+        : null;
+    logger.info(
+      {
+        event: "csv_batch_latency_ms",
+        orgId: args.orgId,
+        entity: args.entity,
+        rows: chunk.length,
+        inserted,
+        durationMs: batchDurationMs,
+        rowsPerSecond,
+      },
+      "csv_batch_latency_ms",
+    );
     rowsInserted += inserted;
     await reportProgress();
   };

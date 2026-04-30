@@ -695,11 +695,64 @@ function downloadEntityTemplate(entity: EntityDef) {
   triggerDownload(blob, `${entity.key}-template.csv`);
 }
 
+function buildTemplatesReadme(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const entityRows = ENTITIES.map(
+    (e) => `- \`${e.key}-template.csv\` — ${e.label}`,
+  ).join("\n");
+  return `# Procuro CSV Templates
+
+Generated: ${today}
+
+This zip contains a CSV template for each entity Procuro can ingest.
+Each file has a single header row matching the columns the importer
+expects. Replace the example placeholders in the second row with your
+own data, or delete the example row entirely.
+
+## Files
+
+${entityRows}
+
+## How to use
+
+1. Open the template for the entity you want to load (for example
+   \`suppliers-template.csv\`) in your spreadsheet tool of choice.
+2. Fill in one row per record. Keep the header row exactly as it is —
+   the importer matches columns by name, not position.
+3. Save the file as UTF-8 CSV.
+4. In the Procuro Command Center, go to **Ingest**, pick the matching
+   entity tab, and drop the file into the upload area (or click
+   \`Choose file\` and select it).
+
+## Tips
+
+- All dates should be ISO-8601 (\`YYYY-MM-DD\` for dates, full
+  \`YYYY-MM-DDTHH:mm:ssZ\` for timestamps).
+- Money columns expect a plain decimal number; do not include a
+  currency symbol. Currency is its own column.
+- Foreign-key columns (for example \`supplierId\` on a contract) refer
+  to the natural key of the linked entity — for suppliers this is the
+  \`code\` column.
+- Empty cells are treated as null. Required columns will fail
+  validation if left blank.
+
+## Need a different template?
+
+Templates are regenerated from the live schema every time you click
+**Download all CSV templates** in the Command Center, so re-downloading
+this zip will always reflect the current importer contract.
+`;
+}
+
 async function downloadAllTemplates() {
   const zip = new JSZip();
   for (const entity of ENTITIES) {
     zip.file(`${entity.key}-template.csv`, buildEntityTemplateCsv(entity));
   }
+  // Per #97: include a README so the downloaded zip is self-describing
+  // — operators forwarding it to a partner do not have to write their
+  // own cover note explaining what each file is for.
+  zip.file("README.md", buildTemplatesReadme());
   const blob = await zip.generateAsync({ type: "blob" });
   triggerDownload(blob, "procuro-csv-templates.zip");
 }

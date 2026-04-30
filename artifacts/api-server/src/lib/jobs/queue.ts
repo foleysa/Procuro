@@ -336,6 +336,27 @@ export async function failJob(jobId: string, error: Error): Promise<void> {
     .where(eq(jobsTable.id, jobId));
 }
 
+/**
+ * Mark a job as `cancelled`. Distinct from `failJob` so the System UI
+ * can render a calm "Cancelled" badge instead of an alarming red
+ * "Failed" badge for jobs the operator stopped on purpose.
+ *
+ * The `error` column still records the cancellation message so any
+ * code that reads `error` (logs, BQ run records, retry filters) keeps
+ * working — only the terminal `status` differs.
+ */
+export async function cancelJob(jobId: string): Promise<void> {
+  await db
+    .update(jobsTable)
+    .set({
+      status: "cancelled",
+      error: CANCELLED_ERROR_MESSAGE,
+      completedAt: new Date(),
+      scheduledFor: null,
+    })
+    .where(eq(jobsTable.id, jobId));
+}
+
 /** Error message used when an operator cancels a job. */
 export const CANCELLED_ERROR_MESSAGE = "Cancelled by operator";
 
@@ -368,14 +389,16 @@ export async function requestJobCancellation(
 ): Promise<JobCancellationResult> {
   const now = new Date();
 
-  // Atomically transition pending -> failed in one statement so a worker
-  // claim cannot race the cancel. Also clear `scheduled_for` so a
-  // backoff-rescheduled row that the operator cancels mid-wait doesn't
-  // leave a stale next-retry time on the audit trail.
+  // Atomically transition pending -> cancelled in one statement so a
+  // worker claim cannot race the cancel. Also clear `scheduled_for` so
+  // a backoff-rescheduled row that the operator cancels mid-wait
+  // doesn't leave a stale next-retry time on the audit trail. We use
+  // the dedicated `cancelled` status (not `failed`) so the UI can show
+  // a calm Cancelled badge for operator-driven stops.
   const pendingResult = await db
     .update(jobsTable)
     .set({
-      status: "failed",
+      status: "cancelled",
       error: CANCELLED_ERROR_MESSAGE,
       cancelRequested: true,
       completedAt: now,
@@ -486,7 +509,7 @@ export async function processOnce(): Promise<boolean> {
     // override the terminal state so the job shows as cancelled instead of
     // succeeded — even if the handler ignored the flag.
     if (await isJobCancelRequested(job.id)) {
-      await failJob(job.id, new Error(CANCELLED_ERROR_MESSAGE));
+      await cancelJob(job.id);
       logger.info(
         { jobId: job.id, kind: job.kind },
         "Job cancelled after handler completion",
@@ -507,7 +530,7 @@ export async function processOnce(): Promise<boolean> {
         { jobId: job.id, kind: job.kind, err: e.message },
         "Job cancelled (handler exited with error)",
       );
-      await failJob(job.id, new Error(CANCELLED_ERROR_MESSAGE));
+      await cancelJob(job.id);
       return true;
     }
     // The worker incremented `attempts` when it claimed this job, so
@@ -639,6 +662,7 @@ export function getJobRetentionConfig(): JobRetentionConfig {
 export interface PruneJobsResult {
   succeededDeleted: number;
   failedDeleted: number;
+  cancelledDeleted: number;
   succeededOlderThanMs: number;
   failedOlderThanMs: number;
 }
@@ -648,6 +672,10 @@ export interface PruneJobsResult {
  * Always uses `completed_at` (never `enqueued_at`) so a long-running job
  * isn't deleted out from under the worker. Leaves `pending` and `running`
  * jobs untouched.
+ *
+ * Cancelled jobs share the failed-retention window: an operator-cancelled
+ * job is still a "did not succeed" terminal row, and operators want a
+ * comparable amount of time to review it before it ages out.
  */
 export async function pruneOldJobs(
   overrides: Partial<JobRetentionConfig> = {},
@@ -676,15 +704,24 @@ export async function pruneOldJobs(
       AND completed_at < ${failedCutoff}
     RETURNING id
   `);
+  const cancelledRes = await db.execute(sql`
+    DELETE FROM jobs
+    WHERE status = 'cancelled'
+      AND completed_at IS NOT NULL
+      AND completed_at < ${failedCutoff}
+    RETURNING id
+  `);
 
   const succeededDeleted = succeededRes.rows?.length ?? 0;
   const failedDeleted = failedRes.rows?.length ?? 0;
+  const cancelledDeleted = cancelledRes.rows?.length ?? 0;
 
-  if (succeededDeleted > 0 || failedDeleted > 0) {
+  if (succeededDeleted > 0 || failedDeleted > 0 || cancelledDeleted > 0) {
     logger.info(
       {
         succeededDeleted,
         failedDeleted,
+        cancelledDeleted,
         succeededOlderThanMs,
         failedOlderThanMs,
       },
@@ -695,6 +732,7 @@ export async function pruneOldJobs(
   return {
     succeededDeleted,
     failedDeleted,
+    cancelledDeleted,
     succeededOlderThanMs,
     failedOlderThanMs,
   };

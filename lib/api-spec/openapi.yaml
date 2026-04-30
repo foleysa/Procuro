@@ -1006,7 +1006,9 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
         - in: query
           name: status
-          schema: { type: string, enum: [pending, running, succeeded, failed] }
+          schema:
+            type: string
+            enum: [pending, running, succeeded, failed, cancelled]
         - in: query
           name: kind
           schema: { type: string }
@@ -1077,6 +1079,32 @@ paths:
                 $ref: "#/components/schemas/JobKindSetting"
         "400":
           description: Invalid kind or maxAttempts value
+    delete:
+      operationId: clearJobKindSetting
+      tags: [jobs]
+      summary: Clear a per-tenant retry-budget override
+      description: |
+        Removes the `job_kind_settings` row for this `(org, kind)` so the
+        next `enqueueJob` call falls back to the in-code default.
+        Idempotent: deleting an already-absent override returns 200 with
+        the default values.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [ingest_csv, ingest_mock_erp, run_analysis_cycle, run_collector]
+      responses:
+        "200":
+          description: Cleared setting (now reflects in-code default)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobKindSetting"
+        "400":
+          description: Invalid kind
 
   /jobs/{id}:
     get:
@@ -1125,13 +1153,18 @@ paths:
       description: |
         Cancels a job that is still `pending` or `running`.
 
-        - `pending` jobs are immediately marked `failed` with the error
+        - `pending` jobs are immediately marked `cancelled` with the error
           "Cancelled by operator".
         - `running` jobs have a cancellation flag set; the worker rewrites
-          the terminal state to `failed` once the handler returns at its
+          the terminal state to `cancelled` once the handler returns at its
           next safe checkpoint.
 
-        Already-terminal jobs (`succeeded` / `failed`) return 409.
+        `cancelled` is a distinct status from `failed` — operator-initiated
+        stops are not infrastructure failures, and surfacing them as a
+        separate badge keeps incident dashboards accurate.
+
+        Already-terminal jobs (`succeeded` / `failed` / `cancelled`)
+        return 409.
       parameters:
         - $ref: "#/components/parameters/OrgIdHeader"
         - $ref: "#/components/parameters/IdPath"
@@ -1858,6 +1891,42 @@ paths:
           description: Removed
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /system/cleanup/status:
+    get:
+      operationId: getSystemCleanupStatus
+      tags: [system]
+      summary: Most-recent prune-jobs run + retention windows
+      description: |
+        Returns the most recent `prune_jobs` row (regardless of status)
+        and the configured retention windows. Used by the System page to
+        show "Last cleanup at" and the next-eligible window. Cross-tenant
+        endpoint — gated by the platform-admin token.
+      responses:
+        "200":
+          description: Cleanup status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemCleanupStatus"
+
+  /system/cleanup/run:
+    post:
+      operationId: runSystemCleanup
+      tags: [system]
+      summary: Enqueue a prune_jobs run on demand
+      description: |
+        Enqueues a `prune_jobs` job (or returns the in-flight one if a
+        prune is already pending or running). Always returns 202 with
+        the job id so the caller can poll progress. Cross-tenant
+        endpoint — gated by the platform-admin token.
+      responses:
+        "202":
+          description: Cleanup enqueued (or already in-flight)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemCleanupRunAccepted"
 
 components:
   parameters:
@@ -3079,7 +3148,11 @@ components:
         kind: { type: string }
         status:
           type: string
-          enum: [pending, running, succeeded, failed]
+          enum: [pending, running, succeeded, failed, cancelled]
+          description: |
+            `cancelled` is a distinct terminal state from `failed` and is
+            only used for operator-initiated cancellations (it never
+            results from infrastructure errors or exhausted retries).
         attempts: { type: integer }
         maxAttempts:
           type: integer
@@ -3094,7 +3167,7 @@ components:
           type: boolean
           description: |
             True once an operator has requested cancellation. For `running`
-            jobs the worker will rewrite the terminal state to `failed`
+            jobs the worker will rewrite the terminal state to `cancelled`
             with error "Cancelled by operator" once the handler returns.
         enqueuedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
@@ -3139,6 +3212,21 @@ components:
           format: date-time
           nullable: true
           description: When the override was last written. Null when there is no override.
+        lastChangedBy:
+          type: string
+          nullable: true
+          description: |
+            Email/identifier of the operator who most recently wrote this
+            override. Null when no override exists, or when the override
+            was created before audit columns were introduced.
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Wall-clock timestamp of the most recent override write.
+            Mirrors `updatedAt` for new writes but is set explicitly so
+            it stays accurate across upsert paths.
 
     UpdateJobKindSettingRequest:
       type: object
@@ -3156,11 +3244,11 @@ components:
         jobId: { type: string }
         status:
           type: string
-          enum: [running, failed]
+          enum: [running, cancelled]
           description: |
-            `failed` when the job was `pending` and was transitioned
+            `cancelled` when the job was `pending` and was transitioned
             immediately, `running` when the cancel flag was set on a
-            running job (the worker will mark it failed when the
+            running job (the worker will mark it cancelled when the
             handler returns).
         cancelRequested:
           type: boolean
@@ -3168,8 +3256,72 @@ components:
         cancelledImmediately:
           type: boolean
           description: |
-            True if the job was pending and is now marked failed; false
-            if the job was running and the cancel flag was set.
+            True if the job was pending and is now marked cancelled;
+            false if the job was running and the cancel flag was set
+            (the worker will finalize the cancellation on the next safe
+            checkpoint).
+
+    SystemCleanupStatus:
+      type: object
+      required: [lastJob, activeJobId, retention]
+      properties:
+        lastJob:
+          nullable: true
+          type: object
+          required: [id, status, enqueuedAt]
+          properties:
+            id: { type: string }
+            status:
+              type: string
+              enum: [pending, running, succeeded, failed, cancelled]
+            enqueuedAt: { type: string, format: date-time }
+            startedAt: { type: string, format: date-time, nullable: true }
+            completedAt: { type: string, format: date-time, nullable: true }
+            result:
+              type: object
+              additionalProperties: true
+              nullable: true
+            error: { type: string, nullable: true }
+        activeJobId:
+          type: string
+          nullable: true
+          description: |
+            ID of an in-flight `prune_jobs` row (status pending or
+            running), or null when no prune is scheduled. The UI uses
+            this to disable the "Run cleanup now" button while a prune
+            is already queued.
+        retention:
+          type: object
+          required: [succeededOlderThanMs, failedOlderThanMs]
+          properties:
+            succeededOlderThanMs: { type: integer }
+            failedOlderThanMs:
+              type: integer
+              description: |
+                Retention window for both `failed` and `cancelled` jobs.
+                Operator-cancelled jobs share the failed window because
+                they're equivalent "did not succeed" terminal rows for
+                review purposes.
+
+    SystemCleanupRunAccepted:
+      type: object
+      required: [jobId, status, reused]
+      properties:
+        jobId:
+          type: string
+          nullable: true
+          description: |
+            ID of the `prune_jobs` row that will (or already does)
+            handle this request. Null only in the rare race where the
+            in-flight job completed between the two queries.
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        reused:
+          type: boolean
+          description: |
+            True when an existing in-flight prune job satisfied the
+            request; false when a new job was enqueued.
 
     SyncResultResponse:
       type: object

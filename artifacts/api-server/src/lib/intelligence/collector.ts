@@ -155,18 +155,27 @@ export interface IntelligenceCollector<
    * `since` is a watermark — the collector should return signals observed
    * after this time. The runtime enforces robots.txt (where applicable),
    * rate limits, retries, and the kill switch.
+   *
+   * `signal` is an optional `AbortSignal` propagated from the runtime.
+   * Collectors should thread it through every outbound `fetch()` so an
+   * operator-initiated cancel can interrupt an in-flight HTTP request
+   * without waiting for it to time out naturally.
    */
   collect(args: {
     since: Date | null;
+    signal?: AbortSignal;
   }): Promise<MarketSignalDraft[]>;
 
   /**
    * Optional: run a collection pass and surface the upstream payload
    * bytes alongside the parsed drafts so the runtime can land them in
    * GCS for replay. When implemented, the runtime prefers this method
-   * over `collect()`.
+   * over `collect()`. Same `signal` semantics as `collect()`.
    */
-  collectWithRaw?(args: { since: Date | null }): Promise<CollectWithRawResult>;
+  collectWithRaw?(args: {
+    since: Date | null;
+    signal?: AbortSignal;
+  }): Promise<CollectWithRawResult>;
 }
 
 /**

@@ -321,6 +321,31 @@ export async function runCollector(
 
   const runId = newId("run");
   const runStartedAt = new Date();
+  // AbortController bridges cooperative cancellation into in-flight HTTP
+  // requests inside the collector. We poll `isCancelled` in parallel
+  // with the collect call so an operator-cancel doesn't have to wait
+  // for the upstream fetch to complete (or time out) before the runtime
+  // notices. The poll interval is short enough to feel responsive but
+  // long enough not to thrash the DB; the runtime already does another
+  // pre-persist `checkCancel` immediately after collect returns.
+  const abortController = new AbortController();
+  let cancelPollHandle: ReturnType<typeof setInterval> | null = null;
+  if (opts.isCancelled) {
+    cancelPollHandle = setInterval(() => {
+      void opts
+        .isCancelled?.()
+        .then((cancelled) => {
+          if (cancelled && !abortController.signal.aborted) {
+            abortController.abort(new Error(CANCELLED_ERROR_MESSAGE));
+          }
+        })
+        .catch(() => {
+          // Treat poll errors as "not cancelled" — the post-collect
+          // checkCancel will raise correctly if the DB really is
+          // unreachable.
+        });
+    }, 500);
+  }
   try {
     await checkCancel();
     await audit(collectorId, "fetch_started", { runId });
@@ -333,11 +358,17 @@ export async function runCollector(
     let drafts: MarketSignalDraft[];
     let rawPayloads: RawPayload[] = [];
     if (typeof collector.collectWithRaw === "function") {
-      const r = await collector.collectWithRaw({ since: null });
+      const r = await collector.collectWithRaw({
+        since: null,
+        signal: abortController.signal,
+      });
       drafts = r.drafts;
       rawPayloads = r.rawPayloads;
     } else {
-      drafts = await collector.collect({ since: null });
+      drafts = await collector.collect({
+        since: null,
+        signal: abortController.signal,
+      });
       // Synthesize a JSON snapshot of the parsed drafts so every run —
       // not just the ones whose collector implements collectWithRaw —
       // lands a replayable artifact in GCS. The snapshot carries every
@@ -569,6 +600,8 @@ export async function runCollector(
       }
     }
     throw e;
+  } finally {
+    if (cancelPollHandle) clearInterval(cancelPollHandle);
   }
 }
 

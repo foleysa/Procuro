@@ -102,6 +102,8 @@ import type {
   SupplierIntelligenceResponse,
   SupplierListResponse,
   SyncResultResponse,
+  SystemCleanupRunAccepted,
+  SystemCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
   UpdateErpConnectionRequest,
@@ -3804,6 +3806,135 @@ export const useUpdateJobKindSetting = <
 };
 
 /**
+ * Removes the `job_kind_settings` row for this `(org, kind)` so the
+next `enqueueJob` call falls back to the in-code default.
+Idempotent: deleting an already-absent override returns 200 with
+the default values.
+
+ * @summary Clear a per-tenant retry-budget override
+ */
+export const getClearJobKindSettingUrl = (
+  kind:
+    | "ingest_csv"
+    | "ingest_mock_erp"
+    | "run_analysis_cycle"
+    | "run_collector",
+) => {
+  return `/api/jobs/settings/${kind}`;
+};
+
+export const clearJobKindSetting = async (
+  kind:
+    | "ingest_csv"
+    | "ingest_mock_erp"
+    | "run_analysis_cycle"
+    | "run_collector",
+  options?: RequestInit,
+): Promise<JobKindSetting> => {
+  return customFetch<JobKindSetting>(getClearJobKindSettingUrl(kind), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getClearJobKindSettingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearJobKindSetting>>,
+    TError,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearJobKindSetting>>,
+  TError,
+  {
+    kind:
+      | "ingest_csv"
+      | "ingest_mock_erp"
+      | "run_analysis_cycle"
+      | "run_collector";
+  },
+  TContext
+> => {
+  const mutationKey = ["clearJobKindSetting"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearJobKindSetting>>,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+    }
+  > = (props) => {
+    const { kind } = props ?? {};
+
+    return clearJobKindSetting(kind, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearJobKindSettingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearJobKindSetting>>
+>;
+
+export type ClearJobKindSettingMutationError = ErrorType<void>;
+
+/**
+ * @summary Clear a per-tenant retry-budget override
+ */
+export const useClearJobKindSetting = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearJobKindSetting>>,
+    TError,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearJobKindSetting>>,
+  TError,
+  {
+    kind:
+      | "ingest_csv"
+      | "ingest_mock_erp"
+      | "run_analysis_cycle"
+      | "run_collector";
+  },
+  TContext
+> => {
+  return useMutation(getClearJobKindSettingMutationOptions(options));
+};
+
+/**
  * @summary Get an async job's status + result
  */
 export const getGetJobUrl = (id: string) => {
@@ -3968,13 +4099,18 @@ export const useRetryJob = <
 /**
  * Cancels a job that is still `pending` or `running`.
 
-- `pending` jobs are immediately marked `failed` with the error
+- `pending` jobs are immediately marked `cancelled` with the error
   "Cancelled by operator".
 - `running` jobs have a cancellation flag set; the worker rewrites
-  the terminal state to `failed` once the handler returns at its
+  the terminal state to `cancelled` once the handler returns at its
   next safe checkpoint.
 
-Already-terminal jobs (`succeeded` / `failed`) return 409.
+`cancelled` is a distinct status from `failed` — operator-initiated
+stops are not infrastructure failures, and surfacing them as a
+separate badge keeps incident dashboards accurate.
+
+Already-terminal jobs (`succeeded` / `failed` / `cancelled`)
+return 409.
 
  * @summary Cancel a pending or running job
  */
@@ -6338,4 +6474,171 @@ export const useRemoveWatchedIssuer = <
   TContext
 > => {
   return useMutation(getRemoveWatchedIssuerMutationOptions(options));
+};
+
+/**
+ * Returns the most recent `prune_jobs` row (regardless of status)
+and the configured retention windows. Used by the System page to
+show "Last cleanup at" and the next-eligible window. Cross-tenant
+endpoint — gated by the platform-admin token.
+
+ * @summary Most-recent prune-jobs run + retention windows
+ */
+export const getGetSystemCleanupStatusUrl = () => {
+  return `/api/system/cleanup/status`;
+};
+
+export const getSystemCleanupStatus = async (
+  options?: RequestInit,
+): Promise<SystemCleanupStatus> => {
+  return customFetch<SystemCleanupStatus>(getGetSystemCleanupStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSystemCleanupStatusQueryKey = () => {
+  return [`/api/system/cleanup/status`] as const;
+};
+
+export const getGetSystemCleanupStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemCleanupStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemCleanupStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemCleanupStatus>>
+  > = ({ signal }) => getSystemCleanupStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemCleanupStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemCleanupStatus>>
+>;
+export type GetSystemCleanupStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Most-recent prune-jobs run + retention windows
+ */
+
+export function useGetSystemCleanupStatus<
+  TData = Awaited<ReturnType<typeof getSystemCleanupStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSystemCleanupStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Enqueues a `prune_jobs` job (or returns the in-flight one if a
+prune is already pending or running). Always returns 202 with
+the job id so the caller can poll progress. Cross-tenant
+endpoint — gated by the platform-admin token.
+
+ * @summary Enqueue a prune_jobs run on demand
+ */
+export const getRunSystemCleanupUrl = () => {
+  return `/api/system/cleanup/run`;
+};
+
+export const runSystemCleanup = async (
+  options?: RequestInit,
+): Promise<SystemCleanupRunAccepted> => {
+  return customFetch<SystemCleanupRunAccepted>(getRunSystemCleanupUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRunSystemCleanupMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSystemCleanup>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runSystemCleanup>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["runSystemCleanup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runSystemCleanup>>,
+    void
+  > = () => {
+    return runSystemCleanup(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunSystemCleanupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runSystemCleanup>>
+>;
+
+export type RunSystemCleanupMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Enqueue a prune_jobs run on demand
+ */
+export const useRunSystemCleanup = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSystemCleanup>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runSystemCleanup>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getRunSystemCleanupMutationOptions(options));
 };

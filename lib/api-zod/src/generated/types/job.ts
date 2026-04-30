@@ -18,6 +18,10 @@ export interface Job {
   id: string;
   orgId?: string | null;
   kind: string;
+  /** `cancelled` is a distinct terminal state from `failed` and is
+only used for operator-initiated cancellations (it never
+results from infrastructure errors or exhausted retries).
+ */
   status: JobStatus;
   attempts: number;
   /** Total automatic-attempt budget (initial run + auto-retries).
@@ -29,7 +33,7 @@ and marks the job `failed`.
   result?: JobResult;
   error?: string | null;
   /** True once an operator has requested cancellation. For `running`
-jobs the worker will rewrite the terminal state to `failed`
+jobs the worker will rewrite the terminal state to `cancelled`
 with error "Cancelled by operator" once the handler returns.
  */
   cancelRequested?: boolean;

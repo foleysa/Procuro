@@ -12,10 +12,10 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export type ListJobsStatus =
-  (typeof ListJobsStatus)[keyof typeof ListJobsStatus];
+export type SystemCleanupRunAcceptedStatus =
+  (typeof SystemCleanupRunAcceptedStatus)[keyof typeof SystemCleanupRunAcceptedStatus];
 
-export const ListJobsStatus = {
+export const SystemCleanupRunAcceptedStatus = {
   pending: "pending",
   running: "running",
   succeeded: "succeeded",

@@ -117,6 +117,7 @@ export function buildFredDraftForObservation(
 async function fetchLatestObservation(
   seriesId: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<FredObservation | null> {
   const url = new URL(`${FRED_API_BASE}/series/observations`);
   url.searchParams.set("series_id", seriesId);
@@ -127,6 +128,7 @@ async function fetchLatestObservation(
 
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
+    signal,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -296,7 +298,7 @@ export const fredEconomicIndexCollector: IntelligenceCollector<
   stableSignalKey(draft) {
     return defaultStableSignalKey(FRED_ECONOMIC_INDEX_COLLECTOR_ID, draft);
   },
-  async collect({ since: _since }): Promise<MarketSignalDraft[]> {
+  async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
     const apiKey = process.env["FRED_API_KEY"];
     if (!apiKey) {
       throw new Error(
@@ -310,7 +312,7 @@ export const fredEconomicIndexCollector: IntelligenceCollector<
     for (const series of FRED_SERIES) {
       let obs: FredObservation | null;
       try {
-        obs = await fetchLatestObservation(series.seriesId, apiKey);
+        obs = await fetchLatestObservation(series.seriesId, apiKey, signal);
       } catch (err) {
         // A single bad series id shouldn't kill the whole run, but we
         // track failures so we can surface them — and so we can throw

@@ -148,9 +148,13 @@ const gleifSignalSchema = buildSignalDraftSchema(gleifMetadataSchema);
 async function fetchGleifPage(
   page: number,
   pageSize: number,
+  signal?: AbortSignal,
 ): Promise<{ url: string; body: string; parsed: GleifResponse }> {
   const url = `${GLEIF_BASE_URL}?page[number]=${page}&page[size]=${pageSize}&sort=-attributes.registration.lastUpdateDate`;
-  const res = await fetch(url, { headers: { Accept: "application/vnd.api+json" } });
+  const res = await fetch(url, {
+    headers: { Accept: "application/vnd.api+json" },
+    signal,
+  });
   const body = await res.text();
   if (!res.ok) {
     throw new Error(`GLEIF HTTP ${res.status} (page ${page})`);
@@ -192,11 +196,11 @@ export const gleifLeiCollector: IntelligenceCollector<typeof gleifSignalSchema> 
   stableSignalKey(draft) {
     return defaultStableSignalKey(GLEIF_LEI_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
-    const r = await fetchGleifPage(1, GLEIF_DEFAULT_PAGE_SIZE);
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
+    const r = await fetchGleifPage(1, GLEIF_DEFAULT_PAGE_SIZE, signal);
     const drafts = parseGleifResponse(r.parsed);
     const enriched = await attachGleifEntityUids(drafts);
     const rawPayloads: RawPayload[] = [

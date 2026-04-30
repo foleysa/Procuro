@@ -36,4 +36,14 @@ table; false when it falls back to `defaultMaxAttempts`.
   isOverride: boolean;
   /** When the override was last written. Null when there is no override. */
   updatedAt?: Date | null;
+  /** Email/identifier of the operator who most recently wrote this
+override. Null when no override exists, or when the override
+was created before audit columns were introduced.
+ */
+  lastChangedBy?: string | null;
+  /** Wall-clock timestamp of the most recent override write.
+Mirrors `updatedAt` for new writes but is set explicitly so
+it stays accurate across upsert paths.
+ */
+  lastChangedAt?: Date | null;
 }

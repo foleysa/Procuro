@@ -1999,7 +1999,9 @@ export const ListJobsQueryParams = zod.object({
     .min(1)
     .max(listJobsQueryLimitMax)
     .default(listJobsQueryLimitDefault),
-  status: zod.enum(["pending", "running", "succeeded", "failed"]).optional(),
+  status: zod
+    .enum(["pending", "running", "succeeded", "failed", "cancelled"])
+    .optional(),
   kind: zod.coerce.string().optional(),
 });
 
@@ -2016,7 +2018,11 @@ export const ListJobsResponseItem = zod.object({
   id: zod.string(),
   orgId: zod.string().nullish(),
   kind: zod.string(),
-  status: zod.enum(["pending", "running", "succeeded", "failed"]),
+  status: zod
+    .enum(["pending", "running", "succeeded", "failed", "cancelled"])
+    .describe(
+      "`cancelled` is a distinct terminal state from `failed` and is\nonly used for operator-initiated cancellations (it never\nresults from infrastructure errors or exhausted retries).\n",
+    ),
   attempts: zod.number(),
   maxAttempts: zod
     .number()
@@ -2030,7 +2036,7 @@ export const ListJobsResponseItem = zod.object({
     .boolean()
     .optional()
     .describe(
-      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `failed`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `cancelled`\nwith error \"Cancelled by operator\" once the handler returns.\n',
     ),
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
@@ -2092,6 +2098,18 @@ export const ListJobKindSettingsResponseItem = zod.object({
     .nullish()
     .describe(
       "When the override was last written. Null when there is no override.",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullish()
+    .describe(
+      "Email\/identifier of the operator who most recently wrote this\noverride. Null when no override exists, or when the override\nwas created before audit columns were introduced.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Wall-clock timestamp of the most recent override write.\nMirrors `updatedAt` for new writes but is set explicitly so\nit stays accurate across upsert paths.\n",
     ),
 });
 export const ListJobKindSettingsResponse = zod.array(
@@ -2160,6 +2178,88 @@ export const UpdateJobKindSettingResponse = zod.object({
     .describe(
       "When the override was last written. Null when there is no override.",
     ),
+  lastChangedBy: zod
+    .string()
+    .nullish()
+    .describe(
+      "Email\/identifier of the operator who most recently wrote this\noverride. Null when no override exists, or when the override\nwas created before audit columns were introduced.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Wall-clock timestamp of the most recent override write.\nMirrors `updatedAt` for new writes but is set explicitly so\nit stays accurate across upsert paths.\n",
+    ),
+});
+
+/**
+ * Removes the `job_kind_settings` row for this `(org, kind)` so the
+next `enqueueJob` call falls back to the in-code default.
+Idempotent: deleting an already-absent override returns 200 with
+the default values.
+
+ * @summary Clear a per-tenant retry-budget override
+ */
+export const ClearJobKindSettingParams = zod.object({
+  kind: zod.enum([
+    "ingest_csv",
+    "ingest_mock_erp",
+    "run_analysis_cycle",
+    "run_collector",
+  ]),
+});
+
+export const ClearJobKindSettingHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ClearJobKindSettingResponse = zod.object({
+  kind: zod.enum([
+    "ingest_csv",
+    "ingest_mock_erp",
+    "run_analysis_cycle",
+    "run_collector",
+  ]),
+  maxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "Effective auto-retry budget for this kind: operator override if\none is set, otherwise the in-code default.\n",
+    ),
+  defaultMaxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "The in-code default for this kind. Shown in the UI so operators\ncan see what value the system would fall back to if the\noverride were removed.\n",
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when `maxAttempts` comes from the `job_kind_settings`\ntable; false when it falls back to `defaultMaxAttempts`.\n",
+    ),
+  updatedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When the override was last written. Null when there is no override.",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullish()
+    .describe(
+      "Email\/identifier of the operator who most recently wrote this\noverride. Null when no override exists, or when the override\nwas created before audit columns were introduced.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Wall-clock timestamp of the most recent override write.\nMirrors `updatedAt` for new writes but is set explicitly so\nit stays accurate across upsert paths.\n",
+    ),
 });
 
 /**
@@ -2182,7 +2282,11 @@ export const GetJobResponse = zod.object({
   id: zod.string(),
   orgId: zod.string().nullish(),
   kind: zod.string(),
-  status: zod.enum(["pending", "running", "succeeded", "failed"]),
+  status: zod
+    .enum(["pending", "running", "succeeded", "failed", "cancelled"])
+    .describe(
+      "`cancelled` is a distinct terminal state from `failed` and is\nonly used for operator-initiated cancellations (it never\nresults from infrastructure errors or exhausted retries).\n",
+    ),
   attempts: zod.number(),
   maxAttempts: zod
     .number()
@@ -2196,7 +2300,7 @@ export const GetJobResponse = zod.object({
     .boolean()
     .optional()
     .describe(
-      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `failed`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `cancelled`\nwith error \"Cancelled by operator\" once the handler returns.\n',
     ),
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
@@ -2231,13 +2335,18 @@ export const RetryJobHeader = zod.object({
 /**
  * Cancels a job that is still `pending` or `running`.
 
-- `pending` jobs are immediately marked `failed` with the error
+- `pending` jobs are immediately marked `cancelled` with the error
   "Cancelled by operator".
 - `running` jobs have a cancellation flag set; the worker rewrites
-  the terminal state to `failed` once the handler returns at its
+  the terminal state to `cancelled` once the handler returns at its
   next safe checkpoint.
 
-Already-terminal jobs (`succeeded` / `failed`) return 409.
+`cancelled` is a distinct status from `failed` — operator-initiated
+stops are not infrastructure failures, and surfacing them as a
+separate badge keeps incident dashboards accurate.
+
+Already-terminal jobs (`succeeded` / `failed` / `cancelled`)
+return 409.
 
  * @summary Cancel a pending or running job
  */
@@ -3754,4 +3863,46 @@ export const RemoveWatchedIssuerHeader = zod.object({
     .describe(
       "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
     ),
+});
+
+/**
+ * Returns the most recent `prune_jobs` row (regardless of status)
+and the configured retention windows. Used by the System page to
+show "Last cleanup at" and the next-eligible window. Cross-tenant
+endpoint — gated by the platform-admin token.
+
+ * @summary Most-recent prune-jobs run + retention windows
+ */
+export const GetSystemCleanupStatusResponse = zod.object({
+  lastJob: zod
+    .object({
+      id: zod.string(),
+      status: zod.enum([
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+      ]),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      result: zod.record(zod.string(), zod.unknown()).nullish(),
+      error: zod.string().nullish(),
+    })
+    .nullable(),
+  activeJobId: zod
+    .string()
+    .nullable()
+    .describe(
+      'ID of an in-flight `prune_jobs` row (status pending or\nrunning), or null when no prune is scheduled. The UI uses\nthis to disable the \"Run cleanup now\" button while a prune\nis already queued.\n',
+    ),
+  retention: zod.object({
+    succeededOlderThanMs: zod.number(),
+    failedOlderThanMs: zod
+      .number()
+      .describe(
+        'Retention window for both `failed` and `cancelled` jobs.\nOperator-cancelled jobs share the failed window because\nthey\'re equivalent \"did not succeed\" terminal rows for\nreview purposes.\n',
+      ),
+  }),
 });

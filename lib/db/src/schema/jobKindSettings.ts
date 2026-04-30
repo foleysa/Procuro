@@ -36,6 +36,23 @@ export const jobKindSettingsTable = pgTable(
       .notNull()
       .defaultNow()
       .$onUpdate(() => new Date()),
+    /**
+     * Email/identifier of the operator who last edited this override.
+     * Captured from `req.actorEmail` (the resolved tenant actor) on the
+     * write that produced the row. Surfaced in the System page so an
+     * operator looking at a custom retry budget can see *who* made the
+     * call to deviate from the default — important on a shared admin
+     * surface where multiple humans can tune retries.
+     */
+    lastChangedBy: text("last_changed_by"),
+    /**
+     * Wall-clock timestamp of the most recent override write. Mirrors
+     * `updatedAt` for now (drizzle's `$onUpdate` only fires on `.update`,
+     * not on conflict-do-update upserts), but is set explicitly by the
+     * route so the audit value is always accurate even when the row was
+     * inserted via the upsert path.
+     */
+    lastChangedAt: timestamp("last_changed_at", { withTimezone: true }),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.orgId, t.kind] }),

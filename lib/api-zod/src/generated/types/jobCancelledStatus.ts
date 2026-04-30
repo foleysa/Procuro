@@ -13,9 +13,9 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 
 /**
- * `failed` when the job was `pending` and was transitioned
+ * `cancelled` when the job was `pending` and was transitioned
 immediately, `running` when the cancel flag was set on a
-running job (the worker will mark it failed when the
+running job (the worker will mark it cancelled when the
 handler returns).
 
  */
@@ -24,5 +24,5 @@ export type JobCancelledStatus =
 
 export const JobCancelledStatus = {
   running: "running",
-  failed: "failed",
+  cancelled: "cancelled",
 } as const;

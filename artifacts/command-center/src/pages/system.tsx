@@ -3,11 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   getListJobsQueryKey,
   getListJobKindSettingsQueryKey,
+  getGetSystemCleanupStatusQueryKey,
   useListJobs,
   useListJobKindSettings,
   useRetryJob,
   useCancelJob,
   useUpdateJobKindSetting,
+  useClearJobKindSetting,
+  useGetSystemCleanupStatus,
+  useRunSystemCleanup,
   ListJobsStatus,
   type Job,
   type JobKindSetting,
@@ -44,6 +48,9 @@ import {
   Ban,
   Save,
   Settings2,
+  Trash2,
+  Activity,
+  Gauge,
 } from "lucide-react";
 
 const STATUS_OPTS: { v: string; l: string }[] = [
@@ -52,6 +59,7 @@ const STATUS_OPTS: { v: string; l: string }[] = [
   { v: ListJobsStatus.running, l: "Running" },
   { v: ListJobsStatus.succeeded, l: "Succeeded" },
   { v: ListJobsStatus.failed, l: "Failed" },
+  { v: ListJobsStatus.cancelled, l: "Cancelled" },
 ];
 
 const KIND_OPTS: { v: string; l: string }[] = [
@@ -77,6 +85,11 @@ const STATUS_BADGE: Record<string, string> = {
   succeeded:
     "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
   failed: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  // Cancelled jobs are operator-initiated terminal rows. Keep them
+  // visually distinct from `failed` (which means "the system tried and
+  // could not"): amber on slate to read as "intentional stop".
+  cancelled:
+    "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
@@ -85,6 +98,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
     running: PlayCircle,
     succeeded: CheckCircle2,
     failed: AlertCircle,
+    cancelled: Ban,
   };
 
 function durationLabel(job: Job): string {
@@ -133,10 +147,18 @@ const KIND_DESCRIPTION: Record<string, string> = {
 interface RetryBudgetRowProps {
   setting: JobKindSetting;
   onSave: (kind: JobKindSetting["kind"], maxAttempts: number) => void;
+  onClear: (kind: JobKindSetting["kind"]) => void;
   isSaving: boolean;
+  isClearing: boolean;
 }
 
-function RetryBudgetRow({ setting, onSave, isSaving }: RetryBudgetRowProps) {
+function RetryBudgetRow({
+  setting,
+  onSave,
+  onClear,
+  isSaving,
+  isClearing,
+}: RetryBudgetRowProps) {
   // Local input state so the operator can type freely without each
   // keystroke triggering a network round-trip. Re-syncs whenever the
   // server value changes (after a save, or when the list refetches).
@@ -207,23 +229,54 @@ function RetryBudgetRow({ setting, onSave, isSaving }: RetryBudgetRowProps) {
         )}
       </td>
       <td className="py-2 pr-4 text-xs text-muted-foreground">
-        {setting.updatedAt ? formatDateTime(setting.updatedAt) : "—"}
+        {setting.lastChangedAt
+          ? formatDateTime(setting.lastChangedAt)
+          : setting.updatedAt
+            ? formatDateTime(setting.updatedAt)
+            : "—"}
+        {setting.lastChangedBy ? (
+          <div
+            className="text-[11px] text-muted-foreground"
+            data-testid={`text-last-changed-by-${setting.kind}`}
+          >
+            by {setting.lastChangedBy}
+          </div>
+        ) : null}
       </td>
       <td className="py-2 pr-2 text-right">
-        <Button
-          data-testid={`btn-save-${setting.kind}`}
-          size="sm"
-          variant="outline"
-          disabled={!isDirty || isSaving}
-          onClick={() => onSave(setting.kind, parsed)}
-        >
-          {isSaving ? (
-            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-          ) : (
-            <Save className="w-3 h-3 mr-1" />
+        <div className="flex justify-end gap-2">
+          <Button
+            data-testid={`btn-save-${setting.kind}`}
+            size="sm"
+            variant="outline"
+            disabled={!isDirty || isSaving || isClearing}
+            onClick={() => onSave(setting.kind, parsed)}
+          >
+            {isSaving ? (
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            ) : (
+              <Save className="w-3 h-3 mr-1" />
+            )}
+            Save
+          </Button>
+          {setting.isOverride && (
+            <Button
+              data-testid={`btn-clear-${setting.kind}`}
+              size="sm"
+              variant="ghost"
+              disabled={isSaving || isClearing}
+              onClick={() => onClear(setting.kind)}
+              title="Remove this override and revert to the in-code default."
+            >
+              {isClearing ? (
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              ) : (
+                <Trash2 className="w-3 h-3 mr-1" />
+              )}
+              Clear
+            </Button>
           )}
-          Save
-        </Button>
+        </div>
       </td>
     </tr>
   );
@@ -268,7 +321,7 @@ export default function System() {
   const jobs = data ?? [];
 
   const counts = useMemo(() => {
-    const c = { pending: 0, running: 0, succeeded: 0, failed: 0 };
+    const c = { pending: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 };
     for (const j of jobs) {
       if (j.status in c) c[j.status as keyof typeof c] += 1;
     }
@@ -305,8 +358,8 @@ export default function System() {
             ? "Job cancelled"
             : "Cancellation requested",
           description: resp.cancelledImmediately
-            ? `Job ${resp.jobId} was pending and is now marked failed.`
-            : `Job ${resp.jobId} is running; it will be marked failed at the next safe checkpoint.`,
+            ? `Job ${resp.jobId} was pending and is now marked cancelled.`
+            : `Job ${resp.jobId} is running; it will be marked cancelled at the next safe checkpoint.`,
         });
         qc.invalidateQueries({ queryKey });
         qc.invalidateQueries({ queryKey: ["/api/jobs"] });
@@ -348,6 +401,98 @@ export default function System() {
     },
   });
 
+  const clearSettingM = useClearJobKindSetting({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Override cleared",
+          description: `${KIND_LABEL[resp.kind] ?? resp.kind} reverted to the in-code default of ${resp.maxAttempts}.`,
+        });
+        qc.invalidateQueries({ queryKey: settingsQueryKey });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not clear override",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  // Cleanup status (#74 / #75 / #76). Polls every 5s when a prune is
+  // already pending or running so the operator sees the cleanup job
+  // appear and resolve in real time.
+  const cleanupQueryKey = useMemo(
+    () => getGetSystemCleanupStatusQueryKey(),
+    [],
+  );
+  const cleanupQuery = useGetSystemCleanupStatus({
+    query: {
+      queryKey: cleanupQueryKey,
+      refetchInterval: (query) => {
+        const data = query.state.data as
+          | { activeJobId: string | null }
+          | undefined;
+        return data && data.activeJobId ? 5000 : false;
+      },
+    },
+  });
+  const runCleanupM = useRunSystemCleanup({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Cleanup queued",
+          description: `Prune job ${resp.jobId} is ${resp.status}.`,
+        });
+        qc.invalidateQueries({ queryKey: cleanupQueryKey });
+        qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not run cleanup",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  // CSV throughput trends (#73 / #74). Computed client-side from the
+  // last `ingest_csv` jobs already in the table so we do not need a
+  // separate query: each succeeded ingest_csv row carries
+  // result.recordsProcessed and durationMs in its result blob.
+  const csvThroughput = useMemo(() => {
+    const samples: { rows: number; durationMs: number; rps: number }[] = [];
+    for (const j of jobs) {
+      if (j.kind !== "ingest_csv" || j.status !== "succeeded") continue;
+      const result = (j.result ?? {}) as Record<string, unknown>;
+      const rows =
+        typeof result["recordsProcessed"] === "number"
+          ? (result["recordsProcessed"] as number)
+          : null;
+      const ms =
+        typeof result["durationMs"] === "number"
+          ? (result["durationMs"] as number)
+          : null;
+      if (rows == null || ms == null || ms <= 0 || rows <= 0) continue;
+      samples.push({ rows, durationMs: ms, rps: (rows / ms) * 1000 });
+    }
+    if (samples.length === 0) return null;
+    const latencies = samples.map((s) => s.durationMs).sort((a, b) => a - b);
+    const rpsList = samples.map((s) => s.rps).sort((a, b) => a - b);
+    const pick = (arr: number[], pct: number) =>
+      arr[
+        Math.min(arr.length - 1, Math.max(0, Math.floor(arr.length * pct)))
+      ]!;
+    return {
+      n: samples.length,
+      p50LatencyMs: pick(latencies, 0.5),
+      p95LatencyMs: pick(latencies, 0.95),
+      p50Rps: pick(rpsList, 0.5),
+      p95Rps: pick(rpsList, 0.95),
+      totalRows: samples.reduce((acc, s) => acc + s.rows, 0),
+    };
+  }, [jobs]);
+
   return (
     <div className="p-8 space-y-6 max-w-7xl">
       <div className="flex items-start justify-between gap-4">
@@ -378,8 +523,8 @@ export default function System() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {(["pending", "running", "succeeded", "failed"] as const).map((s) => {
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {(["pending", "running", "succeeded", "failed", "cancelled"] as const).map((s) => {
           const Icon = STATUS_ICON[s]!;
           return (
             <Card key={s} data-testid={`stat-${s}`}>
@@ -447,9 +592,16 @@ export default function System() {
                           data: { maxAttempts },
                         })
                       }
+                      onClear={(kind) =>
+                        clearSettingM.mutate({ kind })
+                      }
                       isSaving={
                         updateSettingM.isPending &&
                         updateSettingM.variables?.kind === s.kind
+                      }
+                      isClearing={
+                        clearSettingM.isPending &&
+                        clearSettingM.variables?.kind === s.kind
                       }
                     />
                   ))}
@@ -459,6 +611,192 @@ export default function System() {
           )}
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card data-testid="card-cleanup">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-muted-foreground" />
+              Job-history cleanup
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Periodically prunes terminal job rows so the queue table
+              stays bounded. Cancelled jobs share the same retention
+              window as failed jobs.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {cleanupQuery.isLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading
+                cleanup status…
+              </div>
+            )}
+            {cleanupQuery.isError && (
+              <div className="text-sm text-red-600">
+                Failed to load cleanup status. You may not have Platform
+                Admin access.
+              </div>
+            )}
+            {cleanupQuery.data && (
+              <>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Last cleanup at
+                    </div>
+                    <div data-testid="text-last-cleanup-at">
+                      {cleanupQuery.data.lastJob?.completedAt
+                        ? formatDateTime(
+                            cleanupQuery.data.lastJob.completedAt,
+                          )
+                        : cleanupQuery.data.lastJob?.startedAt
+                          ? `${formatDateTime(cleanupQuery.data.lastJob.startedAt)} (in flight)`
+                          : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Last status
+                    </div>
+                    <div>
+                      {cleanupQuery.data.lastJob ? (
+                        <Badge
+                          className={
+                            STATUS_BADGE[cleanupQuery.data.lastJob.status]
+                          }
+                          data-testid="badge-last-cleanup-status"
+                        >
+                          {cleanupQuery.data.lastJob.status}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          never run
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {cleanupQuery.data.lastJob?.result && (
+                  <pre className="bg-muted text-xs p-2 rounded-md whitespace-pre-wrap break-words max-h-40 overflow-auto">
+                    {JSON.stringify(
+                      cleanupQuery.data.lastJob.result,
+                      null,
+                      2,
+                    )}
+                  </pre>
+                )}
+                <div className="text-xs text-muted-foreground">
+                  Retention windows: succeeded{" "}
+                  {Math.round(
+                    cleanupQuery.data.retention.succeededOlderThanMs /
+                      (60 * 60 * 1000),
+                  )}
+                  h, failed/cancelled{" "}
+                  {Math.round(
+                    cleanupQuery.data.retention.failedOlderThanMs /
+                      (60 * 60 * 1000),
+                  )}
+                  h.
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    data-testid="btn-run-cleanup"
+                    size="sm"
+                    onClick={() => runCleanupM.mutate()}
+                    disabled={
+                      runCleanupM.isPending ||
+                      cleanupQuery.data.activeJobId != null
+                    }
+                    title={
+                      cleanupQuery.data.activeJobId
+                        ? `Cleanup job ${cleanupQuery.data.activeJobId} is already in flight.`
+                        : "Enqueue a prune_jobs run now."
+                    }
+                  >
+                    {runCleanupM.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <PlayCircle className="w-3 h-3 mr-1" />
+                    )}
+                    {cleanupQuery.data.activeJobId
+                      ? "Cleanup pending…"
+                      : "Run cleanup now"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-csv-throughput">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              CSV ingest throughput
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Latency and rows-per-second percentiles across the most
+              recent succeeded `ingest_csv` jobs in the table below.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {!csvThroughput && (
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                No completed CSV ingest jobs in the current window.
+              </div>
+            )}
+            {csvThroughput && (
+              <div
+                className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm"
+                data-testid="grid-csv-throughput"
+              >
+                <div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    Samples
+                  </div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {csvThroughput.n}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    Total rows
+                  </div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {csvThroughput.totalRows.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    Latency p50 / p95
+                  </div>
+                  <div
+                    className="text-lg font-semibold tabular-nums"
+                    data-testid="text-csv-latency-percentiles"
+                  >
+                    {Math.round(csvThroughput.p50LatencyMs)}ms /{" "}
+                    {Math.round(csvThroughput.p95LatencyMs)}ms
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    Rows/s p50 / p95
+                  </div>
+                  <div
+                    className="text-lg font-semibold tabular-nums"
+                    data-testid="text-csv-rps-percentiles"
+                  >
+                    {Math.round(csvThroughput.p50Rps).toLocaleString()} /{" "}
+                    {Math.round(csvThroughput.p95Rps).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>

@@ -3,13 +3,13 @@
  *
  * Pins three behaviours of the cancellation contract:
  *
- *  1. Cancelling a `pending` job transitions it directly to `failed` with
- *     error "Cancelled by operator".
+ *  1. Cancelling a `pending` job transitions it directly to `cancelled`
+ *     with error "Cancelled by operator".
  *  2. Cancelling a `running` job sets `cancelRequested=true` (without
  *     immediately changing status) and the worker rewrites the terminal
- *     state to `failed` once the handler returns.
- *  3. Already-terminal jobs (`succeeded` / `failed`) cannot be cancelled
- *     and the endpoint returns 409.
+ *     state to `cancelled` once the handler returns.
+ *  3. Already-terminal jobs (`succeeded` / `failed` / `cancelled`) cannot
+ *     be cancelled and the endpoint returns 409.
  *
  * Approach
  * --------
@@ -81,7 +81,7 @@ async function pickOrgId(): Promise<string> {
   return row.id;
 }
 
-test("requestJobCancellation transitions a pending job directly to failed", async () => {
+test("requestJobCancellation transitions a pending job directly to cancelled", async () => {
   // Test the function directly rather than going through HTTP, because the
   // dev workflow's job worker can race the cancel request and complete the
   // empty `ingest_csv` payload in milliseconds. The route is a thin
@@ -110,7 +110,7 @@ test("requestJobCancellation transitions a pending job directly to failed", asyn
       .from(jobsTable)
       .where(eq(jobsTable.id, jobId));
     assert.ok(row, "job row should still exist");
-    assert.equal(row!.status, "failed");
+    assert.equal(row!.status, "cancelled");
     assert.equal(row!.error, CANCELLED_ERROR_MESSAGE);
     assert.equal(row!.cancelRequested, true);
   } finally {
@@ -159,7 +159,7 @@ test("POST /jobs/:id/cancel flags a running job and the worker rewrites the term
       .from(jobsTable)
       .where(eq(jobsTable.id, job.id));
     assert.ok(row, "job row should still exist");
-    assert.equal(row!.status, "failed");
+    assert.equal(row!.status, "cancelled");
     assert.equal(row!.error, CANCELLED_ERROR_MESSAGE);
     assert.equal(row!.cancelRequested, true);
   } finally {

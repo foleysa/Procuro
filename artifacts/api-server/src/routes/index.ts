@@ -22,6 +22,7 @@ import adminSsoRouter from "./admin-sso";
 import adminTenantRouter from "./admin-tenant";
 import scimRouter from "./scim";
 import contractsRouter from "./contracts";
+import systemRouter from "./system";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(adminSsoRouter);
 router.use(adminTenantRouter);
 router.use(scimRouter);
 router.use(contractsRouter);
+router.use(systemRouter);
 
 export default router;

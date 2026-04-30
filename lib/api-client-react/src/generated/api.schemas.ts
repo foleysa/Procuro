@@ -1202,6 +1202,12 @@ export interface IntelligenceCoverageGapsResponse {
   generatedAt: string;
 }
 
+/**
+ * `cancelled` is a distinct terminal state from `failed` and is
+only used for operator-initiated cancellations (it never
+results from infrastructure errors or exhausted retries).
+
+ */
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 
 export const JobStatus = {
@@ -1209,6 +1215,7 @@ export const JobStatus = {
   running: "running",
   succeeded: "succeeded",
   failed: "failed",
+  cancelled: "cancelled",
 } as const;
 
 export type JobResult = { [key: string]: unknown } | null;
@@ -1217,6 +1224,10 @@ export interface Job {
   id: string;
   orgId?: string | null;
   kind: string;
+  /** `cancelled` is a distinct terminal state from `failed` and is
+only used for operator-initiated cancellations (it never
+results from infrastructure errors or exhausted retries).
+ */
   status: JobStatus;
   attempts: number;
   /** Total automatic-attempt budget (initial run + auto-retries).
@@ -1228,7 +1239,7 @@ and marks the job `failed`.
   result?: JobResult;
   error?: string | null;
   /** True once an operator has requested cancellation. For `running`
-jobs the worker will rewrite the terminal state to `failed`
+jobs the worker will rewrite the terminal state to `cancelled`
 with error "Cancelled by operator" once the handler returns.
  */
   cancelRequested?: boolean;
@@ -1276,6 +1287,16 @@ table; false when it falls back to `defaultMaxAttempts`.
   isOverride: boolean;
   /** When the override was last written. Null when there is no override. */
   updatedAt?: string | null;
+  /** Email/identifier of the operator who most recently wrote this
+override. Null when no override exists, or when the override
+was created before audit columns were introduced.
+ */
+  lastChangedBy?: string | null;
+  /** Wall-clock timestamp of the most recent override write.
+Mirrors `updatedAt` for new writes but is set explicitly so
+it stays accurate across upsert paths.
+ */
+  lastChangedAt?: string | null;
 }
 
 export interface UpdateJobKindSettingRequest {
@@ -1287,9 +1308,9 @@ export interface UpdateJobKindSettingRequest {
 }
 
 /**
- * `failed` when the job was `pending` and was transitioned
+ * `cancelled` when the job was `pending` and was transitioned
 immediately, `running` when the cancel flag was set on a
-running job (the worker will mark it failed when the
+running job (the worker will mark it cancelled when the
 handler returns).
 
  */
@@ -1298,23 +1319,95 @@ export type JobCancelledStatus =
 
 export const JobCancelledStatus = {
   running: "running",
-  failed: "failed",
+  cancelled: "cancelled",
 } as const;
 
 export interface JobCancelled {
   jobId: string;
-  /** `failed` when the job was `pending` and was transitioned
+  /** `cancelled` when the job was `pending` and was transitioned
 immediately, `running` when the cancel flag was set on a
-running job (the worker will mark it failed when the
+running job (the worker will mark it cancelled when the
 handler returns).
  */
   status: JobCancelledStatus;
   /** Always true on a successful response. */
   cancelRequested: boolean;
-  /** True if the job was pending and is now marked failed; false
-if the job was running and the cancel flag was set.
+  /** True if the job was pending and is now marked cancelled;
+false if the job was running and the cancel flag was set
+(the worker will finalize the cancellation on the next safe
+checkpoint).
  */
   cancelledImmediately: boolean;
+}
+
+export type SystemCleanupStatusLastJobStatus =
+  (typeof SystemCleanupStatusLastJobStatus)[keyof typeof SystemCleanupStatusLastJobStatus];
+
+export const SystemCleanupStatusLastJobStatus = {
+  pending: "pending",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export type SystemCleanupStatusLastJobResult = {
+  [key: string]: unknown;
+} | null;
+
+export type SystemCleanupStatusLastJob = {
+  id: string;
+  status: SystemCleanupStatusLastJobStatus;
+  enqueuedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  result?: SystemCleanupStatusLastJobResult;
+  error?: string | null;
+} | null;
+
+export type SystemCleanupStatusRetention = {
+  succeededOlderThanMs: number;
+  /** Retention window for both `failed` and `cancelled` jobs.
+Operator-cancelled jobs share the failed window because
+they're equivalent "did not succeed" terminal rows for
+review purposes.
+ */
+  failedOlderThanMs: number;
+};
+
+export interface SystemCleanupStatus {
+  lastJob: SystemCleanupStatusLastJob;
+  /** ID of an in-flight `prune_jobs` row (status pending or
+running), or null when no prune is scheduled. The UI uses
+this to disable the "Run cleanup now" button while a prune
+is already queued.
+ */
+  activeJobId: string | null;
+  retention: SystemCleanupStatusRetention;
+}
+
+export type SystemCleanupRunAcceptedStatus =
+  (typeof SystemCleanupRunAcceptedStatus)[keyof typeof SystemCleanupRunAcceptedStatus];
+
+export const SystemCleanupRunAcceptedStatus = {
+  pending: "pending",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export interface SystemCleanupRunAccepted {
+  /** ID of the `prune_jobs` row that will (or already does)
+handle this request. Null only in the rare race where the
+in-flight job completed between the two queries.
+ */
+  jobId: string | null;
+  status: SystemCleanupRunAcceptedStatus;
+  /** True when an existing in-flight prune job satisfied the
+request; false when a new job was enqueued.
+ */
+  reused: boolean;
 }
 
 export interface SyncResultResponse {
@@ -2406,6 +2499,7 @@ export const ListJobsStatus = {
   running: "running",
   succeeded: "succeeded",
   failed: "failed",
+  cancelled: "cancelled",
 } as const;
 
 export type IngestCsvBatchParams = {

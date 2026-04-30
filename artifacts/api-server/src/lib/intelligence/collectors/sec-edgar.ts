@@ -356,6 +356,7 @@ export function parseEdgarSubmissions(
 async function fetchSubmissions(
   cik: string,
   userAgent: string,
+  signal?: AbortSignal,
 ): Promise<{
   url: string;
   body: string;
@@ -367,6 +368,7 @@ async function fetchSubmissions(
       "User-Agent": userAgent,
       Accept: "application/json",
     },
+    signal,
   });
   const body = await res.text();
   if (!res.ok) {
@@ -448,10 +450,10 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
     // is the filed-at date and is part of the natural key already.
     return defaultStableSignalKey(SEC_EDGAR_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
     const userAgent = buildEdgarUserAgent();
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
@@ -461,7 +463,7 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
     const issuers = resolved.issuers;
     for (const issuer of issuers) {
       try {
-        const r = await fetchSubmissions(issuer.cik, userAgent);
+        const r = await fetchSubmissions(issuer.cik, userAgent, signal);
         rawPayloads.push({
           name: `cik-${padCik(issuer.cik)}`,
           contentType: "application/json",

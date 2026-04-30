@@ -176,6 +176,7 @@ async function fetchClimateTracePage(
   limit: number,
   sector?: string,
   country?: string,
+  signal?: AbortSignal,
 ): Promise<{ payload: ClimateTraceResponse; body: string; url: string }> {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
@@ -183,7 +184,10 @@ async function fetchClimateTracePage(
   if (sector) params.set("sectors", sector);
   if (country) params.set("countries", country);
   const url = `${CLIMATE_TRACE_BASE_URL}?${params.toString()}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
   if (!res.ok) throw new Error(`ClimateTRACE HTTP ${res.status} (${url})`);
   const body = await res.text();
   const payload = JSON.parse(body) as ClimateTraceResponse;
@@ -211,13 +215,16 @@ export const climateTraceCollector: IntelligenceCollector<typeof climateTraceSig
   stableSignalKey(draft) {
     return defaultStableSignalKey(CLIMATE_TRACE_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
     const { payload, body, url } = await fetchClimateTracePage(
       0,
       CLIMATE_TRACE_DEFAULT_LIMIT,
+      undefined,
+      undefined,
+      signal,
     );
     const drafts = parseClimateTraceResponse(payload);
     const rawPayloads: RawPayload[] = [

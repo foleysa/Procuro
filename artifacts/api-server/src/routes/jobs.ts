@@ -45,6 +45,7 @@ const jobStatusAllow = new Set<JobStatus>([
   "running",
   "succeeded",
   "failed",
+  "cancelled",
 ]);
 
 function mapJob(r: typeof jobsTable.$inferSelect) {
@@ -142,6 +143,8 @@ router.get("/jobs/settings", tenantMiddleware, async (req, res) => {
       defaultMaxAttempts,
       isOverride: override !== undefined,
       updatedAt: override?.updatedAt ?? null,
+      lastChangedBy: override?.lastChangedBy ?? null,
+      lastChangedAt: override?.lastChangedAt ?? null,
     };
   });
 
@@ -172,16 +175,29 @@ router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings
   }
 
   const now = new Date();
+  const actor = req.actorEmail ?? null;
   await db
     .insert(jobKindSettingsTable)
-    .values({ orgId, kind, maxAttempts: n, updatedAt: now })
+    .values({
+      orgId,
+      kind,
+      maxAttempts: n,
+      updatedAt: now,
+      lastChangedBy: actor,
+      lastChangedAt: now,
+    })
     .onConflictDoUpdate({
       target: [jobKindSettingsTable.orgId, jobKindSettingsTable.kind],
-      set: { maxAttempts: n, updatedAt: now },
+      set: {
+        maxAttempts: n,
+        updatedAt: now,
+        lastChangedBy: actor,
+        lastChangedAt: now,
+      },
     });
 
   req.log.info(
-    { orgId, kind, maxAttempts: n },
+    { orgId, kind, maxAttempts: n, actor },
     "Updated per-tenant retry budget override",
   );
 
@@ -192,6 +208,43 @@ router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings
     defaultMaxAttempts,
     isOverride: true,
     updatedAt: now,
+    lastChangedBy: actor,
+    lastChangedAt: now,
+  });
+});
+
+// Clear an override and revert to the in-code default (#96).
+router.delete("/jobs/settings/:kind", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const kind = String(req.params.kind ?? "") as JobKind;
+  if (!configurableKindSet.has(kind)) {
+    res.status(400).json({ error: `Unknown or non-configurable kind: ${kind}` });
+    return;
+  }
+
+  await db
+    .delete(jobKindSettingsTable)
+    .where(
+      and(
+        eq(jobKindSettingsTable.orgId, orgId),
+        eq(jobKindSettingsTable.kind, kind),
+      ),
+    );
+
+  req.log.info(
+    { orgId, kind, actor: req.actorEmail ?? null },
+    "Cleared per-tenant retry budget override",
+  );
+
+  const defaultMaxAttempts = MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
+  res.json({
+    kind,
+    maxAttempts: defaultMaxAttempts,
+    defaultMaxAttempts,
+    isOverride: false,
+    updatedAt: null,
+    lastChangedBy: null,
+    lastChangedAt: null,
   });
 });
 
@@ -263,7 +316,11 @@ router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:writ
     res.status(404).json({ error: "Job not found" });
     return;
   }
-  if (row.status === "succeeded" || row.status === "failed") {
+  if (
+    row.status === "succeeded" ||
+    row.status === "failed" ||
+    row.status === "cancelled"
+  ) {
     res.status(409).json({
       error: `Job is already ${row.status} and cannot be cancelled`,
     });
@@ -295,7 +352,7 @@ router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:writ
 
   res.status(202).json({
     jobId: id,
-    status: result.cancelledImmediately ? "failed" : "running",
+    status: result.cancelledImmediately ? "cancelled" : "running",
     cancelRequested: true,
     cancelledImmediately: result.cancelledImmediately,
   });

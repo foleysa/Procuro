@@ -12,13 +12,12 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export type ListJobsStatus =
-  (typeof ListJobsStatus)[keyof typeof ListJobsStatus];
-
-export const ListJobsStatus = {
-  pending: "pending",
-  running: "running",
-  succeeded: "succeeded",
-  failed: "failed",
-  cancelled: "cancelled",
-} as const;
+export type SystemCleanupStatusRetention = {
+  succeededOlderThanMs: number;
+  /** Retention window for both `failed` and `cancelled` jobs.
+Operator-cancelled jobs share the failed window because
+they're equivalent "did not succeed" terminal rows for
+review purposes.
+ */
+  failedOlderThanMs: number;
+};

@@ -322,6 +322,7 @@ const chSignalSchema = buildSignalDraftSchema(chMetadataSchema);
 async function fetchChJson<T>(
   path: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<{ url: string; body: string; parsed: T }> {
   const url = `${CH_BASE_URL}${path}`;
   const res = await fetch(url, {
@@ -329,6 +330,7 @@ async function fetchChJson<T>(
       Authorization: authHeader(apiKey),
       Accept: "application/json",
     },
+    signal,
   });
   const body = await res.text();
   if (!res.ok) {
@@ -340,14 +342,20 @@ async function fetchChJson<T>(
 async function pullCompany(
   number: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<{
   drafts: MarketSignalDraft[];
   rawPayloads: RawPayload[];
 }> {
-  const profile = await fetchChJson<ChCompanyProfile>(`/company/${number}`, apiKey);
+  const profile = await fetchChJson<ChCompanyProfile>(
+    `/company/${number}`,
+    apiKey,
+    signal,
+  );
   const history = await fetchChJson<ChFilingHistory>(
     `/company/${number}/filing-history?items_per_page=100`,
     apiKey,
+    signal,
   );
   const drafts = parseFilingHistory(profile.parsed, history.parsed);
   const rawPayloads: RawPayload[] = [
@@ -411,10 +419,10 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
   stableSignalKey(draft) {
     return defaultStableSignalKey(COMPANIES_HOUSE_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
     const apiKey = process.env["COMPANIES_HOUSE_API_KEY"];
     if (!apiKey) {
       throw new Error(
@@ -434,7 +442,7 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
     }
     for (const number of numbers) {
       try {
-        const r = await pullCompany(number, apiKey);
+        const r = await pullCompany(number, apiKey, signal);
         for (const x of r.drafts) drafts.push(x);
         for (const p of r.rawPayloads) rawPayloads.push(p);
       } catch (err) {
