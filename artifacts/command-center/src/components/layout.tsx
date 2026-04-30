@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard,
+  BarChart3,
   Sparkles,
   CheckSquare,
   Activity,
@@ -22,7 +23,8 @@ export function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
 
   const navItems = [
-    { href: "/", label: "Spend Overview", icon: LayoutDashboard },
+    { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/spend", label: "Spend Overview", icon: BarChart3 },
     { href: "/opportunities", label: "Opportunities", icon: Sparkles },
     { href: "/approvals", label: "Approvals", icon: CheckSquare },
     { href: "/ooda", label: "OODA Wheel", icon: Activity },

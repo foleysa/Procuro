@@ -60,7 +60,8 @@ Tier‑2 starters (`supplier_consolidation`, `contract_renegotiation_trigger`) w
 
 ### `artifacts/command-center` — operator UI
 React + Vite + wouter + shadcn. Bootstrap auto‑selects SCIS org on first load; sidebar org switcher reloads at `/` so tenant context is unambiguous. Pages:
-- `/` — **Spend Overview** (class / category / supplier / BU + concentration KPIs)
+- `/` — **Command Center** (executive dashboard: 4 KPIs `Realized savings / Pipeline value / Capture rate / Awaiting approval`, "Needs your attention" actionable list with severity dots, System pulse panel `last cycle / job queue / collectors / market signals / total addressable spend`, 5‑stage Opportunity pipeline funnel, Top 5 open opportunities, Lever performance table with realization rate per lever, Recent OODA cycles strip. Every card click‑throughs to its detail page. Auto‑refreshes every 30s via `refetchInterval` on each Orval hook (Orval requires explicit `queryKey` when query opts are passed). Opportunities are fetched as 5 separate per‑status calls (`limit=200` each) so the executive totals can't be skewed by a single page sorted by projected $ — a yellow caveat banner appears automatically if any single bucket hits the 200 cap. **Capture rate** = `realized $ / (realized + proposed + approved + executing) projected $` (excludes rejected/expired so deliberate "no" decisions don't deflate the rate). Stale‑collector alert only flags collectors that actually ran but >24h ago; a separate softer alert surfaces enabled collectors that have never run.)
+- `/spend` — **Spend Overview** (class / category / supplier / BU + concentration KPIs — moved here when Command Center took `/`)
 - `/opportunities` — **Opportunities Feed** (grouped by lever, filterable by status & lever)
 - `/opportunities/:id` — **Opportunity detail** (approve / reject‑with‑reason / execute / realize)
 - `/approvals` — **Pipeline** (Proposed → Approved → Executing → Realized + Rejected)

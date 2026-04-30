@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import { Layout } from "./components/layout";
 import Landing from "./pages/landing";
 import Dashboard from "./pages/dashboard";
+import SpendOverview from "./pages/spend";
 import Opportunities from "./pages/opportunities";
 import OpportunityDetail from "./pages/opportunity-detail";
 import Approvals from "./pages/approvals";
@@ -24,6 +25,7 @@ function Router() {
         <Layout>
           <Switch>
             <Route path="/" component={Dashboard} />
+            <Route path="/spend" component={SpendOverview} />
             <Route path="/opportunities" component={Opportunities} />
             <Route path="/opportunities/:id" component={OpportunityDetail} />
             <Route path="/approvals" component={Approvals} />
