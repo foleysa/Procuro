@@ -1,18 +1,20 @@
 /**
  * Integration test for `POST /api/ingest/csv-stream` covering the higher-risk
- * non-`suppliers` entities — `invoices` and `po_lines` — with a >10 MB CSV
- * each.
+ * non-`suppliers` entities — `invoices`, `po_lines`, `purchase_orders`,
+ * `payments`, and `shipments` — with a >10 MB CSV each.
  *
  * Why this exists
  * ---------------
  * `csv-stream-large.test.ts` only exercises `suppliers`, which has the
  * simplest per-batch logic (no foreign-key lookups). The streaming endpoint
- * also accepts seven other entities, and the highest-volume one in real
+ * also accepts seven other entities. The highest-volume entity in real
  * customer data — `po_lines` — has the most complex per-batch logic: it
  * runs grouped lookups against `purchase_orders` AND `categories` for every
- * batch before the upsert. `invoices` is the next most complex (one or two
- * grouped lookups per batch). A regression in either path would silently
- * drop customer data and the suppliers-only test would not catch it.
+ * batch before the upsert. `invoices`, `purchase_orders`, `payments`, and
+ * `shipments` each run one or two grouped foreign-key lookups per batch
+ * before their upsert. A regression in any of those lookup paths would
+ * silently drop customer data and the suppliers-only test would not catch
+ * it.
  *
  * What this verifies (per entity)
  * -------------------------------
@@ -55,7 +57,10 @@ process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 import {
   db,
   invoicesTable,
+  paymentsTable,
   poLinesTable,
+  purchaseOrdersTable,
+  shipmentsTable,
   pool,
 } from "@workspace/db";
 import { and, eq, like } from "drizzle-orm";
@@ -68,11 +73,15 @@ import {
   openAsBlob,
   pickOrgId,
   seedCategories,
+  seedInvoices,
   seedPurchaseOrders,
   seedSuppliers,
   startServer,
   writeInvoicesCsvSync,
+  writePaymentsCsvSync,
   writePoLinesCsvSync,
+  writePurchaseOrdersCsvSync,
+  writeShipmentsCsvSync,
 } from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
@@ -85,6 +94,11 @@ const TARGET_BYTES = 10 * 1024 * 1024; // 10 MB minimum
 const PARENT_SUPPLIERS = 50;
 const PARENT_POS = 50;
 const PARENT_CATEGORIES = 5;
+// Dedicated parent invoices for the `payments` variant. Kept small (matches
+// the supplier/PO parent counts) so each batch's grouped FK lookup against
+// `invoices` is exercised — i.e. the lookup map has multiple hits per batch
+// rather than a single hit which would fail to catch a misplaced filter.
+const PARENT_INVOICES = 50;
 
 /** Upload a CSV via the multipart streaming endpoint. */
 async function uploadCsv(args: {
@@ -154,13 +168,23 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
    * entry in this table — no copy/paste of the upload + assertion plumbing.
    */
   type Variant = {
-    entity: "invoices" | "po_lines";
+    entity:
+      | "invoices"
+      | "po_lines"
+      | "purchase_orders"
+      | "payments"
+      | "shipments";
     /** Set up parent records and return whatever the writer needs. */
     prepare: () => Promise<{ writeArgs: unknown }>;
     /** Generate the >10 MB CSV row-by-row to disk; return row count. */
     writeCsv: (filePath: string, args: unknown) => number;
     /** Drizzle table the inserted rows land in. */
-    childTable: typeof invoicesTable | typeof poLinesTable;
+    childTable:
+      | typeof invoicesTable
+      | typeof poLinesTable
+      | typeof purchaseOrdersTable
+      | typeof paymentsTable
+      | typeof shipmentsTable;
     /** External-id prefix used by `writeCsv`; scopes the row-count query. */
     childExtIdPrefix: string;
   };
@@ -234,6 +258,155 @@ test("streaming CSV ingest of >10 MB files lands every row for invoices and po_l
         return writePoLinesCsvSync(filePath, {
           poExternalIds,
           categoryCodes,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          minBytes: TARGET_BYTES,
+        });
+      },
+    },
+    {
+      entity: "purchase_orders",
+      childTable: purchaseOrdersTable,
+      // `writePurchaseOrdersCsvSync` uses `upo-` so uploaded POs do NOT
+      // collide with the `po-` parents seeded for the po_lines variant.
+      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}upo-`,
+      prepare: async () => {
+        // Reuse seeded suppliers from earlier variants when present; otherwise
+        // create them now. The CSV references suppliers by external ID so we
+        // only need the strings, not internal ids.
+        let supplierIdMap = await loadSupplierIdMapByPrefix(
+          orgId,
+          EXTERNAL_ID_PREFIX,
+        );
+        if (supplierIdMap.size === 0) {
+          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+          supplierIdMap = await loadSupplierIdMapByPrefix(
+            orgId,
+            EXTERNAL_ID_PREFIX,
+          );
+        }
+        const supplierExternalIds = Array.from(supplierIdMap.keys());
+        assert.ok(
+          supplierExternalIds.length > 0,
+          "expected at least one seeded supplier extId for PO upload",
+        );
+        return { writeArgs: { supplierExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { supplierExternalIds } = args as {
+          supplierExternalIds: string[];
+        };
+        return writePurchaseOrdersCsvSync(filePath, {
+          supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          minBytes: TARGET_BYTES,
+        });
+      },
+    },
+    {
+      entity: "payments",
+      childTable: paymentsTable,
+      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}pay-`,
+      prepare: async () => {
+        // Payments need parent invoices. We can't reuse invoices uploaded by
+        // the earlier `invoices` variant because their batch-load cost grows
+        // with the upload size; seed a small dedicated set instead so each
+        // payment batch resolves through the same FK lookup map shape.
+        let supplierIdMap = await loadSupplierIdMapByPrefix(
+          orgId,
+          EXTERNAL_ID_PREFIX,
+        );
+        if (supplierIdMap.size === 0) {
+          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+          supplierIdMap = await loadSupplierIdMapByPrefix(
+            orgId,
+            EXTERNAL_ID_PREFIX,
+          );
+        }
+        const supplierIds = Array.from(supplierIdMap.values());
+        assert.ok(
+          supplierIds.length > 0,
+          "expected at least one seeded supplier for invoice seeding",
+        );
+        const invoiceExternalIds = await seedInvoices(
+          orgId,
+          PARENT_INVOICES,
+          supplierIds,
+          EXTERNAL_ID_PREFIX,
+        );
+        return { writeArgs: { invoiceExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { invoiceExternalIds } = args as {
+          invoiceExternalIds: string[];
+        };
+        return writePaymentsCsvSync(filePath, {
+          invoiceExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          minBytes: TARGET_BYTES,
+        });
+      },
+    },
+    {
+      entity: "shipments",
+      childTable: shipmentsTable,
+      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}shp-`,
+      prepare: async () => {
+        // Reuse suppliers and POs seeded by earlier variants; seed any that
+        // are missing so this variant can run independently.
+        let supplierIdMap = await loadSupplierIdMapByPrefix(
+          orgId,
+          EXTERNAL_ID_PREFIX,
+        );
+        if (supplierIdMap.size === 0) {
+          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+          supplierIdMap = await loadSupplierIdMapByPrefix(
+            orgId,
+            EXTERNAL_ID_PREFIX,
+          );
+        }
+        const supplierExternalIds = Array.from(supplierIdMap.keys());
+        // Need PO external IDs for the shipments CSV. The po_lines variant
+        // seeds them under the same prefix; query the table directly so this
+        // variant works regardless of variant ordering.
+        const poRows = await db
+          .select({ ext: purchaseOrdersTable.sourceExternalId })
+          .from(purchaseOrdersTable)
+          .where(
+            and(
+              eq(purchaseOrdersTable.orgId, orgId),
+              eq(purchaseOrdersTable.sourceSystem, FIXTURE_SOURCE),
+              like(
+                purchaseOrdersTable.sourceExternalId,
+                `${EXTERNAL_ID_PREFIX}po-%`,
+              ),
+            ),
+          );
+        let poExternalIds = poRows
+          .map((r) => r.ext)
+          .filter((x): x is string => Boolean(x));
+        if (poExternalIds.length === 0) {
+          const supplierIds = Array.from(supplierIdMap.values());
+          poExternalIds = await seedPurchaseOrders(
+            orgId,
+            PARENT_POS,
+            supplierIds,
+            EXTERNAL_ID_PREFIX,
+          );
+        }
+        assert.ok(
+          poExternalIds.length > 0,
+          "expected at least one seeded PO extId for shipments upload",
+        );
+        return { writeArgs: { poExternalIds, supplierExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { poExternalIds, supplierExternalIds } = args as {
+          poExternalIds: string[];
+          supplierExternalIds: string[];
+        };
+        return writeShipmentsCsvSync(filePath, {
+          poExternalIds,
+          supplierExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
           minBytes: TARGET_BYTES,
         });

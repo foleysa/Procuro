@@ -20,9 +20,15 @@ import path from "node:path";
 process.env["NODE_ENV"] = process.env["NODE_ENV"] ?? "development";
 process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 
-import { pool } from "@workspace/db";
+import {
+  db,
+  pool,
+  purchaseOrdersTable,
+} from "@workspace/db";
+import { and, eq, like } from "drizzle-orm";
 import app from "../src/app";
 import {
+  FIXTURE_SOURCE,
   deleteFixtureRowsByPrefix,
   loadSupplierIdMapByPrefix,
   openAsBlob,

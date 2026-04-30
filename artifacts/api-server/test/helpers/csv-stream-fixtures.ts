@@ -182,11 +182,13 @@ export async function seedCategories(
 }
 
 /**
- * Seed N invoices linked round-robin to the given supplier ids. External IDs
- * use the `${extIdPrefix}sinv-` namespace so they don't collide with the
- * `${extIdPrefix}inv-` IDs used by the streaming `invoices` upload variant
- * — both can coexist in the same test run without clashing on the
- * (orgId, sourceSystem, sourceExternalId) unique index.
+ * Seed N invoices linked round-robin to the given supplier ids. Used as
+ * parent rows for the `payments` CSV upload tests, since payments reference
+ * invoices via `invoiceExternalId` in `flushBatch`.
+ *
+ * Uses external-id pattern `${extIdPrefix}sinv-${i}` (s = "seeded") so it
+ * does NOT collide with `writeInvoicesCsvSync` which produces `inv-${i}`
+ * for invoices uploaded via the CSV under test in the same run.
  */
 export async function seedInvoices(
   orgId: string,
@@ -195,7 +197,7 @@ export async function seedInvoices(
   extIdPrefix: string,
 ): Promise<string[]> {
   if (supplierIds.length === 0) {
-    throw new Error("seedInvoices requires at least one supplier id");
+    throw new Error("seedInvoices requires at least one supplier");
   }
   const externalIds: string[] = [];
   const rows: (typeof invoicesTable.$inferInsert)[] = [];
@@ -206,10 +208,11 @@ export async function seedInvoices(
     rows.push({
       id: newId("inv"),
       orgId,
-      invoiceNumber: `${extIdPrefix}SINV-${i}`,
+      invoiceNumber: `${extIdPrefix}SEED-INV-${i}`,
       supplierId: supplierIds[i % supplierIds.length]!,
       invoiceDate: today,
       amountUsd: (100 + (i % 1000)).toFixed(2),
+      status: "received",
       dedupKey: `${ext}|seed`,
       sourceSystem: FIXTURE_SOURCE,
       sourceExternalId: ext,
@@ -391,23 +394,32 @@ export function writeItemsCsvSync(
 }
 
 /**
- * Write a `purchase_orders` CSV referencing seeded supplier external IDs in
- * round-robin order. The streaming flushBatch performs a single grouped
- * lookup against `suppliers` per batch — every row needs the supplier ext
- * to resolve so the terminal `rowsInserted === rowCount` assertion holds.
+ * Write a `purchase_orders` CSV referencing the seeded supplier external IDs
+ * in round-robin order, exercising the grouped supplier lookup in
+ * `flushBatch`. Uses external-id pattern `${extIdPrefix}upo-${i}` (u =
+ * "uploaded") so it does NOT collide with `seedPurchaseOrders` before
+ * produces `po-${i}` for parent POs in the same run. Stops as soon as
+ * `minBytes` or `rowCount` is hit; one of the two must be supplied.
+ * Returns the number of rows written.
  */
 export function writePurchaseOrdersCsvSync(
   filePath: string,
   opts: {
     supplierExternalIds: string[];
     extIdPrefix: string;
-    rowCount: number;
+    minBytes?: number;
+    rowCount?: number;
   },
 ): number {
-  const { supplierExternalIds, extIdPrefix, rowCount } = opts;
+  const { supplierExternalIds, extIdPrefix, minBytes, rowCount } = opts;
   if (supplierExternalIds.length === 0) {
     throw new Error(
       "writePurchaseOrdersCsvSync requires at least one supplier extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error(
+      "writePurchaseOrdersCsvSync requires minBytes or rowCount",
     );
   }
   const fd = fs.openSync(filePath, "w");
@@ -415,18 +427,22 @@ export function writePurchaseOrdersCsvSync(
     const header =
       "externalId,poNumber,supplierExternalId,businessUnit,site,status,orderDate,totalUsd\n";
     fs.writeSync(fd, header);
+    let bytes = header.length;
     let rows = 0;
-    while (rows < rowCount) {
+    const buPad = "Z".repeat(32);
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
       const ext = `${extIdPrefix}upo-${rows}`;
-      const poNum = `${extIdPrefix}UPO-${rows}`;
       const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
-      const bu = `BU-${rows % 10}`;
-      const site = `Site-${rows % 5}`;
-      const total = (1000 + (rows % 5000)).toFixed(2);
-      fs.writeSync(
-        fd,
-        `${ext},${poNum},${supExt},${bu},${site},open,2025-01-15,${total}\n`,
-      );
+      const poNo = `${extIdPrefix}UPO-${rows}`;
+      const bu = `BU-${rows % 10}-${buPad}`;
+      const site = `SITE-${rows % 5}`;
+      const total = (1000 + (rows % 100000)).toFixed(2);
+      const line = `${ext},${poNo},${supExt},"${bu}",${site},open,2025-01-15,${total}\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
       rows++;
     }
     return rows;
@@ -436,33 +452,47 @@ export function writePurchaseOrdersCsvSync(
 }
 
 /**
- * Write a `payments` CSV referencing seeded invoice external IDs in
- * round-robin order. Invoices must already be present in the DB so the
- * per-batch grouped lookup resolves them — see `seedInvoices`.
+ * Write a `payments` CSV referencing the seeded invoice external IDs in
+ * round-robin order, exercising the grouped invoice lookup in `flushBatch`.
+ * Stops as soon as `minBytes` or `rowCount` is hit; one of the two must be
+ * supplied. Returns the number of rows written.
  */
 export function writePaymentsCsvSync(
   filePath: string,
   opts: {
     invoiceExternalIds: string[];
     extIdPrefix: string;
-    rowCount: number;
+    minBytes?: number;
+    rowCount?: number;
   },
 ): number {
-  const { invoiceExternalIds, extIdPrefix, rowCount } = opts;
+  const { invoiceExternalIds, extIdPrefix, minBytes, rowCount } = opts;
   if (invoiceExternalIds.length === 0) {
-    throw new Error("writePaymentsCsvSync requires at least one invoice extId");
+    throw new Error(
+      "writePaymentsCsvSync requires at least one invoice extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error("writePaymentsCsvSync requires minBytes or rowCount");
   }
   const fd = fs.openSync(filePath, "w");
   try {
     const header =
       "externalId,invoiceExternalId,paidDate,amountUsd,paymentTermsDays\n";
     fs.writeSync(fd, header);
+    let bytes = header.length;
     let rows = 0;
-    while (rows < rowCount) {
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
       const ext = `${extIdPrefix}pay-${rows}`;
       const invExt = invoiceExternalIds[rows % invoiceExternalIds.length]!;
-      const amt = (50 + (rows % 1000)).toFixed(2);
-      fs.writeSync(fd, `${ext},${invExt},2025-02-15,${amt},30\n`);
+      const amt = (50 + (rows % 5000)).toFixed(2);
+      const terms = String(15 + (rows % 60));
+      const line = `${ext},${invExt},2025-02-15,${amt},${terms}\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
       rows++;
     }
     return rows;
@@ -472,9 +502,10 @@ export function writePaymentsCsvSync(
 }
 
 /**
- * Write a `shipments` CSV. Both `poExternalId` and `supplierExternalId` are
- * optional in the streaming flushBatch (`set null` on missing lookup hits),
- * but supplying both round-robin exercises the dual grouped-lookup path.
+ * Write a `shipments` CSV referencing seeded PO and supplier external IDs in
+ * round-robin order, exercising both grouped lookups in `flushBatch`. Stops
+ * as soon as `minBytes` or `rowCount` is hit; one of the two must be
+ * supplied. Returns the number of rows written.
  */
 export function writeShipmentsCsvSync(
   filePath: string,
@@ -482,10 +513,17 @@ export function writeShipmentsCsvSync(
     poExternalIds: string[];
     supplierExternalIds: string[];
     extIdPrefix: string;
-    rowCount: number;
+    minBytes?: number;
+    rowCount?: number;
   },
 ): number {
-  const { poExternalIds, supplierExternalIds, extIdPrefix, rowCount } = opts;
+  const {
+    poExternalIds,
+    supplierExternalIds,
+    extIdPrefix,
+    minBytes,
+    rowCount,
+  } = opts;
   if (poExternalIds.length === 0) {
     throw new Error("writeShipmentsCsvSync requires at least one PO extId");
   }
@@ -494,30 +532,36 @@ export function writeShipmentsCsvSync(
       "writeShipmentsCsvSync requires at least one supplier extId",
     );
   }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error("writeShipmentsCsvSync requires minBytes or rowCount");
+  }
   const fd = fs.openSync(filePath, "w");
   try {
     const header =
       "externalId,poExternalId,supplierExternalId,carrier,mode,originCountry,destCountry,laneKey,weightKg,freightCostUsd,incoterms,shipDate\n";
     fs.writeSync(fd, header);
-    const carriers = ["MAERSK", "FEDEX", "DHL", "UPS", "USPS"];
-    const modes = ["ocean", "air", "ltl", "tl", "parcel", "rail"] as const;
-    const countries = ["US", "DE", "CN", "JP", "BR"];
+    let bytes = header.length;
     let rows = 0;
-    while (rows < rowCount) {
+    const modes = ["ocean", "air", "ltl", "tl", "parcel", "rail"] as const;
+    const carriers = ["UPS", "DHL", "FedEx", "Maersk", "Hapag", "DB Schenker"];
+    const countries = ["US", "DE", "CN", "MX", "CA", "JP"];
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
       const ext = `${extIdPrefix}shp-${rows}`;
       const poExt = poExternalIds[rows % poExternalIds.length]!;
       const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
       const carrier = carriers[rows % carriers.length]!;
       const mode = modes[rows % modes.length]!;
-      const orig = countries[rows % countries.length]!;
+      const origin = countries[rows % countries.length]!;
       const dest = countries[(rows + 1) % countries.length]!;
-      const lane = `${orig}-${dest}`;
-      const wt = (50 + (rows % 1000)).toFixed(2);
-      const cost = (100 + (rows % 5000)).toFixed(2);
-      fs.writeSync(
-        fd,
-        `${ext},${poExt},${supExt},${carrier},${mode},${orig},${dest},${lane},${wt},${cost},DAP,2025-03-15\n`,
-      );
+      const lane = `${origin}-${dest}-${mode}`;
+      const weight = (10 + (rows % 5000)).toFixed(2);
+      const cost = (100 + (rows % 10000)).toFixed(2);
+      const line = `${ext},${poExt},${supExt},${carrier},${mode},${origin},${dest},${lane},${weight},${cost},FOB,2025-03-15\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
       rows++;
     }
     return rows;
@@ -539,15 +583,10 @@ export function writeShipmentsCsvSync(
 export async function deleteFixtureRowsByPrefix(
   extIdPrefix: string,
 ): Promise<void> {
-  // Children of POs / invoices / suppliers first.
-  await db
-    .delete(poLinesTable)
-    .where(
-      and(
-        eq(poLinesTable.sourceSystem, FIXTURE_SOURCE),
-        like(poLinesTable.sourceExternalId, `${extIdPrefix}%`),
-      ),
-    );
+  // Children first. Payments cascade-delete with invoices, but deleting them
+  // explicitly first keeps cleanup robust to leftover rows whose parent
+  // invoice was already gone. Shipments do NOT cascade (poId / supplierId
+  // are `set null`), so explicit deletion is required.
   await db
     .delete(paymentsTable)
     .where(
@@ -562,6 +601,14 @@ export async function deleteFixtureRowsByPrefix(
       and(
         eq(shipmentsTable.sourceSystem, FIXTURE_SOURCE),
         like(shipmentsTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(poLinesTable)
+    .where(
+      and(
+        eq(poLinesTable.sourceSystem, FIXTURE_SOURCE),
+        like(poLinesTable.sourceExternalId, `${extIdPrefix}%`),
       ),
     );
   await db
