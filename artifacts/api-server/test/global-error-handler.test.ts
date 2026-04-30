@@ -79,7 +79,7 @@ function buildApp(register: (r: Router) => void): Express {
   // no-op logger so the handler runs without standing up a full logger
   // (and without pino spamming stdout during the test run).
   app.use((req, _res, next) => {
-    (req as Request & { log: { error: () => void } }).log = {
+    (req as unknown as { log: { error: () => void } }).log = {
       error: () => undefined,
     };
     next();

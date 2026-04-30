@@ -1,8 +1,19 @@
 import { Router, type IRouter } from "express";
-import { db, jobsTable, type JobKind, type JobStatus } from "@workspace/db";
+import {
+  db,
+  jobsTable,
+  jobKindSettingsTable,
+  type JobKind,
+  type JobStatus,
+} from "@workspace/db";
 import { and, desc, eq, isNull, or, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
-import { enqueueJob, requestJobCancellation } from "../lib/jobs/queue";
+import {
+  enqueueJob,
+  requestJobCancellation,
+  MAX_ATTEMPTS_BY_KIND,
+  MAX_ATTEMPTS_LIMIT,
+} from "../lib/jobs/queue";
 
 const router: IRouter = Router();
 
@@ -12,6 +23,19 @@ const jobKindAllow = new Set<JobKind>([
   "ingest_mock_erp",
   "run_collector",
 ]);
+
+/**
+ * Job kinds that operators can configure from the System page. We
+ * deliberately exclude `prune_jobs` — it's internal housekeeping with no
+ * upstream API calls, so a tunable retry budget would just add UI noise.
+ */
+const configurableKinds: readonly JobKind[] = [
+  "ingest_csv",
+  "ingest_mock_erp",
+  "run_analysis_cycle",
+  "run_collector",
+];
+const configurableKindSet = new Set<JobKind>(configurableKinds);
 
 const jobStatusAllow = new Set<JobStatus>([
   "pending",
@@ -70,6 +94,102 @@ router.get("/jobs", tenantMiddleware, async (req, res) => {
     .limit(limit);
 
   res.json(rows.map(mapJob));
+});
+
+// ---------------------------------------------------------------------------
+// Per-kind retry budget configuration (System page)
+//
+// Settings are scoped per-tenant: each org sees and edits only its own
+// overrides, and `enqueueJob` only consults the row matching the job's
+// `orgId`. This matches the rest of the System page (recent jobs are
+// already filtered by org) and prevents one tenant from changing
+// another tenant's retry behaviour.
+//
+// `GET /jobs/settings` returns one entry per configurable job kind for
+// the caller's org, with the effective retry budget — either the
+// operator's per-tenant override from `job_kind_settings`, or the
+// in-code default from `MAX_ATTEMPTS_BY_KIND` when no override exists.
+// The `isOverride` flag tells the UI whether a row exists for this org
+// so it can show "default" vs "custom".
+//
+// `PUT /jobs/settings/:kind` upserts an override for a single kind for
+// the caller's org. The next `enqueueJob` call for that org (and only
+// the next one — already-pending rows keep their per-row `max_attempts`
+// value to avoid mid-flight surprises) will use the new value.
+//
+// IMPORTANT: these routes are declared BEFORE `/jobs/:id` so Express does
+// not match `/jobs/settings` against the `:id` param.
+// ---------------------------------------------------------------------------
+
+router.get("/jobs/settings", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const overrides = await db
+    .select()
+    .from(jobKindSettingsTable)
+    .where(eq(jobKindSettingsTable.orgId, orgId));
+  const overrideByKind = new Map(overrides.map((r) => [r.kind, r] as const));
+
+  const rows = configurableKinds.map((kind) => {
+    const override = overrideByKind.get(kind);
+    const defaultMaxAttempts = MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
+    const maxAttempts = override?.maxAttempts ?? defaultMaxAttempts;
+    return {
+      kind,
+      maxAttempts,
+      defaultMaxAttempts,
+      isOverride: override !== undefined,
+      updatedAt: override?.updatedAt ?? null,
+    };
+  });
+
+  res.json(rows);
+});
+
+router.put("/jobs/settings/:kind", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const kind = String(req.params.kind ?? "") as JobKind;
+  if (!configurableKindSet.has(kind)) {
+    res.status(400).json({ error: `Unknown or non-configurable kind: ${kind}` });
+    return;
+  }
+
+  const raw = (req.body as { maxAttempts?: unknown })?.maxAttempts;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+    res.status(400).json({
+      error: "maxAttempts must be an integer >= 1",
+    });
+    return;
+  }
+  if (n > MAX_ATTEMPTS_LIMIT) {
+    res.status(400).json({
+      error: `maxAttempts must be <= ${MAX_ATTEMPTS_LIMIT}`,
+    });
+    return;
+  }
+
+  const now = new Date();
+  await db
+    .insert(jobKindSettingsTable)
+    .values({ orgId, kind, maxAttempts: n, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [jobKindSettingsTable.orgId, jobKindSettingsTable.kind],
+      set: { maxAttempts: n, updatedAt: now },
+    });
+
+  req.log.info(
+    { orgId, kind, maxAttempts: n },
+    "Updated per-tenant retry budget override",
+  );
+
+  const defaultMaxAttempts = MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
+  res.json({
+    kind,
+    maxAttempts: n,
+    defaultMaxAttempts,
+    isOverride: true,
+    updatedAt: now,
+  });
 });
 
 router.get("/jobs/:id", tenantMiddleware, async (req, res) => {

@@ -1226,6 +1226,124 @@ export const ListJobsResponseItem = zod.object({
 export const ListJobsResponse = zod.array(ListJobsResponseItem);
 
 /**
+ * Returns one row per configurable job kind. `maxAttempts` is the
+effective retry budget (operator override if present, otherwise the
+in-code default). `isOverride` is `true` when the value comes from
+the `job_kind_settings` table, `false` when it falls back to the
+default. The pruner is intentionally excluded — it has no upstream
+API calls and does not benefit from operator tuning.
+
+ * @summary List effective per-kind retry budgets
+ */
+export const ListJobKindSettingsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListJobKindSettingsResponseItem = zod.object({
+  kind: zod.enum([
+    "ingest_csv",
+    "ingest_mock_erp",
+    "run_analysis_cycle",
+    "run_collector",
+  ]),
+  maxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "Effective auto-retry budget for this kind: operator override if\none is set, otherwise the in-code default.\n",
+    ),
+  defaultMaxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "The in-code default for this kind. Shown in the UI so operators\ncan see what value the system would fall back to if the\noverride were removed.\n",
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when `maxAttempts` comes from the `job_kind_settings`\ntable; false when it falls back to `defaultMaxAttempts`.\n",
+    ),
+  updatedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When the override was last written. Null when there is no override.",
+    ),
+});
+export const ListJobKindSettingsResponse = zod.array(
+  ListJobKindSettingsResponseItem,
+);
+
+/**
+ * Upserts an operator override into `job_kind_settings`. Takes effect
+on the next `enqueueJob` call; in-flight jobs keep the
+`max_attempts` value they were enqueued with so a mid-flight tweak
+does not change the budget of a job that is already retrying.
+
+ * @summary Override the auto-retry budget for a single job kind
+ */
+export const UpdateJobKindSettingParams = zod.object({
+  kind: zod.enum([
+    "ingest_csv",
+    "ingest_mock_erp",
+    "run_analysis_cycle",
+    "run_collector",
+  ]),
+});
+
+export const UpdateJobKindSettingHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const updateJobKindSettingBodyMaxAttemptsMax = 100;
+
+export const UpdateJobKindSettingBody = zod.object({
+  maxAttempts: zod.number().min(1).max(updateJobKindSettingBodyMaxAttemptsMax),
+});
+
+export const UpdateJobKindSettingResponse = zod.object({
+  kind: zod.enum([
+    "ingest_csv",
+    "ingest_mock_erp",
+    "run_analysis_cycle",
+    "run_collector",
+  ]),
+  maxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "Effective auto-retry budget for this kind: operator override if\none is set, otherwise the in-code default.\n",
+    ),
+  defaultMaxAttempts: zod
+    .number()
+    .min(1)
+    .describe(
+      "The in-code default for this kind. Shown in the UI so operators\ncan see what value the system would fall back to if the\noverride were removed.\n",
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when `maxAttempts` comes from the `job_kind_settings`\ntable; false when it falls back to `defaultMaxAttempts`.\n",
+    ),
+  updatedAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "When the override was last written. Null when there is no override.",
+    ),
+});
+
+/**
  * @summary Get an async job's status + result
  */
 export const GetJobParams = zod.object({

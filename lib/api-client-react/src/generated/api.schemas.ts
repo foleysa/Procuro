@@ -393,6 +393,49 @@ run immediately (the common case).
   scheduledFor?: string | null;
 }
 
+export type JobKindSettingKind =
+  (typeof JobKindSettingKind)[keyof typeof JobKindSettingKind];
+
+export const JobKindSettingKind = {
+  ingest_csv: "ingest_csv",
+  ingest_mock_erp: "ingest_mock_erp",
+  run_analysis_cycle: "run_analysis_cycle",
+  run_collector: "run_collector",
+} as const;
+
+export interface JobKindSetting {
+  kind: JobKindSettingKind;
+  /**
+   * Effective auto-retry budget for this kind: operator override if
+one is set, otherwise the in-code default.
+
+   * @minimum 1
+   */
+  maxAttempts: number;
+  /**
+   * The in-code default for this kind. Shown in the UI so operators
+can see what value the system would fall back to if the
+override were removed.
+
+   * @minimum 1
+   */
+  defaultMaxAttempts: number;
+  /** True when `maxAttempts` comes from the `job_kind_settings`
+table; false when it falls back to `defaultMaxAttempts`.
+ */
+  isOverride: boolean;
+  /** When the override was last written. Null when there is no override. */
+  updatedAt?: string | null;
+}
+
+export interface UpdateJobKindSettingRequest {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  maxAttempts: number;
+}
+
 /**
  * `failed` when the job was `pending` and was transitioned
 immediately, `running` when the cancel flag was set on a

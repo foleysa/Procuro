@@ -1,12 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getListJobsQueryKey,
+  getListJobKindSettingsQueryKey,
   useListJobs,
+  useListJobKindSettings,
   useRetryJob,
   useCancelJob,
+  useUpdateJobKindSetting,
   ListJobsStatus,
   type Job,
+  type JobKindSetting,
   type ListJobsParams,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
+import { Input } from "@/components/ui/input";
 import {
   Loader2,
   RefreshCw,
@@ -37,6 +42,8 @@ import {
   Clock,
   PlayCircle,
   Ban,
+  Save,
+  Settings2,
 } from "lucide-react";
 
 const STATUS_OPTS: { v: string; l: string }[] = [
@@ -111,6 +118,112 @@ function retryDelayLabel(job: Job): string | null {
   const hours = Math.floor(mins / 60);
   const rem = mins % 60;
   return rem > 0 ? `in ${hours}h ${rem}m` : `in ${hours}h`;
+}
+
+const KIND_DESCRIPTION: Record<string, string> = {
+  ingest_csv: "Per-batch CSV ingestion job",
+  ingest_mock_erp: "Mock ERP sync runs",
+  run_analysis_cycle: "OODA analysis cycle execution",
+  run_collector: "External market-signal collector run",
+};
+
+interface RetryBudgetRowProps {
+  setting: JobKindSetting;
+  onSave: (kind: JobKindSetting["kind"], maxAttempts: number) => void;
+  isSaving: boolean;
+}
+
+function RetryBudgetRow({ setting, onSave, isSaving }: RetryBudgetRowProps) {
+  // Local input state so the operator can type freely without each
+  // keystroke triggering a network round-trip. Re-syncs whenever the
+  // server value changes (after a save, or when the list refetches).
+  const [draft, setDraft] = useState<string>(String(setting.maxAttempts));
+  useEffect(() => {
+    setDraft(String(setting.maxAttempts));
+  }, [setting.maxAttempts]);
+
+  const parsed = Number(draft);
+  const isValidInt =
+    draft.trim() !== "" &&
+    Number.isInteger(parsed) &&
+    parsed >= 1 &&
+    parsed <= 100;
+  const isDirty = isValidInt && parsed !== setting.maxAttempts;
+
+  return (
+    <tr
+      data-testid={`row-setting-${setting.kind}`}
+      className="border-t"
+    >
+      <td className="py-2 pr-4">
+        <div className="font-medium">
+          {KIND_LABEL[setting.kind] ?? setting.kind}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {KIND_DESCRIPTION[setting.kind] ?? setting.kind}
+        </div>
+      </td>
+      <td className="py-2 pr-4 text-right tabular-nums text-xs text-muted-foreground">
+        {setting.defaultMaxAttempts}
+      </td>
+      <td className="py-2 pr-4">
+        <div className="flex items-center gap-2">
+          <Input
+            data-testid={`input-max-attempts-${setting.kind}`}
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="w-20 tabular-nums"
+            disabled={isSaving}
+          />
+          {setting.isOverride ? (
+            <Badge
+              variant="secondary"
+              className="text-[10px]"
+              data-testid={`badge-override-${setting.kind}`}
+            >
+              custom
+            </Badge>
+          ) : (
+            <Badge
+              variant="outline"
+              className="text-[10px]"
+              data-testid={`badge-default-${setting.kind}`}
+            >
+              default
+            </Badge>
+          )}
+        </div>
+        {!isValidInt && draft.trim() !== "" && (
+          <div className="text-xs text-red-600 mt-1">
+            Enter an integer between 1 and 100.
+          </div>
+        )}
+      </td>
+      <td className="py-2 pr-4 text-xs text-muted-foreground">
+        {setting.updatedAt ? formatDateTime(setting.updatedAt) : "—"}
+      </td>
+      <td className="py-2 pr-2 text-right">
+        <Button
+          data-testid={`btn-save-${setting.kind}`}
+          size="sm"
+          variant="outline"
+          disabled={!isDirty || isSaving}
+          onClick={() => onSave(setting.kind, parsed)}
+        >
+          {isSaving ? (
+            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+          ) : (
+            <Save className="w-3 h-3 mr-1" />
+          )}
+          Save
+        </Button>
+      </td>
+    </tr>
+  );
 }
 
 export default function System() {
@@ -204,6 +317,34 @@ export default function System() {
     },
   });
 
+  // Per-kind retry budget editor.
+  const settingsQueryKey = useMemo(
+    () => getListJobKindSettingsQueryKey(),
+    [],
+  );
+  const settingsQuery = useListJobKindSettings({
+    query: { queryKey: settingsQueryKey },
+  });
+  const settings = settingsQuery.data ?? [];
+
+  const updateSettingM = useUpdateJobKindSetting({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Retry budget updated",
+          description: `${KIND_LABEL[resp.kind] ?? resp.kind} now retries up to ${resp.maxAttempts} time${resp.maxAttempts === 1 ? "" : "s"}.`,
+        });
+        qc.invalidateQueries({ queryKey: settingsQueryKey });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not save retry budget",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
   return (
     <div className="p-8 space-y-6 max-w-7xl">
       <div className="flex items-start justify-between gap-4">
@@ -256,6 +397,65 @@ export default function System() {
           );
         })}
       </div>
+
+      <Card data-testid="card-retry-budgets">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings2 className="w-4 h-4 text-muted-foreground" />
+            Retry budgets
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Tune the maximum number of automatic attempts (initial run +
+            retries) per job kind. New values apply to the next enqueue;
+            in-flight jobs keep the budget they were enqueued with.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {settingsQuery.isLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading settings…
+            </div>
+          )}
+          {settingsQuery.isError && (
+            <div className="text-sm text-red-600">
+              Failed to load retry-budget settings.
+            </div>
+          )}
+          {!settingsQuery.isLoading && settings.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground uppercase tracking-wide">
+                    <th className="py-2 pr-4">Job kind</th>
+                    <th className="py-2 pr-4 text-right">Default</th>
+                    <th className="py-2 pr-4">Max attempts</th>
+                    <th className="py-2 pr-4">Last updated</th>
+                    <th className="py-2 pr-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settings.map((s) => (
+                    <RetryBudgetRow
+                      key={s.kind}
+                      setting={s}
+                      onSave={(kind, maxAttempts) =>
+                        updateSettingM.mutate({
+                          kind,
+                          data: { maxAttempts },
+                        })
+                      }
+                      isSaving={
+                        updateSettingM.isPending &&
+                        updateSettingM.variables?.kind === s.kind
+                      }
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

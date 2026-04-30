@@ -51,7 +51,7 @@ function buildApp(): Express {
   // not log, but pino-http would normally attach `req.log` in
   // production — wire up a no-op so the contract matches.
   app.use((req, _res, next) => {
-    (req as Request & { log: { error: () => void } }).log = {
+    (req as unknown as { log: { error: () => void } }).log = {
       error: () => undefined,
     };
     next();

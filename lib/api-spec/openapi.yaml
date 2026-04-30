@@ -600,6 +600,64 @@ paths:
                 items:
                   $ref: "#/components/schemas/Job"
 
+  /jobs/settings:
+    get:
+      operationId: listJobKindSettings
+      tags: [jobs]
+      summary: List effective per-kind retry budgets
+      description: |
+        Returns one row per configurable job kind. `maxAttempts` is the
+        effective retry budget (operator override if present, otherwise the
+        in-code default). `isOverride` is `true` when the value comes from
+        the `job_kind_settings` table, `false` when it falls back to the
+        default. The pruner is intentionally excluded — it has no upstream
+        API calls and does not benefit from operator tuning.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Per-kind retry-budget settings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JobKindSetting"
+
+  /jobs/settings/{kind}:
+    put:
+      operationId: updateJobKindSetting
+      tags: [jobs]
+      summary: Override the auto-retry budget for a single job kind
+      description: |
+        Upserts an operator override into `job_kind_settings`. Takes effect
+        on the next `enqueueJob` call; in-flight jobs keep the
+        `max_attempts` value they were enqueued with so a mid-flight tweak
+        does not change the budget of a job that is already retrying.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [ingest_csv, ingest_mock_erp, run_analysis_cycle, run_collector]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateJobKindSettingRequest"
+      responses:
+        "200":
+          description: Updated setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobKindSetting"
+        "400":
+          description: Invalid kind or maxAttempts value
+
   /jobs/{id}:
     get:
       operationId: getJob
@@ -1361,6 +1419,46 @@ components:
             Set to a future timestamp while a job is in retry-backoff
             after a transient failure; `null` means the job is ready to
             run immediately (the common case).
+
+    JobKindSetting:
+      type: object
+      required: [kind, maxAttempts, defaultMaxAttempts, isOverride]
+      properties:
+        kind:
+          type: string
+          enum: [ingest_csv, ingest_mock_erp, run_analysis_cycle, run_collector]
+        maxAttempts:
+          type: integer
+          minimum: 1
+          description: |
+            Effective auto-retry budget for this kind: operator override if
+            one is set, otherwise the in-code default.
+        defaultMaxAttempts:
+          type: integer
+          minimum: 1
+          description: |
+            The in-code default for this kind. Shown in the UI so operators
+            can see what value the system would fall back to if the
+            override were removed.
+        isOverride:
+          type: boolean
+          description: |
+            True when `maxAttempts` comes from the `job_kind_settings`
+            table; false when it falls back to `defaultMaxAttempts`.
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the override was last written. Null when there is no override.
+
+    UpdateJobKindSettingRequest:
+      type: object
+      required: [maxAttempts]
+      properties:
+        maxAttempts:
+          type: integer
+          minimum: 1
+          maximum: 100
 
     JobCancelled:
       type: object

@@ -1,4 +1,10 @@
-import { db, jobsTable, type JobKind, type JobRow } from "@workspace/db";
+import {
+  db,
+  jobsTable,
+  jobKindSettingsTable,
+  type JobKind,
+  type JobRow,
+} from "@workspace/db";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
@@ -21,7 +27,7 @@ const MAX_PENDING_JOBS_PER_ORG = 5;
  * mode is upstream rate-limiting / 5xx blips that almost always recover on
  * the next attempt.
  */
-const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
+export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   ingest_csv: 3,
   ingest_mock_erp: 3,
   run_analysis_cycle: 3,
@@ -32,6 +38,42 @@ const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // default budget of 3 is plenty.
   prune_jobs: 3,
 };
+
+/** Hard upper bound to keep pathological values out of the DB. */
+export const MAX_ATTEMPTS_LIMIT = 100;
+
+/**
+ * Resolve the effective retry budget for a job kind, scoped to a single
+ * tenant: returns the operator override from `job_kind_settings` for
+ * `(orgId, kind)` if one is set, otherwise the in-code default from
+ * `MAX_ATTEMPTS_BY_KIND`. Defaults to 3 if neither is available
+ * (defensive — every known kind has an entry above).
+ *
+ * `orgId` is required for a per-tenant lookup. System/internal jobs that
+ * have no tenant scope (e.g. `prune_jobs` with `orgId === null`) should
+ * skip this helper or pass `null`, in which case only the in-code
+ * default is consulted — there is no global override layer.
+ */
+export async function resolveMaxAttempts(
+  kind: JobKind,
+  orgId: string | null,
+): Promise<number> {
+  if (orgId) {
+    const [row] = await db
+      .select({ maxAttempts: jobKindSettingsTable.maxAttempts })
+      .from(jobKindSettingsTable)
+      .where(
+        and(
+          eq(jobKindSettingsTable.orgId, orgId),
+          eq(jobKindSettingsTable.kind, kind),
+        ),
+      );
+    if (row && Number.isFinite(row.maxAttempts) && row.maxAttempts > 0) {
+      return row.maxAttempts;
+    }
+  }
+  return MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
+}
 
 /** Backoff: 5s base, doubles each attempt, capped at 5 minutes, ±25% jitter. */
 const BACKOFF_BASE_MS = 5_000;
@@ -125,10 +167,17 @@ export async function enqueueJob(args: {
   const jobId = newId("job");
   const kind = args.kind;
   const payload = args.payload ?? {};
-  const maxAttempts = Math.max(
-    1,
-    Math.floor(args.maxAttempts ?? MAX_ATTEMPTS_BY_KIND[kind] ?? 3),
-  );
+  // If the caller provided an explicit override (mostly tests / one-off
+  // internal jobs) honour it; otherwise consult `job_kind_settings` for a
+  // per-tenant operator override and fall back to the in-code default.
+  // Note: `resolveMaxAttempts` returns the in-code default when `orgId`
+  // is null, since per-tenant overrides only exist for tenant-scoped
+  // jobs (system jobs like `prune_jobs` always use the default).
+  const resolved =
+    args.maxAttempts !== undefined
+      ? args.maxAttempts
+      : await resolveMaxAttempts(kind, orgId);
+  const maxAttempts = Math.max(1, Math.floor(resolved));
 
   if (orgId) {
     // Acquire a transaction-scoped advisory lock keyed to this org before

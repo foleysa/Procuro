@@ -43,6 +43,7 @@ import type {
   Job,
   JobAccepted,
   JobCancelled,
+  JobKindSetting,
   LearnedPrior,
   ListJobsParams,
   ListMarketSignalsParams,
@@ -65,6 +66,7 @@ import type {
   SpendOverview,
   SupplierListResponse,
   SyncResultResponse,
+  UpdateJobKindSettingRequest,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -2280,6 +2282,226 @@ export function useListJobs<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns one row per configurable job kind. `maxAttempts` is the
+effective retry budget (operator override if present, otherwise the
+in-code default). `isOverride` is `true` when the value comes from
+the `job_kind_settings` table, `false` when it falls back to the
+default. The pruner is intentionally excluded — it has no upstream
+API calls and does not benefit from operator tuning.
+
+ * @summary List effective per-kind retry budgets
+ */
+export const getListJobKindSettingsUrl = () => {
+  return `/api/jobs/settings`;
+};
+
+export const listJobKindSettings = async (
+  options?: RequestInit,
+): Promise<JobKindSetting[]> => {
+  return customFetch<JobKindSetting[]>(getListJobKindSettingsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListJobKindSettingsQueryKey = () => {
+  return [`/api/jobs/settings`] as const;
+};
+
+export const getListJobKindSettingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listJobKindSettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listJobKindSettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListJobKindSettingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listJobKindSettings>>
+  > = ({ signal }) => listJobKindSettings({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listJobKindSettings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListJobKindSettingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listJobKindSettings>>
+>;
+export type ListJobKindSettingsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List effective per-kind retry budgets
+ */
+
+export function useListJobKindSettings<
+  TData = Awaited<ReturnType<typeof listJobKindSettings>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listJobKindSettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListJobKindSettingsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Upserts an operator override into `job_kind_settings`. Takes effect
+on the next `enqueueJob` call; in-flight jobs keep the
+`max_attempts` value they were enqueued with so a mid-flight tweak
+does not change the budget of a job that is already retrying.
+
+ * @summary Override the auto-retry budget for a single job kind
+ */
+export const getUpdateJobKindSettingUrl = (
+  kind:
+    | "ingest_csv"
+    | "ingest_mock_erp"
+    | "run_analysis_cycle"
+    | "run_collector",
+) => {
+  return `/api/jobs/settings/${kind}`;
+};
+
+export const updateJobKindSetting = async (
+  kind:
+    | "ingest_csv"
+    | "ingest_mock_erp"
+    | "run_analysis_cycle"
+    | "run_collector",
+  updateJobKindSettingRequest: UpdateJobKindSettingRequest,
+  options?: RequestInit,
+): Promise<JobKindSetting> => {
+  return customFetch<JobKindSetting>(getUpdateJobKindSettingUrl(kind), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateJobKindSettingRequest),
+  });
+};
+
+export const getUpdateJobKindSettingMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateJobKindSetting>>,
+    TError,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+      data: BodyType<UpdateJobKindSettingRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateJobKindSetting>>,
+  TError,
+  {
+    kind:
+      | "ingest_csv"
+      | "ingest_mock_erp"
+      | "run_analysis_cycle"
+      | "run_collector";
+    data: BodyType<UpdateJobKindSettingRequest>;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateJobKindSetting"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateJobKindSetting>>,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+      data: BodyType<UpdateJobKindSettingRequest>;
+    }
+  > = (props) => {
+    const { kind, data } = props ?? {};
+
+    return updateJobKindSetting(kind, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateJobKindSettingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateJobKindSetting>>
+>;
+export type UpdateJobKindSettingMutationBody =
+  BodyType<UpdateJobKindSettingRequest>;
+export type UpdateJobKindSettingMutationError = ErrorType<void>;
+
+/**
+ * @summary Override the auto-retry budget for a single job kind
+ */
+export const useUpdateJobKindSetting = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateJobKindSetting>>,
+    TError,
+    {
+      kind:
+        | "ingest_csv"
+        | "ingest_mock_erp"
+        | "run_analysis_cycle"
+        | "run_collector";
+      data: BodyType<UpdateJobKindSettingRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateJobKindSetting>>,
+  TError,
+  {
+    kind:
+      | "ingest_csv"
+      | "ingest_mock_erp"
+      | "run_analysis_cycle"
+      | "run_collector";
+    data: BodyType<UpdateJobKindSettingRequest>;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateJobKindSettingMutationOptions(options));
+};
 
 /**
  * @summary Get an async job's status + result
