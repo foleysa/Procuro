@@ -11,6 +11,72 @@ const handlers = new Map<JobKind, JobHandler>();
 const MAX_PENDING_JOBS_PER_ORG = 5;
 
 /**
+ * Default per-kind retry budget. A fresh enqueue counts as attempt #1, so a
+ * value of 3 means "try at most 3 times total" (the original run + 2
+ * automatic retries). Operators can still hit the manual "Retry" button on
+ * the System / Jobs page after a job has exhausted its automatic budget,
+ * which enqueues a brand-new job with a fresh attempts counter.
+ *
+ * Collector runs get a slightly larger budget because their dominant failure
+ * mode is upstream rate-limiting / 5xx blips that almost always recover on
+ * the next attempt.
+ */
+const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
+  ingest_csv: 3,
+  ingest_mock_erp: 3,
+  run_analysis_cycle: 3,
+  run_collector: 5,
+  // The pruner is internal housekeeping with no upstream API calls; if a
+  // single run trips on a transient DB hiccup it's fine to retry once or
+  // twice, but the next scheduled run will catch up regardless, so the
+  // default budget of 3 is plenty.
+  prune_jobs: 3,
+};
+
+/** Backoff: 5s base, doubles each attempt, capped at 5 minutes, ±25% jitter. */
+const BACKOFF_BASE_MS = 5_000;
+const BACKOFF_CAP_MS = 5 * 60 * 1_000;
+
+/**
+ * Returns the backoff delay in milliseconds for the given attempt count.
+ * `attempt` is the number of attempts ALREADY made (>= 1). The first retry
+ * (after attempt #1 failed) waits ~5s, the second ~10s, the third ~20s,
+ * and so on, capped at five minutes. A small jitter prevents synchronized
+ * thundering-herd retries when many jobs fail at the same instant (e.g. a
+ * shared upstream API blip).
+ */
+export function nextBackoffMs(attempt: number): number {
+  const exponent = Math.max(0, attempt - 1);
+  const base = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** exponent);
+  const jitter = Math.random() * 0.25 * base;
+  return Math.floor(base + jitter);
+}
+
+/**
+ * Marker error class for failures that are known to be permanent and
+ * therefore should NOT consume retry budget. Throw this from a job handler
+ * (or wrap the underlying error) when the input is structurally invalid,
+ * a referenced entity does not exist, or any other condition where retrying
+ * the same payload is guaranteed to fail again.
+ */
+export class UnrecoverableJobError extends Error {
+  readonly unrecoverable = true as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "UnrecoverableJobError";
+  }
+}
+
+function isUnrecoverable(err: unknown): boolean {
+  return (
+    err instanceof UnrecoverableJobError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { unrecoverable?: unknown }).unrecoverable === true)
+  );
+}
+
+/**
  * Namespace integer for per-org advisory locks used during job enqueue.
  * Chosen to avoid collision with other app-level advisory locks.
  */
@@ -48,11 +114,21 @@ export async function enqueueJob(args: {
   kind: JobKind;
   orgId?: string | null;
   payload?: Record<string, unknown>;
+  /**
+   * Override the per-kind default retry budget. Mostly useful for tests
+   * and one-off internal jobs; production callers should rely on the
+   * defaults so behaviour stays consistent across the queue.
+   */
+  maxAttempts?: number;
 }): Promise<JobRow> {
   const orgId = args.orgId ?? null;
   const jobId = newId("job");
   const kind = args.kind;
   const payload = args.payload ?? {};
+  const maxAttempts = Math.max(
+    1,
+    Math.floor(args.maxAttempts ?? MAX_ATTEMPTS_BY_KIND[kind] ?? 3),
+  );
 
   if (orgId) {
     // Acquire a transaction-scoped advisory lock keyed to this org before
@@ -79,8 +155,8 @@ export async function enqueueJob(args: {
       }
 
       await tx.execute(sql`
-        INSERT INTO jobs (id, kind, org_id, payload, status)
-        VALUES (${jobId}, ${kind}, ${orgId}, ${JSON.stringify(payload)}::jsonb, 'pending')
+        INSERT INTO jobs (id, kind, org_id, payload, status, max_attempts)
+        VALUES (${jobId}, ${kind}, ${orgId}, ${JSON.stringify(payload)}::jsonb, 'pending', ${maxAttempts})
       `);
       inserted = true;
     });
@@ -106,6 +182,7 @@ export async function enqueueJob(args: {
       orgId: null,
       payload,
       status: "pending",
+      maxAttempts,
     })
     .returning();
   if (!row) throw new Error("Failed to enqueue job");
@@ -131,6 +208,9 @@ export async function claimNextJob(): Promise<JobRow | null> {
   //   on a window-free query, so concurrent workers safely skip claimed rows.
   // If a peer worker grabs the row between the two CTEs, `locked` returns
   // empty and the UPDATE matches 0 rows — same retry-on-next-poll behaviour.
+  // Jobs whose `scheduled_for` is set in the future are in retry-backoff and
+  // must be skipped until that time arrives. NULL means "ready immediately"
+  // (the common case for fresh enqueues), so we coalesce to NOW().
   const result = await db.execute(sql`
     WITH candidate AS MATERIALIZED (
       SELECT id
@@ -140,6 +220,7 @@ export async function claimNextJob(): Promise<JobRow | null> {
                MIN(enqueued_at) OVER (PARTITION BY org_id) AS org_earliest
         FROM jobs
         WHERE status = 'pending'
+          AND COALESCE(scheduled_for, NOW()) <= NOW()
       ) ranked
       WHERE rn = 1
       ORDER BY org_earliest ASC
@@ -150,10 +231,14 @@ export async function claimNextJob(): Promise<JobRow | null> {
       FROM jobs
       WHERE id = (SELECT id FROM candidate)
         AND status = 'pending'
+        AND COALESCE(scheduled_for, NOW()) <= NOW()
       FOR UPDATE SKIP LOCKED
     )
     UPDATE jobs
-    SET status = 'running', started_at = NOW(), attempts = attempts + 1
+    SET status = 'running',
+        started_at = NOW(),
+        attempts = attempts + 1,
+        scheduled_for = NULL
     WHERE id = (SELECT id FROM locked)
     RETURNING *
   `);
@@ -190,6 +275,7 @@ export async function failJob(jobId: string, error: Error): Promise<void> {
       status: "failed",
       error: error.message,
       completedAt: new Date(),
+      scheduledFor: null,
     })
     .where(eq(jobsTable.id, jobId));
 }
@@ -227,7 +313,9 @@ export async function requestJobCancellation(
   const now = new Date();
 
   // Atomically transition pending -> failed in one statement so a worker
-  // claim cannot race the cancel.
+  // claim cannot race the cancel. Also clear `scheduled_for` so a
+  // backoff-rescheduled row that the operator cancels mid-wait doesn't
+  // leave a stale next-retry time on the audit trail.
   const pendingResult = await db
     .update(jobsTable)
     .set({
@@ -235,6 +323,7 @@ export async function requestJobCancellation(
       error: CANCELLED_ERROR_MESSAGE,
       cancelRequested: true,
       completedAt: now,
+      scheduledFor: null,
     })
     .where(and(eq(jobsTable.id, jobId), eq(jobsTable.status, "pending")))
     .returning({ id: jobsTable.id });
@@ -269,6 +358,31 @@ export async function isJobCancelRequested(jobId: string): Promise<boolean> {
   return row?.cancelRequested === true;
 }
 
+/**
+ * Re-queue a job that just failed transiently. Sets status back to
+ * `pending`, records the error message, and schedules the next claim for
+ * `delayMs` in the future. Leaves `attempts` as the worker incremented it
+ * on claim, and intentionally leaves `enqueued_at` untouched so per-org
+ * FIFO ordering is preserved across retries.
+ */
+export async function scheduleRetry(
+  jobId: string,
+  error: Error,
+  delayMs: number,
+): Promise<Date> {
+  const next = new Date(Date.now() + Math.max(0, delayMs));
+  await db
+    .update(jobsTable)
+    .set({
+      status: "pending",
+      error: error.message,
+      scheduledFor: next,
+      startedAt: null,
+    })
+    .where(eq(jobsTable.id, jobId));
+  return next;
+}
+
 export async function setJobProgress(jobId: string, pct: number): Promise<void> {
   await db
     .update(jobsTable)
@@ -284,7 +398,12 @@ export async function processOnce(): Promise<boolean> {
   if (!job) return false;
   const handler = handlers.get(job.kind);
   if (!handler) {
-    await failJob(job.id, new Error(`No handler registered for kind=${job.kind}`));
+    // Unknown kind is a permanent configuration error: retrying will not
+    // suddenly conjure a handler. Fail immediately, no retry.
+    await failJob(
+      job.id,
+      new Error(`No handler registered for kind=${job.kind}`),
+    );
     return true;
   }
   try {
@@ -303,19 +422,53 @@ export async function processOnce(): Promise<boolean> {
       logger.info({ jobId: job.id, kind: job.kind }, "Job succeeded");
     }
   } catch (err) {
-    const e = err as Error;
-    // Same idea on the failure path: if cancellation was requested, normalize
-    // the error message so the UI/audit trail consistently shows "Cancelled
-    // by operator" regardless of which exception the handler happened to
-    // raise on its way out.
+    const e = err instanceof Error ? err : new Error(String(err));
+    // Cancellation always wins over auto-retry. If the operator flipped
+    // `cancel_requested` while the handler was running, normalize the
+    // terminal error to CANCELLED_ERROR_MESSAGE and skip backoff —
+    // automatically re-queuing a job the operator just told us to stop
+    // would be both wrong and confusing on the UI.
     if (await isJobCancelRequested(job.id)) {
       logger.info(
         { jobId: job.id, kind: job.kind, err: e.message },
         "Job cancelled (handler exited with error)",
       );
       await failJob(job.id, new Error(CANCELLED_ERROR_MESSAGE));
+      return true;
+    }
+    // The worker incremented `attempts` when it claimed this job, so
+    // job.attempts here is the number of attempts already consumed by
+    // this run. We retry only while we have budget left AND the error is
+    // not explicitly marked unrecoverable.
+    const budget = job.maxAttempts ?? MAX_ATTEMPTS_BY_KIND[job.kind] ?? 3;
+    const remaining = Math.max(0, budget - job.attempts);
+    if (remaining > 0 && !isUnrecoverable(e)) {
+      const delay = nextBackoffMs(job.attempts);
+      const next = await scheduleRetry(job.id, e, delay);
+      logger.warn(
+        {
+          jobId: job.id,
+          kind: job.kind,
+          attempt: job.attempts,
+          maxAttempts: budget,
+          retryInMs: delay,
+          nextAttemptAt: next.toISOString(),
+          err: e.message,
+        },
+        "Job failed transiently; scheduled for retry",
+      );
     } else {
-      logger.error({ jobId: job.id, kind: job.kind, err: e.message }, "Job failed");
+      logger.error(
+        {
+          jobId: job.id,
+          kind: job.kind,
+          attempt: job.attempts,
+          maxAttempts: budget,
+          unrecoverable: isUnrecoverable(e),
+          err: e.message,
+        },
+        "Job failed permanently",
+      );
       await failJob(job.id, e);
     }
   }

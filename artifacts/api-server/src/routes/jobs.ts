@@ -27,6 +27,7 @@ function mapJob(r: typeof jobsTable.$inferSelect) {
     kind: r.kind,
     status: r.status,
     attempts: r.attempts,
+    maxAttempts: r.maxAttempts,
     progress: r.progress,
     result: r.result ?? null,
     error: r.error,
@@ -34,6 +35,7 @@ function mapJob(r: typeof jobsTable.$inferSelect) {
     enqueuedAt: r.enqueuedAt,
     startedAt: r.startedAt,
     completedAt: r.completedAt,
+    scheduledFor: r.scheduledFor,
   };
 }
 

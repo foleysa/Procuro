@@ -93,6 +93,26 @@ function durationLabel(job: Job): string {
   return `${mins}m ${secs}s`;
 }
 
+/**
+ * If `job` is currently in retry-backoff (pending with `scheduledFor` set
+ * to a future time), return a short human label like "in 12s" or "in 2m".
+ * Returns null otherwise so callers can hide the row entirely.
+ */
+function retryDelayLabel(job: Job): string | null {
+  if (job.status !== "pending" || !job.scheduledFor) return null;
+  const next = new Date(job.scheduledFor).getTime();
+  if (!Number.isFinite(next)) return null;
+  const ms = next - Date.now();
+  if (ms <= 0) return "any moment";
+  if (ms < 60_000) return `in ${Math.max(1, Math.round(ms / 1000))}s`;
+  const mins = Math.floor(ms / 60_000);
+  const secs = Math.round((ms % 60_000) / 1000);
+  if (mins < 60) return secs > 0 ? `in ${mins}m ${secs}s` : `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `in ${hours}h ${rem}m` : `in ${hours}h`;
+}
+
 export default function System() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -319,12 +339,34 @@ export default function System() {
                         </div>
                       </td>
                       <td className="py-2 pr-4">
-                        <Badge className={STATUS_BADGE[j.status]}>
-                          {j.status}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge className={STATUS_BADGE[j.status]}>
+                            {j.status}
+                          </Badge>
+                          {(() => {
+                            const label = retryDelayLabel(j);
+                            return label ? (
+                              <span
+                                data-testid={`text-retry-${j.id}`}
+                                className="text-xs text-amber-700 dark:text-amber-400"
+                                title={
+                                  j.scheduledFor
+                                    ? `Next retry at ${formatDateTime(j.scheduledFor)}`
+                                    : undefined
+                                }
+                              >
+                                Retry {label}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
                       </td>
                       <td className="py-2 pr-4 text-right tabular-nums">
                         {j.attempts}
+                        <span className="text-muted-foreground">
+                          {" / "}
+                          {j.maxAttempts}
+                        </span>
                       </td>
                       <td className="py-2 pr-4 text-xs text-muted-foreground">
                         {formatDateTime(j.enqueuedAt)}
@@ -438,7 +480,13 @@ export default function System() {
                   <div className="text-xs uppercase text-muted-foreground">
                     Attempts
                   </div>
-                  <div className="tabular-nums">{selectedJob.attempts}</div>
+                  <div className="tabular-nums">
+                    {selectedJob.attempts}
+                    <span className="text-muted-foreground">
+                      {" / "}
+                      {selectedJob.maxAttempts}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs uppercase text-muted-foreground">
@@ -466,6 +514,25 @@ export default function System() {
                     {durationLabel(selectedJob)}
                   </div>
                 </div>
+                {selectedJob.scheduledFor && selectedJob.status === "pending" ? (
+                  <div className="col-span-2">
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Next retry
+                    </div>
+                    <div
+                      data-testid="text-detail-next-retry"
+                      className="text-amber-700 dark:text-amber-400"
+                    >
+                      {formatDateTime(selectedJob.scheduledFor)}
+                      {(() => {
+                        const label = retryDelayLabel(selectedJob);
+                        return label ? (
+                          <span className="text-xs ml-2">({label})</span>
+                        ) : null;
+                      })()}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {selectedJob.error && (

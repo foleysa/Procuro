@@ -8,6 +8,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
+import { UnrecoverableJobError } from "../jobs/queue";
 import type { IntelligenceCollector, MarketSignalDraft } from "./collector";
 import {
   ECB_FX_RATES_COLLECTOR_ID,
@@ -157,6 +158,16 @@ export async function runCollector(
   opts: { force?: boolean } = {},
 ): Promise<{ signalsCollected: number; durationMs: number; skipped?: string }> {
   const start = Date.now();
+
+  // Deterministic input validation: an empty / missing collector ID can
+  // never succeed on a retry with the same payload. Throwing
+  // UnrecoverableJobError here ensures the job runner skips the backoff
+  // ladder and fails the job immediately.
+  if (typeof collectorId !== "string" || collectorId.trim() === "") {
+    throw new UnrecoverableJobError(
+      "runCollector requires a non-empty collectorId",
+    );
+  }
   const [reg] = await db
     .select()
     .from(collectorsTable)
@@ -164,7 +175,11 @@ export async function runCollector(
     .limit(1);
 
   if (!reg) {
-    throw new Error(`Collector ${collectorId} not registered`);
+    // Unknown collector ID is a deterministic permanent failure for this
+    // payload — no amount of retrying will create the registry row.
+    throw new UnrecoverableJobError(
+      `Collector ${collectorId} not registered`,
+    );
   }
 
   // Hard gates: kill switch, posture, status.
@@ -194,7 +209,10 @@ export async function runCollector(
   const collector = registry.get(collectorId);
   if (!collector) {
     await audit(collectorId, "no_implementation");
-    throw new Error(
+    // The registry row exists but no in-process implementation is wired
+    // up. Retrying with the same payload cannot fix this — the only
+    // remedy is shipping new code that registers the collector.
+    throw new UnrecoverableJobError(
       `Collector ${collectorId} registered in DB but no runtime implementation`,
     );
   }

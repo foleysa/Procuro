@@ -20,6 +20,11 @@ export interface Job {
   kind: string;
   status: JobStatus;
   attempts: number;
+  /** Total automatic-attempt budget (initial run + auto-retries).
+When `attempts` reaches this value the worker stops retrying
+and marks the job `failed`.
+ */
+  maxAttempts: number;
   progress?: number;
   result?: JobResult;
   error?: string | null;
@@ -31,4 +36,10 @@ with error "Cancelled by operator" once the handler returns.
   enqueuedAt: Date;
   startedAt?: Date | null;
   completedAt?: Date | null;
+  /** Earliest time the worker is allowed to claim this job again.
+Set to a future timestamp while a job is in retry-backoff
+after a transient failure; `null` means the job is ready to
+run immediately (the common case).
+ */
+  scheduledFor?: Date | null;
 }

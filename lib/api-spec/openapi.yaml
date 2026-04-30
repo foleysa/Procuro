@@ -1325,7 +1325,7 @@ components:
 
     Job:
       type: object
-      required: [id, kind, status, attempts, enqueuedAt]
+      required: [id, kind, status, attempts, maxAttempts, enqueuedAt]
       properties:
         id: { type: string }
         orgId: { type: string, nullable: true }
@@ -1334,6 +1334,12 @@ components:
           type: string
           enum: [pending, running, succeeded, failed]
         attempts: { type: integer }
+        maxAttempts:
+          type: integer
+          description: |
+            Total automatic-attempt budget (initial run + auto-retries).
+            When `attempts` reaches this value the worker stops retrying
+            and marks the job `failed`.
         progress: { type: integer }
         result: { type: object, additionalProperties: true, nullable: true }
         error: { type: string, nullable: true }
@@ -1346,6 +1352,15 @@ components:
         enqueuedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         completedAt: { type: string, format: date-time, nullable: true }
+        scheduledFor:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Earliest time the worker is allowed to claim this job again.
+            Set to a future timestamp while a job is in retry-backoff
+            after a transient failure; `null` means the job is ready to
+            run immediately (the common case).
 
     JobCancelled:
       type: object

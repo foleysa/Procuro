@@ -48,6 +48,20 @@ export const jobsTable = pgTable(
     error: text("error"),
     attempts: integer("attempts").notNull().default(0),
     cancelRequested: boolean("cancel_requested").notNull().default(false),
+    /**
+     * Maximum attempts (claims) before the job is permanently marked
+     * `failed`. Defaults to 3 — a fresh enqueue counts as attempt #1, so
+     * the worker will retry up to two more times on transient errors.
+     */
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    /**
+     * Earliest time at which the worker is allowed to claim this job.
+     * Used to implement exponential backoff: on a transient failure the
+     * worker resets `status` back to `pending` and sets `scheduled_for`
+     * to a future time. NULL means "ready immediately" (the common case
+     * for freshly enqueued jobs).
+     */
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
     enqueuedAt: timestamp("enqueued_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -62,6 +76,9 @@ export const jobsTable = pgTable(
     // Supports the periodic prune query
     // (`WHERE status = ? AND completed_at < ?`).
     index("jobs_status_completed_at_idx").on(t.status, t.completedAt),
+    // Supports the worker's claim query, which filters pending jobs whose
+    // `scheduled_for` has arrived (auto-retry backoff scheduling).
+    index("jobs_scheduled_for_idx").on(t.scheduledFor),
   ],
 );
 

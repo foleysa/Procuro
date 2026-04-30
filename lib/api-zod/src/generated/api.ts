@@ -1199,6 +1199,11 @@ export const ListJobsResponseItem = zod.object({
   kind: zod.string(),
   status: zod.enum(["pending", "running", "succeeded", "failed"]),
   attempts: zod.number(),
+  maxAttempts: zod
+    .number()
+    .describe(
+      "Total automatic-attempt budget (initial run + auto-retries).\nWhen `attempts` reaches this value the worker stops retrying\nand marks the job `failed`.\n",
+    ),
   progress: zod.number().optional(),
   result: zod.record(zod.string(), zod.unknown()).nullish(),
   error: zod.string().nullish(),
@@ -1211,6 +1216,12 @@ export const ListJobsResponseItem = zod.object({
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
   completedAt: zod.coerce.date().nullish(),
+  scheduledFor: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
+    ),
 });
 export const ListJobsResponse = zod.array(ListJobsResponseItem);
 
@@ -1236,6 +1247,11 @@ export const GetJobResponse = zod.object({
   kind: zod.string(),
   status: zod.enum(["pending", "running", "succeeded", "failed"]),
   attempts: zod.number(),
+  maxAttempts: zod
+    .number()
+    .describe(
+      "Total automatic-attempt budget (initial run + auto-retries).\nWhen `attempts` reaches this value the worker stops retrying\nand marks the job `failed`.\n",
+    ),
   progress: zod.number().optional(),
   result: zod.record(zod.string(), zod.unknown()).nullish(),
   error: zod.string().nullish(),
@@ -1248,6 +1264,12 @@ export const GetJobResponse = zod.object({
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
   completedAt: zod.coerce.date().nullish(),
+  scheduledFor: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
+    ),
 });
 
 /**
