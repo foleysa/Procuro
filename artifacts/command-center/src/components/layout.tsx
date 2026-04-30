@@ -19,6 +19,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Show, useClerk, useUser } from "@clerk/react";
+import { ChessKnight } from "./icons/chess-knight";
 import { OrgSwitcher } from "./org-switcher";
 import { cn } from "@/lib/utils";
 import { useMyRole } from "@/lib/use-my-role";
@@ -41,7 +42,7 @@ export function Layout({ children }: LayoutProps) {
     { href: "/contracts", label: "Contracts", icon: FileText },
     { href: "/approvals", label: "Approvals", icon: CheckSquare },
     { href: "/ooda", label: "OODA Wheel", icon: Activity },
-    { href: "/fusion", label: "Intelligence Fusion", icon: Radar },
+    { href: "/fusion", label: "Intelligence Fusion", icon: ChessKnight },
     { href: "/results", label: "Results & Billing", icon: TrendingUp },
     { href: "/playbook", label: "Playbook", icon: BookOpen },
     { href: "/collectors", label: "Collector Workbench", icon: Radar },
