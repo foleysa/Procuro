@@ -153,25 +153,34 @@ function assertNoLeakage(label: string, body: string): void {
 }
 
 /**
- * The sanitizer produces messages that begin with a friendly headline
- * (one of `PG_ERROR_CODES` lookups), `Database error <SQLSTATE>` for
- * codes outside the known map (21000 is in this bucket), or the static
- * fallback `Internal server error during import` for non-DB errors. Any
- * of these is acceptable — we just need to confirm SOME sanitized
- * summary is present, not the raw stack/SQL.
+ * The sanitizer must produce a *useful* summary for the duplicate-key
+ * trigger this test fires, not just any acceptable string. The trigger
+ * is an `INSERT ... ON CONFLICT DO UPDATE` whose conflict target is hit
+ * twice in one statement — Postgres rejects with SQLSTATE 21000
+ * ("cardinality_violation").
+ *
+ * 21000 is not a member of the curated `PG_ERROR_CODES` map (it's not a
+ * 23xxx integrity violation, even though it's caused by duplicate key
+ * data), so the sanitizer's headline falls into the
+ * `Database error <SQLSTATE>` branch — i.e. the message must literally
+ * contain `Database error 21000`. Anything weaker (a bare
+ * `Internal server error during import`, or no SQLSTATE at all) means
+ * either the unwrap of `DrizzleQueryError.cause` regressed or the
+ * sanitizer is no longer being called on the wrapped error from the
+ * route's catch block. Operators rely on this code being present so they
+ * can self-service before opening a support ticket.
+ *
+ * The streaming endpoint additionally prefixes the sanitized message
+ * with `CSV stream ingest failed: `; the helper accepts that wrapper
+ * but still requires the `Database error 21000` headline to appear
+ * inside it.
  */
-function assertSanitizedSummaryPresent(label: string, body: string): void {
-  const lower = body.toLowerCase();
-  const ok =
-    lower.includes("database error") ||
-    lower.includes("duplicate") ||
-    lower.includes("integrity constraint") ||
-    lower.includes("internal server error during import") ||
-    lower.includes("csv stream ingest failed:");
+function assertSanitizedHeadline(label: string, body: string): void {
   assert.ok(
-    ok,
-    `[${label}] response body did not contain any recognizable sanitized ` +
-      `summary. Got: ${body}`,
+    body.includes("Database error 21000"),
+    `[${label}] expected response body to contain the specific sanitized ` +
+      `headline "Database error 21000" for the SQLSTATE 21000 trigger. ` +
+      `Got: ${body}`,
   );
 }
 
@@ -307,7 +316,7 @@ test("POST /api/ingest/csv hides SQL when the database rejects the upsert", asyn
     typeof json.error === "string" && json.error.length > 0,
     `/api/ingest/csv response missing 'error' field: ${body}`,
   );
-  assertSanitizedSummaryPresent("/api/ingest/csv", json.error ?? "");
+  assertSanitizedHeadline("/api/ingest/csv", json.error ?? "");
 });
 
 test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert", async () => {
@@ -394,7 +403,7 @@ test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert",
     typeof json.error === "string" && json.error.length > 0,
     `/api/ingest/mock-erp response missing 'error' field: ${body}`,
   );
-  assertSanitizedSummaryPresent("/api/ingest/mock-erp", json.error ?? "");
+  assertSanitizedHeadline("/api/ingest/mock-erp", json.error ?? "");
 });
 
 test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert", async () => {
@@ -471,7 +480,7 @@ test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert
     `/api/ingest/csv-stream error event is missing the documented prefix. ` +
       `Got: ${errorEvent.error}`,
   );
-  assertSanitizedSummaryPresent(
+  assertSanitizedHeadline(
     "/api/ingest/csv-stream",
     errorEvent.error,
   );

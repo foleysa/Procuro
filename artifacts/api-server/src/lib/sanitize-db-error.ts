@@ -85,6 +85,30 @@ function looksLikeDbError(err: unknown): err is PgLikeError {
 }
 
 /**
+ * Find the nearest pg-like error in the cause chain. Drizzle's
+ * `DrizzleQueryError` wraps the underlying `pg.DatabaseError` on `.cause`,
+ * which means the SQLSTATE code, table, column, and constraint that drive
+ * a useful summary live one level down — the outer wrapper itself only
+ * carries a `Failed query: ... params: [...]` message. Without unwrapping,
+ * a real Postgres conflict (e.g. SQLSTATE 23505 unique violation, 21000
+ * cardinality violation) collapses to the static `"Internal server error
+ * during import"` fallback and operators are left guessing.
+ *
+ * We walk a single `cause` level defensively. That is enough for the
+ * `DrizzleQueryError` -> `pg.DatabaseError` shape we actually see in
+ * production; deeper traversal risks chasing unrelated wrapped errors.
+ */
+function unwrapPgLikeError(err: unknown): PgLikeError | null {
+  if (looksLikeDbError(err)) return err;
+  const outer = asPgLike(err);
+  if (!outer) return null;
+  const cause = (outer as { cause?: unknown }).cause;
+  if (cause === err) return null;
+  if (looksLikeDbError(cause)) return cause;
+  return null;
+}
+
+/**
  * Identifier-shaped strings (table names, column names, constraint names,
  * SQLSTATE codes) — these never contain caller-supplied data and are safe
  * to surface to the user. Reject anything else as a defense-in-depth guard
@@ -120,12 +144,13 @@ function safeSqlState(v: unknown): string | undefined {
  * `"Internal server error during import"` string.
  */
 export function sanitizeDbErrorMessage(err: unknown): string {
-  if (looksLikeDbError(err)) {
-    const code = safeSqlState(err.code);
+  const pg = unwrapPgLikeError(err);
+  if (pg) {
+    const code = safeSqlState(pg.code);
     const kind = code ? PG_ERROR_CODES[code] : undefined;
-    const table = safeIdent(err.table);
-    const column = safeIdent(err.column);
-    const constraint = safeIdent(err.constraint);
+    const table = safeIdent(pg.table);
+    const column = safeIdent(pg.column);
+    const constraint = safeIdent(pg.constraint);
 
     const headline = kind ?? (code ? `Database error ${code}` : "Database error");
     const parts: string[] = [];

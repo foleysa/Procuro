@@ -201,6 +201,80 @@ test("rejects suspicious values masquerading as identifiers", () => {
   );
 });
 
+test("unwraps a Drizzle-style wrapper that carries the pg fields on `cause`", () => {
+  // Drizzle's `DrizzleQueryError` rethrows the underlying `pg.DatabaseError`
+  // on `.cause`. The outer wrapper's own message is the noisy
+  // `Failed query: ... params: [...]` string and it has no `code` / `table`
+  // / `constraint` of its own. Without unwrapping, the sanitizer has
+  // nothing to work with and falls all the way through to the static
+  // generic fallback — exactly the regression operators were complaining
+  // about. Once unwrapped, we should produce the same friendly summary
+  // we'd produce if the bare pg.DatabaseError had been thrown directly.
+  const inner = makePgError({
+    message:
+      'duplicate key value violates unique constraint "suppliers_org_external_id_uq"',
+    code: "23505",
+    table: "suppliers",
+    constraint: "suppliers_org_external_id_uq",
+    detail: "Key (external_id)=(SUP-001) already exists.",
+  });
+  const wrapper = new Error(
+    'Failed query: insert into "suppliers" ("org_id", "external_id", "name") ' +
+      "values ($1, $2, $3) returning *\n" +
+      'params: ["00000000-0000-0000-0000-000000000001","SUP-001","Acme Industrial"]',
+  );
+  // Mirror the shape produced by Drizzle's `DrizzleQueryError`: the SQLSTATE
+  // / table / constraint live on `cause`, not on the wrapper itself.
+  Object.assign(wrapper, { cause: inner });
+
+  const msg = sanitizeDbErrorMessage(wrapper);
+
+  // Must NOT collapse to the static fallback any more — that was the
+  // whole point of the unwrap.
+  assert.notEqual(msg, "Internal server error during import");
+  // Must NOT echo the wrapper's noisy SQL/params string.
+  for (const banned of [
+    "insert into",
+    "$1",
+    "$2",
+    "$3",
+    "values",
+    "params",
+    "Failed query",
+    "SUP-001",
+    "Acme Industrial",
+    "00000000-0000-0000-0000-000000000001",
+  ]) {
+    assert.ok(
+      !msg.includes(banned),
+      `unwrapped message must not include "${banned}", got: ${msg}`,
+    );
+  }
+  // Must produce the same friendly headline as the unwrapped case.
+  assert.ok(
+    msg.toLowerCase().includes("duplicate"),
+    `expected unique-violation summary from cause, got: ${msg}`,
+  );
+  assert.ok(
+    msg.includes("suppliers"),
+    `expected table name preserved from cause, got: ${msg}`,
+  );
+  assert.ok(
+    msg.includes("suppliers_org_external_id_uq"),
+    `expected constraint name preserved from cause, got: ${msg}`,
+  );
+});
+
+test("does not chase a self-referential `cause`", () => {
+  // Defensive guard: if a buggy wrapper sets `err.cause = err` we must
+  // not infinite-loop. The sanitizer should treat it as a non-DB error
+  // and return the generic fallback rather than hanging.
+  const err = new Error("boom");
+  Object.assign(err, { cause: err });
+  const msg = sanitizeDbErrorMessage(err);
+  assert.equal(msg, "Internal server error during import");
+});
+
 test("errorLogContext captures full message and structured pg fields", () => {
   const err = makePgError({
     message: "duplicate key value violates unique constraint",
