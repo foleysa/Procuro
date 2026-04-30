@@ -1,10 +1,15 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { registerCollector } from "./lib/intelligence/runtime";
+import {
+  registerCollector,
+  upsertCollectorRegistration,
+} from "./lib/intelligence/runtime";
 import { publishedCommodityIndexCollector } from "./lib/intelligence/collectors/published-commodity-index";
 import { ecbFxRatesCollector } from "./lib/intelligence/collectors/ecb-fx-rates";
 import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-economic-index";
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
+import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
+import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
   startWorker,
@@ -32,11 +37,44 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Register intelligence collectors
-registerCollector(publishedCommodityIndexCollector);
-registerCollector(ecbFxRatesCollector);
-registerCollector(fredEconomicIndexCollector);
-registerCollector(eiaEnergyCollector);
+// Register intelligence collectors (in-memory registry for runtime
+// dispatch + DB seed so each collector has a `collectors` row that can
+// be approved, throttled, killed, and run via the platform admin
+// routes from first boot).
+const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
+  publishedCommodityIndexCollector,
+  ecbFxRatesCollector,
+  fredEconomicIndexCollector,
+  eiaEnergyCollector,
+  worldBankPinkSheetCollector,
+];
+
+for (const c of COLLECTORS) {
+  registerCollector(c);
+}
+
+async function seedCollectorRegistry(): Promise<void> {
+  for (const c of COLLECTORS) {
+    try {
+      await upsertCollectorRegistration({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        posture: c.posture,
+        owner: "procurement-platform@procuro.ai",
+        sourceUrl: c.sourceUrl,
+        rateLimitRpm: c.defaultRateLimitRpm,
+        scheduleCron: c.defaultScheduleCron,
+        actor: "system@procuro.ai",
+      });
+    } catch (err) {
+      logger.error(
+        { err, collectorId: c.id },
+        "Failed to seed collector registration",
+      );
+    }
+  }
+}
 
 // Register job handlers
 registerJobHandler("run_analysis_cycle", async (job) => {
@@ -80,4 +118,10 @@ app.listen(port, (err) => {
 
   startWorker(1500);
   logger.info({ port }, "Server listening; job worker started");
+
+  void seedCollectorRegistry().then(
+    () => logger.info("Collector registry seeded"),
+    (err) =>
+      logger.error({ err }, "Collector registry seed failed (continuing)"),
+  );
 });

@@ -19,6 +19,7 @@
     "csv-parse": "^6.2.1",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "node-xlsx": "^0.24.0",
     "pino": "^9",
     "pino-http": "^10",
     "zod": "catalog:"
