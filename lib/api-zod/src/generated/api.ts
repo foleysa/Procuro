@@ -4510,6 +4510,54 @@ export const GetSystemCleanupStatusResponse = zod.object({
 });
 
 /**
+ * Returns the most recent `prune_funnel_snapshots` row
+(regardless of status) and the configured snapshot/failure
+retention windows. Used by the System page to render a
+"Funnel snapshot cleanup" card alongside the generic prune
+card. Cross-tenant endpoint — gated by the platform-admin
+token.
+
+ * @summary Most-recent prune_funnel_snapshots run + retention windows
+ */
+export const GetSystemFunnelSnapshotCleanupStatusResponse = zod.object({
+  lastJob: zod
+    .object({
+      id: zod.string(),
+      status: zod.enum([
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+      ]),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      result: zod.record(zod.string(), zod.unknown()).nullish(),
+      error: zod.string().nullish(),
+    })
+    .nullable(),
+  activeJobId: zod
+    .string()
+    .nullable()
+    .describe(
+      "ID of an in-flight `prune_funnel_snapshots` row (status\npending or running), or null when no prune is scheduled.\n",
+    ),
+  retention: zod.object({
+    snapshotsOlderThanMs: zod
+      .number()
+      .describe(
+        "Snapshots in `funnel_snapshots` (and their cascading\n`funnel_annotations`) older than this window get pruned\non each daily run.\n",
+      ),
+    failuresOlderThanMs: zod
+      .number()
+      .describe(
+        "Rows in `funnel_snapshot_failures` older than this\nwindow get pruned on each daily run.\n",
+      ),
+  }),
+});
+
+/**
  * Returns the most recent Defense Packs created in the tenant,
 newest first. Pack `sections` and `evidenceSnapshot` are
 omitted from list rows for payload size — fetch

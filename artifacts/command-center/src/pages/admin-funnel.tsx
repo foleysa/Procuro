@@ -44,6 +44,10 @@ interface SnapshotListResp {
   snapshots: SnapshotListRow[];
   warmupComplete: boolean;
   totalSnapshotCount: number;
+  retention: {
+    snapshotsOlderThanMs: number;
+    failuresOlderThanMs: number;
+  };
 }
 
 interface StagePayload {
@@ -188,6 +192,22 @@ function SnapshotsTab({
                 ? "delta-detection active"
                 : `warmup ${data.totalSnapshotCount}/5`}
             </Badge>
+          )}
+          {data?.retention && (
+            <span
+              className="ml-2 text-xs text-muted-foreground"
+              data-testid="text-funnel-retention"
+            >
+              Retention:{" "}
+              {Math.round(
+                data.retention.snapshotsOlderThanMs / (24 * 60 * 60 * 1000),
+              )}
+              d snapshots ·{" "}
+              {Math.round(
+                data.retention.failuresOlderThanMs / (24 * 60 * 60 * 1000),
+              )}
+              d failures (auto-pruned daily).
+            </span>
           )}
         </CardDescription>
       </CardHeader>

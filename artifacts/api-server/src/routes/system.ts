@@ -3,7 +3,9 @@ import { db, jobsTable } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requirePlatformAdmin } from "../lib/platform-admin";
 import {
+  ensureFunnelSnapshotPruneJobScheduled,
   ensurePruneJobScheduled,
+  getFunnelSnapshotRetentionConfig,
   getJobRetentionConfig,
 } from "../lib/jobs/queue";
 
@@ -101,5 +103,104 @@ router.post("/system/cleanup/run", requirePlatformAdmin, async (req, res) => {
     reused: false,
   });
 });
+
+/**
+ * Funnel-snapshot cleanup status — same shape as `/system/cleanup/status`
+ * but for the daily `prune_funnel_snapshots` job. Surfaces the most
+ * recent run plus the configured retention windows so the System page
+ * can render a parallel "Funnel snapshot cleanup" card without baking
+ * funnel-specific knowledge into the generic prune card. Cross-tenant
+ * by design — the funnel pruner has no `org_id`.
+ */
+router.get(
+  "/system/cleanup/funnel-snapshots/status",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    const [last] = await db
+      .select()
+      .from(jobsTable)
+      .where(eq(jobsTable.kind, "prune_funnel_snapshots"))
+      .orderBy(desc(jobsTable.enqueuedAt))
+      .limit(1);
+
+    const [active] = await db
+      .select({ id: jobsTable.id })
+      .from(jobsTable)
+      .where(
+        and(
+          eq(jobsTable.kind, "prune_funnel_snapshots"),
+          sql`${jobsTable.status} IN ('pending', 'running')`,
+        ),
+      )
+      .limit(1);
+
+    const cfg = getFunnelSnapshotRetentionConfig();
+    res.json({
+      lastJob: last
+        ? {
+            id: last.id,
+            status: last.status,
+            enqueuedAt: last.enqueuedAt,
+            startedAt: last.startedAt,
+            completedAt: last.completedAt,
+            result: last.result ?? null,
+            error: last.error,
+          }
+        : null,
+      activeJobId: active?.id ?? null,
+      retention: {
+        snapshotsOlderThanMs: cfg.snapshotsOlderThanMs,
+        failuresOlderThanMs: cfg.failuresOlderThanMs,
+      },
+    });
+  },
+);
+
+/**
+ * Run funnel-snapshot cleanup now — enqueues a `prune_funnel_snapshots`
+ * job (or returns the in-flight one if a prune is already pending or
+ * running) so an operator can trigger pruning ad hoc. Mirrors the
+ * `/system/cleanup/run` contract so the UI can reuse the same accepted
+ * shape and polling loop.
+ */
+router.post(
+  "/system/cleanup/funnel-snapshots/run",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const job = await ensureFunnelSnapshotPruneJobScheduled();
+    if (!job) {
+      const [existing] = await db
+        .select({ id: jobsTable.id, status: jobsTable.status })
+        .from(jobsTable)
+        .where(
+          and(
+            eq(jobsTable.kind, "prune_funnel_snapshots"),
+            sql`${jobsTable.status} IN ('pending', 'running')`,
+          ),
+        )
+        .orderBy(desc(jobsTable.enqueuedAt))
+        .limit(1);
+      res.status(202).json({
+        jobId: existing?.id ?? null,
+        status: existing?.status ?? "pending",
+        reused: true,
+      });
+      req.log.info(
+        { jobId: existing?.id ?? null },
+        "Reused in-flight prune_funnel_snapshots for manual cleanup request",
+      );
+      return;
+    }
+    req.log.info(
+      { jobId: job.id },
+      "Enqueued prune_funnel_snapshots from manual request",
+    );
+    res.status(202).json({
+      jobId: job.id,
+      status: job.status,
+      reused: false,
+    });
+  },
+);
 
 export default router;

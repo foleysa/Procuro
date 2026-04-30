@@ -148,6 +148,7 @@ import type {
   SyncResultResponse,
   SystemCleanupRunAccepted,
   SystemCleanupStatus,
+  SystemFunnelSnapshotCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
   TransitionAlertRequest,
@@ -7063,6 +7064,184 @@ export const useRunSystemCleanup = <
   TContext
 > => {
   return useMutation(getRunSystemCleanupMutationOptions(options));
+};
+
+/**
+ * Returns the most recent `prune_funnel_snapshots` row
+(regardless of status) and the configured snapshot/failure
+retention windows. Used by the System page to render a
+"Funnel snapshot cleanup" card alongside the generic prune
+card. Cross-tenant endpoint — gated by the platform-admin
+token.
+
+ * @summary Most-recent prune_funnel_snapshots run + retention windows
+ */
+export const getGetSystemFunnelSnapshotCleanupStatusUrl = () => {
+  return `/api/system/cleanup/funnel-snapshots/status`;
+};
+
+export const getSystemFunnelSnapshotCleanupStatus = async (
+  options?: RequestInit,
+): Promise<SystemFunnelSnapshotCleanupStatus> => {
+  return customFetch<SystemFunnelSnapshotCleanupStatus>(
+    getGetSystemFunnelSnapshotCleanupStatusUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSystemFunnelSnapshotCleanupStatusQueryKey = () => {
+  return [`/api/system/cleanup/funnel-snapshots/status`] as const;
+};
+
+export const getGetSystemFunnelSnapshotCleanupStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemFunnelSnapshotCleanupStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>
+  > = ({ signal }) =>
+    getSystemFunnelSnapshotCleanupStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemFunnelSnapshotCleanupStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>
+>;
+export type GetSystemFunnelSnapshotCleanupStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Most-recent prune_funnel_snapshots run + retention windows
+ */
+
+export function useGetSystemFunnelSnapshotCleanupStatus<
+  TData = Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotCleanupStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions =
+    getGetSystemFunnelSnapshotCleanupStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Enqueues a `prune_funnel_snapshots` job (or returns the
+in-flight one if a prune is already pending or running). Mirrors
+`/system/cleanup/run` so the UI can reuse the same accepted
+shape. Cross-tenant endpoint — gated by the platform-admin
+token.
+
+ * @summary Enqueue a prune_funnel_snapshots run on demand
+ */
+export const getRunSystemFunnelSnapshotCleanupUrl = () => {
+  return `/api/system/cleanup/funnel-snapshots/run`;
+};
+
+export const runSystemFunnelSnapshotCleanup = async (
+  options?: RequestInit,
+): Promise<SystemCleanupRunAccepted> => {
+  return customFetch<SystemCleanupRunAccepted>(
+    getRunSystemFunnelSnapshotCleanupUrl(),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRunSystemFunnelSnapshotCleanupMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["runSystemFunnelSnapshotCleanup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>,
+    void
+  > = () => {
+    return runSystemFunnelSnapshotCleanup(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunSystemFunnelSnapshotCleanupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>
+>;
+
+export type RunSystemFunnelSnapshotCleanupMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Enqueue a prune_funnel_snapshots run on demand
+ */
+export const useRunSystemFunnelSnapshotCleanup = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runSystemFunnelSnapshotCleanup>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getRunSystemFunnelSnapshotCleanupMutationOptions(options));
 };
 
 /**

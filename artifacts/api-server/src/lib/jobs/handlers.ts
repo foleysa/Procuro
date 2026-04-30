@@ -25,6 +25,7 @@ import { runCollector } from "../intelligence/runtime";
 import {
   ensureOrgAnalysisCycleScheduled,
   isJobCancelRequested,
+  pruneOldFunnelSnapshots,
   pruneOldJobs,
 } from "./queue";
 import { UnrecoverableJobError } from "./queue";
@@ -223,6 +224,22 @@ export async function pruneJobsHandler(
   _job: JobRow,
 ): Promise<Record<string, unknown>> {
   const result = await pruneOldJobs();
+  return result as unknown as Record<string, unknown>;
+}
+
+/**
+ * Daily housekeeping: delete `funnel_snapshots` older than the
+ * configured snapshot retention window (cascading
+ * `funnel_annotations`) and `funnel_snapshot_failures` older than the
+ * configured failure window. The result row surfaces the per-table
+ * delete counts and whether the post-prune VACUUM succeeded so
+ * operators can see exactly what the run did from the System / Jobs
+ * page without digging through logs.
+ */
+export async function pruneFunnelSnapshotsHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const result = await pruneOldFunnelSnapshots();
   return result as unknown as Record<string, unknown>;
 }
 

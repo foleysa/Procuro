@@ -32,6 +32,7 @@ import { and, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
+import { getFunnelSnapshotRetentionConfig } from "../lib/jobs/queue";
 import {
   captureFunnelSnapshot,
   funnelSnapshotFailuresCounter,
@@ -101,10 +102,22 @@ router.get(
       .where(eq(funnelSnapshotsTable.orgId, orgId));
     const total = Number(totalSnapshotCount[0]?.c ?? 0);
 
+    // Surface the configured retention windows alongside the listing
+    // so the funnel observability page can show operators exactly how
+    // long a snapshot (or its failure row) will live before the
+    // `prune_funnel_snapshots` job removes it. Computed from env each
+    // request — these are constants from `getFunnelSnapshotRetentionConfig`,
+    // so the cost is negligible and we avoid a stale cache.
+    const retention = getFunnelSnapshotRetentionConfig();
+
     res.json({
       snapshots: rows,
       warmupComplete: total >= 5,
       totalSnapshotCount: total,
+      retention: {
+        snapshotsOlderThanMs: retention.snapshotsOlderThanMs,
+        failuresOlderThanMs: retention.failuresOlderThanMs,
+      },
     });
   },
 );

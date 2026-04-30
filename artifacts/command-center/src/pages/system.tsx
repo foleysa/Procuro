@@ -4,6 +4,7 @@ import {
   getListJobsQueryKey,
   getListJobKindSettingsQueryKey,
   getGetSystemCleanupStatusQueryKey,
+  getGetSystemFunnelSnapshotCleanupStatusQueryKey,
   useListJobs,
   useListJobKindSettings,
   useRetryJob,
@@ -12,6 +13,8 @@ import {
   useClearJobKindSetting,
   useGetSystemCleanupStatus,
   useRunSystemCleanup,
+  useGetSystemFunnelSnapshotCleanupStatus,
+  useRunSystemFunnelSnapshotCleanup,
   ListJobsStatus,
   type Job,
   type JobKindSetting,
@@ -514,6 +517,43 @@ export default function System() {
       }),
   });
 
+  // Funnel-snapshot cleanup (#189). Same polling/refetch pattern as the
+  // generic cleanup card so an in-flight prune resolves visibly without
+  // a manual refresh.
+  const funnelCleanupQueryKey = useMemo(
+    () => getGetSystemFunnelSnapshotCleanupStatusQueryKey(),
+    [],
+  );
+  const funnelCleanupQuery = useGetSystemFunnelSnapshotCleanupStatus({
+    query: {
+      queryKey: funnelCleanupQueryKey,
+      refetchInterval: (query) => {
+        const data = query.state.data as
+          | { activeJobId: string | null }
+          | undefined;
+        return data && data.activeJobId ? 5000 : false;
+      },
+    },
+  });
+  const runFunnelCleanupM = useRunSystemFunnelSnapshotCleanup({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Funnel snapshot cleanup queued",
+          description: `Prune job ${resp.jobId} is ${resp.status}.`,
+        });
+        qc.invalidateQueries({ queryKey: funnelCleanupQueryKey });
+        qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not run funnel snapshot cleanup",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
   // CSV throughput trends (#73 / #74). Computed client-side from the
   // last `ingest_csv` jobs already in the table so we do not need a
   // separate query: each succeeded ingest_csv row carries
@@ -890,6 +930,127 @@ export default function System() {
                     : "Run backfill (all tenants)"}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-funnel-cleanup">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-muted-foreground" />
+              Funnel snapshot cleanup
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Daily prune of `funnel_snapshots` (cascading
+              `funnel_annotations`) and `funnel_snapshot_failures`
+              older than the configured windows so the funnel
+              observability tables stay bounded.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {funnelCleanupQuery.isLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading
+                funnel cleanup status…
+              </div>
+            )}
+            {funnelCleanupQuery.isError && (
+              <div className="text-sm text-red-600">
+                Failed to load funnel cleanup status. You may not have
+                Platform Admin access.
+              </div>
+            )}
+            {funnelCleanupQuery.data && (
+              <>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Last cleanup at
+                    </div>
+                    <div data-testid="text-last-funnel-cleanup-at">
+                      {funnelCleanupQuery.data.lastJob?.completedAt
+                        ? formatDateTime(
+                            funnelCleanupQuery.data.lastJob.completedAt,
+                          )
+                        : funnelCleanupQuery.data.lastJob?.startedAt
+                          ? `${formatDateTime(funnelCleanupQuery.data.lastJob.startedAt)} (in flight)`
+                          : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Last status
+                    </div>
+                    <div>
+                      {funnelCleanupQuery.data.lastJob ? (
+                        <Badge
+                          className={
+                            STATUS_BADGE[
+                              funnelCleanupQuery.data.lastJob.status
+                            ]
+                          }
+                          data-testid="badge-last-funnel-cleanup-status"
+                        >
+                          {funnelCleanupQuery.data.lastJob.status}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          never run
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {funnelCleanupQuery.data.lastJob?.result && (
+                  <pre className="bg-muted text-xs p-2 rounded-md whitespace-pre-wrap break-words max-h-40 overflow-auto">
+                    {JSON.stringify(
+                      funnelCleanupQuery.data.lastJob.result,
+                      null,
+                      2,
+                    )}
+                  </pre>
+                )}
+                <div className="text-xs text-muted-foreground">
+                  Retention windows: snapshots{" "}
+                  {Math.round(
+                    funnelCleanupQuery.data.retention
+                      .snapshotsOlderThanMs /
+                      (24 * 60 * 60 * 1000),
+                  )}
+                  d, failures{" "}
+                  {Math.round(
+                    funnelCleanupQuery.data.retention
+                      .failuresOlderThanMs /
+                      (24 * 60 * 60 * 1000),
+                  )}
+                  d.
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    data-testid="btn-run-funnel-cleanup"
+                    size="sm"
+                    onClick={() => runFunnelCleanupM.mutate()}
+                    disabled={
+                      runFunnelCleanupM.isPending ||
+                      funnelCleanupQuery.data.activeJobId != null
+                    }
+                    title={
+                      funnelCleanupQuery.data.activeJobId
+                        ? `Funnel cleanup job ${funnelCleanupQuery.data.activeJobId} is already in flight.`
+                        : "Enqueue a prune_funnel_snapshots run now."
+                    }
+                  >
+                    {runFunnelCleanupM.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <PlayCircle className="w-3 h-3 mr-1" />
+                    )}
+                    {funnelCleanupQuery.data.activeJobId
+                      ? "Cleanup pending…"
+                      : "Run cleanup now"}
+                  </Button>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 

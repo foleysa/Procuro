@@ -2406,6 +2406,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCleanupRunAccepted'
+  /system/cleanup/funnel-snapshots/status:
+    get:
+      operationId: getSystemFunnelSnapshotCleanupStatus
+      tags:
+      - system
+      summary: Most-recent prune_funnel_snapshots run + retention windows
+      description: 'Returns the most recent `prune_funnel_snapshots` row
+
+        (regardless of status) and the configured snapshot/failure
+
+        retention windows. Used by the System page to render a
+
+        "Funnel snapshot cleanup" card alongside the generic prune
+
+        card. Cross-tenant endpoint — gated by the platform-admin
+
+        token.
+
+        '
+      responses:
+        '200':
+          description: Funnel snapshot cleanup status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemFunnelSnapshotCleanupStatus'
+  /system/cleanup/funnel-snapshots/run:
+    post:
+      operationId: runSystemFunnelSnapshotCleanup
+      tags:
+      - system
+      summary: Enqueue a prune_funnel_snapshots run on demand
+      description: 'Enqueues a `prune_funnel_snapshots` job (or returns the
+
+        in-flight one if a prune is already pending or running). Mirrors
+
+        `/system/cleanup/run` so the UI can reuse the same accepted
+
+        shape. Cross-tenant endpoint — gated by the platform-admin
+
+        token.
+
+        '
+      responses:
+        '202':
+          description: Funnel snapshot cleanup enqueued (or already in-flight)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCleanupRunAccepted'
   /defense-packs:
     get:
       operationId: listDefensePacks
@@ -5833,6 +5883,79 @@ components:
                 they''re equivalent "did not succeed" terminal rows for
 
                 review purposes.
+
+                '
+    SystemFunnelSnapshotCleanupStatus:
+      type: object
+      required:
+      - lastJob
+      - activeJobId
+      - retention
+      properties:
+        lastJob:
+          nullable: true
+          type: object
+          required:
+          - id
+          - status
+          - enqueuedAt
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+              enum:
+              - pending
+              - running
+              - succeeded
+              - failed
+              - cancelled
+            enqueuedAt:
+              type: string
+              format: date-time
+            startedAt:
+              type: string
+              format: date-time
+              nullable: true
+            completedAt:
+              type: string
+              format: date-time
+              nullable: true
+            result:
+              type: object
+              additionalProperties: true
+              nullable: true
+            error:
+              type: string
+              nullable: true
+        activeJobId:
+          type: string
+          nullable: true
+          description: 'ID of an in-flight `prune_funnel_snapshots` row (status
+
+            pending or running), or null when no prune is scheduled.
+
+            '
+        retention:
+          type: object
+          required:
+          - snapshotsOlderThanMs
+          - failuresOlderThanMs
+          properties:
+            snapshotsOlderThanMs:
+              type: integer
+              description: 'Snapshots in `funnel_snapshots` (and their cascading
+
+                `funnel_annotations`) older than this window get pruned
+
+                on each daily run.
+
+                '
+            failuresOlderThanMs:
+              type: integer
+              description: 'Rows in `funnel_snapshot_failures` older than this
+
+                window get pruned on each daily run.
 
                 '
     SystemCleanupRunAccepted:

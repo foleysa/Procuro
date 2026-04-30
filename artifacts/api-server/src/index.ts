@@ -23,6 +23,7 @@ import {
   registerJobHandler,
   startWorker,
   startJobPruner,
+  startFunnelSnapshotPruner,
   startRenewalScanScheduler,
   startAnalysisCycleScheduler,
   enqueueJob as _enqueueJob,
@@ -32,6 +33,7 @@ import {
   escalateAlertsHandler,
   ingestCsvHandler,
   ingestMockErpHandler,
+  pruneFunnelSnapshotsHandler,
   pruneJobsHandler,
   runAnalysisCycleHandler,
   runAnalysisCycleFanoutHandler,
@@ -138,6 +140,7 @@ registerJobHandler("ingest_csv", ingestCsvHandler);
 registerJobHandler("ingest_mock_erp", ingestMockErpHandler);
 registerJobHandler("run_collector", runCollectorHandler);
 registerJobHandler("prune_jobs", pruneJobsHandler);
+registerJobHandler("prune_funnel_snapshots", pruneFunnelSnapshotsHandler);
 registerJobHandler("sync_erp_connection", syncErpConnectionHandler);
 registerJobHandler("renewal_alert_scan", runRenewalAlertScanHandler);
 registerJobHandler("analysis_cycle_fanout", runAnalysisCycleFanoutHandler);
@@ -162,6 +165,7 @@ app.listen(port, (err) => {
 
   startWorker(1500);
   startJobPruner();
+  startFunnelSnapshotPruner();
   startRenewalScanScheduler();
   startAnalysisCycleScheduler();
   startAlertsDeliveryScheduler();

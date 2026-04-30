@@ -34,10 +34,10 @@ import { analysisCyclesTable } from "./cycles";
  *  as `[{ key, count }]` arrays so the admin UI can drill into the actual
  *  identities, not just totals.
  *
- *  Retention: full snapshot rows older than 90 days are purged by the
- *  retention job; cycle-level aggregates roll up into `aggregates` JSON
- *  on the same row before purge so trend lines remain available
- *  indefinitely. (Retention job is a follow-up — see README.funnel.md.)
+ *  Retention: snapshot rows older than the configured window (default
+ *  365 days) are purged daily by the `prune_funnel_snapshots` job, which
+ *  also prunes `funnel_snapshot_failures` older than its own window
+ *  (default 90 days). See `lib/jobs/queue.ts` for retention helpers.
  */
 export const funnelSnapshotsTable = pgTable(
   "funnel_snapshots",

@@ -26,6 +26,7 @@ export const jobKindValues = [
   "run_collector",
   "sync_erp_connection",
   "prune_jobs",
+  "prune_funnel_snapshots",
   "renewal_alert_scan",
   "deliver_alerts",
   "escalate_alerts",

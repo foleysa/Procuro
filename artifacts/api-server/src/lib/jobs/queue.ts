@@ -41,6 +41,10 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // twice, but the next scheduled run will catch up regardless, so the
   // default budget of 3 is plenty.
   prune_jobs: 3,
+  // Funnel-snapshot pruner — same shape as `prune_jobs` (internal DB
+  // housekeeping, no upstream calls), so it gets the same default
+  // retry budget for the same reasons.
+  prune_funnel_snapshots: 3,
   // Daily renewal-alert scan does only DB work (no upstream API calls);
   // a transient retry budget of 3 mirrors the pruner.
   renewal_alert_scan: 3,
@@ -844,6 +848,244 @@ export function stopJobPruner(): void {
   if (prunerHandle) clearInterval(prunerHandle);
   prunerHandle = null;
   prunerStarted = false;
+}
+
+// ─── Funnel-snapshot retention pruner ────────────────────────────────────
+//
+// `funnel_snapshots` rows carry a sizable JSONB payload (16 stage entries
+// with sample IDs, cohort drill-down, calibration). One cycle per 6h per
+// tenant is ~1,460 rows/year/tenant — without retention the table grows
+// unboundedly and the admin observability page eventually pays for it on
+// every read. A daily prune of snapshots older than 365 days plus a
+// post-prune VACUUM keeps the table bounded with no operator effort.
+//
+// Same job also prunes `funnel_snapshot_failures` older than its own
+// (shorter) window — failures are diagnostic noise once acked and aged
+// out. Both windows are env-overridable; defaults are conservative.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_FUNNEL_SNAPSHOT_RETENTION_DAYS = 365;
+const DEFAULT_FUNNEL_FAILURE_RETENTION_DAYS = 90;
+const DEFAULT_FUNNEL_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+export interface FunnelSnapshotRetentionConfig {
+  snapshotsOlderThanMs: number;
+  failuresOlderThanMs: number;
+}
+
+/** Resolve the configured funnel-snapshot retention windows, in milliseconds. */
+export function getFunnelSnapshotRetentionConfig(): FunnelSnapshotRetentionConfig {
+  const snapshotDays = envPositiveNumber(
+    "FUNNEL_SNAPSHOT_RETENTION_DAYS",
+    DEFAULT_FUNNEL_SNAPSHOT_RETENTION_DAYS,
+  );
+  const failureDays = envPositiveNumber(
+    "FUNNEL_SNAPSHOT_FAILURE_RETENTION_DAYS",
+    DEFAULT_FUNNEL_FAILURE_RETENTION_DAYS,
+  );
+  return {
+    snapshotsOlderThanMs: snapshotDays * DAY_MS,
+    failuresOlderThanMs: failureDays * DAY_MS,
+  };
+}
+
+export interface PruneFunnelSnapshotsResult {
+  snapshotsDeleted: number;
+  failuresDeleted: number;
+  snapshotsOlderThanMs: number;
+  failuresOlderThanMs: number;
+  /**
+   * True when the post-prune `VACUUM funnel_snapshots` succeeded. False
+   * when it was skipped (no rows deleted) or failed (e.g. running
+   * through pgbouncer in transaction-pooling mode, or insufficient
+   * privileges). Surfaces a single boolean to operators rather than
+   * the full PG error so the System UI can show a calm "vacuum
+   * skipped" badge instead of a scary stack trace.
+   */
+  vacuumed: boolean;
+}
+
+/**
+ * Delete `funnel_snapshots` rows older than the configured snapshot
+ * window (cascading `funnel_annotations` go with them via the FK
+ * `ON DELETE CASCADE`), and delete `funnel_snapshot_failures` older
+ * than the configured failures window. Returns the per-table delete
+ * counts plus whether the post-prune VACUUM succeeded.
+ *
+ * The `created_at` cutoff is applied per-table, never `enqueued_at` or
+ * any other field, so a freshly-captured snapshot is never collected
+ * out from under the writer. Failures use `last_seen_at` for the same
+ * "still-fresh diagnostic" reason.
+ */
+export async function pruneOldFunnelSnapshots(
+  overrides: Partial<FunnelSnapshotRetentionConfig> = {},
+): Promise<PruneFunnelSnapshotsResult> {
+  const cfg = getFunnelSnapshotRetentionConfig();
+  const snapshotsOlderThanMs =
+    overrides.snapshotsOlderThanMs ?? cfg.snapshotsOlderThanMs;
+  const failuresOlderThanMs =
+    overrides.failuresOlderThanMs ?? cfg.failuresOlderThanMs;
+
+  const now = Date.now();
+  const snapshotsCutoff = new Date(
+    now - snapshotsOlderThanMs,
+  ).toISOString();
+  const failuresCutoff = new Date(
+    now - failuresOlderThanMs,
+  ).toISOString();
+
+  const snapshotsRes = await db.execute(sql`
+    DELETE FROM funnel_snapshots
+    WHERE created_at < ${snapshotsCutoff}
+    RETURNING id
+  `);
+  const failuresRes = await db.execute(sql`
+    DELETE FROM funnel_snapshot_failures
+    WHERE last_seen_at < ${failuresCutoff}
+    RETURNING id
+  `);
+
+  const snapshotsDeleted = snapshotsRes.rows?.length ?? 0;
+  const failuresDeleted = failuresRes.rows?.length ?? 0;
+
+  let vacuumed = false;
+  if (snapshotsDeleted > 0 || failuresDeleted > 0) {
+    // VACUUM cannot run inside a transaction block. node-postgres' pool
+    // runs single statements as autocommit, so this works in normal
+    // dev/prod setups but can fail under pgbouncer transaction pooling
+    // or when the DB role lacks privileges. Treat failure as a soft
+    // signal — the prune itself already succeeded — and surface it via
+    // `vacuumed: false` so operators see something actionable on the
+    // System page without the job itself failing.
+    try {
+      if (snapshotsDeleted > 0) {
+        await db.execute(sql`VACUUM funnel_snapshots`);
+      }
+      if (failuresDeleted > 0) {
+        await db.execute(sql`VACUUM funnel_snapshot_failures`);
+      }
+      vacuumed = true;
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message },
+        "VACUUM after funnel-snapshot prune failed; rows were deleted but space was not reclaimed",
+      );
+      vacuumed = false;
+    }
+  }
+
+  if (snapshotsDeleted > 0 || failuresDeleted > 0) {
+    logger.info(
+      {
+        snapshotsDeleted,
+        failuresDeleted,
+        snapshotsOlderThanMs,
+        failuresOlderThanMs,
+        vacuumed,
+      },
+      "Pruned old funnel snapshots",
+    );
+  }
+
+  return {
+    snapshotsDeleted,
+    failuresDeleted,
+    snapshotsOlderThanMs,
+    failuresOlderThanMs,
+    vacuumed,
+  };
+}
+
+/**
+ * Fixed advisory-lock key used to serialize funnel-snapshot prune
+ * scheduling across every process and every scheduler tick. Distinct
+ * sub-key from `PRUNE_SCHEDULE_LOCK_KEY` so the two pruners can never
+ * accidentally serialize against each other.
+ */
+const FUNNEL_PRUNE_SCHEDULE_LOCK_KEY = 0x46554e50; // "FUNP"
+
+/**
+ * Enqueue a `prune_funnel_snapshots` job iff there isn't one already
+ * pending or running. Returns the new job row, or `null` if a prune was
+ * already scheduled. Same advisory-lock-protected check-then-insert as
+ * `ensurePruneJobScheduled` so concurrent scheduler ticks across
+ * multiple worker processes can't both observe "no active prune" and
+ * both INSERT.
+ */
+export async function ensureFunnelSnapshotPruneJobScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${FUNNEL_PRUNE_SCHEDULE_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'prune_funnel_snapshots' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) {
+      return; // inserted stays false; advisory lock released on tx end
+    }
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'prune_funnel_snapshots', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let funnelPrunerStarted = false;
+let funnelPrunerHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic funnel-snapshot pruner scheduler. Enqueues a
+ * `prune_funnel_snapshots` job at boot, then again on a fixed interval
+ * (default 24h, overridable via `FUNNEL_SNAPSHOT_PRUNE_INTERVAL_MS`).
+ * Idempotent — calling twice has no effect.
+ */
+export function startFunnelSnapshotPruner(intervalMs?: number): void {
+  if (funnelPrunerStarted) return;
+  funnelPrunerStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "FUNNEL_SNAPSHOT_PRUNE_INTERVAL_MS",
+      DEFAULT_FUNNEL_PRUNE_INTERVAL_MS,
+    );
+
+  void ensureFunnelSnapshotPruneJobScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial prune_funnel_snapshots",
+    );
+  });
+
+  funnelPrunerHandle = setInterval(() => {
+    ensureFunnelSnapshotPruneJobScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled prune_funnel_snapshots",
+      );
+    });
+  }, ms);
+}
+
+export function stopFunnelSnapshotPruner(): void {
+  if (funnelPrunerHandle) clearInterval(funnelPrunerHandle);
+  funnelPrunerHandle = null;
+  funnelPrunerStarted = false;
 }
 
 // ─── Daily renewal-alert scheduler ───────────────────────────────────────

@@ -1695,6 +1695,52 @@ is already queued.
   retention: SystemCleanupStatusRetention;
 }
 
+export type SystemFunnelSnapshotCleanupStatusLastJobStatus =
+  (typeof SystemFunnelSnapshotCleanupStatusLastJobStatus)[keyof typeof SystemFunnelSnapshotCleanupStatusLastJobStatus];
+
+export const SystemFunnelSnapshotCleanupStatusLastJobStatus = {
+  pending: "pending",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export type SystemFunnelSnapshotCleanupStatusLastJobResult = {
+  [key: string]: unknown;
+} | null;
+
+export type SystemFunnelSnapshotCleanupStatusLastJob = {
+  id: string;
+  status: SystemFunnelSnapshotCleanupStatusLastJobStatus;
+  enqueuedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  result?: SystemFunnelSnapshotCleanupStatusLastJobResult;
+  error?: string | null;
+} | null;
+
+export type SystemFunnelSnapshotCleanupStatusRetention = {
+  /** Snapshots in `funnel_snapshots` (and their cascading
+`funnel_annotations`) older than this window get pruned
+on each daily run.
+ */
+  snapshotsOlderThanMs: number;
+  /** Rows in `funnel_snapshot_failures` older than this
+window get pruned on each daily run.
+ */
+  failuresOlderThanMs: number;
+};
+
+export interface SystemFunnelSnapshotCleanupStatus {
+  lastJob: SystemFunnelSnapshotCleanupStatusLastJob;
+  /** ID of an in-flight `prune_funnel_snapshots` row (status
+pending or running), or null when no prune is scheduled.
+ */
+  activeJobId: string | null;
+  retention: SystemFunnelSnapshotCleanupStatusRetention;
+}
+
 export type SystemCleanupRunAcceptedStatus =
   (typeof SystemCleanupRunAcceptedStatus)[keyof typeof SystemCleanupRunAcceptedStatus];
 
