@@ -5,6 +5,7 @@ import {
   index,
   jsonb,
   integer,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { orgsTable } from "./orgs";
 
@@ -46,6 +47,7 @@ export const jobsTable = pgTable(
     progress: integer("progress").notNull().default(0),
     error: text("error"),
     attempts: integer("attempts").notNull().default(0),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
     enqueuedAt: timestamp("enqueued_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

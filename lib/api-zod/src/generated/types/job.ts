@@ -23,6 +23,11 @@ export interface Job {
   progress?: number;
   result?: JobResult;
   error?: string | null;
+  /** True once an operator has requested cancellation. For `running`
+jobs the worker will rewrite the terminal state to `failed`
+with error "Cancelled by operator" once the handler returns.
+ */
+  cancelRequested?: boolean;
   enqueuedAt: Date;
   startedAt?: Date | null;
   completedAt?: Date | null;

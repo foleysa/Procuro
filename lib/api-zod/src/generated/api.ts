@@ -1202,6 +1202,12 @@ export const ListJobsResponseItem = zod.object({
   progress: zod.number().optional(),
   result: zod.record(zod.string(), zod.unknown()).nullish(),
   error: zod.string().nullish(),
+  cancelRequested: zod
+    .boolean()
+    .optional()
+    .describe(
+      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `failed`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+    ),
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
   completedAt: zod.coerce.date().nullish(),
@@ -1233,6 +1239,12 @@ export const GetJobResponse = zod.object({
   progress: zod.number().optional(),
   result: zod.record(zod.string(), zod.unknown()).nullish(),
   error: zod.string().nullish(),
+  cancelRequested: zod
+    .boolean()
+    .optional()
+    .describe(
+      'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `failed`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+    ),
   enqueuedAt: zod.coerce.date(),
   startedAt: zod.coerce.date().nullish(),
   completedAt: zod.coerce.date().nullish(),
@@ -1249,6 +1261,32 @@ export const RetryJobParams = zod.object({
 });
 
 export const RetryJobHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * Cancels a job that is still `pending` or `running`.
+
+- `pending` jobs are immediately marked `failed` with the error
+  "Cancelled by operator".
+- `running` jobs have a cancellation flag set; the worker rewrites
+  the terminal state to `failed` once the handler returns at its
+  next safe checkpoint.
+
+Already-terminal jobs (`succeeded` / `failed`) return 409.
+
+ * @summary Cancel a pending or running job
+ */
+export const CancelJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const CancelJobHeader = zod.object({
   "x-org-id": zod
     .string()
     .optional()

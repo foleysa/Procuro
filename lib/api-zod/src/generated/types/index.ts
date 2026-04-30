@@ -54,6 +54,8 @@ export * from "./ingestMockErpParams";
 export * from "./job";
 export * from "./jobAccepted";
 export * from "./jobAcceptedStatus";
+export * from "./jobCancelled";
+export * from "./jobCancelledStatus";
 export * from "./jobResult";
 export * from "./jobStatus";
 export * from "./learnedPrior";

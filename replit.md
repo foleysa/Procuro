@@ -53,6 +53,7 @@ Tier‑2 starters (`supplier_consolidation`, `contract_renegotiation_trigger`, `
 - `jobs` table acts as queue.
 - Worker loop polls and dispatches by `kind`: `run_analysis_cycle`, `ingest_csv`, `ingest_mock_erp`, `run_collector`, `seed_demo`.
 - Per‑tenant rate limiting.
+- Operator cancellation: `POST /api/jobs/{id}/cancel` immediately transitions `pending` jobs to `failed` with error "Cancelled by operator"; for `running` jobs it sets a `cancel_requested` flag (new boolean column on `jobs`) and the worker rewrites the terminal state to `failed` once the handler returns. Long-running handlers can poll `isJobCancelRequested(jobId)` at safe checkpoints to bail out early. Surfaced via Cancel buttons on the System / Jobs page next to the existing Retry action.
 
 ### `artifacts/api-server` — Express API
 - Tenant middleware: `x-org-id` header validated against `orgs` (dev fallback to seeded SCIS org).

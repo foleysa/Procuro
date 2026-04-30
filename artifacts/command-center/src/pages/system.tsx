@@ -4,6 +4,7 @@ import {
   getListJobsQueryKey,
   useListJobs,
   useRetryJob,
+  useCancelJob,
   ListJobsStatus,
   type Job,
   type ListJobsParams,
@@ -35,6 +36,7 @@ import {
   CheckCircle2,
   Clock,
   PlayCircle,
+  Ban,
 } from "lucide-react";
 
 const STATUS_OPTS: { v: string; l: string }[] = [
@@ -153,6 +155,29 @@ export default function System() {
       onError: (e: Error) =>
         toast({
           title: "Retry failed",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  const cancelM = useCancelJob({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: resp.cancelledImmediately
+            ? "Job cancelled"
+            : "Cancellation requested",
+          description: resp.cancelledImmediately
+            ? `Job ${resp.jobId} was pending and is now marked failed.`
+            : `Job ${resp.jobId} is running; it will be marked failed at the next safe checkpoint.`,
+        });
+        qc.invalidateQueries({ queryKey });
+        qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Cancel failed",
           description: String(e),
           variant: "destructive",
         }),
@@ -320,7 +345,7 @@ export default function System() {
                         className="py-2 pr-2 text-right"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {j.status === "failed" ? (
+                        {j.status === "failed" && (
                           <Button
                             data-testid={`btn-retry-${j.id}`}
                             size="sm"
@@ -339,7 +364,31 @@ export default function System() {
                             )}
                             Retry
                           </Button>
-                        ) : null}
+                        )}
+                        {(j.status === "pending" ||
+                          j.status === "running") && (
+                          <Button
+                            data-testid={`btn-cancel-${j.id}`}
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              j.cancelRequested === true ||
+                              (cancelM.isPending &&
+                                cancelM.variables?.id === j.id)
+                            }
+                            onClick={() => cancelM.mutate({ id: j.id })}
+                          >
+                            {cancelM.isPending &&
+                            cancelM.variables?.id === j.id ? (
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <Ban className="w-3 h-3 mr-1" />
+                            )}
+                            {j.cancelRequested === true
+                              ? "Cancelling…"
+                              : "Cancel"}
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -453,6 +502,29 @@ export default function System() {
                   >
                     <RotateCw className="w-4 h-4 mr-1" />
                     Retry job
+                  </Button>
+                </div>
+              )}
+
+              {(selectedJob.status === "pending" ||
+                selectedJob.status === "running") && (
+                <div className="flex justify-end">
+                  <Button
+                    data-testid="btn-cancel-detail"
+                    variant="outline"
+                    disabled={
+                      selectedJob.cancelRequested === true ||
+                      cancelM.isPending
+                    }
+                    onClick={() => {
+                      cancelM.mutate({ id: selectedJob.id });
+                      setSelectedJob(null);
+                    }}
+                  >
+                    <Ban className="w-4 h-4 mr-1" />
+                    {selectedJob.cancelRequested === true
+                      ? "Cancelling…"
+                      : "Cancel job"}
                   </Button>
                 </div>
               )}

@@ -639,6 +639,36 @@ paths:
         "409":
           description: Job is not in a retryable state
 
+  /jobs/{id}/cancel:
+    post:
+      operationId: cancelJob
+      tags: [jobs]
+      summary: Cancel a pending or running job
+      description: |
+        Cancels a job that is still `pending` or `running`.
+
+        - `pending` jobs are immediately marked `failed` with the error
+          "Cancelled by operator".
+        - `running` jobs have a cancellation flag set; the worker rewrites
+          the terminal state to `failed` once the handler returns at its
+          next safe checkpoint.
+
+        Already-terminal jobs (`succeeded` / `failed`) return 409.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "202":
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobCancelled"
+        "404":
+          description: Job not found
+        "409":
+          description: Job is already in a terminal state
+
   /ingest/csv:
     post:
       operationId: ingestCsvBatch
@@ -1307,9 +1337,37 @@ components:
         progress: { type: integer }
         result: { type: object, additionalProperties: true, nullable: true }
         error: { type: string, nullable: true }
+        cancelRequested:
+          type: boolean
+          description: |
+            True once an operator has requested cancellation. For `running`
+            jobs the worker will rewrite the terminal state to `failed`
+            with error "Cancelled by operator" once the handler returns.
         enqueuedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         completedAt: { type: string, format: date-time, nullable: true }
+
+    JobCancelled:
+      type: object
+      required: [jobId, status, cancelRequested, cancelledImmediately]
+      properties:
+        jobId: { type: string }
+        status:
+          type: string
+          enum: [running, failed]
+          description: |
+            `failed` when the job was `pending` and was transitioned
+            immediately, `running` when the cancel flag was set on a
+            running job (the worker will mark it failed when the
+            handler returns).
+        cancelRequested:
+          type: boolean
+          description: Always true on a successful response.
+        cancelledImmediately:
+          type: boolean
+          description: |
+            True if the job was pending and is now marked failed; false
+            if the job was running and the cancel flag was set.
 
     SyncResultResponse:
       type: object

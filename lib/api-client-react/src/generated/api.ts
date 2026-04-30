@@ -42,6 +42,7 @@ import type {
   IngestMockErpParams,
   Job,
   JobAccepted,
+  JobCancelled,
   LearnedPrior,
   ListJobsParams,
   ListMarketSignalsParams,
@@ -2440,6 +2441,100 @@ export const useRetryJob = <
   TContext
 > => {
   return useMutation(getRetryJobMutationOptions(options));
+};
+
+/**
+ * Cancels a job that is still `pending` or `running`.
+
+- `pending` jobs are immediately marked `failed` with the error
+  "Cancelled by operator".
+- `running` jobs have a cancellation flag set; the worker rewrites
+  the terminal state to `failed` once the handler returns at its
+  next safe checkpoint.
+
+Already-terminal jobs (`succeeded` / `failed`) return 409.
+
+ * @summary Cancel a pending or running job
+ */
+export const getCancelJobUrl = (id: string) => {
+  return `/api/jobs/${id}/cancel`;
+};
+
+export const cancelJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<JobCancelled> => {
+  return customFetch<JobCancelled>(getCancelJobUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getCancelJobMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["cancelJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelJob>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return cancelJob(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CancelJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelJob>>
+>;
+
+export type CancelJobMutationError = ErrorType<void>;
+
+/**
+ * @summary Cancel a pending or running job
+ */
+export const useCancelJob = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof cancelJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getCancelJobMutationOptions(options));
 };
 
 /**

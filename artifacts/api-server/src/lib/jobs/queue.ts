@@ -194,6 +194,81 @@ export async function failJob(jobId: string, error: Error): Promise<void> {
     .where(eq(jobsTable.id, jobId));
 }
 
+/** Error message used when an operator cancels a job. */
+export const CANCELLED_ERROR_MESSAGE = "Cancelled by operator";
+
+export class JobCancellationResult {
+  constructor(
+    /** True if the job was actually transitioned (pending → failed). */
+    readonly cancelledImmediately: boolean,
+    /** True if a cancel-flag was set on a running job (worker will honour it). */
+    readonly cancelRequested: boolean,
+  ) {}
+}
+
+/**
+ * Request cancellation of a job.
+ *
+ * - `pending` jobs are immediately transitioned to `failed` with the
+ *   "Cancelled by operator" error (and `cancel_requested` is also set so
+ *   any handler that briefly inspects the row sees it).
+ * - `running` jobs have `cancel_requested` set to true. Handlers can poll
+ *   `isJobCancelRequested` at safe checkpoints and bail out; in any case,
+ *   the worker rewrites the terminal state to `failed` with the cancelled
+ *   error message once the handler returns.
+ * - Already-terminal jobs (`succeeded` / `failed`) are left untouched.
+ *
+ * Both transitions are performed inside a single conditional UPDATE so
+ * concurrent cancel requests are idempotent.
+ */
+export async function requestJobCancellation(
+  jobId: string,
+): Promise<JobCancellationResult> {
+  const now = new Date();
+
+  // Atomically transition pending -> failed in one statement so a worker
+  // claim cannot race the cancel.
+  const pendingResult = await db
+    .update(jobsTable)
+    .set({
+      status: "failed",
+      error: CANCELLED_ERROR_MESSAGE,
+      cancelRequested: true,
+      completedAt: now,
+    })
+    .where(and(eq(jobsTable.id, jobId), eq(jobsTable.status, "pending")))
+    .returning({ id: jobsTable.id });
+  if (pendingResult.length > 0) {
+    return new JobCancellationResult(true, true);
+  }
+
+  // For running jobs, flag the row. The worker will detect this when the
+  // handler returns and rewrite the terminal state.
+  const runningResult = await db
+    .update(jobsTable)
+    .set({ cancelRequested: true })
+    .where(and(eq(jobsTable.id, jobId), eq(jobsTable.status, "running")))
+    .returning({ id: jobsTable.id });
+  if (runningResult.length > 0) {
+    return new JobCancellationResult(false, true);
+  }
+
+  return new JobCancellationResult(false, false);
+}
+
+/**
+ * Returns true if cancellation has been requested on this job. Long-running
+ * handlers should poll this at safe checkpoints (e.g. between batches) and
+ * throw `new Error(CANCELLED_ERROR_MESSAGE)` to bail out cleanly.
+ */
+export async function isJobCancelRequested(jobId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ cancelRequested: jobsTable.cancelRequested })
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row?.cancelRequested === true;
+}
+
 export async function setJobProgress(jobId: string, pct: number): Promise<void> {
   await db
     .update(jobsTable)
@@ -214,12 +289,35 @@ export async function processOnce(): Promise<boolean> {
   }
   try {
     const result = await handler(job);
-    await completeJob(job.id, result);
-    logger.info({ jobId: job.id, kind: job.kind }, "Job succeeded");
+    // If the operator requested cancellation while the handler was running,
+    // override the terminal state so the job shows as cancelled instead of
+    // succeeded — even if the handler ignored the flag.
+    if (await isJobCancelRequested(job.id)) {
+      await failJob(job.id, new Error(CANCELLED_ERROR_MESSAGE));
+      logger.info(
+        { jobId: job.id, kind: job.kind },
+        "Job cancelled after handler completion",
+      );
+    } else {
+      await completeJob(job.id, result);
+      logger.info({ jobId: job.id, kind: job.kind }, "Job succeeded");
+    }
   } catch (err) {
     const e = err as Error;
-    logger.error({ jobId: job.id, kind: job.kind, err: e.message }, "Job failed");
-    await failJob(job.id, e);
+    // Same idea on the failure path: if cancellation was requested, normalize
+    // the error message so the UI/audit trail consistently shows "Cancelled
+    // by operator" regardless of which exception the handler happened to
+    // raise on its way out.
+    if (await isJobCancelRequested(job.id)) {
+      logger.info(
+        { jobId: job.id, kind: job.kind, err: e.message },
+        "Job cancelled (handler exited with error)",
+      );
+      await failJob(job.id, new Error(CANCELLED_ERROR_MESSAGE));
+    } else {
+      logger.error({ jobId: job.id, kind: job.kind, err: e.message }, "Job failed");
+      await failJob(job.id, e);
+    }
   }
   return true;
 }

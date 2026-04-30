@@ -372,9 +372,45 @@ export interface Job {
   progress?: number;
   result?: JobResult;
   error?: string | null;
+  /** True once an operator has requested cancellation. For `running`
+jobs the worker will rewrite the terminal state to `failed`
+with error "Cancelled by operator" once the handler returns.
+ */
+  cancelRequested?: boolean;
   enqueuedAt: string;
   startedAt?: string | null;
   completedAt?: string | null;
+}
+
+/**
+ * `failed` when the job was `pending` and was transitioned
+immediately, `running` when the cancel flag was set on a
+running job (the worker will mark it failed when the
+handler returns).
+
+ */
+export type JobCancelledStatus =
+  (typeof JobCancelledStatus)[keyof typeof JobCancelledStatus];
+
+export const JobCancelledStatus = {
+  running: "running",
+  failed: "failed",
+} as const;
+
+export interface JobCancelled {
+  jobId: string;
+  /** `failed` when the job was `pending` and was transitioned
+immediately, `running` when the cancel flag was set on a
+running job (the worker will mark it failed when the
+handler returns).
+ */
+  status: JobCancelledStatus;
+  /** Always true on a successful response. */
+  cancelRequested: boolean;
+  /** True if the job was pending and is now marked failed; false
+if the job was running and the cancel flag was set.
+ */
+  cancelledImmediately: boolean;
 }
 
 export interface SyncResultResponse {
