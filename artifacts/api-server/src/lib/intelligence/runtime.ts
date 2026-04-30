@@ -4,6 +4,7 @@ import {
   collectorAuditLogTable,
   marketSignalsTable,
   type CollectorRow,
+  type MarketSignalType,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { newId } from "../ids";
@@ -13,6 +14,11 @@ import {
   ECB_FX_RATES_COLLECTOR_ID,
   fetchEcbBackfillDrafts,
 } from "./collectors/ecb-fx-rates";
+import {
+  FRED_ECONOMIC_INDEX_COLLECTOR_ID,
+  fetchFredBackfillDrafts,
+  FRED_SERIES,
+} from "./collectors/fred-economic-index";
 
 const registry = new Map<string, IntelligenceCollector>();
 
@@ -135,15 +141,48 @@ export interface BackfillResult {
 }
 
 /**
+ * Build the dedupe key for an idempotent backfill insert. We key on the
+ * combination of `signalType` plus all scope columns plus `observedAt` —
+ * empty string when a column is null. This matches the natural identity of
+ * a market signal: "the same source measurement of the same scope at the
+ * same time", regardless of which scope column is populated.
+ *
+ * Backfill collectors (ECB, FRED) all anchor `observedAt` to a deterministic
+ * timestamp matching what their live collector would write, so this string
+ * key is a correct dedupe and does not require a schema migration.
+ */
+function signalDedupeKey(args: {
+  signalType: string;
+  scopeMaterialCode: string | null;
+  scopeCategoryCode: string | null;
+  scopeSku: string | null;
+  scopeSupplierName: string | null;
+  scopeLaneKey: string | null;
+  observedAt: Date;
+}): string {
+  return [
+    args.signalType,
+    args.scopeMaterialCode ?? "",
+    args.scopeCategoryCode ?? "",
+    args.scopeSku ?? "",
+    args.scopeSupplierName ?? "",
+    args.scopeLaneKey ?? "",
+    args.observedAt.toISOString(),
+  ].join("|");
+}
+
+/**
  * Insert a batch of MarketSignalDrafts for a collector, skipping rows that
- * already exist for the same `(scope_material_code, observed_at)` key.
+ * already exist for the same `(signal_type, scope_*, observed_at)` key.
  *
- * The ECB historical backfill anchors `observedAt` to a deterministic
- * `YYYY-MM-DDT15:00:00Z` (mirroring the live collector), so a simple
- * "already have a row at exactly this timestamp + pair" check is the
- * cheapest correct dedupe — and it does not require a schema migration.
+ * Backfills anchor `observedAt` to a deterministic UTC timestamp (e.g. the
+ * ECB run anchors to `YYYY-MM-DDT15:00:00Z`, the FRED run anchors to
+ * `YYYY-MM-DDT00:00:00Z`) so a string-key dedupe is correct without a
+ * schema migration.
  *
- * Existence is sampled once before the insert loop to avoid N round-trips.
+ * Existence is sampled once before the insert loop (filtered to this
+ * collector + the `signalType`s present in the draft batch) to avoid N
+ * round-trips.
  */
 async function insertSignalsIdempotent(
   collectorRow: CollectorRow,
@@ -151,24 +190,55 @@ async function insertSignalsIdempotent(
 ): Promise<{ inserted: number; skipped: number }> {
   if (drafts.length === 0) return { inserted: 0, skipped: 0 };
 
-  const existing = await db
-    .select({
-      key: marketSignalsTable.scopeMaterialCode,
-      observedAt: marketSignalsTable.observedAt,
-    })
-    .from(marketSignalsTable)
-    .where(
-      and(
-        eq(marketSignalsTable.collectorId, collectorRow.id),
-        eq(marketSignalsTable.signalType, "fx_rate"),
-      ),
-    );
+  // We could SELECT *only* for the signal types present in the drafts, but
+  // collectors emit a single signal_type today (fx_rate for ECB,
+  // economic_index for FRED). Filtering by collectorId + signalType
+  // narrows the scan to the relevant slice.
+  const signalTypes = Array.from(new Set(drafts.map((d) => d.signalType)));
+  const existing: Array<{
+    signalType: MarketSignalType;
+    scopeMaterialCode: string | null;
+    scopeCategoryCode: string | null;
+    scopeSku: string | null;
+    scopeSupplierName: string | null;
+    scopeLaneKey: string | null;
+    observedAt: Date | null;
+  }> = [];
+  for (const st of signalTypes) {
+    const rows = await db
+      .select({
+        signalType: marketSignalsTable.signalType,
+        scopeMaterialCode: marketSignalsTable.scopeMaterialCode,
+        scopeCategoryCode: marketSignalsTable.scopeCategoryCode,
+        scopeSku: marketSignalsTable.scopeSku,
+        scopeSupplierName: marketSignalsTable.scopeSupplierName,
+        scopeLaneKey: marketSignalsTable.scopeLaneKey,
+        observedAt: marketSignalsTable.observedAt,
+      })
+      .from(marketSignalsTable)
+      .where(
+        and(
+          eq(marketSignalsTable.collectorId, collectorRow.id),
+          eq(marketSignalsTable.signalType, st),
+        ),
+      );
+    existing.push(...rows);
+  }
 
   const seen = new Set<string>();
   for (const r of existing) {
-    if (r.key && r.observedAt) {
-      seen.add(`${r.key}@${r.observedAt.toISOString()}`);
-    }
+    if (!r.observedAt) continue;
+    seen.add(
+      signalDedupeKey({
+        signalType: r.signalType,
+        scopeMaterialCode: r.scopeMaterialCode,
+        scopeCategoryCode: r.scopeCategoryCode,
+        scopeSku: r.scopeSku,
+        scopeSupplierName: r.scopeSupplierName,
+        scopeLaneKey: r.scopeLaneKey,
+        observedAt: r.observedAt,
+      }),
+    );
   }
 
   // Filter to just the new rows, deduping within the batch as well so a
@@ -178,7 +248,15 @@ async function insertSignalsIdempotent(
   const toInsert: Array<typeof marketSignalsTable.$inferInsert> = [];
   let skipped = 0;
   for (const d of drafts) {
-    const k = `${d.scopeMaterialCode ?? ""}@${d.observedAt.toISOString()}`;
+    const k = signalDedupeKey({
+      signalType: d.signalType,
+      scopeMaterialCode: d.scopeMaterialCode ?? null,
+      scopeCategoryCode: d.scopeCategoryCode ?? null,
+      scopeSku: d.scopeSku ?? null,
+      scopeSupplierName: d.scopeSupplierName ?? null,
+      scopeLaneKey: d.scopeLaneKey ?? null,
+      observedAt: d.observedAt,
+    });
     if (seen.has(k)) {
       skipped++;
       continue;
@@ -278,6 +356,95 @@ export async function runEcbFxRatesBackfill(
     logger.info(
       { collectorId, days, inserted, skipped },
       "ECB FX backfill completed",
+    );
+    return result;
+  } catch (err) {
+    const e = err as Error;
+    await audit(collectorId, "backfill_failed", {}, e.message);
+    throw e;
+  }
+}
+
+/**
+ * Run the one-shot historical backfill for the FRED economic index
+ * collector.
+ *
+ * Walks the curated `FRED_SERIES` list, fetches each series' observation
+ * history (default: last 5 years) from the FRED API, and inserts only the
+ * (series × observed_at) rows that aren't already in `market_signals`.
+ * Re-running is therefore a safe no-op.
+ *
+ * Gated on the same kill switch + approval status as the live collector so
+ * a paused collector cannot be force-fed through the backfill path. The
+ * regular daily collector (`collect()`) is unaffected — it still emits
+ * latest-observation-only signals on its cron.
+ *
+ * `observationStart` overrides the default 5-year window when the caller
+ * needs a deeper or shallower history (admin tooling or tests).
+ */
+export async function runFredEconomicIndexBackfill(
+  opts: { force?: boolean; observationStart?: string } = {},
+): Promise<BackfillResult> {
+  const start = Date.now();
+  const collectorId = FRED_ECONOMIC_INDEX_COLLECTOR_ID;
+  const [reg] = await db
+    .select()
+    .from(collectorsTable)
+    .where(eq(collectorsTable.id, collectorId))
+    .limit(1);
+  if (!reg) {
+    throw new Error(`Collector ${collectorId} not registered`);
+  }
+  if (reg.killSwitch === 1) {
+    await audit(collectorId, "backfill_skipped_kill_switch");
+    throw new Error("Collector is killed; release the kill switch first.");
+  }
+  if (reg.status !== "approved" && !opts.force) {
+    await audit(collectorId, "backfill_skipped_not_approved", {
+      status: reg.status,
+    });
+    throw new Error(
+      `Collector status is ${reg.status}; approve it before backfilling.`,
+    );
+  }
+
+  await audit(collectorId, "backfill_started", {
+    observationStart: opts.observationStart ?? null,
+  });
+  try {
+    const { drafts, failedSeries } = await fetchFredBackfillDrafts(
+      opts.observationStart ? { observationStart: opts.observationStart } : {},
+    );
+    // If every tracked series failed to fetch, the run is genuinely broken
+    // (bad API key, FRED outage, network) — surface it to the caller so the
+    // audit log records a failure instead of "succeeded with 0 inserts".
+    if (drafts.length === 0 && failedSeries.length === FRED_SERIES.length) {
+      const sample = failedSeries.slice(0, 3).map((f) => f.error).join("; ");
+      throw new Error(
+        `FRED backfill: all ${FRED_SERIES.length} series failed. Sample errors: ${sample}`,
+      );
+    }
+    const days = new Set(
+      drafts.map((d) => d.observedAt.toISOString().slice(0, 10)),
+    ).size;
+    const { inserted, skipped } = await insertSignalsIdempotent(reg, drafts);
+    const result: BackfillResult = {
+      collectorId,
+      daysWritten: days,
+      signalsInserted: inserted,
+      signalsSkipped: skipped,
+      durationMs: Date.now() - start,
+    };
+    await audit(collectorId, "backfill_succeeded", {
+      days,
+      inserted,
+      skipped,
+      drafts: drafts.length,
+      failedSeries: failedSeries.length,
+    });
+    logger.info(
+      { collectorId, days, inserted, skipped, failedSeries: failedSeries.length },
+      "FRED economic index backfill completed",
     );
     return result;
   } catch (err) {

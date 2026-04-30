@@ -1990,6 +1990,101 @@ export const useBackfillEcbFxRates = <
 };
 
 /**
+ * Walks every series in the curated FRED PPI list, fetches the last
+~5 years of observations from the FRED API, and writes one
+`economic_index` MarketSignal per (series × observed_at).
+Re-running is safe: rows that already exist for the same
+`(signal_type, scope_*, observed_at)` are skipped. The regular
+daily collector cron is unaffected — it still fetches latest only.
+
+ * @summary Backfill historical FRED PPI economic-index observations
+(one-shot, idempotent).
+
+ */
+export const getBackfillFredEconomicIndexUrl = () => {
+  return `/api/collectors/fred-economic-index/backfill`;
+};
+
+export const backfillFredEconomicIndex = async (
+  options?: RequestInit,
+): Promise<CollectorBackfillResult> => {
+  return customFetch<CollectorBackfillResult>(
+    getBackfillFredEconomicIndexUrl(),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getBackfillFredEconomicIndexMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillFredEconomicIndex>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof backfillFredEconomicIndex>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["backfillFredEconomicIndex"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof backfillFredEconomicIndex>>,
+    void
+  > = () => {
+    return backfillFredEconomicIndex(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BackfillFredEconomicIndexMutationResult = NonNullable<
+  Awaited<ReturnType<typeof backfillFredEconomicIndex>>
+>;
+
+export type BackfillFredEconomicIndexMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Backfill historical FRED PPI economic-index observations
+(one-shot, idempotent).
+
+ */
+export const useBackfillFredEconomicIndex = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof backfillFredEconomicIndex>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof backfillFredEconomicIndex>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getBackfillFredEconomicIndexMutationOptions(options));
+};
+
+/**
  * @summary Recent market signals
  */
 export const getListMarketSignalsUrl = (params?: ListMarketSignalsParams) => {

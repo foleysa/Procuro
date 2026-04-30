@@ -1057,6 +1057,34 @@ export const BackfillEcbFxRatesResponse = zod.object({
 });
 
 /**
+ * Walks every series in the curated FRED PPI list, fetches the last
+~5 years of observations from the FRED API, and writes one
+`economic_index` MarketSignal per (series × observed_at).
+Re-running is safe: rows that already exist for the same
+`(signal_type, scope_*, observed_at)` are skipped. The regular
+daily collector cron is unaffected — it still fetches latest only.
+
+ * @summary Backfill historical FRED PPI economic-index observations
+(one-shot, idempotent).
+
+ */
+export const BackfillFredEconomicIndexResponse = zod.object({
+  collectorId: zod.string(),
+  daysWritten: zod
+    .number()
+    .describe("Distinct calendar days covered by the backfill."),
+  signalsInserted: zod
+    .number()
+    .describe("New `market_signals` rows written by this run."),
+  signalsSkipped: zod
+    .number()
+    .describe(
+      "Drafts that matched an existing\n`(scope_material_code, observed_at)` row and were not re-inserted.\n",
+    ),
+  durationMs: zod.number(),
+});
+
+/**
  * @summary Recent market signals
  */
 export const listMarketSignalsQueryLimitDefault = 50;

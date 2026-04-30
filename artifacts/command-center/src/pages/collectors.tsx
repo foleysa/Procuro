@@ -4,6 +4,7 @@ import {
   useListMarketSignals,
   useRunCollector,
   useBackfillEcbFxRates,
+  useBackfillFredEconomicIndex,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { formatDateTime } from "@/lib/format";
 import { Radar, Loader2, Play, History } from "lucide-react";
 
 const ECB_FX_RATES_COLLECTOR_ID = "ecb-fx-rates";
+const FRED_ECONOMIC_INDEX_COLLECTOR_ID = "fred-economic-index";
 
 const POSTURE_LABEL: Record<string, string> = {
   "public-api": "Public API",
@@ -64,6 +66,24 @@ export default function Collectors() {
       onError: (e: Error) =>
         toast({
           title: "FX backfill failed",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  const backfillFredM = useBackfillFredEconomicIndex({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "FRED PPI history backfilled",
+          description: `${resp.daysWritten} days · ${resp.signalsInserted} new, ${resp.signalsSkipped} already had · ${resp.durationMs}ms`,
+        });
+        qc.invalidateQueries({ queryKey: ["listMarketSignals"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "FRED backfill failed",
           description: String(e),
           variant: "destructive",
         }),
@@ -150,6 +170,25 @@ export default function Collectors() {
                       title="Load 5 years of historical ECB reference rates. Idempotent: safe to re-run."
                     >
                       {backfillEcbM.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      ) : (
+                        <History className="w-4 h-4 mr-1" />
+                      )}
+                      Backfill history
+                    </Button>
+                  )}
+                  {c.id === FRED_ECONOMIC_INDEX_COLLECTOR_ID && (
+                    <Button
+                      data-testid={`btn-backfill-${c.id}`}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => backfillFredM.mutate()}
+                      disabled={
+                        backfillFredM.isPending || c.status !== "enabled"
+                      }
+                      title="Load 5 years of historical FRED PPI observations. Idempotent: safe to re-run."
+                    >
+                      {backfillFredM.isPending ? (
                         <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                       ) : (
                         <History className="w-4 h-4 mr-1" />

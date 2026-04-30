@@ -487,6 +487,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /collectors/fred-economic-index/backfill:
+    post:
+      operationId: backfillFredEconomicIndex
+      tags: [collectors]
+      summary: |
+        Backfill historical FRED PPI economic-index observations
+        (one-shot, idempotent).
+      description: |
+        Walks every series in the curated FRED PPI list, fetches the last
+        ~5 years of observations from the FRED API, and writes one
+        `economic_index` MarketSignal per (series × observed_at).
+        Re-running is safe: rows that already exist for the same
+        `(signal_type, scope_*, observed_at)` are skipped. The regular
+        daily collector cron is unaffected — it still fetches latest only.
+      responses:
+        "200":
+          description: Backfill result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorBackfillResult"
+        "409":
+          description: |
+            Collector is killed, not approved, or the `FRED_API_KEY` env
+            var is not set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /market-signals:
     get:
       operationId: listMarketSignals

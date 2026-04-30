@@ -14,8 +14,10 @@ import {
   upsertCollectorRegistration,
   listCollectorAudit,
   runEcbFxRatesBackfill,
+  runFredEconomicIndexBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
+import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
 import { z } from "zod";
 
 const router: IRouter = Router();
@@ -222,6 +224,39 @@ router.post(
         message.includes("approve")
       ) {
         res.status(409).json({ error: message, collectorId: ECB_FX_RATES_COLLECTOR_ID });
+        return;
+      }
+      throw err;
+    }
+  },
+);
+
+router.post(
+  "/collectors/fred-economic-index/backfill",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    try {
+      const result = await runFredEconomicIndexBackfill();
+      res.json({
+        collectorId: result.collectorId,
+        daysWritten: result.daysWritten,
+        signalsInserted: result.signalsInserted,
+        signalsSkipped: result.signalsSkipped,
+        durationMs: result.durationMs,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Same shape as the ECB backfill: surface preflight gates as 409 so
+      // the System page can show a clear toast instead of a 500.
+      if (
+        message.includes("kill switch") ||
+        message.includes("approved") ||
+        message.includes("approve") ||
+        message.includes("FRED_API_KEY")
+      ) {
+        res
+          .status(409)
+          .json({ error: message, collectorId: FRED_ECONOMIC_INDEX_COLLECTOR_ID });
         return;
       }
       throw err;

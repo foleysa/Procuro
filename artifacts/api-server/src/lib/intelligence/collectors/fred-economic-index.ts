@@ -23,7 +23,7 @@ import type {
   MarketSignalDraft,
 } from "../collector";
 
-interface FredSeriesRef {
+export interface FredSeriesRef {
   /** FRED series id, e.g. "WPU101". */
   seriesId: string;
   /** Human-readable label for ops/docs. */
@@ -53,7 +53,7 @@ interface FredSeriesRef {
  * logistics category). Material codes line up with raw inputs; PCU
  * (industry) codes line up with service categories.
  */
-const FRED_SERIES: FredSeriesRef[] = [
+export const FRED_SERIES: FredSeriesRef[] = [
   // Metals
   {
     seriesId: "WPU101",
@@ -153,7 +153,18 @@ const FRED_SERIES: FredSeriesRef[] = [
 
 const FRED_API_BASE = "https://api.stlouisfed.org/fred";
 
-interface FredObservation {
+/** Public id for the FRED economic index collector. */
+export const FRED_ECONOMIC_INDEX_COLLECTOR_ID = "fred-economic-index";
+
+/**
+ * Default historical window for the on-demand backfill. Five years gives
+ * downstream analyzers enough history to compute YoY comparisons, multi-cycle
+ * trends, and momentum/inflection signals without pulling the entire archive
+ * (some PPI series go back to the 1940s).
+ */
+const FRED_BACKFILL_DEFAULT_YEARS = 5;
+
+export interface FredObservation {
   date: string;
   value: string;
 }
@@ -164,6 +175,50 @@ interface FredObservationsResponse {
 
 function seriesPageUrl(seriesId: string): string {
   return `https://fred.stlouisfed.org/series/${seriesId}`;
+}
+
+/**
+ * Build a `MarketSignalDraft` for a single FRED observation. Shared between
+ * the live collector (`basis: "fred_latest_observation"`) and the historical
+ * backfill (`basis: "fred_historical_backfill"`) so backfilled rows are
+ * indistinguishable from rows the daily collector would have produced for
+ * the same `(seriesId, observed_at)` — which is what lets the deduper
+ * recognize them as the same signal.
+ *
+ * Returns `null` when the observation is FRED's "." missing-value marker or
+ * an unparseable date.
+ */
+export function buildFredDraftForObservation(
+  series: FredSeriesRef,
+  obs: FredObservation,
+  basis: "fred_latest_observation" | "fred_historical_backfill",
+): MarketSignalDraft | null {
+  if (obs.value === "." || obs.value === "") return null;
+  const value = Number(obs.value);
+  if (!Number.isFinite(value)) return null;
+  const observedAt = new Date(`${obs.date}T00:00:00Z`);
+  if (Number.isNaN(observedAt.getTime())) return null;
+
+  const draft: MarketSignalDraft = {
+    signalType: "economic_index",
+    value,
+    unit: series.unit,
+    currency: "USD",
+    observedAt,
+    sourceUrl: seriesPageUrl(series.seriesId),
+    confidence: 0.95,
+    metadata: {
+      seriesId: series.seriesId,
+      label: series.label,
+      basis,
+    },
+  };
+  if (series.scope.kind === "material") {
+    draft.scopeMaterialCode = series.scope.code;
+  } else {
+    draft.scopeCategoryCode = series.scope.code;
+  }
+  return draft;
 }
 
 async function fetchLatestObservation(
@@ -194,8 +249,122 @@ async function fetchLatestObservation(
   return obs;
 }
 
+/**
+ * Fetch the historical observation series for one FRED id starting at
+ * `observationStart` (inclusive, `YYYY-MM-DD`). Sorted ascending so callers
+ * see the oldest point first. Missing-value rows (FRED ".") are filtered
+ * out here so caller code can stay simple.
+ */
+export async function fetchHistoricalObservations(
+  seriesId: string,
+  apiKey: string,
+  observationStart: string,
+): Promise<FredObservation[]> {
+  const url = new URL(`${FRED_API_BASE}/series/observations`);
+  url.searchParams.set("series_id", seriesId);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("file_type", "json");
+  url.searchParams.set("sort_order", "asc");
+  url.searchParams.set("observation_start", observationStart);
+
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `FRED ${seriesId} HTTP ${res.status}: ${body.slice(0, 200)}`,
+    );
+  }
+  const json = (await res.json()) as FredObservationsResponse;
+  const out: FredObservation[] = [];
+  for (const o of json.observations ?? []) {
+    if (o.value === "." || o.value === "") continue;
+    out.push(o);
+  }
+  return out;
+}
+
+/**
+ * Compute the default `observation_start` for the backfill: today minus
+ * `FRED_BACKFILL_DEFAULT_YEARS` years, formatted `YYYY-MM-DD` (UTC).
+ */
+function defaultObservationStart(now: Date = new Date()): string {
+  const d = new Date(
+    Date.UTC(
+      now.getUTCFullYear() - FRED_BACKFILL_DEFAULT_YEARS,
+      now.getUTCMonth(),
+      now.getUTCDate(),
+    ),
+  );
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * One-shot historical backfill for the FRED economic index collector.
+ *
+ * Walks every series in `FRED_SERIES`, fetches its observation history from
+ * `observationStart` (default: 5 years back), and returns one
+ * `MarketSignalDraft` per (series × observation). The caller (runtime) is
+ * responsible for the idempotent insert against `market_signals` so re-runs
+ * are safe no-ops.
+ *
+ * A single bad series id (e.g. FRED removes a sub-series) does not abort
+ * the whole run — failures are collected and surfaced to the caller, which
+ * decides whether to throw (e.g. zero successes = genuine breakage).
+ */
+export async function fetchFredBackfillDrafts(opts?: {
+  apiKey?: string;
+  observationStart?: string;
+}): Promise<{
+  drafts: MarketSignalDraft[];
+  failedSeries: Array<{ seriesId: string; error: string }>;
+}> {
+  const apiKey = opts?.apiKey ?? process.env["FRED_API_KEY"];
+  if (!apiKey) {
+    throw new Error(
+      "FRED_API_KEY env var is not set. Set it to your St. Louis Fed FRED API key (https://fred.stlouisfed.org/docs/api/api_key.html) before running the FRED backfill.",
+    );
+  }
+  const observationStart = opts?.observationStart ?? defaultObservationStart();
+
+  const drafts: MarketSignalDraft[] = [];
+  const failedSeries: Array<{ seriesId: string; error: string }> = [];
+  for (const series of FRED_SERIES) {
+    let observations: FredObservation[];
+    try {
+      observations = await fetchHistoricalObservations(
+        series.seriesId,
+        apiKey,
+        observationStart,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failedSeries.push({ seriesId: series.seriesId, error: message });
+      logger.warn(
+        {
+          collectorId: FRED_ECONOMIC_INDEX_COLLECTOR_ID,
+          seriesId: series.seriesId,
+          err,
+        },
+        "FRED historical fetch failed",
+      );
+      continue;
+    }
+    for (const obs of observations) {
+      const draft = buildFredDraftForObservation(
+        series,
+        obs,
+        "fred_historical_backfill",
+      );
+      if (draft) drafts.push(draft);
+    }
+  }
+  return { drafts, failedSeries };
+}
+
 export const fredEconomicIndexCollector: IntelligenceCollector = {
-  id: "fred-economic-index",
+  id: FRED_ECONOMIC_INDEX_COLLECTOR_ID,
   name: "FRED Economic Index (PPI)",
   description:
     "Pulls Producer Price Index sub-series (metals, chemicals, plastics, lumber, energy, freight, warehousing) from the St. Louis Fed FRED API and emits them as economic_index market signals scoped to procurement materials/categories.",
@@ -231,31 +400,12 @@ export const fredEconomicIndexCollector: IntelligenceCollector = {
         continue;
       }
       if (!obs) continue;
-      const value = Number(obs.value);
-      if (!Number.isFinite(value)) continue;
-      const observedAt = new Date(`${obs.date}T00:00:00Z`);
-      if (Number.isNaN(observedAt.getTime())) continue;
-
-      const draft: MarketSignalDraft = {
-        signalType: "economic_index",
-        value,
-        unit: series.unit,
-        currency: "USD",
-        observedAt,
-        sourceUrl: seriesPageUrl(series.seriesId),
-        confidence: 0.95,
-        metadata: {
-          seriesId: series.seriesId,
-          label: series.label,
-          basis: "fred_latest_observation",
-        },
-      };
-      if (series.scope.kind === "material") {
-        draft.scopeMaterialCode = series.scope.code;
-      } else {
-        draft.scopeCategoryCode = series.scope.code;
-      }
-      drafts.push(draft);
+      const draft = buildFredDraftForObservation(
+        series,
+        obs,
+        "fred_latest_observation",
+      );
+      if (draft) drafts.push(draft);
     }
 
     // If every series failed, the run is genuinely broken (bad key,
