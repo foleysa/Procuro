@@ -42,6 +42,23 @@ let cachedClient: BigQueryClientLike | null = null;
 let loadFailed = false;
 
 /**
+ * Test-only seam: install (or clear) the cached BigQuery client without
+ * going through the dynamic `@google-cloud/bigquery` import. Lets
+ * integration tests inject a fake client that records `query()` and
+ * `dataset(...).table(...).insert(...)` calls so we can assert what the
+ * runtime would have sent to BigQuery without touching the network.
+ *
+ * Pass `null` to reset both the cached client and the "load failed"
+ * memo so a follow-up test can re-install a fresh fake.
+ */
+export function __setBigQueryClientForTests(
+  client: BigQueryClientLike | null,
+): void {
+  cachedClient = client;
+  loadFailed = false;
+}
+
+/**
  * Lazily resolve a BigQuery client, returning `null` when:
  *   - the intelligence config isn't fully populated, or
  *   - the optional `@google-cloud/bigquery` peer isn't installed.

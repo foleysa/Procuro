@@ -41,6 +41,20 @@ interface StorageClientLike {
 let cachedStorage: StorageClientLike | null = null;
 let loadFailed = false;
 
+/**
+ * Test-only seam: install (or clear) the cached GCS Storage client
+ * without dynamic-importing `@google-cloud/storage`. Mirrors the
+ * BigQuery seam — integration tests can swap in an in-memory fake so
+ * raw-payload landing succeeds (and is observable) without hitting the
+ * network. Pass `null` to reset.
+ */
+export function __setStorageClientForTests(
+  client: StorageClientLike | null,
+): void {
+  cachedStorage = client;
+  loadFailed = false;
+}
+
 async function getStorage(): Promise<StorageClientLike | null> {
   if (cachedStorage) return cachedStorage;
   if (loadFailed) return null;
