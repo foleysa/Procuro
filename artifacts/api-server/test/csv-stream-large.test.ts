@@ -275,12 +275,63 @@ test("streaming CSV ingest of a >10 MB file lands every row in Postgres", async 
   );
 
   assert.equal(res.status, 200, `unexpected status ${res.status}: ${rawBody}`);
-  const body = JSON.parse(rawBody) as {
+
+  // The route streams NDJSON: one JSON object per line. The body is a mix of
+  // `{ type: "progress", ... }` events emitted while the upload is in flight,
+  // optionally a terminal `{ type: "error", ... }` event, and (on success) a
+  // final `{ type: "result", entity, rowsParsed, rowsInserted, durationMs }`.
+  // Split on newlines, parse each non-empty line, and pick the final result.
+  type ProgressEvent = { type: "progress"; rowsParsed: number; rowsInserted: number };
+  type ResultEvent = {
+    type: "result";
     entity: string;
     rowsParsed: number;
     rowsInserted: number;
     durationMs: number;
   };
+  type ErrorEvent = { type: "error"; error: string };
+  type StreamEvent = ProgressEvent | ResultEvent | ErrorEvent;
+
+  const events: StreamEvent[] = rawBody
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line, idx) => {
+      try {
+        return JSON.parse(line) as StreamEvent;
+      } catch (err) {
+        throw new Error(
+          `Failed to parse NDJSON line #${idx + 1}: ${(err as Error).message}\n` +
+            `Line content: ${line}`,
+        );
+      }
+    });
+
+  const errorEvent = events.find((e): e is ErrorEvent => e.type === "error");
+  assert.ok(
+    !errorEvent,
+    `streaming endpoint emitted error event: ${errorEvent?.error ?? ""}`,
+  );
+
+  // The route's contract is that `result` is the *terminal* event of a
+  // successful stream. Assert exactly that — using `findLast` (and then
+  // verifying it is the last parsed event) catches both "no result emitted"
+  // regressions and "extra events after result" regressions.
+  const resultEvent = events.findLast(
+    (e): e is ResultEvent => e.type === "result",
+  );
+  assert.ok(
+    resultEvent,
+    `streaming endpoint did not emit a 'result' event. ` +
+      `Got ${events.length} events: ${events.map((e) => e.type).join(", ")}`,
+  );
+  assert.equal(
+    events[events.length - 1]?.type,
+    "result",
+    `'result' event must be the terminal NDJSON line; got trailing event ` +
+      `'${events[events.length - 1]?.type}' instead.`,
+  );
+  const body = resultEvent;
 
   // 5. Server-reported counts match the file.
   assert.equal(body.entity, "suppliers");
