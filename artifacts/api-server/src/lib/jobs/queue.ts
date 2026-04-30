@@ -7,8 +7,41 @@ export type JobHandler = (job: JobRow) => Promise<Record<string, unknown>>;
 
 const handlers = new Map<JobKind, JobHandler>();
 
+/** Maximum number of pending+running jobs a single org may have at once. */
+const MAX_PENDING_JOBS_PER_ORG = 5;
+
+/**
+ * Namespace integer for per-org advisory locks used during job enqueue.
+ * Chosen to avoid collision with other app-level advisory locks.
+ */
+const JOB_ENQUEUE_LOCK_NS = 0x4a4f4200; // "JOB\0"
+
 export function registerJobHandler(kind: JobKind, handler: JobHandler): void {
   handlers.set(kind, handler);
+}
+
+export class JobQuotaExceededError extends Error {
+  readonly statusCode = 429;
+  constructor(orgId: string) {
+    super(
+      `Job queue quota exceeded for org ${orgId}: at most ${MAX_PENDING_JOBS_PER_ORG} pending/running jobs are allowed at a time.`,
+    );
+    this.name = "JobQuotaExceededError";
+  }
+}
+
+/**
+ * Stable 32-bit signed integer hash of a string, used as a PostgreSQL
+ * advisory lock sub-key. Collisions are possible but benign — two orgs
+ * that hash to the same key will serialize against each other, never
+ * against unrelated orgs.
+ */
+function stringHash32(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return h;
 }
 
 export async function enqueueJob(args: {
@@ -16,13 +49,62 @@ export async function enqueueJob(args: {
   orgId?: string | null;
   payload?: Record<string, unknown>;
 }): Promise<JobRow> {
+  const orgId = args.orgId ?? null;
+  const jobId = newId("job");
+  const kind = args.kind;
+  const payload = args.payload ?? {};
+
+  if (orgId) {
+    // Acquire a transaction-scoped advisory lock keyed to this org before
+    // checking the quota and inserting. pg_advisory_xact_lock serializes
+    // concurrent enqueue requests for the same org so the COUNT check and
+    // INSERT are effectively atomic — no concurrent request for the same org
+    // can sneak in between them.
+    const lockKey = stringHash32(orgId);
+    let inserted = false;
+
+    await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${lockKey})`,
+      );
+
+      const countResult = await tx.execute(sql`
+        SELECT COUNT(*) AS cnt FROM jobs
+        WHERE org_id = ${orgId} AND status IN ('pending', 'running')
+      `);
+      const rows = (countResult.rows ?? []) as Array<Record<string, unknown>>;
+      const current = Number(rows[0]?.cnt ?? 0);
+      if (current >= MAX_PENDING_JOBS_PER_ORG) {
+        return; // inserted stays false; advisory lock released on tx end
+      }
+
+      await tx.execute(sql`
+        INSERT INTO jobs (id, kind, org_id, payload, status)
+        VALUES (${jobId}, ${kind}, ${orgId}, ${JSON.stringify(payload)}::jsonb, 'pending')
+      `);
+      inserted = true;
+    });
+
+    if (!inserted) {
+      throw new JobQuotaExceededError(orgId);
+    }
+
+    const [row] = await db
+      .select()
+      .from(jobsTable)
+      .where(eq(jobsTable.id, jobId));
+    if (!row) throw new Error("Failed to retrieve enqueued job");
+    return row;
+  }
+
+  // No orgId — insert unconditionally (internal/system jobs).
   const [row] = await db
     .insert(jobsTable)
     .values({
-      id: newId("job"),
-      kind: args.kind,
-      orgId: args.orgId ?? null,
-      payload: args.payload ?? {},
+      id: jobId,
+      kind,
+      orgId: null,
+      payload,
       status: "pending",
     })
     .returning();
@@ -31,14 +113,35 @@ export async function enqueueJob(args: {
 }
 
 export async function claimNextJob(): Promise<JobRow | null> {
-  // Atomic claim of the oldest pending job per-tenant fairness via SKIP LOCKED.
+  // Per-org head-of-line scheduling: select the oldest pending job from each
+  // org (via ROW_NUMBER window function — compatible with FOR UPDATE SKIP
+  // LOCKED, unlike DISTINCT ON), then among those candidates pick the org
+  // whose oldest job has been waiting the longest. The outer JOIN re-fetches
+  // the chosen row from the base table so FOR UPDATE SKIP LOCKED can safely
+  // skip it if another worker grabbed it first; in that case the UPDATE
+  // matches 0 rows and the worker retries on the next poll interval.
+  //
+  // Per-tenant starvation is bounded by MAX_PENDING_JOBS_PER_ORG: at most
+  // that many jobs from one org can sit ahead of a newly-arriving tenant.
   const result = await db.execute(sql`
     UPDATE jobs SET status = 'running', started_at = NOW(), attempts = attempts + 1
     WHERE id = (
-      SELECT id FROM jobs
-      WHERE status = 'pending'
-      ORDER BY enqueued_at ASC
-      LIMIT 1
+      SELECT j.id
+      FROM jobs j
+      JOIN (
+        SELECT id
+        FROM (
+          SELECT id,
+                 ROW_NUMBER() OVER (PARTITION BY org_id ORDER BY enqueued_at ASC) AS rn,
+                 MIN(enqueued_at) OVER (PARTITION BY org_id) AS org_earliest
+          FROM jobs
+          WHERE status = 'pending'
+        ) ranked
+        WHERE rn = 1
+        ORDER BY org_earliest ASC
+        LIMIT 1
+      ) chosen ON j.id = chosen.id
+      WHERE j.status = 'pending'
       FOR UPDATE SKIP LOCKED
     )
     RETURNING *

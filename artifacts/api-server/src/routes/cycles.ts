@@ -7,7 +7,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { runAnalysisCycle } from "../lib/ooda/cycle";
-import { enqueueJob } from "../lib/jobs/queue";
+import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
 
 const router: IRouter = Router();
 
@@ -73,14 +73,22 @@ router.post("/cycles/run", tenantMiddleware, async (req, res) => {
   const isAsync =
     req.query["async"] === "true" || req.query["async"] === "1";
 
-  if (isAsync) {
-    const job = await enqueueJob({
-      kind: "run_analysis_cycle",
-      orgId,
-      payload: { triggeredBy },
-    });
-    res.status(202).json({ jobId: job.id, status: job.status });
-    return;
+  try {
+    if (isAsync) {
+      const job = await enqueueJob({
+        kind: "run_analysis_cycle",
+        orgId,
+        payload: { triggeredBy },
+      });
+      res.status(202).json({ jobId: job.id, status: job.status });
+      return;
+    }
+  } catch (err) {
+    if (err instanceof JobQuotaExceededError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
+    throw err;
   }
 
   const result = await runAnalysisCycle({ orgId, triggeredBy });
