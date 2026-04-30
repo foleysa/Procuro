@@ -15,6 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
+import { TruncatedError } from "@/components/truncated-error";
 import {
   Upload,
   FileSpreadsheet,
@@ -952,9 +953,19 @@ export default function Ingest() {
     } catch (e) {
       const msg = String((e as Error).message ?? e);
       setApiError(msg);
+      // Toasts auto-dismiss and have no expand affordance, so keep them
+      // short. Full details (incl. raw SQL) are available in the
+      // destructive alert at the top of the page via "Show details".
+      const firstLine = msg.split(/\r?\n/, 1)[0] ?? "";
+      const toastDesc =
+        firstLine.length > 160
+          ? `${firstLine.slice(0, 160).trimEnd()}… (see error above for details)`
+          : firstLine.length < msg.length
+            ? `${firstLine} (see error above for details)`
+            : firstLine;
       toast({
         title: "Import failed",
-        description: msg,
+        description: toastDesc,
         variant: "destructive",
       });
     } finally {
@@ -997,8 +1008,8 @@ export default function Ingest() {
         <Alert variant="destructive" data-testid="alert-import-error">
           <XCircle className="w-4 h-4" />
           <AlertTitle>Import failed</AlertTitle>
-          <AlertDescription className="font-mono text-xs whitespace-pre-wrap">
-            {apiError}
+          <AlertDescription>
+            <TruncatedError message={apiError} />
           </AlertDescription>
         </Alert>
       )}
