@@ -284,7 +284,15 @@ export async function runAnalysisCycle(args: {
   }
 }
 
-async function observeStep(
+/**
+ * OODA Observe-step queries. Exported so the cycle-perf-budget
+ * test (`artifacts/api-server/test/cycle-perf-budget.test.ts`) can
+ * exercise this stage directly against a seeded large tenant
+ * without having to re-implement the SQL. Internal callers should
+ * keep going through `runAnalysisCycle` rather than calling this
+ * helper out-of-band.
+ */
+export async function observeStep(
   orgId: string,
   previousCycleId: string | null,
 ): Promise<Record<string, unknown>> {
@@ -332,7 +340,13 @@ async function observeStep(
   };
 }
 
-async function collectOutcomesSinceLastCycle(
+/**
+ * Outcome aggregation feeding the OODA Learn step. Exported for the
+ * same reason as `observeStep` above: the cycle-perf-budget test
+ * needs to time this query independently. Not intended as a public
+ * API for non-test callers.
+ */
+export async function collectOutcomesSinceLastCycle(
   orgId: string,
   previousCycleId: string | null,
 ): Promise<OutcomeStats[]> {
