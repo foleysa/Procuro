@@ -5,6 +5,9 @@ import {
   FRED_CATEGORY_SCOPE_CODES,
   fredSeriesForScopeCode,
 } from "../intelligence/scope-taxonomy";
+import { getCollector } from "../intelligence/runtime";
+import { collectorContract } from "../intelligence/collector";
+import { buildInsightSource, type InsightSource } from "../insight-sources";
 
 const dollars = (n: number) => Math.round(n * 100) / 100;
 
@@ -286,6 +289,30 @@ export const spotVsContractLever: LeverAnalyzer = {
       const observedDate = new Date(sig.observed_at).toISOString().slice(0, 10);
       const indexValue = Number(sig.value);
 
+      // Build the disclosure-tier source descriptor for the FRED PPI
+      // observation that drove this opportunity. Same pattern as
+      // `supplier-fx-exposure`: look the collector up in the in-memory
+      // registry by `market_signals.collector_id` and emit one entry
+      // via `buildInsightSource()`. If the registry doesn't recognise
+      // the id (legacy row from a removed collector) we omit the
+      // source rather than emit a partial citation.
+      const sources: InsightSource[] = [];
+      const collector = getCollector(sig.collector_id);
+      if (collector) {
+        sources.push(
+          buildInsightSource({
+            collectorId: collector.id,
+            collectorName: collector.name,
+            // Prefer the per-signal source URL (e.g. the exact FRED
+            // series page) over the collector's catalog URL — it's a
+            // more useful citation target for the buyer.
+            sourceUrl: sig.source_url || collector.sourceUrl,
+            observedAt: new Date(sig.observed_at),
+            contract: collectorContract(collector),
+          }),
+        );
+      }
+
       for (const r of contractRows.rows as Array<{
         contract_id: string;
         contract_number: string;
@@ -329,6 +356,11 @@ export const spotVsContractLever: LeverAnalyzer = {
                 label: f.label,
               })),
             },
+            // Persisted on the opportunity's `inputs` JSON so the API
+            // server can lift them back out at read time without
+            // re-querying the underlying market_signals — same shape
+            // as the FX-exposure lever uses.
+            sources,
           },
         });
       }

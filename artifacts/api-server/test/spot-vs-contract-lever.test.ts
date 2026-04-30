@@ -34,6 +34,9 @@ import {
   CANONICAL_CATEGORY_CODES,
   type CanonicalCategoryCode,
 } from "../src/lib/intelligence/scope-taxonomy";
+import { registerCollector } from "../src/lib/intelligence/runtime";
+import type { IntelligenceCollector } from "../src/lib/intelligence/collector";
+import { z } from "zod";
 
 const RUN = `t43-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
 const SOURCE = "csv";
@@ -159,6 +162,30 @@ describe("spot_vs_contract Tier-2 lever", () => {
       killSwitch: 0,
     });
 
+    // Mirror the DB row into the in-memory collector registry so that
+    // `getCollector(sig.collector_id)` resolves inside the analyzer and
+    // the disclosure-tier source descriptor is built. The lever skips
+    // unknown collectors (legacy rows from removed sources) on purpose,
+    // so a test asserting `sources` must register the stub here.
+    const stubCollector: IntelligenceCollector = {
+      id: collectorId,
+      name: `${RUN} fred-stub`,
+      description: "Stub for spot_vs_contract test",
+      posture: "public-api",
+      sourceUrl: "https://fred.stlouisfed.org/series/PCU484121484121",
+      defaultRateLimitRpm: 30,
+      defaultScheduleCron: null,
+      postureClass: "public_api",
+      disclosureTier: "T1",
+      jurisdiction: "US",
+      retentionDays: 365,
+      tenantOptInDefault: true,
+      signalSchema: z.object({}).passthrough(),
+      stableSignalKey: () => `${collectorId}::stub`,
+      collect: async () => [],
+    };
+    registerCollector(stubCollector);
+
     // Insert a global FRED-style economic_index signal scoped to the
     // canonical category code. The lever filters org_id IS NULL OR =
     // orgId, so global signals reach every tenant.
@@ -224,6 +251,38 @@ describe("spot_vs_contract Tier-2 lever", () => {
       /PCU484121484121/,
       "rationale should include the FRED series id from the catalog",
     );
+
+    // Disclosure-tier source descriptor: the analyzer must lift the
+    // collector that produced the underlying market_signal off the
+    // in-memory registry and surface it on `inputs.sources` so the
+    // Command Center citation block (`<InsightCitations>`) renders for
+    // non-FX opportunities. This is the heart of task #103.
+    const sources = (ours.inputs as { sources?: unknown[] }).sources;
+    assert.ok(Array.isArray(sources), "draft.inputs.sources missing");
+    assert.equal(
+      sources.length,
+      1,
+      `expected exactly one source for the single FRED signal; got ${sources.length}`,
+    );
+    const src = sources[0] as Record<string, unknown>;
+    assert.equal(src["collectorId"], collectorId);
+    assert.equal(src["collectorName"], `${RUN} fred-stub`);
+    assert.equal(
+      src["sourceUrl"],
+      "https://fred.stlouisfed.org/series/PCU484121484121",
+      "sources[].sourceUrl should prefer the per-signal URL",
+    );
+    assert.ok(
+      typeof src["observedAt"] === "string" &&
+        !Number.isNaN(Date.parse(src["observedAt"] as string)),
+      "sources[].observedAt should be an ISO-8601 string the renderer can parse",
+    );
+    const contract = src["contract"] as Record<string, unknown>;
+    assert.equal(contract["postureClass"], "public_api");
+    assert.equal(contract["disclosureTier"], "T1");
+    assert.equal(contract["jurisdiction"], "US");
+    assert.equal(typeof contract["retentionDays"], "number");
+    assert.equal(typeof contract["tenantOptInDefault"], "boolean");
   });
 
   after(async () => {
