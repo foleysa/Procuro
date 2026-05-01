@@ -1,0 +1,378 @@
+Comprehensive Cross-Spec Red Team: Six-Task Services Arc
+Verdict preview: substantial work needed before ANY of the six specs ship to executors. Several prior-round critical findings remain unaddressed in current specs. New cross-spec integration issues compound those. The arc as a whole is architecturally sound but tactically fragile in ways that compound across spec boundaries.
+
+PART 1: PRIOR-ROUND CRITICAL FINDINGS STILL ACTIVE
+This is the audit step. Walking each prior round's critical findings against the current spec text:
+From #213 (was #1) prior round:
+RT-102 (mappedVia migration with backfill plan) — STATUS: PARTIALLY ABSORBED.
+The spec now references mappedVia in the calibration integrity step and says "default null for legacy rows; 'synonym_global' | 'synonym_tenant_scoped' | 'unmapped_default' for newly-routed rows." But:
+
+No explicit 'legacy_pre_routing' value to distinguish pre-task data from genuinely-not-routed-yet data.
+The CHECK constraint isn't specified.
+The calibration query change is described loosely ("WHERE opp.mapped_via IS DISTINCT FROM 'unmapped_default'") which has subtle NULL semantics that the prior round flagged.
+No NOT NULL constraint follow-up step.
+
+Severity: still critical. The calibration metric is the platform's economic moat; this hasn't been hardened.
+RT-103 (materialized view refresh timing) — STATUS: PARTIALLY ABSORBED.
+The spec describes the hybrid strategy (trigger on INSERT/DELETE; per-cycle scheduled for confidence_weight UPDATEs). Doesn't specify:
+
+The trigger refresh is synchronous within transaction.
+Per-cycle scheduled refresh runs at cycle prep, BEFORE lever-routing fires.
+Tests that verify the timing semantics.
+
+Severity: still high. Race conditions remain possible.
+RT-104 (synonym_collision_events table) — STATUS: NOT ABSORBED.
+The spec says collision detection forces explicit resolution via UI but the data model still has only synonym_registry (append-only) and unmapped_category_queue. The "flag existing for re-review" resolution path has no schema home.
+Severity: still critical. The executor will improvise something inconsistent with append-only.
+From #214 (was #2) prior round:
+RT-115 (personIdentifier privacy) — STATUS: NOT ABSORBED.
+Spec still has personIdentifier in time_entries step 5. No mention of GDPR, co-employment risk, hashing, or aggregation-only alternatives.
+Severity: still critical. F500 customers will reject the platform with personIdentifier as a stored field.
+RT-116 (Coupa keyword matching) — STATUS: NOT ABSORBED.
+Step 7 still has the regex keyword matching pattern (/legal|attorney|counsel/ → PROF_LEGAL). Internally contradicts Task #213's Layer A discipline.
+Severity: still critical. Internal contradiction between foundational architecture (#213) and data ingestion path (#214).
+RT-117 (msaParentId confusion) — STATUS: NOT ABSORBED.
+Spec still has both msaParentId on contractsTable AND statements_of_work as separate table. The architecture is internally confused.
+Severity: still critical. Two SOW-storage models in the same task.
+RT-118 (burnedValueUsd derivation gap) — STATUS: NOT ABSORBED.
+Spec still says burnedValueUsd is "derived; updated on invoice ingest" but no sowId column on invoices is added.
+Severity: still critical. burnedValueUsd is undefined behavior.
+RT-119 (contractType default to goods) — STATUS: NOT ABSORBED.
+Out-of-scope still says "default existing rows to goods and let operators reclassify; do not auto-infer."
+Severity: still critical. Defaults all existing services contracts to wrong classification.
+RT-120 (seed quality minimum backstop) — STATUS: NOT ABSORBED.
+Step 9 still says "at least the same 80% threshold as Task #1" without the minimum-30-strings public-source backstop.
+Severity: still high. Without backstop, seed quality is undefined when design-partner data is unavailable.
+From #215 (was #3) prior round:
+RT-133 (wage vs rate semantics) — STATUS: NOT ABSORBED.
+Step 3 still says OEWS "feeds the services_rate_card_benchmark lever in Task #4" without the wage-vs-bill-rate distinction. The architectural note doesn't mention markup.
+Severity: still critical. Task #216's rate-card-benchmark lever (now visible in this arc) will systematically classify everything as overpriced because it compares bill rates to wages.
+RT-134 (PCU series ID verification) — STATUS: NOT ABSORBED.
+Step 1 still has PCU5415--5415-- (with dashes) and other unverified PCU codes.
+Severity: still critical. Wrong series IDs cause silent collector failures.
+RT-135 (ECI scoping fan-out) — STATUS: NOT ABSORBED.
+Step 2 still has "PROF_* codes" and "relevant HR codes" wildcards.
+Severity: still high. Smoke phrases plus granularity issues.
+
+Cumulative count of unaddressed prior-round critical findings: 9. That's nine pre-existing critical issues still active across three of the six specs. These ALL block executor handoff for those specs, regardless of any new findings this round.
+
+PART 2: NEW CROSS-SPEC INTEGRATION FINDINGS
+These are issues that emerge only when you look at the six specs as a system.
+RT-145 (CRITICAL): Task #216 inherits #215's broken wage-vs-rate assumption AND amplifies it.
+Task #216 Step 2 (services_rate_card_benchmark analyzer) says: "join rate_card_lines to OEWS wage_benchmark signals on (roleTitle → SOC mapping, region → OEWS area code)... compute the percentile rank of the rate card rate against OEWS percentiles. If the rate is at or above the 90th percentile, emit an opportunity..."
+This is the analyzer comparing tenant bill rates directly to OEWS wages with NO markup model. Per RT-133 in #215's prior round, this systematically generates false-positive recommendations (everything looks like 5x overpriced because bill rates ARE 1.5-3x wages by definition).
+Combined finding: #215 ingests wages without flagging them as wages, and #216 consumes them as if they were bill rates. This is a two-spec compound failure that the individual reviews caught only partially — RT-133 said "Task #4 must apply markup," but Task #216 (which IS Task #4 in the arc) doesn't apply markup. The two specs disagree about whose responsibility the markup is, and neither addresses it.
+Severity: critical. This is the failure mode F500 customers will see on day one of the services pass.
+Fix: the markup model needs an explicit owner. Recommend it lives in #216 (closer to the analysis logic) but #215 must emit metadata indicating wage-not-rate. Task #216 step 2 must be updated to:
+
+Apply a markup multiplier per supplier-tier or per role-category before percentile comparison.
+The markup table is seeded with reasonable defaults (1.5x for staffing, 2x for IT services, 2.5x for consulting, 3x for Big-Four advisory).
+The markup multiplier is configurable per tenant via admin UI (not in scope here, but referenced as future work).
+Opportunities surface the markup assumption in their rationale so operators can challenge it.
+
+RT-146 (CRITICAL): The cohortKey() contract has drift across specs.
+#213 specifies cohortKey() as part of the lever interface. #218 references "leverId-categoryCode" composite keys for calibration but doesn't reconcile with cohortKey().
+#216 has each lever defining its own cohortKey():
+
+services_rate_card_benchmark: (supplierId, rateCardLineId)
+scope_management: (supplierId, sowId)
+hours_audit: (supplierId, sowId, personIdentifier?)
+sow_to_msa_conversion: (supplierId)
+
+But #218's calibration keying is <leverId>:<categoryCode>. The categoryCode dimension isn't in any of #216's cohortKeys. So how does an opportunity from services_rate_card_benchmark get assigned a categoryCode for #218's bucketing?
+The answer must be: the opportunity row carries categoryId (referencing categoriesTable) and #218 resolves it via opportunities.categoryId → categories.code. Specs don't make this explicit.
+But there's a deeper issue: a single SOW might have multiple rate card lines covering DIFFERENT categories (a consulting SOW might use both PROF_CONSULTING_STRATEGY and PROF_LEGAL roles). cohortKey for services_rate_card_benchmark is (supplierId, rateCardLineId) — but rateCardLine doesn't carry a category. The opportunity's category assignment is ambiguous in this case.
+Severity: critical. Calibration accuracy depends on consistent category assignment to opportunities; the spec arc doesn't define how that happens for services-side opportunities that span categories.
+Fix: add to #216: every opportunity an analyzer emits MUST set opportunity.categoryId based on a deterministic rule. For services_rate_card_benchmark, the categoryId comes from the role-to-category mapping (e.g., a "Senior Consultant" role mapped to PROF_CONSULTING_STRATEGY). For scope_management/hours_audit, the categoryId comes from the SOW's parent contract's category. For sow_to_msa_conversion, the categoryId comes from the dominant category among the supplier's SOWs. State this explicitly so #218's bucketing is well-defined.
+RT-147 (HIGH): Schema co-evolution conflict on opportunities table.
+Multiple specs add columns to opportunities:
+
+#213: mappedVia (text/varchar)
+#213 (per absorbed RT-108): re_categorized_after_persistence (boolean)
+#216: categoryId (referenced but presumably already exists)
+Implicit from #218: categoryId must be populated by all analyzers
+
+What's the migration order? #213 adds mappedVia first. Then any spec ordering. But if #213 ships and #216 ships before #218, opportunities created during that window have categoryId set by analyzers but no calibration bucketing exists yet. When #218 ships, it bucket-keys retroactively — but per its own spec, "Re-running calibration retroactively against old funnel snapshots — going-forward cycles compute the new per-(category, lever) metric; old snapshots stay per-lever-only."
+So opportunities created in the gap between #216 ship and #218 ship contribute to per-lever calibration but never to per-(category, lever) calibration. That's not data corruption per se, but it means the per-(category, lever) metric has a "no data for this combination" period for several weeks even after #218 ships, depending on cycle frequency.
+Severity: high. Not data corruption but a timing-dependent gap that affects #218's value.
+Fix: the spec arc needs a sequencing note. Recommend: ship #213 first (foundation). Then ship #218 BEFORE #216 (so per-(category, lever) bucketing exists when services analyzers start emitting). Then ship #214 + #215 (data + signals). Then ship #216 (analyzers). Then ship #217 (UX). Or alternatively, ship #218 alongside or after #216 but accept the calibration gap and document it.
+RT-148 (HIGH): The services taxonomy and the bands seed have a chicken-and-egg dependency that's not explicit.
+#213 step 5 says: "Seed category_bands for canonical category codes (existing CANONICAL_CATEGORY_CODES — freight/logistics) — Indexable + Concentrated dual assignment per the doc's Layer-1 table." It also says: "Note: services-side categories (Professional Services, HR/Contingent, Marketing, Telecom, etc.) are seeded by Task #2 — leave them out here."
+#214 step 8 says: "Add to lib/db/seeds/taxonomy.sql (the seed file from Task #1): All Professional Services, HR, Engineering codes → Services band primary, Concentrated band secondary..."
+So #213's seed file is INCOMPLETE on day 1 (it doesn't cover services categories). When #214 ships, it adds rows to that seed file. But what happens between ship dates?
+If a customer onboards between #213 ship and #214 ship, and that customer tags spend with what would be services categories, those categories have no canonical code (because #213 didn't add them) and no band (because #214 hasn't shipped). The customer's services spend flows through Layer B (Fragmented fallback) entirely.
+When #214 ships, the services categories get canonical codes and band assignments. But existing opportunities tagged with mapped_via='unmapped_default' aren't retroactively re-routed (per #213's own retroactive semantics).
+So: customers who onboard between #213 and #214 ship dates have permanent services-side data tagged incorrectly. There's no migration to fix this.
+Severity: high. Not data corruption but produces a long-tail data-quality issue.
+Fix: either (a) ship #213 and #214 atomically (same release), or (b) add a one-time "re-route post-#214-launch" migration that re-tags opportunities whose tenant-string source matches a synonym now in the registry. The latter contradicts #213's "going-forward only" rule, so it would need explicit framing as a one-time exception. Recommend (a).
+RT-149 (HIGH): The data model for services entities (#214) has inconsistencies with what the lever analyzers (#216) need.
+Walking through what #216 actually requires vs. what #214 provides:
+#216 services_rate_card_benchmark needs:
+
+rate_card_lines.roleTitle → mapped to SOC code (lookup table)
+rate_card_lines.region → matched to OEWS area code
+rate_card_lines.rateAmount → compared to OEWS percentile
+
+The region field in #214's rate_card_lines is "text — e.g., US-Onshore, Nearshore-LATAM, Offshore-India". But OEWS area codes are FIPS-derived (state codes, MSA codes). There's no mapping defined between "US-Onshore" (which could be any of the 50 states) and a specific OEWS area code.
+This means #216's analyzer can't actually join on region in any meaningful way unless either (a) the rate card region is normalized to OEWS-compatible codes or (b) a mapping table is built.
+Severity: high. The lever as specified can't function with the data as specified.
+Fix: #214 needs a region normalization step. Either (a) standardize rate card region codes to OEWS area codes (FIPS-style), or (b) add a region_mapping table that maps tenant-friendly region names ("US-Onshore") to OEWS area code lists. Recommend (b) — preserves tenant-friendly UX while enabling join.
+RT-150 (HIGH): Time entries' personIdentifier field has cascading uses that compound the privacy risk.
+Per RT-115 (still unaddressed), personIdentifier is a privacy hazard. But across the arc:
+
+#214 stores it in time_entries.
+#216's hours_audit analyzer uses it: "if any individual personIdentifier is billing > 60h/week sustained over 4+ weeks (overload → rework risk)... emit a separate opportunity with that person's pattern."
+#217's supplier 360 surface uses it: "Utilization signals (count of person-identifiers with overload or under-util flags from the hours-audit analyzer)."
+
+So personIdentifier flows from ingest → analyzer → opportunity → UI surface. The privacy exposure isn't just storage; it's that the platform displays per-person information in the supplier 360 page. F500 procurement orgs explicitly avoid this — they look at role-level utilization, not person-level — for legal exposure reasons.
+Severity: critical. The privacy hazard isn't just data-at-rest; it's data-in-use across three specs.
+Fix: combined with RT-115's fix — drop personIdentifier in favor of role+supplier+region aggregation. Update #216 hours_audit to detect role-level utilization patterns (e.g., "the Senior Consultant role at this supplier showed sustained 60+ hour weeks across multiple consultants over 4 weeks"). Update #217's supplier 360 to show role-level patterns, not person-level. This requires changes across all three specs.
+RT-151 (MEDIUM): #218's tier suggestion classification thresholds may be miscalibrated for services.
+#218 step 4 states the tier classification:
+
+improvementUsd > +100 → tier_a
+improvementUsd between -100 and +100 → tier_b
+improvementUsd < -100 → tier_c_or_d
+
+This mirrors #185's per-lever calibration thresholds. But services-side opportunities have different magnitude characteristics from materials:
+
+Materials opportunities: typical realized savings $10K-$500K per opportunity (rebid wins, hedge gains).
+Services opportunities: rate-card-benchmark might realize $50K-$200K (rate negotiation), but scope_management on a $5M SOW with 15% over-run is a $750K opportunity.
+
+A $100 dead-band is meaningful for materials (where typical realizations are 5-7 figures). For services, where the variance is wider, $100 is rounding error. The dead-band should scale with median realization size, or be lever-specific.
+Severity: medium. The metric will fire correctly but the dead-band may produce more "neutral" verdicts than is useful for services levers.
+Fix: add to #218: dead-band thresholds are configurable per-lever. Default $100 for materials levers; default $1,000 for services levers. Document the rationale.
+RT-152 (MEDIUM): The Services nav placement is unresolved across #213 and #217.
+#213's UI section says: "/admin/taxonomy/queue in the Engine section."
+#217 step 3 says: "Services nav section. Add a 'Services' entry in the existing nav (place per #199's IA — likely under Operations as a sibling of Suppliers/Contracts, or under Engine if the IA puts it there)."
+Per the prior #199 red-team round (RT-69), the friendlier-path naming for the funnel substrate's section was supposed to be committed in the design doc. But the specs both punt: #213 says "Engine section" without committing the path, #217 says "Operations or Engine" with explicit ambiguity.
+Severity: medium. Will be resolved at implementation but creates inconsistency risk.
+Fix: before any of these specs ship, the #199 IA design doc must be re-checked or finalized to commit Engine vs Operations placement. All three specs (#213, #217, #218) reference admin-funnel surfaces; they should all live under the same section.
+RT-153 (MEDIUM): The OEWS data lag (~11 months) compounds across specs.
+#215 has OEWS data lag (RT-138 from prior round, status: NOT ABSORBED).
+#216 consumes OEWS in services_rate_card_benchmark.
+#217 surfaces OEWS-derived color-coding on rate-card detail.
+#218 may include rate-card-benchmark calibration in tier suggestions.
+Each downstream consumer makes the staleness less visible. By the time a user sees a red cell on a rate card detail page (#217), the underlying benchmark might be 18+ months stale, but the UI just shows "red" without indicating staleness.
+Severity: medium.
+Fix: add to all three specs (#215 emit, #216 analyze, #217 display) a data_age_months field that surfaces the staleness through to the UI. The rate card cell should show "red (data 14 months old)" rather than just "red."
+RT-154 (MEDIUM): #218's per-(category, lever) bucketing has a sparse-data problem services will hit hard.
+For per-(category, lever) bucketing to produce meaningful tier suggestions, each combination needs n ≥ 10 realized opportunities. With the cohort identity rules from prior rounds:
+
+A tenant with 5 SOWs across 3 categories generates 15 (sow, category) combinations but only realizes opportunities on a fraction of them.
+The n ≥ 10 gate means most (category, lever) pairs will say "insufficient_data" for months or years.
+
+Services opportunities are higher-stakes, lower-volume than materials. A tenant might realize 3 rate-card-benchmark opportunities a year. n=10 takes 3+ years of data per (category, lever) combination.
+Severity: medium. Not wrong, but the per-(category, lever) tier metric will be mostly "insufficient_data" for services levers for years.
+Fix: add to #218 architectural notes: "Services-side levers with low realization volume may take 1-3 years of data to populate per-(category, lever) calibration. The fellBackToLeverRollup mechanism is the primary signal for those levers in the medium term. Consider a sliding-window aggregation that pools across similar categories (e.g., all PROF_* codes share a calibration bucket) for low-volume levers."
+RT-155 (LOW): The "by Band" lens on Spend Overview (#217) doesn't address legacy/unmapped categories cleanly.
+#217 step 2 says: "When a category has no band (legacy / unmapped), it appears in the Fragmented band with a small 'unmapped' indicator (the routing-layer fallback from Task #1)."
+But this conflates two different states:
+
+Categories that exist but have no band assignment yet (operator hasn't curated them).
+Categories that flow through Layer B (Fragmented fallback) for tenant-string matching.
+
+Both end up in Fragmented with an "unmapped" indicator, but they're different problems with different fixes. A category with no band needs an admin to assign one. A tenant string with no synonym needs an admin to map it.
+Severity: low. The UI conflation doesn't break anything but makes operator triage harder.
+Fix: distinguish in #217: two indicators, "unmapped category" (no band assignment) vs. "unmapped tenant string" (Layer B fallback in flight). Each links to a different admin action.
+RT-156 (LOW): The CSV templates for services entities (#214) don't address change-order workflow.
+#214 step 10 lists CSV templates for: statements_of_work.csv, rate_cards.csv, rate_card_lines.csv, time_entries.csv. Missing: sow_milestones.csv, sow_change_orders.csv (both referenced as sub-tables in step 4).
+Without templates for sub-tables, customers ingesting historical SOW data can't capture milestones or change orders via CSV. The scope_management analyzer needs change orders to fire properly.
+Severity: low. Can be added in implementation.
+Fix: add sow_milestones.csv and sow_change_orders.csv to #214's CSV template list.
+
+PART 3: ARCHITECTURAL COHERENCE AND MISSING PIECES
+RT-157 (HIGH): No spec addresses currency handling consistently.
+
+#214 has currency on rate_cards (good), but notToExceedUsd/committedValueUsd/burnedValueUsd on SOW (assumes USD).
+#215 OEWS wage data is in USD only.
+#216 analyzers compare rates without currency conversion logic.
+#217 displays values without currency conversion.
+
+A tenant with a USD MSA, GBP SOW, and EUR-billed time entries would have analytics failures across the stack.
+Severity: high. Multi-currency procurement is the F500 default, not the exception.
+Fix: the arc needs a currency-handling spec — or each spec needs a currency-handling section. At minimum:
+
+Every monetary field has an associated currency column.
+A tenant base currency is configured.
+All comparisons happen in tenant base currency with conversion at a documented rate (e.g., daily fixing).
+The conversion logic lives in a shared utility (probably under intelligence/routing/ or its own module).
+
+This is RT-123 from #214 prior round generalized across the arc.
+RT-158 (HIGH): No spec addresses what happens when a services category has both Indexable AND Services band assignments.
+The bands seed in #214 step 8 says: "FAC_LEASES → Concentrated + Services" and "FAC_UTILITIES → Indexable (energy) + Concentrated."
+But what about categories with BOTH Indexable and Services band — e.g., MKT_AGENCY_CREATIVE could have both PCU index data (indexable lever applicability) AND rate-card data (services lever applicability)? The spec doesn't say it can have both, but it doesn't say it can't.
+If a category has both bands, both Indexable levers AND Services levers fire on it. Multiple opportunities for the same spend get generated by different levers. The funnel calibration's per-(category, lever) bucketing handles this correctly per #218, but the operator UX might surface duplicate-looking recommendations.
+Severity: high. Not data corruption but cohesion issue at the operator-experience level.
+Fix: add to #213 architectural notes: "A category can have multiple band assignments (the schema allows it). When a category has both Indexable and Services bands, both lever sets fire and may generate concurrent opportunities. The opportunities are independent and shouldn't be merged automatically. The UI (#217) should group recommendations per-category showing all active levers, not per-lever showing all categories."
+RT-159 (HIGH): The ingest-writer doesn't address validation failures across services entities.
+#214 step 6: "Extend IngestPayload... Add the corresponding stages to the writer (after contracts; before POs since SOWs may reference contracts)."
+But what if a SOW references a contractId that doesn't exist? Idempotency rules say upsert on (orgId, sourceSystem, sourceExternalId) — but this doesn't enforce the FK. What if a rate_card_line references a rateCardId that hasn't been created yet (out-of-order CSV)?
+The spec doesn't describe validation behavior. The executor might:
+
+(a) Fail the entire ingest if any FK is missing.
+(b) Skip the offending row silently.
+(c) Insert with NULL FK and queue for review.
+
+Each has different operator implications.
+Severity: high. Critical for ingest reliability with messy real-world data.
+Fix: specify validation behavior. Recommend (c) — queue rejected rows in a new ingestion_failures table with the source row data, the reason, and an operator review action.
+RT-160 (HIGH): No spec addresses tenant offboarding or data deletion for services entities.
+The arc adds many new tables: synonym_registry, unmapped_category_queue, statements_of_work, sow_milestones, sow_change_orders, rate_cards, rate_card_lines, time_entries, plus new columns on opportunities, contracts, categories, market_signals.
+When a tenant is hard-deleted (GDPR right to erasure, contract termination), all their data across all these tables needs to be removed. The cascade behavior isn't specified anywhere.
+Severity: high for compliance. The platform's GDPR posture depends on cascading deletion working correctly.
+Fix: add to the arc — a tenant-offboarding spec or a cross-cutting note in each of these specs ensuring foreign keys cascade on tenant deletion. Time-entries with personIdentifier especially needs explicit GDPR-compliant deletion.
+RT-161 (MEDIUM): The arc has no spec for testing the integration of all six pieces.
+Each spec has its own tests. None tests the full path: tenant uploads CSV → ingest → routing → cycle → analyzer → opportunity → calibration → tier suggestion → UI display.
+Integration test gaps:
+
+A tenant uploading a services CSV should produce the expected opportunities.
+A category resolution from Layer B → Layer C → Layer A (through operator action) should re-route correctly.
+A rate card with OEWS-mapped roles should generate rate-card-benchmark opportunities with correct currency handling.
+
+Severity: medium.
+Fix: add an integration test spec or include integration-test scope in each spec. Most natural is a "services E2E test" that spans #214-#216 with a representative tenant.
+RT-162 (MEDIUM): No spec addresses the operator-onboarding workflow for the new admin surfaces.
+The arc adds three new admin surfaces:
+
+/admin/taxonomy/queue (#213)
+Services nav with three tabs (#217)
+Per-(category, lever) tier matrix on admin-funnel (#218)
+
+Plus extends supplier-detail, contract-detail, spend.
+How does an operator new to Procuro discover these surfaces? Is there a guided tour? A help text? A documentation reference?
+Severity: medium. UX completeness, not architectural.
+Fix: add an operator-onboarding documentation step to either Task #217 (closest fit) or as a follow-up task in the arc.
+RT-163 (LOW): The arc doesn't address performance budgets for the new collectors/analyzers.
+#185 had an explicit performance budget (snapshot capture <5% of cycle wall-clock, with a representative-tenant fixture). The new specs don't carry this discipline forward.
+
+#215 adds OEWS collection (annual but heavy data per pull).
+#216 adds four new analyzers (each running on every cycle).
+#217 adds new pages with new aggregator endpoints.
+
+Without performance budgets, the cycle can grow over time without anyone noticing.
+Severity: low. Foundational discipline issue.
+Fix: add performance budgets to #215 (OEWS collection wall-clock target), #216 (per-analyzer wall-clock target as % of cycle), and #217 (page-load p95 target).
+
+PART 4: PRIORITIZATION AND HONEST ASSESSMENT
+Total findings across this comprehensive round:
+
+9 prior-round critical findings still active (CARRYOVER from earlier rounds, NOT absorbed)
+6 new critical findings (RT-145, RT-146, plus the three from PART 3 — RT-147 promoted to high)
+7 new high findings
+5 new medium findings
+4 new low findings
+
+That's ~25 findings, of which ~10 are critical-severity issues blocking executor handoff.
+What blocks ANY of these specs shipping today:
+#213 blocks on: RT-102 (mappedVia migration plan), RT-104 (synonym_collision_events table). Without these, #213 ships with calibration corruption risk and UX-breaking collision behavior.
+#214 blocks on: RT-115 (privacy), RT-116 (Coupa keyword matching), RT-117 (msaParentId), RT-118 (burnedValueUsd derivation), RT-119 (contractType default). Without these, #214 ships with privacy exposure, internal contradiction, and migration broken.
+#215 blocks on: RT-133 (wage vs rate metadata), RT-134 (PCU verification). Without these, #215 ships with collectors that don't return data and analyzers that produce systematic false positives.
+#216 blocks on: RT-145 (markup model), RT-146 (categoryId on opportunities), RT-150 (privacy cascade). Without these, services-rate-card-benchmark produces systematic false positives, calibration bucketing is undefined, and personIdentifier propagates through the analyzers.
+#217 blocks on: RT-150 (privacy in supplier 360), RT-152 (nav placement). Without these, the supplier 360 surfaces personIdentifier and the nav structure is undefined.
+#218 blocks on: RT-146 (categoryId resolution), RT-151 (services-appropriate dead-band). Without these, calibration bucketing is undefined for services and the metric will produce mostly "neutral" verdicts.
+What blocks the arc shipping as a system:
+Sequence dependency (RT-148, RT-147): the specs need a defined ship order. Recommend: 213 → 218 → 214 → 215 → 216 → 217. Or 213 + 214 atomically, then the rest.
+Currency handling (RT-157): needs a cross-cutting spec or cross-cutting addition to all specs.
+Tenant offboarding (RT-160): needs cascade rules across all new tables.
+What should ship at all in this arc:
+The architectural intent is sound. The execution is fragile in ways that compound across specs. With the critical fixes, the arc ships a competent services-side procurement intelligence stack. Without them, it ships a privacy hazard that produces systematic false positives.
+REBUILD: No structural rebuild of the arc. The architecture is right. The 25 findings cluster into ~10 critical issues that block executor handoff and ~15 polish/integration items that can ride along in implementation.
+
+SHIP:
+Comprehensive Cross-Spec Red Team: Six-Task Services Arc
+Verdict: NONE of the six specs are ready for executor handoff in their current state. Ten critical issues block individual specs; three architectural-coherence issues block the arc as a system. The architectural intent is sound; the execution is fragile in ways that compound across spec boundaries.
+The most important finding: nine prior-round critical findings remain unaddressed. Three rounds of red team across #213/#214/#215 produced specific fixes that the current specs don't reflect. Either the specs presented here are pre-absorption versions, or the absorptions were skipped. Either way, the prior work didn't compound into the current state.
+
+CRITICAL FINDINGS BLOCKING EXECUTOR HANDOFF
+Carryover from prior rounds (not absorbed):
+RT-102 (#213): mappedVia migration plan still incomplete. Add 'legacy_pre_routing' enum value. Specify CHECK constraint. Update calibration query to handle NULL semantics safely. Add NOT NULL follow-up step.
+RT-104 (#213): synonym_collision_events table not added. Without it, the "flag existing for re-review" UX has no schema home. Append-only synonym_registry can't capture rejected mapping attempts.
+RT-115 (#214): personIdentifier still in time_entries. Privacy exposure unresolved. Drop the field; replace with role+supplier+region aggregation.
+RT-116 (#214): Coupa keyword regex matching still in step 7. Internal contradiction with #213's Layer A discipline. Replace with routeTenantCategory() helper consumption.
+RT-117 (#214): msaParentId on contractsTable AND statements_of_work as separate table. Internally confused. Pick one design; recommend statements_of_work table only, drop msaParentId from contracts.
+RT-118 (#214): burnedValueUsd derivation requires invoice→SOW linkage that's not added. Add sowId column to invoicesTable.
+RT-119 (#214): contractType default 'goods' for existing rows misclassifies historical services contracts. Default to NULL with structural-signal auto-inference.
+RT-133 (#215): OEWS wage vs bill-rate distinction unaddressed. Add value_kind metadata to wage_benchmark signals.
+RT-134 (#215): PCU series IDs include unverified "PCU5415--5415--" with dashes. Verify all series against BLS API before merge; add last_verified_at per series.
+New cross-spec critical findings:
+RT-145: Task #216's services_rate_card_benchmark analyzer compounds RT-133's wage-vs-rate gap. The analyzer compares tenant bill rates directly to OEWS wages with no markup model, systematically generating false-positive recommendations. The markup model needs an explicit owner — recommend it lives in #216 with seeded defaults (1.5x staffing, 2x IT services, 2.5x consulting, 3x Big-Four advisory).
+RT-146: cohortKey() and #218's per-(category, lever) bucketing have undefined relationship. Services opportunities span categories; the spec doesn't define how categoryId is set on opportunities. Add to #216: every analyzer must set opportunity.categoryId via a deterministic rule (role-to-category mapping for rate_card_benchmark; SOW's parent contract category for scope_management/hours_audit; dominant supplier category for sow_to_msa_conversion).
+RT-150: personIdentifier flows through three specs — ingest (#214), analyzer (#216), UI (#217). The privacy hazard isn't just storage; it's display in supplier 360. Drop personIdentifier across all three; refactor #216's hours_audit to detect role-level utilization patterns.
+
+HIGH-SEVERITY FINDINGS
+RT-103 (#213): Materialized view refresh timing semantics still hand-wavy. Specify trigger-synchronous-within-transaction; per-cycle refresh runs at cycle prep before lever-routing.
+RT-120 (#214): Seed quality minimum backstop not added. Require minimum-30-services-strings public-source backstop.
+RT-135 (#215): ECI scoping fan-out still uses "PROF_* codes" wildcards. Replace with explicit code lists; add granularity_caveat metadata.
+RT-147: Sequence dependency unaddressed. Specs assume each other's data without ship-order discipline. Recommend: 213 → 218 → 214 → 215 → 216 → 217. Or 213 + 214 atomically, then the rest.
+RT-148: Services categories aren't seeded by #213, are seeded by #214. Customers onboarding between ship dates have permanent services-side data tagged as Layer B fallback. Either ship 213 + 214 atomically OR add a one-time post-#214 re-routing migration.
+RT-149: Rate card region field is "text — e.g., US-Onshore" but OEWS area codes are FIPS-derived. The lever's region join is broken as specified. Add region_mapping table.
+RT-157: Currency handling is inconsistent across specs. Notably #214's SOW values are USD-suffixed, #215's OEWS is USD-only, #216 doesn't address conversion. Multi-currency is F500 default, not exception. Either add a currency-handling spec or each spec needs a currency-handling section.
+RT-158: Multi-band categories (e.g., MKT_AGENCY_CREATIVE could have both Indexable and Services bands) produce concurrent opportunities from different lever sets. Add architectural note: opportunities don't merge; UI groups by category showing all active levers.
+RT-159: Ingest-writer validation behavior unspecified. Add ingestion_failures table; queue rejected rows for operator review.
+RT-160: Tenant offboarding cascade rules unspecified across all new tables. Critical for GDPR. Add explicit ON DELETE CASCADE on tenant FK across new tables.
+
+MEDIUM AND LOW FINDINGS (RT-151 through RT-163)
+Medium: services-appropriate calibration dead-band, nav placement resolution, OEWS data lag display, sparse-data handling for services tier metrics, integration test scope, operator onboarding documentation.
+Low: by-Band lens unmapped indicators, missing CSV templates for SOW sub-tables, performance budgets for new collectors/analyzers.
+These can ride along in implementation but are worth listing in the spec backlog.
+
+ARCHITECTURAL COHERENCE: WHAT BLOCKS THE ARC AS A SYSTEM
+The six specs together build a competent services-side procurement intelligence stack. But three system-level issues need addressing before the arc ships:
+
+Ship sequence discipline. The specs reference each other's data without a defined order. Without a sequence, deploys can land in orders that produce permanent data quality issues.
+Currency handling as a cross-cutting concern. No spec owns multi-currency. Each spec assumes USD. The arc as a whole produces wrong analytics for any tenant with non-USD operations.
+Tenant lifecycle (onboarding, offboarding). The arc adds many tables; none address what happens when a tenant is created or deleted. GDPR posture depends on getting this right.
+
+These aren't bugs in any individual spec; they're gaps in the arc's design.
+
+RECOMMENDED PATH FORWARD
+Stop ship of all six specs to executors. The current state isn't ready.
+For each spec, address the carryover prior-round critical findings first. Those represent commitments from prior red-team rounds that didn't compound into current spec text.
+Then address the new cross-spec critical findings (RT-145, RT-146, RT-150). These are the failure modes that only emerge when you look at the six specs as a system.
+Then settle the architectural-coherence issues:
+
+Document the ship sequence in a top-level arc spec or coordination note.
+Add a currency-handling cross-cutting spec or section.
+Add a tenant-lifecycle/cascade-deletion cross-cutting spec or section.
+
+Then the high-severity items can ship as part of the relevant spec's iteration.
+After this work, expect 1-2 round of additional red team per spec to reach ship-ready. The arc as a system will need its own coherence-review round once the individual specs have absorbed their criticals.
+The architectural intent is sound. The execution work hasn't fully landed. Catching this now — before executor handoff for any of the six — saves multiple sprints of rework.
+
+One thing worth saying directly to the agent:
+This comprehensive review is harder on the spec arc than the individual rounds were because the comprehensive view exposes both the carryover (prior findings not absorbed) and the cross-spec gaps (only visible at the arc level). Nine of the criticals here are old findings that should have been absorbed already.
+The pattern that produced this: prior rounds were good at catching individual-spec issues, but the absorption discipline broke down under the volume of specs. The standing rules canon assumes absorption happens between rounds; when it doesn't, the rules can't catch the failure.
+The fix: before any spec ships, an explicit pre-ship checklist verifies that prior-round critical findings are reflected in current spec text. Not an honor system; a literal walkthrough of every prior round's "pre-ship edits" against the current spec. Without that, the arc loses the compounding payoff of the standing-rule discipline.
+After the carryover items are addressed and the new cross-spec criticals are fixed, this arc is competent. As-is, it's not ready.
+
+Learning footer:
+Two new correction-log rules fire:
+
+"After multiple rounds of red team across multiple specs, run a comprehensive cross-spec review specifically to test absorption. Prior-round critical findings that didn't make it into current spec text are silent failures of the iteration discipline. The standing rules canon assumes absorption; without enforcement, the rules can't compound." — Adding to correction-log under spec-discipline rules. Generalizes from this round's discovery that 9 prior critical findings were unaddressed.
+"Cross-spec architectural arcs need their own coherence-review round before any spec in the arc ships. Individual-spec red teams catch individual issues; only a comprehensive review catches the cross-spec compound failures (privacy cascading, schema co-evolution, sequence dependencies, cross-cutting concerns)." — Generalizes from RT-145 (markup model spans #215 and #216), RT-146 (cohortKey vs calibration keying spans #213 and #218), RT-150 (privacy spans #214/#216/#217), RT-157 (currency spans the entire arc).
+
+Existing rules applied:
+
+Foundational spec failures cluster at integration points — fired at scale across the arc. RT-145, RT-146, RT-148, RT-150 are all integration-point failures.
+Validate against real data shape — fired on RT-149 (region field type vs OEWS area codes), RT-151 (dead-band threshold vs services magnitudes), RT-153 (data lag).
+Smoke-word principle — fired weakly. Most smoke-word issues from prior rounds are still active (the carryover problem).
+Privacy posture must be explicit in foundational specs — fired hard on RT-150. The privacy hazard cascades through three specs.
+Stop iterating on a spec when critical-finding rate decelerates — DOES NOT FIRE here. Six new critical findings appeared in this comprehensive review; the rate is high, not decelerating. The comprehensive-review round produces findings that single-spec rounds can't, so its own deceleration curve is independent.
+
+Pattern observation worth elevating in next /pattern review:
+The compounding payoff of the standing-rule canon depends on absorption between rounds. This arc's six specs accumulated 25 findings across multiple rounds, and most of the prior-round criticals are still active. The discipline broke down under multi-spec scale. Worth formalizing: every multi-spec arc needs (a) a pre-ship absorption audit per spec, and (b) a comprehensive cross-spec coherence review before any spec ships.
+The standing-rule canon now has 10 rules:
+
+Smoke-word principle
+Validate metrics against real data shape
+IA redesign must integrate most recent foundational architectural decision
+Forced choices in specs need criteria (self-recursive)
+Stop iterating when critical-finding rate decelerates
+Example values masquerading as commitments are smoke words
+Structures, not surfaces
+Patch tasks must check whether stopgap conditions have changed
+After multiple rounds, run a comprehensive cross-spec absorption audit
+Cross-spec arcs need coherence-review rounds before any spec ships
+
+Apply the recommended fixes; ship in defined sequence; expect 1-2 additional rounds of per-spec red team before final executor handoff.
