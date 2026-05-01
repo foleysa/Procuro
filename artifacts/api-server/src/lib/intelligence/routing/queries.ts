@@ -2,6 +2,23 @@ import { pool } from "@workspace/db";
 import type { LeverId } from "@workspace/db";
 
 /**
+ * Sentinel categoryCode used by the per-lever rollup in
+ * `funnel_snapshots.calibration` (task #218). Mirrors
+ * `lib/ooda/funnel.ts:CALIBRATION_ROLLUP_CATEGORY` — duplicated here
+ * to avoid pulling the routing module across the ooda boundary.
+ */
+const CALIBRATION_ROLLUP_CATEGORY = "_all" as const;
+
+/**
+ * Verdict gating thresholds for tier classification. Mirrors the ones
+ * applied by the funnel snapshot writer (task #185 / #218) so that the
+ * `verdict` field on a calibration entry and the `tier` returned here
+ * agree on the same dead-band edges.
+ */
+const TIER_MIN_N = 10;
+const TIER_DEAD_BAND_USD = 100;
+
+/**
  * Read-side helpers backed by the `v_category_lever_mappings`
  * materialized view. These are the only queries that should hit the
  * routing tables from outside this module.
@@ -154,4 +171,133 @@ export async function leversInFragmentedFallback(): Promise<Set<string>> {
       WHERE band = 'fragmented'`,
   );
   return new Set(rows.map((r) => r.lever_id));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Tier suggestion (task #218)
+// ─────────────────────────────────────────────────────────────────────
+
+export type TierSuggestion =
+  | "tier_a"
+  | "tier_b"
+  | "tier_c_or_d"
+  | "insufficient_data";
+
+export interface SuggestTierResult {
+  tier: TierSuggestion;
+  improvementUsd: number | null;
+  n: number | null;
+  window: "30d" | "90d";
+  /**
+   * True when the per-(lever, category) bucket was missing for the
+   * tenant's latest snapshot and the helper fell back to the
+   * `<leverId>:_all` rollup. Callers can use this to badge the
+   * suggestion as a coarser estimate.
+   */
+  fellBackToLeverRollup: boolean;
+}
+
+interface CalibrationEntry {
+  leverId?: string;
+  categoryCode?: string;
+  window?: string;
+  n?: number;
+  rawMedianAbsErrorUsd?: number;
+  rescaledMedianAbsErrorUsd?: number;
+  improvementUsd?: number;
+  verdict?: string;
+}
+
+/**
+ * Per-(category, lever) tier classification backed by the most-recent
+ * `funnel_snapshots.calibration` block for the tenant (task #218).
+ *
+ * Reads the latest snapshot's calibration map, looks up the
+ * `<leverId>:<categoryCode>:<window>` entry, and classifies the
+ * `improvementUsd` field against the same dead-band the funnel writer
+ * uses for its `verdict`:
+ *
+ *   - `n < 10`                      → `insufficient_data`
+ *   - `improvementUsd > +$100`      → `tier_a`        (priors helping)
+ *   - `improvementUsd ∈ [-100,+100]` → `tier_b`       (priors neutral)
+ *   - `improvementUsd < -$100`      → `tier_c_or_d`  (priors hurting)
+ *
+ * When the per-(category, lever) bucket is missing, the helper falls
+ * back to the `<leverId>:_all` rollup and sets
+ * `fellBackToLeverRollup: true` so callers can badge the answer as a
+ * coarser, cross-category estimate.
+ *
+ * Returns `insufficient_data` with null metrics when no snapshot
+ * exists for the org or neither bucket is present in the latest one.
+ */
+export async function suggestTierForCategoryLever(args: {
+  orgId: string;
+  categoryCode: string;
+  leverId: LeverId;
+  window?: "30d" | "90d";
+}): Promise<SuggestTierResult> {
+  const window = args.window ?? "90d";
+  const { rows } = await pool.query<{ calibration: Record<string, unknown> | null }>(
+    `SELECT calibration
+       FROM funnel_snapshots
+      WHERE org_id = $1
+      ORDER BY cycle_generation DESC
+      LIMIT 1`,
+    [args.orgId],
+  );
+  const calibration = rows[0]?.calibration ?? null;
+  if (!calibration) {
+    return {
+      tier: "insufficient_data",
+      improvementUsd: null,
+      n: null,
+      window,
+      fellBackToLeverRollup: false,
+    };
+  }
+  const map = calibration as Record<string, CalibrationEntry>;
+  const primaryKey = `${args.leverId}:${args.categoryCode}:${window}`;
+  const fallbackKey = `${args.leverId}:${CALIBRATION_ROLLUP_CATEGORY}:${window}`;
+  let entry = map[primaryKey];
+  let fellBack = false;
+  if (!entry) {
+    entry = map[fallbackKey];
+    fellBack = true;
+  }
+  if (!entry || typeof entry.n !== "number") {
+    return {
+      tier: "insufficient_data",
+      improvementUsd: null,
+      n: null,
+      window,
+      fellBackToLeverRollup: false,
+    };
+  }
+  const n = entry.n;
+  const improvementUsd =
+    typeof entry.improvementUsd === "number" ? entry.improvementUsd : null;
+  if (n < TIER_MIN_N || improvementUsd == null) {
+    return {
+      tier: "insufficient_data",
+      improvementUsd,
+      n,
+      window,
+      fellBackToLeverRollup: fellBack,
+    };
+  }
+  let tier: TierSuggestion;
+  if (improvementUsd > TIER_DEAD_BAND_USD) {
+    tier = "tier_a";
+  } else if (improvementUsd < -TIER_DEAD_BAND_USD) {
+    tier = "tier_c_or_d";
+  } else {
+    tier = "tier_b";
+  }
+  return {
+    tier,
+    improvementUsd,
+    n,
+    window,
+    fellBackToLeverRollup: fellBack,
+  };
 }

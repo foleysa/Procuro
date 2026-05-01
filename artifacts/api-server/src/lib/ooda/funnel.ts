@@ -28,6 +28,7 @@ import {
   decisionsTable,
   marketSignalsTable,
   analysisCyclesTable,
+  categoriesTable,
   orgsTable,
   COHORT_WINDOWS,
   type CohortWindow,
@@ -560,10 +561,49 @@ function buildCohortDrilldown(
 }
 
 /**
- * Median absolute error of (projected - realized) USD per lever, both
- * raw (without prior) and with the current prior multiplier applied,
- * over the trailing 30d/90d realized cohort. The verdict gates on
- * n ≥ 10 and a $100 swing in the buyer's favor.
+ * Sentinel categoryCode used for the per-lever rollup that aggregates
+ * realized opportunities across all categories (and includes legacy /
+ * supplier-scoped opportunities without a `categoryId`). Picking a
+ * leading underscore keeps it lex-sorted ahead of any canonical code
+ * and is unambiguously not a real procurement code.
+ */
+export const CALIBRATION_ROLLUP_CATEGORY = "_all" as const;
+
+/**
+ * Calibration entry surfaced on `funnel_snapshots.calibration`.
+ *
+ * Keys take the form `<leverId>:<categoryCode>:<window>` where
+ * `categoryCode` is either a canonical procurement code or
+ * `CALIBRATION_ROLLUP_CATEGORY` ('_all') for the per-lever rollup that
+ * preserves the legacy per-lever surface (task #218).
+ */
+export interface CalibrationEntry {
+  leverId: string;
+  /** Canonical category code OR `_all` for the per-lever rollup. */
+  categoryCode: string;
+  window: "30d" | "90d";
+  n: number;
+  rawMedianAbsErrorUsd: number;
+  rescaledMedianAbsErrorUsd: number;
+  improvementUsd: number;
+  verdict: "helping" | "hurting" | "neutral" | "insufficient_evidence";
+}
+
+/**
+ * Median absolute error of (projected - realized) USD per (lever,
+ * category) bucket, both raw (without prior) and with the current
+ * prior multiplier applied, over the trailing 30d/90d realized cohort.
+ * Verdict gates on n ≥ 10 and a $100 swing in the buyer's favor — same
+ * thresholds as the original per-lever calibration.
+ *
+ * Per task #218, results are bucketed by both `leverId` and the
+ * canonical `categoryCode` resolved via `opportunities.categoryId →
+ * categories.code`. Opportunities without a category (legacy or
+ * supplier-scoped) contribute only to the `<leverId>:_all` rollup,
+ * which is also emitted unconditionally so existing per-lever displays
+ * stay backward-compatible. Output keys take the form
+ * `<leverId>:<categoryCode>:<window>` with `_all` as the rollup
+ * sentinel.
  */
 async function computeCalibration(
   orgId: string,
@@ -581,32 +621,43 @@ async function computeCalibration(
           rawProjected: opportunitiesTable.rawProjectedSavingsUsd,
           projected: opportunitiesTable.projectedSavingsUsd,
           realized: decisionsTable.realizedSavingsUsd,
+          // LEFT JOIN so opportunities without a categoryId still
+          // contribute to the per-lever `_all` rollup. categoryCode is
+          // null in that case and we route the sample to `_all` only.
+          categoryCode: categoriesTable.code,
         })
         .from(decisionsTable)
         .innerJoin(
           opportunitiesTable,
           eq(decisionsTable.opportunityId, opportunitiesTable.id),
         )
+        .leftJoin(
+          categoriesTable,
+          eq(opportunitiesTable.categoryId, categoriesTable.id),
+        )
         .where(
           and(
             eq(opportunitiesTable.orgId, orgId),
             eq(decisionsTable.eventType, "realize"),
             gte(decisionsTable.createdAt, since),
-            // Calibration integrity (task #213): exclude opportunities
-            // routed via the Layer-B fallback. `unmapped_default` rows
-            // are scope-mismatched by construction (Fragmented band
-            // catch-all), so including them in per-lever median-error
-            // would contaminate the prior. `IS DISTINCT FROM` also
-            // keeps legacy NULL-mapped_via rows in the calibration
-            // sample so the historical baseline is preserved.
+            // Calibration integrity (task #213/218): exclude
+            // opportunities routed via the Layer-B fallback.
+            // `unmapped_default` rows are scope-mismatched by
+            // construction (Fragmented band catch-all), so including
+            // them in either the per-lever rollup or the per-(lever,
+            // category) bucket would contaminate the priors.
+            // `IS DISTINCT FROM` also keeps legacy NULL-mapped_via
+            // rows in the calibration sample so the historical
+            // baseline is preserved.
             sql`${opportunitiesTable.mappedVia} IS DISTINCT FROM 'unmapped_default'`,
           ),
         );
 
-      const byLever = new Map<
-        string,
-        Array<{ raw: number; rescaled: number; realized: number }>
-      >();
+      type Sample = { raw: number; rescaled: number; realized: number };
+      const allByLever = new Map<string, Sample[]>();
+      // Keyed by `<leverId>\u0000<categoryCode>` so we don't have to
+      // worry about colons in canonical codes.
+      const byLeverCat = new Map<string, Sample[]>();
       for (const r of rows) {
         if (r.realized == null) continue;
         const realized = Number(r.realized);
@@ -615,54 +666,99 @@ async function computeCalibration(
         if (!isFinite(realized) || !isFinite(raw) || !isFinite(rescaled)) {
           continue;
         }
-        const arr = byLever.get(r.leverId) ?? [];
-        arr.push({ raw, rescaled, realized });
-        byLever.set(r.leverId, arr);
+        const sample: Sample = { raw, rescaled, realized };
+        // Always feed the per-lever rollup — that's the backward-compat
+        // surface previous per-lever-only consumers depend on.
+        const allArr = allByLever.get(r.leverId) ?? [];
+        allArr.push(sample);
+        allByLever.set(r.leverId, allArr);
+        // Per-(lever, category) bucket only when the opportunity has a
+        // category. Supplier-scoped / legacy rows roll up under `_all`.
+        if (r.categoryCode) {
+          const k = `${r.leverId}\u0000${r.categoryCode}`;
+          const arr = byLeverCat.get(k) ?? [];
+          arr.push(sample);
+          byLeverCat.set(k, arr);
+        }
       }
-      return { window, byLever };
+      return { window, allByLever, byLeverCat };
     }),
   );
 
-  // Re-assemble in the original window order so the output payload
-  // matches the pre-parallel implementation byte-for-byte (30d entries
-  // before 90d entries when iterating Object.entries).
+  function classify(samples: Array<{ raw: number; rescaled: number; realized: number }>): {
+    n: number;
+    rawMedian: number;
+    rescaledMedian: number;
+    improvementUsd: number;
+    verdict: CalibrationEntry["verdict"];
+  } {
+    const rawErrs = samples
+      .map((s) => Math.abs(s.raw - s.realized))
+      .sort((a, b) => a - b);
+    const rescaledErrs = samples
+      .map((s) => Math.abs(s.rescaled - s.realized))
+      .sort((a, b) => a - b);
+    const rawMedian = median(rawErrs);
+    const rescaledMedian = median(rescaledErrs);
+    const improvementUsd = rawMedian - rescaledMedian;
+    let verdict: CalibrationEntry["verdict"] = "neutral";
+    if (samples.length < CALIBRATION_MIN_N) {
+      verdict = "insufficient_evidence";
+    } else if (improvementUsd > CALIBRATION_HELP_USD) {
+      verdict = "helping";
+    } else if (improvementUsd < -CALIBRATION_HELP_USD) {
+      verdict = "hurting";
+    }
+    return {
+      n: samples.length,
+      rawMedian,
+      rescaledMedian,
+      improvementUsd,
+      verdict,
+    };
+  }
+
+  // Re-assemble in the original window order so 30d entries appear
+  // before 90d when iterating `Object.entries`. Within a window we
+  // emit the per-lever rollup first (lever ASC) followed by the
+  // per-(lever, category) buckets (lever ASC, category ASC) so the
+  // payload is deterministic and easy to diff between snapshots.
   const out: Record<string, unknown> = {};
-  for (const { window, byLever } of perWindow) {
-    for (const [leverId, samples] of byLever) {
-      const rawErrs = samples
-        .map((s) => Math.abs(s.raw - s.realized))
-        .sort((a, b) => a - b);
-      const rescaledErrs = samples
-        .map((s) => Math.abs(s.rescaled - s.realized))
-        .sort((a, b) => a - b);
-      const rawMedian = median(rawErrs);
-      const rescaledMedian = median(rescaledErrs);
-      const improvementUsd = rawMedian - rescaledMedian;
-      let verdict:
-        | "helping"
-        | "hurting"
-        | "neutral"
-        | "insufficient_evidence" = "neutral";
-      if (samples.length < CALIBRATION_MIN_N) {
-        verdict = "insufficient_evidence";
-      } else if (improvementUsd > CALIBRATION_HELP_USD) {
-        verdict = "helping";
-      } else if (improvementUsd < -CALIBRATION_HELP_USD) {
-        verdict = "hurting";
-      }
-      // We namespace by window so 30d and 90d coexist in the output;
-      // ordering is deterministic because we re-emit windows in the
-      // declared order above.
-      const key = `${leverId}:${window}`;
+  for (const { window, allByLever, byLeverCat } of perWindow) {
+    const sortedLevers = Array.from(allByLever.keys()).sort();
+    for (const leverId of sortedLevers) {
+      const samples = allByLever.get(leverId)!;
+      const c = classify(samples);
+      const key = `${leverId}:${CALIBRATION_ROLLUP_CATEGORY}:${window}`;
       out[key] = {
         leverId,
+        categoryCode: CALIBRATION_ROLLUP_CATEGORY,
         window,
-        n: samples.length,
-        rawMedianAbsErrorUsd: round2(rawMedian),
-        rescaledMedianAbsErrorUsd: round2(rescaledMedian),
-        improvementUsd: round2(improvementUsd),
-        verdict,
-      };
+        n: c.n,
+        rawMedianAbsErrorUsd: round2(c.rawMedian),
+        rescaledMedianAbsErrorUsd: round2(c.rescaledMedian),
+        improvementUsd: round2(c.improvementUsd),
+        verdict: c.verdict,
+      } satisfies CalibrationEntry;
+    }
+    const sortedCatKeys = Array.from(byLeverCat.keys()).sort();
+    for (const k of sortedCatKeys) {
+      const idx = k.indexOf("\u0000");
+      const leverId = k.slice(0, idx);
+      const categoryCode = k.slice(idx + 1);
+      const samples = byLeverCat.get(k)!;
+      const c = classify(samples);
+      const key = `${leverId}:${categoryCode}:${window}`;
+      out[key] = {
+        leverId,
+        categoryCode,
+        window,
+        n: c.n,
+        rawMedianAbsErrorUsd: round2(c.rawMedian),
+        rescaledMedianAbsErrorUsd: round2(c.rescaledMedian),
+        improvementUsd: round2(c.improvementUsd),
+        verdict: c.verdict,
+      } satisfies CalibrationEntry;
     }
   }
   return out;

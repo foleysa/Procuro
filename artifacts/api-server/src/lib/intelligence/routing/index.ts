@@ -48,8 +48,11 @@ export {
   isCanonicalCodeRouted,
   bandForCategory,
   leversInFragmentedFallback,
+  suggestTierForCategoryLever,
   type LeversForCategoryRow,
   type CategoriesForLeverRow,
+  type TierSuggestion,
+  type SuggestTierResult,
 } from "./queries";
 
 // Materialized view bootstrap + refresh

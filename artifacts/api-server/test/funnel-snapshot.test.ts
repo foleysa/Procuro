@@ -27,7 +27,7 @@ import {
   type OpportunityRow,
   type LeverId,
 } from "@workspace/db";
-import { eq, like, or, and } from "drizzle-orm";
+import { eq, like, or, and, sql } from "drizzle-orm";
 
 import {
   captureFunnelSnapshot,
@@ -362,6 +362,7 @@ describe("OODA funnel substrate", () => {
       string,
       {
         leverId: string;
+        categoryCode?: string;
         n: number;
         verdict: string;
         rawMedianAbsErrorUsd: number;
@@ -378,6 +379,344 @@ describe("OODA funnel substrate", () => {
     assert.equal(cal30!.verdict, "helping");
     assert.ok(cal30!.rescaledMedianAbsErrorUsd < cal30!.rawMedianAbsErrorUsd);
   });
+
+  // ───────────── Per-(category, lever) calibration (task #218) ───────
+
+  it(
+    "buckets calibration by (lever, category) AND emits an `_all` rollup that matches the per-lever metric",
+    async () => {
+      // Seed two distinct categories on the same lever and realize 12
+      // decisions in each — `_all` rollup must aggregate both buckets,
+      // and per-bucket metrics must coexist alongside the rollup.
+      const cycle = await insertCycle(orgA, 100);
+      const catB = newId("cat");
+      const catC = newId("cat");
+      await db.insert(categoriesTable).values([
+        {
+          id: catB,
+          orgId: orgA,
+          code: `${RUN}-CAT-B`,
+          name: "Test cat B",
+          class: "service",
+          sourceSystem: "csv",
+          sourceExternalId: `${RUN}-catB`,
+        },
+        {
+          id: catC,
+          orgId: orgA,
+          code: `${RUN}-CAT-C`,
+          name: "Test cat C",
+          class: "service",
+          sourceSystem: "csv",
+          sourceExternalId: `${RUN}-catC`,
+        },
+      ]);
+      const opps: OpportunityRow[] = [];
+      // 12 realized in catB (rescaled = realized -> rescaled MAE = 0,
+      // raw MAE = $500). improvement +$500 -> 'helping'.
+      for (let i = 0; i < 12; i++) {
+        opps.push(
+          await persistOpp({
+            orgId: orgA,
+            cycleId: cycle,
+            raw: 1000,
+            rescaleMultiplier: 0.5,
+            supplierId: supA,
+            categoryId: catB,
+            categoryCode: `${RUN}-CAT-B`,
+            decisionEvent: "realize",
+            realizedRatio: 1.0,
+            decisionAge: 5,
+          }),
+        );
+      }
+      // 12 realized in catC with the OPPOSITE sign — rescaled (0.5 ×
+      // raw) is *further* from realized than raw itself (1.5 × raw is
+      // closer than 0.5 × raw vs realized = 1.5 × raw):
+      //   raw=1000, projected=500, realized=1500
+      //   raw |1000-1500| = 500;  rescaled |500-1500| = 1000
+      //   improvement = -500 -> 'hurting'
+      for (let i = 0; i < 12; i++) {
+        opps.push(
+          await persistOpp({
+            orgId: orgA,
+            cycleId: cycle,
+            raw: 1000,
+            rescaleMultiplier: 0.5,
+            supplierId: supA,
+            categoryId: catC,
+            categoryCode: `${RUN}-CAT-C`,
+            decisionEvent: "realize",
+            realizedRatio: 3.0, // realized = rescaled × 3 = $1500
+            decisionAge: 5,
+          }),
+        );
+      }
+      const r = await captureFunnelSnapshot({
+        orgId: orgA,
+        cycleId: cycle,
+        cycleGeneration: 100,
+        leverResults: [
+          {
+            lever: stubLever,
+            result: {
+              drafts: [],
+              consultedSignalIds: [],
+              candidatesEvaluated: 0,
+            },
+          },
+        ],
+        draftsPostExclusion: [],
+        persistedOpps: opps,
+        priorDeltas: [],
+      });
+      const [snap] = await db
+        .select()
+        .from(funnelSnapshotsTable)
+        .where(eq(funnelSnapshotsTable.id, r.snapshotId!))
+        .limit(1);
+      const cal = snap!.calibration as Record<
+        string,
+        {
+          leverId: string;
+          categoryCode: string;
+          window: string;
+          n: number;
+          verdict: string;
+          rawMedianAbsErrorUsd: number;
+          rescaledMedianAbsErrorUsd: number;
+          improvementUsd: number;
+        }
+      >;
+      // Per-bucket entries exist with the canonical key shape.
+      const lever = stubLever.leverId;
+      const catBKey30 = `${lever}:${RUN}-CAT-B:30d`;
+      const catCKey30 = `${lever}:${RUN}-CAT-C:30d`;
+      const allKey30 = `${lever}:_all:30d`;
+      assert.ok(cal[catBKey30], `missing bucket ${catBKey30}`);
+      assert.ok(cal[catCKey30], `missing bucket ${catCKey30}`);
+      assert.ok(cal[allKey30], `missing rollup ${allKey30}`);
+      assert.equal(cal[catBKey30]!.n, 12);
+      assert.equal(cal[catCKey30]!.n, 12);
+      assert.equal(cal[allKey30]!.n, 24);
+      // Verdicts at the dead-band edges.
+      assert.equal(cal[catBKey30]!.verdict, "helping");
+      assert.equal(cal[catCKey30]!.verdict, "hurting");
+      // Backward compat: the `_all` rollup carries the same metric as
+      // the previous per-lever-only calibration would have produced
+      // over the union of samples. With opposite-sign improvements the
+      // medians cancel; verdict ends up 'neutral' (within ±$100).
+      // Concretely: rescaled errors over 24 samples are 12 × $0
+      // (catB) + 12 × $1000 (catC) → median sits between sorted
+      // positions 12 and 13 = (0+1000)/2 = $500. Raw errors are 24 ×
+      // $500 → median = $500. improvement = $0 → 'neutral'.
+      assert.equal(cal[allKey30]!.verdict, "neutral");
+      assert.equal(cal[allKey30]!.improvementUsd, 0);
+    },
+  );
+
+  it(
+    "applies n >= 10 gating per (lever, category) bucket independently",
+    async () => {
+      const cycle = await insertCycle(orgA, 101);
+      const catSmall = newId("cat");
+      const catBig = newId("cat");
+      await db.insert(categoriesTable).values([
+        {
+          id: catSmall,
+          orgId: orgA,
+          code: `${RUN}-CAT-SMALL`,
+          name: "Small cat",
+          class: "service",
+          sourceSystem: "csv",
+          sourceExternalId: `${RUN}-catSmall`,
+        },
+        {
+          id: catBig,
+          orgId: orgA,
+          code: `${RUN}-CAT-BIG`,
+          name: "Big cat",
+          class: "service",
+          sourceSystem: "csv",
+          sourceExternalId: `${RUN}-catBig`,
+        },
+      ]);
+      const opps: OpportunityRow[] = [];
+      // 9 realized in catSmall — under threshold, should be
+      // 'insufficient_evidence' for the per-bucket entry.
+      for (let i = 0; i < 9; i++) {
+        opps.push(
+          await persistOpp({
+            orgId: orgA,
+            cycleId: cycle,
+            raw: 1000,
+            rescaleMultiplier: 0.5,
+            supplierId: supA,
+            categoryId: catSmall,
+            categoryCode: `${RUN}-CAT-SMALL`,
+            decisionEvent: "realize",
+            realizedRatio: 1.0,
+            decisionAge: 5,
+          }),
+        );
+      }
+      // 12 realized in catBig — at threshold, should be 'helping'.
+      for (let i = 0; i < 12; i++) {
+        opps.push(
+          await persistOpp({
+            orgId: orgA,
+            cycleId: cycle,
+            raw: 1000,
+            rescaleMultiplier: 0.5,
+            supplierId: supA,
+            categoryId: catBig,
+            categoryCode: `${RUN}-CAT-BIG`,
+            decisionEvent: "realize",
+            realizedRatio: 1.0,
+            decisionAge: 5,
+          }),
+        );
+      }
+      const r = await captureFunnelSnapshot({
+        orgId: orgA,
+        cycleId: cycle,
+        cycleGeneration: 101,
+        leverResults: [
+          {
+            lever: stubLever,
+            result: {
+              drafts: [],
+              consultedSignalIds: [],
+              candidatesEvaluated: 0,
+            },
+          },
+        ],
+        draftsPostExclusion: [],
+        persistedOpps: opps,
+        priorDeltas: [],
+      });
+      const [snap] = await db
+        .select()
+        .from(funnelSnapshotsTable)
+        .where(eq(funnelSnapshotsTable.id, r.snapshotId!))
+        .limit(1);
+      const cal = snap!.calibration as Record<
+        string,
+        { n: number; verdict: string }
+      >;
+      const lever = stubLever.leverId;
+      const small = cal[`${lever}:${RUN}-CAT-SMALL:30d`];
+      const big = cal[`${lever}:${RUN}-CAT-BIG:30d`];
+      assert.ok(small, "small bucket missing");
+      assert.ok(big, "big bucket missing");
+      assert.equal(small!.n, 9);
+      assert.equal(small!.verdict, "insufficient_evidence");
+      assert.equal(big!.n, 12);
+      assert.equal(big!.verdict, "helping");
+    },
+  );
+
+  it(
+    "excludes mappedVia='unmapped_default' from per-(category, lever) buckets AND the `_all` rollup",
+    async () => {
+      const cycle = await insertCycle(orgA, 102);
+      const cat = newId("cat");
+      await db.insert(categoriesTable).values({
+        id: cat,
+        orgId: orgA,
+        code: `${RUN}-CAT-EXCL`,
+        name: "Excl cat",
+        class: "service",
+        sourceSystem: "csv",
+        sourceExternalId: `${RUN}-catExcl`,
+      });
+      const opps: OpportunityRow[] = [];
+      // 12 realized rows but every one is `unmapped_default` — must
+      // not surface in either dimension.
+      for (let i = 0; i < 12; i++) {
+        const o = await persistOpp({
+          orgId: orgA,
+          cycleId: cycle,
+          raw: 1000,
+          rescaleMultiplier: 0.5,
+          supplierId: supA,
+          categoryId: cat,
+          categoryCode: `${RUN}-CAT-EXCL`,
+          decisionEvent: "realize",
+          realizedRatio: 1.0,
+          decisionAge: 5,
+        });
+        opps.push(o);
+      }
+      // Force-flip mapped_via on every opportunity for this cycle.
+      await db.execute(sql`
+        UPDATE opportunities
+           SET mapped_via = 'unmapped_default'
+         WHERE cycle_id = ${cycle}
+      `);
+      const r = await captureFunnelSnapshot({
+        orgId: orgA,
+        cycleId: cycle,
+        cycleGeneration: 102,
+        leverResults: [
+          {
+            lever: stubLever,
+            result: {
+              drafts: [],
+              consultedSignalIds: [],
+              candidatesEvaluated: 0,
+            },
+          },
+        ],
+        draftsPostExclusion: [],
+        persistedOpps: opps,
+        priorDeltas: [],
+      });
+      const [snap] = await db
+        .select()
+        .from(funnelSnapshotsTable)
+        .where(eq(funnelSnapshotsTable.id, r.snapshotId!))
+        .limit(1);
+      const cal = snap!.calibration as Record<
+        string,
+        { leverId?: string; categoryCode?: string }
+      >;
+      const lever = stubLever.leverId;
+      const matching = Object.entries(cal).filter(
+        ([, v]) =>
+          v.leverId === lever && v.categoryCode === `${RUN}-CAT-EXCL`,
+      );
+      assert.equal(
+        matching.length,
+        0,
+        "unmapped_default rows must not produce a per-(cat,lever) bucket",
+      );
+      // The `_all` rollup for this lever in this snapshot should also
+      // not include the excluded sample (i.e. no `_all` row exists for
+      // this lever in this cycle since these 12 were the only realized
+      // decisions in the relevant window).
+      const rollup = Object.entries(cal).filter(
+        ([k, v]) =>
+          v.leverId === lever && v.categoryCode === "_all" && k.endsWith(":30d"),
+      );
+      // The same 24-day window may include realizations from earlier
+      // cycles. We can't assert "no rollup at all", but we CAN assert
+      // that the 12 unmapped rows we just inserted didn't bump the
+      // sample size. Earlier "computes calibration verdicts" test
+      // seeded 12 'helping' rows with categoryId=null, so the rollup
+      // for this lever should still be exactly those 12.
+      assert.ok(rollup.length <= 1);
+      if (rollup[0]) {
+        const r0 = rollup[0][1] as unknown as { n: number };
+        // Should be ≤12 (only the prior 'helping' fixture). If the
+        // exclusion filter were broken, we'd see 24.
+        assert.ok(
+          r0.n <= 12,
+          `unmapped_default contaminated rollup: n=${r0.n}`,
+        );
+      }
+    },
+  );
 
   it("delta detection skips during warmup and fires on dual-threshold breach", async () => {
     // Snapshot insertion in earlier tests already populated org A. We need

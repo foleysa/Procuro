@@ -85,6 +85,13 @@ interface SnapshotDetail {
       string,
       {
         leverId: string;
+        /**
+         * Canonical category code OR `_all` for the per-lever rollup
+         * (task #218). Older snapshots from before #218 may omit this
+         * field — UI guards default to `_all` so the legacy per-lever
+         * "Prior calibration" table still renders one row per lever.
+         */
+        categoryCode?: string;
         window: string;
         n: number;
         rawMedianAbsErrorUsd: number;
@@ -387,59 +394,81 @@ function SnapshotDetailPanel({ id }: { id: string }) {
 
       <Card data-testid="card-calibration-table">
         <CardHeader>
-          <CardTitle>Prior calibration</CardTitle>
+          <CardTitle>Prior calibration (per-lever rollup)</CardTitle>
           <CardDescription>
             Median absolute error of (projected − realized) USD per lever &amp;
-            window. Verdict gates on n ≥ 10 and a $100 swing.
+            window. Verdict gates on n ≥ 10 and a $100 swing. Per task
+            #218 the per-(lever, category) breakdown lives in the tier
+            matrix card below — this row is the across-categories rollup.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {Object.keys(snapshot.calibration).length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              Insufficient realized history — no calibration verdict yet.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Lever</TableHead>
-                  <TableHead>Window</TableHead>
-                  <TableHead>n</TableHead>
-                  <TableHead>Raw MAE</TableHead>
-                  <TableHead>Rescaled MAE</TableHead>
-                  <TableHead>Improvement</TableHead>
-                  <TableHead>Verdict</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.values(snapshot.calibration).map((c) => (
-                  <TableRow key={`${c.leverId}:${c.window}`}>
-                    <TableCell className="font-mono text-xs">{c.leverId}</TableCell>
-                    <TableCell>{c.window}</TableCell>
-                    <TableCell>{c.n}</TableCell>
-                    <TableCell>{fmtUsd(c.rawMedianAbsErrorUsd)}</TableCell>
-                    <TableCell>{fmtUsd(c.rescaledMedianAbsErrorUsd)}</TableCell>
-                    <TableCell>{fmtUsd(c.improvementUsd)}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          c.verdict === "helping"
-                            ? "default"
-                            : c.verdict === "hurting"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {c.verdict}
-                      </Badge>
-                    </TableCell>
+          {(() => {
+            // Filter to the `_all` rollup so this table preserves its
+            // historical per-lever surface even though calibration now
+            // also stores per-(lever, category) buckets. Older snapshots
+            // (pre-#218) omit `categoryCode` entirely; treat those as
+            // rollup rows so legacy data still renders.
+            const rollupRows = Object.values(snapshot.calibration).filter(
+              (c) => !c.categoryCode || c.categoryCode === "_all",
+            );
+            if (rollupRows.length === 0) {
+              return (
+                <div className="text-sm text-muted-foreground">
+                  Insufficient realized history — no calibration verdict
+                  yet.
+                </div>
+              );
+            }
+            return (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Lever</TableHead>
+                    <TableHead>Window</TableHead>
+                    <TableHead>n</TableHead>
+                    <TableHead>Raw MAE</TableHead>
+                    <TableHead>Rescaled MAE</TableHead>
+                    <TableHead>Improvement</TableHead>
+                    <TableHead>Verdict</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+                </TableHeader>
+                <TableBody>
+                  {rollupRows.map((c) => (
+                    <TableRow key={`${c.leverId}:${c.window}`}>
+                      <TableCell className="font-mono text-xs">
+                        {c.leverId}
+                      </TableCell>
+                      <TableCell>{c.window}</TableCell>
+                      <TableCell>{c.n}</TableCell>
+                      <TableCell>{fmtUsd(c.rawMedianAbsErrorUsd)}</TableCell>
+                      <TableCell>
+                        {fmtUsd(c.rescaledMedianAbsErrorUsd)}
+                      </TableCell>
+                      <TableCell>{fmtUsd(c.improvementUsd)}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            c.verdict === "helping"
+                              ? "default"
+                              : c.verdict === "hurting"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                        >
+                          {c.verdict}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            );
+          })()}
         </CardContent>
       </Card>
+
+      <TierMatrixCard />
 
       <Card data-testid="card-annotations">
         <CardHeader>
@@ -487,6 +516,208 @@ function SnapshotDetailPanel({ id }: { id: string }) {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ───────────────────────── Tier matrix (task #218) ──────────────────
+
+interface TierMatrixCell {
+  leverId: string;
+  categoryCode: string;
+  n: number;
+  improvementUsd: number | null;
+  rawMedianAbsErrorUsd: number | null;
+  rescaledMedianAbsErrorUsd: number | null;
+  verdict: string;
+  tier: "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data";
+}
+
+interface TierMatrixResp {
+  snapshot: {
+    id: string;
+    cycleGeneration: number;
+    createdAt: string;
+  } | null;
+  window: "30d" | "90d";
+  levers: string[];
+  categories: string[];
+  cells: TierMatrixCell[];
+  rollups: TierMatrixCell[];
+}
+
+function tierBadgeVariant(
+  tier: TierMatrixCell["tier"],
+): "default" | "destructive" | "secondary" | "outline" {
+  switch (tier) {
+    case "tier_a":
+      return "default";
+    case "tier_c_or_d":
+      return "destructive";
+    case "tier_b":
+      return "secondary";
+    case "insufficient_data":
+    default:
+      return "outline";
+  }
+}
+
+function tierLabel(tier: TierMatrixCell["tier"]): string {
+  switch (tier) {
+    case "tier_a":
+      return "Tier A";
+    case "tier_b":
+      return "Tier B";
+    case "tier_c_or_d":
+      return "Tier C/D";
+    case "insufficient_data":
+    default:
+      return "n<10";
+  }
+}
+
+function TierMatrixCard() {
+  const [window, setWindow] = useState<"30d" | "90d">("90d");
+  const { data, isLoading } = useQuery({
+    queryKey: ["funnel", "tier-matrix", window],
+    queryFn: () =>
+      fetchJson<TierMatrixResp>(
+        `/api/admin/funnel/tier-matrix?window=${window}`,
+      ),
+  });
+
+  const cellMap = new Map<string, TierMatrixCell>();
+  if (data) {
+    for (const c of data.cells) {
+      cellMap.set(`${c.leverId}\u0000${c.categoryCode}`, c);
+    }
+  }
+
+  return (
+    <Card data-testid="card-tier-matrix">
+      <CardHeader>
+        <CardTitle>Per-(category, lever) tier matrix</CardTitle>
+        <CardDescription>
+          Tenant-specific tier suggestions derived from the latest
+          snapshot's calibration block (task #218). Tier A: priors
+          help &gt;$100 in the buyer's favor. Tier B: priors neutral
+          (±$100). Tier C/D: priors hurt &gt;$100. Cells with n &lt; 10
+          render greyed out — gating identical to the per-lever
+          verdict.
+          <span className="ml-2">
+            <Select
+              value={window}
+              onValueChange={(v) => setWindow(v as "30d" | "90d")}
+            >
+              <SelectTrigger
+                className="inline-flex h-7 w-[110px]"
+                data-testid="select-tier-matrix-window"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="30d">30d window</SelectItem>
+                <SelectItem value="90d">90d window</SelectItem>
+              </SelectContent>
+            </Select>
+          </span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && <div>Loading…</div>}
+        {data && !data.snapshot && (
+          <div className="text-sm text-muted-foreground">
+            No snapshot yet for this tenant — tier suggestions will
+            appear once an analysis cycle has produced calibration data.
+          </div>
+        )}
+        {data &&
+          data.snapshot &&
+          data.cells.length === 0 &&
+          data.rollups.length === 0 && (
+            <div className="text-sm text-muted-foreground">
+              Latest snapshot's calibration block contains no entries
+              for the {data.window} window.
+            </div>
+          )}
+        {data &&
+          data.snapshot &&
+          (data.cells.length > 0 || data.rollups.length > 0) && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="font-medium">
+                    Lever ↓ / Category →
+                  </TableHead>
+                  <TableHead className="text-xs italic">_all rollup</TableHead>
+                  {data.categories.map((cat) => (
+                    <TableHead key={cat} className="font-mono text-xs">
+                      {cat}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.levers.map((leverId) => {
+                  const rollup = data.rollups.find(
+                    (r) => r.leverId === leverId,
+                  );
+                  return (
+                    <TableRow
+                      key={leverId}
+                      data-testid={`row-tier-matrix-${leverId}`}
+                    >
+                      <TableCell className="font-mono text-xs font-medium">
+                        {leverId}
+                      </TableCell>
+                      <TableCell>
+                        {rollup ? (
+                          <TierCell cell={rollup} />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
+                        )}
+                      </TableCell>
+                      {data.categories.map((cat) => {
+                        const cell = cellMap.get(`${leverId}\u0000${cat}`);
+                        return (
+                          <TableCell key={cat}>
+                            {cell ? (
+                              <TierCell cell={cell} />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TierCell({ cell }: { cell: TierMatrixCell }) {
+  const greyed = cell.tier === "insufficient_data";
+  return (
+    <div
+      className={greyed ? "opacity-50" : undefined}
+      data-testid={`cell-tier-${cell.leverId}-${cell.categoryCode}`}
+    >
+      <Badge variant={tierBadgeVariant(cell.tier)}>{tierLabel(cell.tier)}</Badge>
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        n={cell.n}
+        {cell.improvementUsd != null && (
+          <> · Δ{fmtUsd(cell.improvementUsd)}</>
+        )}
+      </div>
     </div>
   );
 }

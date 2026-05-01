@@ -15,6 +15,7 @@
  *  GET    /admin/funnel/failures                        — list snapshot failures
  *  PATCH  /admin/funnel/failures/:id/ack                — ack
  *  GET    /admin/funnel/lowest-conversion               — slowest stages by lever
+ *  GET    /admin/funnel/tier-matrix                     — per-(category, lever) tier matrix
  *  GET    /platform/funnel/aggregate                    — cross-tenant rollup
  */
 import { Router, type IRouter } from "express";
@@ -47,6 +48,7 @@ import {
   summarizeQueue,
   countOpportunitiesByMappedVia,
   checkRoutingHealth,
+  suggestTierForCategoryLever,
 } from "../lib/intelligence/routing";
 
 const router: IRouter = Router();
@@ -556,6 +558,179 @@ router.get(
     }
     rows.sort((a, b) => (a.worstRate ?? 1) - (b.worstRate ?? 1));
     res.json({ rows, cyclesAnalyzed: snapshots.length });
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Per-(category, lever) tier matrix (task #218)
+//
+// Reads the latest funnel_snapshot for the tenant and explodes the
+// `calibration` block into a 2-D matrix that the admin-funnel UI
+// renders as rows = levers, cols = categories. Each cell carries the
+// raw calibration entry alongside the classified `tier` so the UI can
+// badge insufficient_evidence / tier_a / tier_b / tier_c_or_d
+// uniformly without re-implementing the dead-band rule.
+// ─────────────────────────────────────────────────────────────────────
+
+router.get(
+  "/admin/funnel/tier-matrix",
+  tenantMiddleware,
+  requirePermission("audit:read"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const windowParam = req.query["window"];
+    const window: "30d" | "90d" =
+      windowParam === "30d" ? "30d" : "90d";
+
+    // Pull the latest snapshot's calibration map. We don't recompute
+    // tiers here off live opportunities — tier suggestions are a
+    // *snapshot-derived* surface so they line up with what the admin
+    // already sees in the calibration table.
+    const [latest] = await db
+      .select({
+        snapshotId: funnelSnapshotsTable.id,
+        cycleGeneration: funnelSnapshotsTable.cycleGeneration,
+        createdAt: funnelSnapshotsTable.createdAt,
+        calibration: funnelSnapshotsTable.calibration,
+      })
+      .from(funnelSnapshotsTable)
+      .where(eq(funnelSnapshotsTable.orgId, orgId))
+      .orderBy(desc(funnelSnapshotsTable.cycleGeneration))
+      .limit(1);
+
+    if (!latest) {
+      return res.json({
+        snapshot: null,
+        window,
+        levers: [],
+        categories: [],
+        cells: [],
+        rollups: [],
+      });
+    }
+
+    interface RawEntry {
+      leverId?: string;
+      categoryCode?: string;
+      window?: string;
+      n?: number;
+      improvementUsd?: number;
+      rawMedianAbsErrorUsd?: number;
+      rescaledMedianAbsErrorUsd?: number;
+      verdict?: string;
+    }
+    const calibration = (latest.calibration ?? {}) as Record<string, RawEntry>;
+
+    const TIER_MIN_N = 10;
+    const TIER_DEAD_BAND_USD = 100;
+    function classify(
+      e: RawEntry,
+    ): "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data" {
+      const n = e.n ?? 0;
+      const imp = e.improvementUsd;
+      if (n < TIER_MIN_N || typeof imp !== "number") return "insufficient_data";
+      if (imp > TIER_DEAD_BAND_USD) return "tier_a";
+      if (imp < -TIER_DEAD_BAND_USD) return "tier_c_or_d";
+      return "tier_b";
+    }
+
+    const ROLLUP = "_all";
+    const cells: Array<{
+      leverId: string;
+      categoryCode: string;
+      n: number;
+      improvementUsd: number | null;
+      rawMedianAbsErrorUsd: number | null;
+      rescaledMedianAbsErrorUsd: number | null;
+      verdict: string;
+      tier: "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data";
+    }> = [];
+    const rollups: typeof cells = [];
+    const leversSet = new Set<string>();
+    const categoriesSet = new Set<string>();
+
+    for (const [key, entry] of Object.entries(calibration)) {
+      // Keys are `<leverId>:<categoryCode>:<window>`. Filter by the
+      // requested window and skip anything that doesn't parse — old
+      // snapshots from before task #218 used `<leverId>:<window>` and
+      // we want the matrix to be silent about them rather than crash.
+      const parts = key.split(":");
+      if (parts.length !== 3) continue;
+      const [leverId, categoryCode, w] = parts as [string, string, string];
+      if (w !== window) continue;
+      const cell = {
+        leverId,
+        categoryCode,
+        n: entry.n ?? 0,
+        improvementUsd:
+          typeof entry.improvementUsd === "number" ? entry.improvementUsd : null,
+        rawMedianAbsErrorUsd:
+          typeof entry.rawMedianAbsErrorUsd === "number"
+            ? entry.rawMedianAbsErrorUsd
+            : null,
+        rescaledMedianAbsErrorUsd:
+          typeof entry.rescaledMedianAbsErrorUsd === "number"
+            ? entry.rescaledMedianAbsErrorUsd
+            : null,
+        verdict: entry.verdict ?? "neutral",
+        tier: classify(entry),
+      };
+      leversSet.add(leverId);
+      if (categoryCode === ROLLUP) {
+        rollups.push(cell);
+      } else {
+        categoriesSet.add(categoryCode);
+        cells.push(cell);
+      }
+    }
+
+    return res.json({
+      snapshot: {
+        id: latest.snapshotId,
+        cycleGeneration: latest.cycleGeneration,
+        createdAt: latest.createdAt,
+      },
+      window,
+      levers: Array.from(leversSet).sort(),
+      categories: Array.from(categoriesSet).sort(),
+      cells,
+      rollups,
+    });
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Single (category, lever) tier suggestion (task #218)
+//
+// Convenience wrapper around `suggestTierForCategoryLever()` so the
+// engine UI / programmatic callers can ask about one cell without
+// pulling the whole matrix. Same `audit:read` gate as the matrix
+// endpoint.
+// ─────────────────────────────────────────────────────────────────────
+
+router.get(
+  "/admin/funnel/tier-suggestion",
+  tenantMiddleware,
+  requirePermission("audit:read"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const categoryCode = String(req.query["categoryCode"] ?? "").trim();
+    const leverId = String(req.query["leverId"] ?? "").trim();
+    if (!categoryCode || !leverId) {
+      return res
+        .status(400)
+        .json({ error: "categoryCode and leverId are required" });
+    }
+    const windowParam = req.query["window"];
+    const window: "30d" | "90d" =
+      windowParam === "30d" ? "30d" : "90d";
+    const result = await suggestTierForCategoryLever({
+      orgId,
+      categoryCode,
+      leverId: leverId as LeverId,
+      window,
+    });
+    return res.json(result);
   },
 );
 

@@ -17,7 +17,7 @@ writes one row to `funnel_snapshots` with:
 | `cycle_id`, `cycle_generation` | The cycle this snapshot describes. |
 | `stages` | Object keyed by stage name (see below). Each stage has `count`, optional `by_lever`, `sample_ids`/`sample_drafts`, `capped` flag. |
 | `cohorts.persisted` | Array of `{key, count}` cohort identity tuples for stage 6 (persisted opportunities). |
-| `calibration` | Object keyed by `${leverId}:${window}` describing prior calibration verdicts. |
+| `calibration` | Object keyed by `${leverId}:${categoryCode}:${window}` describing prior calibration verdicts. `${categoryCode}` is either a canonical procurement code or the sentinel `_all` for the per-lever rollup (task #218). |
 | `total_*`, `total_projected_usd` | Lifted scalars for cheap dashboards. |
 | `capture_duration_ms` | Wall-clock time the writer spent. |
 | `has_auto_annotation` | 1 if delta detection wrote at least one annotation against this snapshot. |
@@ -57,17 +57,54 @@ identity row in `cohorts.persisted`.
 
 ### Prior calibration
 
-For every `(leverId, window∈{7d,30d,90d})` pair where the cycle has at
-least 10 realized decisions in window, we compute:
+Calibration is bucketed two ways and emitted into the `calibration`
+JSONB object with keys of the form `${leverId}:${categoryCode}:${window}`:
+
+* `${leverId}:_all:${window}` — the **per-lever rollup**, aggregated
+  across every realized opportunity for that lever in window
+  (including legacy / supplier-scoped opps without a `categoryId`).
+  This preserves the previous per-lever calibration surface 1:1 and is
+  what the legacy "Prior calibration" UI table reads.
+* `${leverId}:${canonicalCode}:${window}` — the **per-(lever, category)
+  bucket**, only emitted when one or more realized opps in that bucket
+  carry a `categoryId` resolving to that canonical code. This is what
+  the per-(category, lever) tier matrix and `suggestTierForCategoryLever`
+  read.
+
+For every emitted bucket (`window∈{30d,90d}`) we compute:
 
 * `rawMedianAbsErrorUsd` — median |raw projected − realized|.
 * `rescaledMedianAbsErrorUsd` — median |projected_after_prior − realized|.
 * `improvementUsd` — `raw - rescaled`.
 * `verdict` — `helping` if improvement > $100, `hurting` if < −$100,
   `neutral` if within ±$100, `insufficient_evidence` if n < 10.
+* `n`, `leverId`, `categoryCode`, `window` — echoed for fast filtering.
+
+The same `n ≥ 10` and `±$100` dead-band gating is applied per-bucket,
+so a (lever, category) cell can be `insufficient_evidence` while the
+lever's `_all` rollup is `helping` (or vice versa). Realized
+opportunities routed via `mappedVia='unmapped_default'` are excluded
+from **both** bucketing dimensions — Layer-B fallback rows would
+contaminate per-(category, lever) priors as much as the rollup.
 
 Verdicts give operators a fast read on whether the per-lever rescaling
-priors are still pulling projections in the right direction.
+priors are still pulling projections in the right direction; the
+per-(category, lever) buckets surface tenant-specific tiering ("priors
+help on `IRON_STEEL` but hurt on `LUMBER`").
+
+#### Tier suggestions
+
+`suggestTierForCategoryLever({orgId, categoryCode, leverId, window?})`
+in `lib/intelligence/routing` reads the latest snapshot's calibration
+and classifies the bucket into a tier:
+
+* `n < 10`                         → `insufficient_data`
+* `improvementUsd > +$100`         → `tier_a`
+* `improvementUsd ∈ [-100, +100]`  → `tier_b`
+* `improvementUsd < -$100`         → `tier_c_or_d`
+
+When the per-(lever, category) bucket is missing it falls back to the
+`_all` rollup and sets `fellBackToLeverRollup: true` on the response.
 
 ## Delta detection + auto-annotations
 
@@ -113,6 +150,8 @@ and an Ack button.
 | GET | `/failures` | List snapshot failures + counters. |
 | PATCH | `/failures/:id/ack` | Ack failure. |
 | GET | `/lowest-conversion?cycles=N` | Per-lever worst-transition rollup over the last N snapshots. |
+| GET | `/tier-matrix?window=30d\|90d` | Per-(category, lever) tier matrix from the latest snapshot's calibration block (task #218). Returns `cells`, `rollups`, `levers`, `categories`. |
+| GET | `/tier-suggestion?categoryCode=&leverId=&window=` | Single-cell wrapper around `suggestTierForCategoryLever()` (task #218). |
 | GET | `/platform/funnel/aggregate` | **Cross-tenant** rollup; `platform:manage` required. |
 
 All tenant routes use `requirePermission("audit:read")` and the org
