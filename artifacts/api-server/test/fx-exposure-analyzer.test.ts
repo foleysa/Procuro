@@ -33,6 +33,7 @@ import { and, eq, like } from "drizzle-orm";
 import { z } from "zod";
 
 import { supplierFxExposureLever } from "../src/lib/levers/fx-exposure";
+import { toAnalyzeResult } from "../src/lib/levers/types";
 import {
   registerCollector,
   getCollector,
@@ -273,10 +274,12 @@ after(async () => {
 
 describe("supplierFxExposureLever", () => {
   it("flags only suppliers whose FX pair moved beyond the threshold", async () => {
-    const drafts = await supplierFxExposureLever.analyze({
-      orgId: ctx.orgId,
-      cycleId: ctx.cycleId,
-    });
+    const drafts = toAnalyzeResult(
+      await supplierFxExposureLever.analyze({
+        orgId: ctx.orgId,
+        cycleId: ctx.cycleId,
+      }),
+    ).drafts;
 
     const mine = drafts.filter(
       (d) =>
@@ -444,10 +447,12 @@ describe("supplierFxExposureLever", () => {
       },
     ]);
 
-    const drafts = await supplierFxExposureLever.analyze({
-      orgId: ctx.orgId,
-      cycleId: ctx.cycleId,
-    });
+    const drafts = toAnalyzeResult(
+      await supplierFxExposureLever.analyze({
+        orgId: ctx.orgId,
+        cycleId: ctx.cycleId,
+      }),
+    ).drafts;
 
     // CASE A: USD supplier with one GBP contract should fire under the
     // contract-level branch.
@@ -515,10 +520,12 @@ describe("supplierFxExposureLever", () => {
     };
     registerCollector(fakeCollector);
     try {
-      const drafts = await supplierFxExposureLever.analyze({
-        orgId: ctx.orgId,
-        cycleId: ctx.cycleId,
-      });
+      const drafts = toAnalyzeResult(
+        await supplierFxExposureLever.analyze({
+          orgId: ctx.orgId,
+          cycleId: ctx.cycleId,
+        }),
+      ).drafts;
       assert.ok(
         drafts.length >= 1,
         "expected at least one FX exposure opportunity in the test fixture",

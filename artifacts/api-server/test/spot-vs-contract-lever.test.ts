@@ -30,6 +30,7 @@ import {
 import { eq, like, or } from "drizzle-orm";
 
 import { spotVsContractLever } from "../src/lib/levers/tier2";
+import { toAnalyzeResult } from "../src/lib/levers/types";
 import {
   CANONICAL_CATEGORY_CODES,
   type CanonicalCategoryCode,
@@ -208,10 +209,12 @@ describe("spot_vs_contract Tier-2 lever", () => {
   });
 
   it("emits an opportunity citing the FRED signal for the matched contract", async () => {
-    const drafts = await spotVsContractLever.analyze({
-      orgId,
-      cycleId: "test-cycle",
-    });
+    const drafts = toAnalyzeResult(
+      await spotVsContractLever.analyze({
+        orgId,
+        cycleId: "test-cycle",
+      }),
+    ).drafts;
 
     // There may be other tenant data in the DB matching the same canonical
     // code; pick the draft tied to OUR seeded contract.

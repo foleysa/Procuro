@@ -37,6 +37,7 @@ import { eq, like, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { contractRenegotiationTriggerLever } from "../src/lib/levers/tier2";
+import { toAnalyzeResult } from "../src/lib/levers/types";
 import { registerCollector } from "../src/lib/intelligence/runtime";
 import type { IntelligenceCollector } from "../src/lib/intelligence/collector";
 
@@ -206,10 +207,12 @@ describe("contract_renegotiation_trigger CPI pushback (#68)", () => {
   });
 
   it("attaches CPI pushback context, source, and updated rationale/action", async () => {
-    const drafts = await contractRenegotiationTriggerLever.analyze({
-      orgId,
-      cycleId: "test-cycle",
-    });
+    const drafts = toAnalyzeResult(
+      await contractRenegotiationTriggerLever.analyze({
+        orgId,
+        cycleId: "test-cycle",
+      }),
+    ).drafts;
 
     const ours = drafts.find(
       (d) =>

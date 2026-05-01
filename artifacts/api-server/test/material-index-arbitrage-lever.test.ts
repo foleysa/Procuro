@@ -40,6 +40,7 @@ import { eq, like, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { materialIndexArbitrageLever } from "../src/lib/levers/material-index-arbitrage";
+import { toAnalyzeResult } from "../src/lib/levers/types";
 import { registerCollector } from "../src/lib/intelligence/runtime";
 import type { IntelligenceCollector } from "../src/lib/intelligence/collector";
 
@@ -213,10 +214,12 @@ describe("material_index_arbitrage Tier-4 lever (#62)", () => {
   });
 
   it("emits a draft for the matched contract with sized savings + sources", async () => {
-    const drafts = await materialIndexArbitrageLever.analyze({
-      orgId,
-      cycleId: "test-cycle",
-    });
+    const drafts = toAnalyzeResult(
+      await materialIndexArbitrageLever.analyze({
+        orgId,
+        cycleId: "test-cycle",
+      }),
+    ).drafts;
 
     const ours = drafts.find(
       (d) =>
