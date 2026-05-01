@@ -3510,6 +3510,54 @@ export interface PatchEscalationPolicyRequest {
 }
 
 /**
+ * Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.
+ */
+export type TodayFeedItemPayload = { [key: string]: unknown };
+
+/**
+ * Display severity, normalized across sources.
+ */
+export type TodayFeedItemSeverity =
+  (typeof TodayFeedItemSeverity)[keyof typeof TodayFeedItemSeverity];
+
+export const TodayFeedItemSeverity = {
+  info: "info",
+  warn: "warn",
+  error: "error",
+} as const;
+
+export interface TodayFeedItem {
+  /** Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending). */
+  kind: string;
+  /** Name of the underlying handler that produced this item (e.g. getAlertsSummary). */
+  source: string;
+  /** Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated. */
+  payload: TodayFeedItemPayload;
+  /** When the underlying event happened (or now() for synthesized rollups). */
+  occurredAt: string;
+  /** Display severity, normalized across sources. */
+  severity: TodayFeedItemSeverity;
+}
+
+export interface TodayFeedSourceError {
+  source: string;
+  error: string;
+}
+
+export interface TodayFeed {
+  items: TodayFeedItem[];
+  /** True iff at least one underlying source failed and contributed to `errors[]`. */
+  partial: boolean;
+  errors: TodayFeedSourceError[];
+}
+
+export interface OperationsHealth {
+  items: TodayFeedItem[];
+  partial: boolean;
+  errors: TodayFeedSourceError[];
+}
+
+/**
  * Not found
  */
 export type NotFoundResponse = ErrorResponse;

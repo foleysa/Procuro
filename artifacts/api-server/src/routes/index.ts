@@ -29,6 +29,8 @@ import alertsRouter from "./alerts";
 import readinessRouter from "./readiness";
 import onboardingRouter from "./onboarding";
 import funnelRouter from "./funnel";
+import todayRouter from "./today";
+import operationsRouter from "./operations";
 
 const router: IRouter = Router();
 
@@ -62,5 +64,7 @@ router.use(alertsRouter);
 router.use(readinessRouter);
 router.use(onboardingRouter);
 router.use(funnelRouter);
+router.use(todayRouter);
+router.use(operationsRouter);
 
 export default router;

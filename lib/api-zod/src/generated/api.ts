@@ -6259,3 +6259,115 @@ export const RemoveSampleDataResponse = zod.object({
     payments: zod.number().min(removeSampleDataResponseCountsPaymentsMin),
   }),
 });
+
+/**
+ * Composes alerts summary, proposed-bucket opportunities, recently-failed
+jobs, and pending-approval counts into a single fail-soft feed. Per-source
+failures populate `errors[]` and set `partial=true` rather than failing
+the response. No persistence; per-request cache only.
+
+ * @summary Aggregated landing feed for the operator's morning triage
+ */
+export const GetTodayFeedHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetTodayFeedResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      kind: zod
+        .string()
+        .describe(
+          "Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending).",
+        ),
+      source: zod
+        .string()
+        .describe(
+          "Name of the underlying handler that produced this item (e.g. getAlertsSummary).",
+        ),
+      payload: zod
+        .record(zod.string(), zod.unknown())
+        .describe(
+          "Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.",
+        ),
+      occurredAt: zod.coerce
+        .date()
+        .describe(
+          "When the underlying event happened (or now() for synthesized rollups).",
+        ),
+      severity: zod
+        .enum(["info", "warn", "error"])
+        .describe("Display severity, normalized across sources."),
+    }),
+  ),
+  partial: zod
+    .boolean()
+    .describe(
+      "True iff at least one underlying source failed and contributed to `errors[]`.",
+    ),
+  errors: zod.array(
+    zod.object({
+      source: zod.string(),
+      error: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * Composes collectors, jobs (last 24h), data sources, integrations, and
+funnel snapshot failures into a single fail-soft rollup. Per-source
+failures populate `errors[]` and set `partial=true` rather than failing
+the response. No persistence; per-request cache only.
+
+ * @summary Cross-cutting operations health rollup
+ */
+export const GetOperationsHealthHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetOperationsHealthResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      kind: zod
+        .string()
+        .describe(
+          "Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending).",
+        ),
+      source: zod
+        .string()
+        .describe(
+          "Name of the underlying handler that produced this item (e.g. getAlertsSummary).",
+        ),
+      payload: zod
+        .record(zod.string(), zod.unknown())
+        .describe(
+          "Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.",
+        ),
+      occurredAt: zod.coerce
+        .date()
+        .describe(
+          "When the underlying event happened (or now() for synthesized rollups).",
+        ),
+      severity: zod
+        .enum(["info", "warn", "error"])
+        .describe("Display severity, normalized across sources."),
+    }),
+  ),
+  partial: zod.boolean(),
+  errors: zod.array(
+    zod.object({
+      source: zod.string(),
+      error: zod.string(),
+    }),
+  ),
+});

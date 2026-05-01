@@ -117,6 +117,7 @@ import type {
   MockErpIngestRequest,
   NotFoundResponse,
   OnboardingState,
+  OperationsHealth,
   Opportunity,
   OpportunityDetail,
   OpportunityListResponse,
@@ -151,6 +152,7 @@ import type {
   SystemFunnelSnapshotCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
+  TodayFeed,
   TransitionAlertRequest,
   TrustSummary,
   UpdateErpConnectionRequest,
@@ -10772,3 +10774,163 @@ export const useRemoveSampleData = <
 > => {
   return useMutation(getRemoveSampleDataMutationOptions(options));
 };
+
+/**
+ * Composes alerts summary, proposed-bucket opportunities, recently-failed
+jobs, and pending-approval counts into a single fail-soft feed. Per-source
+failures populate `errors[]` and set `partial=true` rather than failing
+the response. No persistence; per-request cache only.
+
+ * @summary Aggregated landing feed for the operator's morning triage
+ */
+export const getGetTodayFeedUrl = () => {
+  return `/api/today/feed`;
+};
+
+export const getTodayFeed = async (
+  options?: RequestInit,
+): Promise<TodayFeed> => {
+  return customFetch<TodayFeed>(getGetTodayFeedUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTodayFeedQueryKey = () => {
+  return [`/api/today/feed`] as const;
+};
+
+export const getGetTodayFeedQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTodayFeed>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTodayFeed>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTodayFeedQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTodayFeed>>> = ({
+    signal,
+  }) => getTodayFeed({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTodayFeed>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTodayFeedQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTodayFeed>>
+>;
+export type GetTodayFeedQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregated landing feed for the operator's morning triage
+ */
+
+export function useGetTodayFeed<
+  TData = Awaited<ReturnType<typeof getTodayFeed>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTodayFeed>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTodayFeedQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Composes collectors, jobs (last 24h), data sources, integrations, and
+funnel snapshot failures into a single fail-soft rollup. Per-source
+failures populate `errors[]` and set `partial=true` rather than failing
+the response. No persistence; per-request cache only.
+
+ * @summary Cross-cutting operations health rollup
+ */
+export const getGetOperationsHealthUrl = () => {
+  return `/api/operations/health`;
+};
+
+export const getOperationsHealth = async (
+  options?: RequestInit,
+): Promise<OperationsHealth> => {
+  return customFetch<OperationsHealth>(getGetOperationsHealthUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOperationsHealthQueryKey = () => {
+  return [`/api/operations/health`] as const;
+};
+
+export const getGetOperationsHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOperationsHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperationsHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOperationsHealthQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOperationsHealth>>
+  > = ({ signal }) => getOperationsHealth({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOperationsHealth>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOperationsHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOperationsHealth>>
+>;
+export type GetOperationsHealthQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Cross-cutting operations health rollup
+ */
+
+export function useGetOperationsHealth<
+  TData = Awaited<ReturnType<typeof getOperationsHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperationsHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOperationsHealthQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

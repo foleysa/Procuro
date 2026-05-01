@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { ClerkProvider, useClerk } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
@@ -32,7 +32,10 @@ import Settings from "./pages/settings";
 import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
 import Admin from "./pages/admin";
-import AdminFunnel from "./pages/admin-funnel";
+import Today from "./pages/today";
+import Operations from "./pages/operations";
+import Engine from "./pages/engine";
+import WhatsNew from "./pages/whats-new";
 import TrustPage from "./pages/trust";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
@@ -201,7 +204,25 @@ function AppRoutes() {
       <Route>
         <Layout>
           <Switch>
-            <Route path="/" component={Dashboard} />
+            <Route path="/" component={Today} />
+            <Route path="/dashboard" component={Dashboard} />
+            <Route path="/operations">
+              <AdminGuard>
+                <Operations />
+              </AdminGuard>
+            </Route>
+            <Route path="/engine">
+              <AdminGuard>
+                <Engine />
+              </AdminGuard>
+            </Route>
+            {/* Backward-compat redirects (#199 step 7). Old links keep
+              * resolving so external bookmarks and email deep-links don't
+              * 404 immediately after the IA flip. */}
+            <Route path="/admin/funnel">
+              <Redirect to="/engine" />
+            </Route>
+            <Route path="/whats-new" component={WhatsNew} />
             <Route path="/spend" component={SpendOverview} />
             <Route path="/suppliers" component={Suppliers} />
             <Route path="/suppliers/:id" component={SupplierDetail} />
@@ -227,11 +248,6 @@ function AppRoutes() {
             <Route path="/admin">
               <AdminGuard>
                 <Admin />
-              </AdminGuard>
-            </Route>
-            <Route path="/admin/funnel">
-              <AdminGuard>
-                <AdminFunnel />
               </AdminGuard>
             </Route>
             <Route component={NotFound} />

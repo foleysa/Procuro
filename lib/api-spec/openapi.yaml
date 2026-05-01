@@ -3289,6 +3289,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/SampleDataResult"
 
+  /today/feed:
+    get:
+      operationId: getTodayFeed
+      tags: [today]
+      summary: Aggregated landing feed for the operator's morning triage
+      description: |
+        Composes alerts summary, proposed-bucket opportunities, recently-failed
+        jobs, and pending-approval counts into a single fail-soft feed. Per-source
+        failures populate `errors[]` and set `partial=true` rather than failing
+        the response. No persistence; per-request cache only.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Today feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TodayFeed"
+  /operations/health:
+    get:
+      operationId: getOperationsHealth
+      tags: [operations]
+      summary: Cross-cutting operations health rollup
+      description: |
+        Composes collectors, jobs (last 24h), data sources, integrations, and
+        funnel snapshot failures into a single fail-soft rollup. Per-source
+        failures populate `errors[]` and set `partial=true` rather than failing
+        the response. No persistence; per-request cache only.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Operations health rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationsHealth"
+
 components:
   parameters:
     OrgIdHeader:
@@ -8761,3 +8800,76 @@ components:
         channelId:
           type: string
           nullable: true
+
+    TodayFeedItem:
+      type: object
+      required:
+        - kind
+        - source
+        - payload
+        - occurredAt
+        - severity
+      properties:
+        kind:
+          type: string
+          description: Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending).
+        source:
+          type: string
+          description: Name of the underlying handler that produced this item (e.g. getAlertsSummary).
+        payload:
+          type: object
+          additionalProperties: true
+          description: Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.
+        occurredAt:
+          type: string
+          format: date-time
+          description: When the underlying event happened (or now() for synthesized rollups).
+        severity:
+          type: string
+          enum: [info, warn, error]
+          description: Display severity, normalized across sources.
+    TodayFeedSourceError:
+      type: object
+      required:
+        - source
+        - error
+      properties:
+        source:
+          type: string
+        error:
+          type: string
+    TodayFeed:
+      type: object
+      required:
+        - items
+        - partial
+        - errors
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayFeedItem'
+        partial:
+          type: boolean
+          description: True iff at least one underlying source failed and contributed to `errors[]`.
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayFeedSourceError'
+    OperationsHealth:
+      type: object
+      required:
+        - items
+        - partial
+        - errors
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayFeedItem'
+        partial:
+          type: boolean
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodayFeedSourceError'
