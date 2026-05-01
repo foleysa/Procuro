@@ -12,14 +12,11 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export type DecisionEventType =
-  (typeof DecisionEventType)[keyof typeof DecisionEventType];
+export type ListOpportunitiesSnoozed =
+  (typeof ListOpportunitiesSnoozed)[keyof typeof ListOpportunitiesSnoozed];
 
-export const DecisionEventType = {
-  approve: "approve",
-  reject: "reject",
-  execute: "execute",
-  realize: "realize",
-  snooze: "snooze",
-  unsnooze: "unsnooze",
+export const ListOpportunitiesSnoozed = {
+  exclude: "exclude",
+  only: "only",
+  all: "all",
 } as const;

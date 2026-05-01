@@ -12,14 +12,16 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
-export type DecisionEventType =
-  (typeof DecisionEventType)[keyof typeof DecisionEventType];
-
-export const DecisionEventType = {
-  approve: "approve",
-  reject: "reject",
-  execute: "execute",
-  realize: "realize",
-  snooze: "snooze",
-  unsnooze: "unsnooze",
-} as const;
+export interface BulkSnoozeOpportunitiesRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  ids: string[];
+  /** Wall-clock deadline at which the snooze expires. Must be
+strictly in the future. The server clamps the maximum
+allowed snooze to 365 days so dropdown UIs cannot accidentally
+hide a row forever.
+ */
+  snoozedUntil: Date;
+}

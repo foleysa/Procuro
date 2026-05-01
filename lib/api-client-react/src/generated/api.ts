@@ -43,6 +43,11 @@ import type {
   BroadcastCollectorPosturePreview,
   BroadcastCollectorPostureRequest,
   BroadcastCollectorPostureResult,
+  BulkApproveOpportunitiesRequest,
+  BulkOpportunityActionResult,
+  BulkRejectOpportunitiesRequest,
+  BulkSnoozeOpportunitiesRequest,
+  BulkUnsnoozeOpportunitiesRequest,
   ChannelTestResult,
   Collector,
   CollectorAuditEntry,
@@ -1205,6 +1210,389 @@ export function useListOpportunities<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Single-shot bulk approve. The server processes every requested
+id, gates each by `opp:approve` permission, and skips rows whose
+current status is not `proposed` so the call is safe to retry.
+Each successful row writes one `decisions` audit event and the
+affected analysis cycles have their aggregates refreshed.
+
+ * @summary Approve a batch of pending opportunities in one call
+ */
+export const getBulkApproveOpportunitiesUrl = () => {
+  return `/api/opportunities/bulk-approve`;
+};
+
+export const bulkApproveOpportunities = async (
+  bulkApproveOpportunitiesRequest: BulkApproveOpportunitiesRequest,
+  options?: RequestInit,
+): Promise<BulkOpportunityActionResult> => {
+  return customFetch<BulkOpportunityActionResult>(
+    getBulkApproveOpportunitiesUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bulkApproveOpportunitiesRequest),
+    },
+  );
+};
+
+export const getBulkApproveOpportunitiesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkApproveOpportunities>>,
+    TError,
+    { data: BodyType<BulkApproveOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkApproveOpportunities>>,
+  TError,
+  { data: BodyType<BulkApproveOpportunitiesRequest> },
+  TContext
+> => {
+  const mutationKey = ["bulkApproveOpportunities"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkApproveOpportunities>>,
+    { data: BodyType<BulkApproveOpportunitiesRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkApproveOpportunities(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkApproveOpportunitiesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkApproveOpportunities>>
+>;
+export type BulkApproveOpportunitiesMutationBody =
+  BodyType<BulkApproveOpportunitiesRequest>;
+export type BulkApproveOpportunitiesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve a batch of pending opportunities in one call
+ */
+export const useBulkApproveOpportunities = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkApproveOpportunities>>,
+    TError,
+    { data: BodyType<BulkApproveOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkApproveOpportunities>>,
+  TError,
+  { data: BodyType<BulkApproveOpportunitiesRequest> },
+  TContext
+> => {
+  return useMutation(getBulkApproveOpportunitiesMutationOptions(options));
+};
+
+/**
+ * Single-shot bulk reject. The structured rejection reason is
+applied to every successfully-rejected row and an audit event
+is written per row. Rows already in a non-`proposed` status are
+silently skipped via `skippedWrongStatus`.
+
+ * @summary Reject a batch of pending opportunities in one call
+ */
+export const getBulkRejectOpportunitiesUrl = () => {
+  return `/api/opportunities/bulk-reject`;
+};
+
+export const bulkRejectOpportunities = async (
+  bulkRejectOpportunitiesRequest: BulkRejectOpportunitiesRequest,
+  options?: RequestInit,
+): Promise<BulkOpportunityActionResult> => {
+  return customFetch<BulkOpportunityActionResult>(
+    getBulkRejectOpportunitiesUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bulkRejectOpportunitiesRequest),
+    },
+  );
+};
+
+export const getBulkRejectOpportunitiesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkRejectOpportunities>>,
+    TError,
+    { data: BodyType<BulkRejectOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkRejectOpportunities>>,
+  TError,
+  { data: BodyType<BulkRejectOpportunitiesRequest> },
+  TContext
+> => {
+  const mutationKey = ["bulkRejectOpportunities"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkRejectOpportunities>>,
+    { data: BodyType<BulkRejectOpportunitiesRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkRejectOpportunities(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkRejectOpportunitiesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkRejectOpportunities>>
+>;
+export type BulkRejectOpportunitiesMutationBody =
+  BodyType<BulkRejectOpportunitiesRequest>;
+export type BulkRejectOpportunitiesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Reject a batch of pending opportunities in one call
+ */
+export const useBulkRejectOpportunities = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkRejectOpportunities>>,
+    TError,
+    { data: BodyType<BulkRejectOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkRejectOpportunities>>,
+  TError,
+  { data: BodyType<BulkRejectOpportunitiesRequest> },
+  TContext
+> => {
+  return useMutation(getBulkRejectOpportunitiesMutationOptions(options));
+};
+
+/**
+ * Snoozed rows stay in `proposed` status and remain visible on the
+snoozed-only filter, but disappear from the Today page Pending
+approvals card and from the default opportunities list view
+until `snoozedUntil` passes. Each affected row records a
+`snooze` event in the audit log.
+
+ * @summary Snooze a batch of pending opportunities until a future date
+ */
+export const getBulkSnoozeOpportunitiesUrl = () => {
+  return `/api/opportunities/bulk-snooze`;
+};
+
+export const bulkSnoozeOpportunities = async (
+  bulkSnoozeOpportunitiesRequest: BulkSnoozeOpportunitiesRequest,
+  options?: RequestInit,
+): Promise<BulkOpportunityActionResult> => {
+  return customFetch<BulkOpportunityActionResult>(
+    getBulkSnoozeOpportunitiesUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bulkSnoozeOpportunitiesRequest),
+    },
+  );
+};
+
+export const getBulkSnoozeOpportunitiesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkSnoozeOpportunities>>,
+    TError,
+    { data: BodyType<BulkSnoozeOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkSnoozeOpportunities>>,
+  TError,
+  { data: BodyType<BulkSnoozeOpportunitiesRequest> },
+  TContext
+> => {
+  const mutationKey = ["bulkSnoozeOpportunities"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkSnoozeOpportunities>>,
+    { data: BodyType<BulkSnoozeOpportunitiesRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkSnoozeOpportunities(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkSnoozeOpportunitiesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkSnoozeOpportunities>>
+>;
+export type BulkSnoozeOpportunitiesMutationBody =
+  BodyType<BulkSnoozeOpportunitiesRequest>;
+export type BulkSnoozeOpportunitiesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Snooze a batch of pending opportunities until a future date
+ */
+export const useBulkSnoozeOpportunities = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkSnoozeOpportunities>>,
+    TError,
+    { data: BodyType<BulkSnoozeOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkSnoozeOpportunities>>,
+  TError,
+  { data: BodyType<BulkSnoozeOpportunitiesRequest> },
+  TContext
+> => {
+  return useMutation(getBulkSnoozeOpportunitiesMutationOptions(options));
+};
+
+/**
+ * Clears `snoozedUntil` so the rows become visible again on the
+Today page and the default opportunities list. Rows that have no
+snooze set (or that are not in `proposed` status) are silently
+skipped via `skippedWrongStatus`. Each affected row records an
+`unsnooze` event in the audit log.
+
+ * @summary Clear the snooze deadline on a batch of opportunities
+ */
+export const getBulkUnsnoozeOpportunitiesUrl = () => {
+  return `/api/opportunities/bulk-unsnooze`;
+};
+
+export const bulkUnsnoozeOpportunities = async (
+  bulkUnsnoozeOpportunitiesRequest: BulkUnsnoozeOpportunitiesRequest,
+  options?: RequestInit,
+): Promise<BulkOpportunityActionResult> => {
+  return customFetch<BulkOpportunityActionResult>(
+    getBulkUnsnoozeOpportunitiesUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bulkUnsnoozeOpportunitiesRequest),
+    },
+  );
+};
+
+export const getBulkUnsnoozeOpportunitiesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>,
+    TError,
+    { data: BodyType<BulkUnsnoozeOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>,
+  TError,
+  { data: BodyType<BulkUnsnoozeOpportunitiesRequest> },
+  TContext
+> => {
+  const mutationKey = ["bulkUnsnoozeOpportunities"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>,
+    { data: BodyType<BulkUnsnoozeOpportunitiesRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkUnsnoozeOpportunities(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkUnsnoozeOpportunitiesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>
+>;
+export type BulkUnsnoozeOpportunitiesMutationBody =
+  BodyType<BulkUnsnoozeOpportunitiesRequest>;
+export type BulkUnsnoozeOpportunitiesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Clear the snooze deadline on a batch of opportunities
+ */
+export const useBulkUnsnoozeOpportunities = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>,
+    TError,
+    { data: BodyType<BulkUnsnoozeOpportunitiesRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkUnsnoozeOpportunities>>,
+  TError,
+  { data: BodyType<BulkUnsnoozeOpportunitiesRequest> },
+  TContext
+> => {
+  return useMutation(getBulkUnsnoozeOpportunitiesMutationOptions(options));
+};
 
 /**
  * @summary Opportunity detail

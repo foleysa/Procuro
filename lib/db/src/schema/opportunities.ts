@@ -218,6 +218,18 @@ export const opportunitiesTable = pgTable(
     reCategorizedAfterPersistence: integer("re_categorized_after_persistence")
       .notNull()
       .default(0),
+    /**
+     * Snooze deadline (task #220). When set and `> now()`, the row is
+     * "snoozed" — it stays in `proposed` status (so the audit trail
+     * keeps the same lifecycle), but is excluded from the Today
+     * page's pending-approvals card and from the default opportunities
+     * list view until the deadline passes. Snoozed rows reappear
+     * automatically once `snoozedUntil <= now()`. The bulk snooze /
+     * unsnooze endpoints flip this column and write a `snooze` /
+     * `unsnooze` event into `decisions` per affected row so the audit
+     * trail is preserved.
+     */
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -251,6 +263,14 @@ export const opportunitiesTable = pgTable(
       t.orgId,
       t.sourceTenantCategoryString,
     ),
+    // Drives the "currently snoozed" filter on the Today aggregator
+    // and the default opportunities list query: per-org + status +
+    // snoozed_until range scan against `now()`. Partial so the index
+    // only carries the rows that can be currently snoozed (others are
+    // excluded by `status` upstream anyway).
+    index("opps_snoozed_until_idx")
+      .on(t.orgId, t.status, t.snoozedUntil)
+      .where(sql`snoozed_until IS NOT NULL`),
   ],
 );
 
@@ -262,6 +282,11 @@ export const decisionEventTypes = [
   "reject",
   "execute",
   "realize",
+  // Snooze / unsnooze (task #220) — write a decision row for every
+  // affected opportunity so the audit trail records who deferred what
+  // and until when, and who unsnoozed it.
+  "snooze",
+  "unsnooze",
 ] as const;
 export type DecisionEventType = (typeof decisionEventTypes)[number];
 

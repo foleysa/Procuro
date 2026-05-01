@@ -417,6 +417,19 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
   await safe(
     "approvalsPending",
     async () => {
+      // Snooze gating (#220). A row is "currently snoozed" iff
+      // `snoozed_until > now()`. Snoozed rows are explicitly hidden
+      // from BOTH `pending` and `needsActionToday` so the operator's
+      // morning queue matches what they see when they open the
+      // opportunities list (which defaults to `snoozed=exclude`).
+      // Reusing the SQL fragment via a constant keeps the two queries
+      // in lock-step — the partial index `opps_snoozed_until_idx`
+      // covers both.
+      const notSnoozed = sql`(
+        ${opportunitiesTable.snoozedUntil} IS NULL
+        OR ${opportunitiesTable.snoozedUntil} <= now()
+      )`;
+
       const [totalRow] = await db
         .select({ n: sql<number>`COUNT(*)::int` })
         .from(opportunitiesTable)
@@ -424,6 +437,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
           and(
             eq(opportunitiesTable.orgId, orgId),
             eq(opportunitiesTable.status, "proposed"),
+            notSnoozed,
           ),
         );
       const pending = totalRow?.n ?? 0;
@@ -436,6 +450,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
           and(
             eq(opportunitiesTable.orgId, orgId),
             eq(opportunitiesTable.status, "proposed"),
+            notSnoozed,
             sql`(
               ${opportunitiesTable.createdAt} >= ${last24h}
               OR ${opportunitiesTable.createdAt} <= ${softDeadline}
@@ -445,7 +460,9 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
       const needsActionToday = todayRow?.n ?? 0;
 
       // Oldest pending — gives the operator a sense of the backlog
-      // tail without forcing them to open the page.
+      // tail without forcing them to open the page. We deliberately
+      // leave snoozed rows OUT of this calculation as well so the
+      // "oldest pending" age agrees with the visible queue.
       const oldest = await softEnrich(async () => {
         const [row] = await db
           .select({ createdAt: opportunitiesTable.createdAt })
@@ -454,6 +471,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
             and(
               eq(opportunitiesTable.orgId, orgId),
               eq(opportunitiesTable.status, "proposed"),
+              notSnoozed,
             ),
           )
           .orderBy(opportunitiesTable.createdAt)

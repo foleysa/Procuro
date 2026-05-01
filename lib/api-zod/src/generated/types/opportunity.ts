@@ -39,5 +39,13 @@ export interface Opportunity {
   rejectedAt?: Date | null;
   executingAt?: Date | null;
   realizedAt?: Date | null;
+  /** Snooze deadline. When set and in the future, the row is
+"snoozed": still in `proposed` status (audit lifecycle is
+preserved), but excluded from the Today page Pending approvals
+card and from the default opportunities list. Rows reappear
+automatically once this passes; clients can also clear it
+explicitly via `bulk-unsnooze`.
+ */
+  snoozedUntil?: Date | null;
   createdAt: Date;
 }

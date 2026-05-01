@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import {
   db,
   opportunitiesTable,
@@ -8,11 +8,14 @@ import {
   rejectionReasonCodes,
   type LeverId,
   type OpportunityStatus,
+  type DecisionEventType,
+  type RejectionReasonCode,
+  type InsertDecisionRow,
 } from "@workspace/db";
-import { and, eq, desc, sql, or, lt } from "drizzle-orm";
+import { and, eq, desc, sql, or, lt, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, resolveRbacContext, roleHasPermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
 import { extractSourcesFromInputs } from "../lib/insight-sources";
 
@@ -138,8 +141,25 @@ function mapOpportunity(row: {
     rejectedReasonCode: o.rejectedReasonCode,
     rejectedReasonText: o.rejectedReasonNote,
     realizedAt: o.realizedAt,
+    snoozedUntil: o.snoozedUntil,
     createdAt: o.createdAt,
   };
+}
+
+// Snooze filter (#220). `exclude` (default) hides currently-snoozed
+// rows so the operator's default opportunities view matches the Today
+// page Pending approvals card. `only` returns just the snoozed rows so
+// the UI can render a "Snoozed" filter chip without a second endpoint.
+// `all` ignores the column entirely.
+const snoozeFilterValues = ["exclude", "only", "all"] as const;
+type SnoozeFilter = (typeof snoozeFilterValues)[number];
+
+function parseSnoozeFilter(raw: unknown): SnoozeFilter {
+  if (typeof raw === "string") {
+    const found = snoozeFilterValues.find((v) => v === raw);
+    if (found) return found;
+  }
+  return "exclude";
 }
 
 router.get("/opportunities", tenantMiddleware, async (req, res) => {
@@ -148,6 +168,7 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   const leverId = req.query.leverId as LeverId | undefined;
   const cycleId = req.query.cycleId as string | undefined;
   const supplierId = req.query.supplierId as string | undefined;
+  const snoozed = parseSnoozeFilter(req.query.snoozed);
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "100", 10) || 100, 1),
     200,
@@ -161,6 +182,17 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   if (status) where.push(eq(opportunitiesTable.status, status));
   if (leverId) where.push(eq(opportunitiesTable.leverId, leverId));
   if (cycleId) where.push(eq(opportunitiesTable.cycleId, cycleId));
+  if (snoozed === "exclude") {
+    // A row is "currently snoozed" iff snoozed_until > now(). We OR with
+    // `IS NULL` so unsnoozed rows are kept, matching the Today feed.
+    where.push(
+      sql`(${opportunitiesTable.snoozedUntil} IS NULL OR ${opportunitiesTable.snoozedUntil} <= now())`,
+    );
+  } else if (snoozed === "only") {
+    where.push(
+      sql`${opportunitiesTable.snoozedUntil} IS NOT NULL AND ${opportunitiesTable.snoozedUntil} > now()`,
+    );
+  }
   if (supplierId) {
     // Match both the canonical `supplier_id` column AND the
     // `inputs.supplierId` field that older lever code stamps before
@@ -304,6 +336,482 @@ async function loadOppOrThrow(orgId: string, id: string) {
     );
   return row;
 }
+
+/**
+ * Bulk action support (#220).
+ *
+ * The four bulk endpoints share most of the wiring: validate the
+ * batch, fetch the eligible rows in this tenant, partition the
+ * requested ids into the four buckets the client cares about
+ * (`succeeded` / `skippedNoPermission` / `skippedWrongStatus` /
+ * `failed`), apply the state change in a single UPDATE, write one
+ * `decisions` audit event per affected row, and refresh the
+ * `analysis_cycles` aggregates per touched cycle.
+ *
+ * Permission gating note. The route middleware `requirePermission(
+ * "opp:approve")` already short-circuits the whole call when the
+ * caller lacks the permission tenant-wide — RBAC has no row-level
+ * granularity in H1 (see `lib/rbac.ts`), so the per-row
+ * `skippedNoPermission` count exists in the response shape for
+ * forward-compat with future row-level rules but will normally be 0.
+ */
+const MAX_BULK_IDS = 1000;
+
+const bulkIdsSchema = z
+  .object({
+    ids: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(MAX_BULK_IDS)
+      .transform((v) => Array.from(new Set(v))),
+  });
+
+const bulkApproveBodySchema = bulkIdsSchema.extend({
+  notes: z.string().optional(),
+});
+
+const bulkRejectBodySchema = bulkIdsSchema.extend({
+  reasonCode: z.enum(rejectionReasonCodes),
+  reasonText: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((v) => (typeof v === "string" && v.length > 0 ? v : null)),
+});
+
+// Cap snooze deadlines at +365d so a dropdown UI bug can't
+// accidentally hide a row forever.
+const MAX_SNOOZE_MS = 365 * 24 * 60 * 60 * 1000;
+
+const bulkSnoozeBodySchema = bulkIdsSchema.extend({
+  snoozedUntil: z
+    .union([z.string().min(1), z.date()])
+    .transform((v, ctx) => {
+      const d = v instanceof Date ? v : new Date(v);
+      if (Number.isNaN(d.getTime())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Expected an ISO date-time string",
+        });
+        return z.NEVER;
+      }
+      const now = Date.now();
+      if (d.getTime() <= now) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "snoozedUntil must be strictly in the future",
+        });
+        return z.NEVER;
+      }
+      if (d.getTime() - now > MAX_SNOOZE_MS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "snoozedUntil must not be more than 365 days in the future",
+        });
+        return z.NEVER;
+      }
+      return d;
+    }),
+});
+
+const bulkUnsnoozeBodySchema = bulkIdsSchema;
+
+interface BulkOpportunityActionResult {
+  requested: number;
+  succeeded: number;
+  skippedNoPermission: number;
+  skippedWrongStatus: number;
+  failed: number;
+  succeededIds: string[];
+}
+
+interface EligibleRow {
+  id: string;
+  cycleId: string | null;
+  status: OpportunityStatus;
+  snoozedUntil: Date | null;
+}
+
+/**
+ * Fetch the requested ids that belong to this tenant and project the
+ * fields needed to decide which bucket each falls in. Anything not
+ * returned by this query is, by definition, not visible to the caller
+ * (cross-tenant id) — we count those as `skippedNoPermission` so a
+ * client batching ids across orgs gets a clear signal.
+ */
+async function loadBulkRows(
+  orgId: string,
+  ids: string[],
+): Promise<Map<string, EligibleRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: opportunitiesTable.id,
+      cycleId: opportunitiesTable.cycleId,
+      status: opportunitiesTable.status,
+      snoozedUntil: opportunitiesTable.snoozedUntil,
+    })
+    .from(opportunitiesTable)
+    .where(
+      and(
+        eq(opportunitiesTable.orgId, orgId),
+        inArray(opportunitiesTable.id, ids),
+      ),
+    );
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      {
+        id: r.id,
+        cycleId: r.cycleId,
+        status: r.status,
+        snoozedUntil: r.snoozedUntil,
+      },
+    ]),
+  );
+}
+
+/**
+ * Refresh per-cycle aggregates touched by a bulk transition. We
+ * collect the `cycle_id` set up-front to keep the round-trip count
+ * proportional to the number of distinct cycles, not the number of
+ * rows.
+ */
+async function refreshCyclesForRows(
+  orgId: string,
+  rows: EligibleRow[],
+): Promise<void> {
+  const cycleIds = new Set<string>();
+  for (const r of rows) {
+    if (r.cycleId) cycleIds.add(r.cycleId);
+  }
+  for (const cycleId of cycleIds) {
+    await updateCycleAggregates(orgId, cycleId);
+  }
+}
+
+/**
+ * Build the decisions rows for an affected batch in one shot. Caller
+ * supplies the event type and any per-event payload columns
+ * (rejection reason, etc.).
+ */
+function buildDecisionRows(
+  orgId: string,
+  actor: string,
+  rows: EligibleRow[],
+  eventType: DecisionEventType,
+  extra?: {
+    rejectedReasonCode?: RejectionReasonCode;
+    rejectedReasonNote?: string | null;
+  },
+): InsertDecisionRow[] {
+  return rows.map((r) => ({
+    id: newId("dec"),
+    orgId,
+    opportunityId: r.id,
+    // `cycle_id` is `notNull` on the decisions table; legacy rows that
+    // somehow lack a cycle pointer fall back to a synthetic marker so
+    // the audit insert never blows up on a NOT NULL violation.
+    cycleId: r.cycleId ?? "unknown",
+    eventType,
+    actor,
+    rejectedReasonCode: extra?.rejectedReasonCode ?? null,
+    rejectedReasonNote: extra?.rejectedReasonNote ?? null,
+  }));
+}
+
+function actorOf(req: Request): string {
+  return req.actorEmail ?? "system@procuro.ai";
+}
+
+async function callerHasOppApprove(req: Request): Promise<boolean> {
+  const ctx = await resolveRbacContext(req);
+  return ctx.roles.some((r) => roleHasPermission(r, "opp:approve"));
+}
+
+/**
+ * Bucketise the requested ids. Anything not present in the loaded set
+ * is `skippedNoPermission` (cross-tenant or non-existent — both look
+ * the same to the caller, which prevents tenant-id enumeration).
+ * Everything else is bucketised by the supplied `eligible` predicate.
+ */
+function partition(
+  requested: string[],
+  loaded: Map<string, EligibleRow>,
+  eligible: (r: EligibleRow) => boolean,
+  callerHasPerm: boolean,
+): {
+  succeed: EligibleRow[];
+  skippedNoPermission: number;
+  skippedWrongStatus: number;
+} {
+  let skippedNoPermission = 0;
+  let skippedWrongStatus = 0;
+  const succeed: EligibleRow[] = [];
+  for (const id of requested) {
+    const row = loaded.get(id);
+    if (!row) {
+      skippedNoPermission += 1;
+      continue;
+    }
+    if (!callerHasPerm) {
+      skippedNoPermission += 1;
+      continue;
+    }
+    if (!eligible(row)) {
+      skippedWrongStatus += 1;
+      continue;
+    }
+    succeed.push(row);
+  }
+  return { succeed, skippedNoPermission, skippedWrongStatus };
+}
+
+router.post(
+  "/opportunities/bulk-approve",
+  tenantMiddleware,
+  requirePermission("opp:approve"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const { ids } = bulkApproveBodySchema.parse(req.body);
+    const callerHasPerm = await callerHasOppApprove(req);
+    const loaded = await loadBulkRows(orgId, ids);
+    const { succeed, skippedNoPermission, skippedWrongStatus } = partition(
+      ids,
+      loaded,
+      (r) => r.status === "proposed",
+      callerHasPerm,
+    );
+    let failed = 0;
+    let succeededIds: string[] = [];
+    if (succeed.length > 0) {
+      try {
+        await db.transaction(async (tx) => {
+          await tx
+            .update(opportunitiesTable)
+            .set({ status: "approved" })
+            .where(
+              and(
+                eq(opportunitiesTable.orgId, orgId),
+                inArray(
+                  opportunitiesTable.id,
+                  succeed.map((r) => r.id),
+                ),
+                // Re-check status under the row lock so a concurrent
+                // single-row transition can't double-approve.
+                eq(opportunitiesTable.status, "proposed"),
+              ),
+            );
+          await tx
+            .insert(decisionsTable)
+            .values(buildDecisionRows(orgId, actorOf(req), succeed, "approve"));
+        });
+        succeededIds = succeed.map((r) => r.id);
+        await refreshCyclesForRows(orgId, succeed);
+      } catch (err) {
+        req.log.error({ err }, "bulkApproveOpportunities failed");
+        failed = succeed.length;
+        succeededIds = [];
+      }
+    }
+    const result: BulkOpportunityActionResult = {
+      requested: ids.length,
+      succeeded: succeededIds.length,
+      skippedNoPermission,
+      skippedWrongStatus,
+      failed,
+      succeededIds,
+    };
+    res.json(result);
+  },
+);
+
+router.post(
+  "/opportunities/bulk-reject",
+  tenantMiddleware,
+  requirePermission("opp:approve"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const { ids, reasonCode, reasonText } = bulkRejectBodySchema.parse(
+      req.body,
+    );
+    const callerHasPerm = await callerHasOppApprove(req);
+    const loaded = await loadBulkRows(orgId, ids);
+    const { succeed, skippedNoPermission, skippedWrongStatus } = partition(
+      ids,
+      loaded,
+      (r) => r.status === "proposed",
+      callerHasPerm,
+    );
+    let failed = 0;
+    let succeededIds: string[] = [];
+    if (succeed.length > 0) {
+      try {
+        await db.transaction(async (tx) => {
+          await tx
+            .update(opportunitiesTable)
+            .set({
+              status: "rejected",
+              rejectedReasonCode: reasonCode,
+              rejectedReasonNote: reasonText,
+            })
+            .where(
+              and(
+                eq(opportunitiesTable.orgId, orgId),
+                inArray(
+                  opportunitiesTable.id,
+                  succeed.map((r) => r.id),
+                ),
+                eq(opportunitiesTable.status, "proposed"),
+              ),
+            );
+          await tx.insert(decisionsTable).values(
+            buildDecisionRows(orgId, actorOf(req), succeed, "reject", {
+              rejectedReasonCode: reasonCode,
+              rejectedReasonNote: reasonText,
+            }),
+          );
+        });
+        succeededIds = succeed.map((r) => r.id);
+        await refreshCyclesForRows(orgId, succeed);
+      } catch (err) {
+        req.log.error({ err }, "bulkRejectOpportunities failed");
+        failed = succeed.length;
+        succeededIds = [];
+      }
+    }
+    const result: BulkOpportunityActionResult = {
+      requested: ids.length,
+      succeeded: succeededIds.length,
+      skippedNoPermission,
+      skippedWrongStatus,
+      failed,
+      succeededIds,
+    };
+    res.json(result);
+  },
+);
+
+router.post(
+  "/opportunities/bulk-snooze",
+  tenantMiddleware,
+  requirePermission("opp:approve"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const { ids, snoozedUntil } = bulkSnoozeBodySchema.parse(req.body);
+    const callerHasPerm = await callerHasOppApprove(req);
+    const loaded = await loadBulkRows(orgId, ids);
+    // Snooze only acts on `proposed` rows — once a row leaves the
+    // approvals queue, snooze has no defined meaning. Already-snoozed
+    // rows ARE eligible (this is how the UI extends a snooze).
+    const { succeed, skippedNoPermission, skippedWrongStatus } = partition(
+      ids,
+      loaded,
+      (r) => r.status === "proposed",
+      callerHasPerm,
+    );
+    let failed = 0;
+    let succeededIds: string[] = [];
+    if (succeed.length > 0) {
+      try {
+        await db.transaction(async (tx) => {
+          await tx
+            .update(opportunitiesTable)
+            .set({ snoozedUntil })
+            .where(
+              and(
+                eq(opportunitiesTable.orgId, orgId),
+                inArray(
+                  opportunitiesTable.id,
+                  succeed.map((r) => r.id),
+                ),
+                eq(opportunitiesTable.status, "proposed"),
+              ),
+            );
+          await tx
+            .insert(decisionsTable)
+            .values(buildDecisionRows(orgId, actorOf(req), succeed, "snooze"));
+        });
+        succeededIds = succeed.map((r) => r.id);
+        // Snooze does not change `status`, so the cycle aggregate
+        // counters (approved/rejected/realized) don't move. Skip the
+        // refresh round-trip.
+      } catch (err) {
+        req.log.error({ err }, "bulkSnoozeOpportunities failed");
+        failed = succeed.length;
+        succeededIds = [];
+      }
+    }
+    const result: BulkOpportunityActionResult = {
+      requested: ids.length,
+      succeeded: succeededIds.length,
+      skippedNoPermission,
+      skippedWrongStatus,
+      failed,
+      succeededIds,
+    };
+    res.json(result);
+  },
+);
+
+router.post(
+  "/opportunities/bulk-unsnooze",
+  tenantMiddleware,
+  requirePermission("opp:approve"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const { ids } = bulkUnsnoozeBodySchema.parse(req.body);
+    const callerHasPerm = await callerHasOppApprove(req);
+    const loaded = await loadBulkRows(orgId, ids);
+    // Unsnooze is only meaningful for rows that actually have a
+    // snooze set — others go to `skippedWrongStatus`.
+    const { succeed, skippedNoPermission, skippedWrongStatus } = partition(
+      ids,
+      loaded,
+      (r) => r.snoozedUntil !== null,
+      callerHasPerm,
+    );
+    let failed = 0;
+    let succeededIds: string[] = [];
+    if (succeed.length > 0) {
+      try {
+        await db.transaction(async (tx) => {
+          await tx
+            .update(opportunitiesTable)
+            .set({ snoozedUntil: null })
+            .where(
+              and(
+                eq(opportunitiesTable.orgId, orgId),
+                inArray(
+                  opportunitiesTable.id,
+                  succeed.map((r) => r.id),
+                ),
+                isNotNull(opportunitiesTable.snoozedUntil),
+              ),
+            );
+          await tx
+            .insert(decisionsTable)
+            .values(
+              buildDecisionRows(orgId, actorOf(req), succeed, "unsnooze"),
+            );
+        });
+        succeededIds = succeed.map((r) => r.id);
+      } catch (err) {
+        req.log.error({ err }, "bulkUnsnoozeOpportunities failed");
+        failed = succeed.length;
+        succeededIds = [];
+      }
+    }
+    const result: BulkOpportunityActionResult = {
+      requested: ids.length,
+      succeeded: succeededIds.length,
+      skippedNoPermission,
+      skippedWrongStatus,
+      failed,
+      succeededIds,
+    };
+    res.json(result);
+  },
+);
 
 router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("opp:approve"), async (req, res) => {
   const orgId = requireOrgId(req);

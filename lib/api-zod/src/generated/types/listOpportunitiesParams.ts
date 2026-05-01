@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { LeverId } from "./leverId";
+import type { ListOpportunitiesSnoozed } from "./listOpportunitiesSnoozed";
 import type { ListOpportunitiesStatus } from "./listOpportunitiesStatus";
 
 export type ListOpportunitiesParams = {
@@ -26,6 +27,15 @@ normalised supplier link yet.
 
  */
   supplierId?: string;
+  /**
+ * Filter on the snooze window. `exclude` (default) hides rows whose
+`snoozedUntil` is in the future — these are the rows that the
+Today page also hides. `only` returns just the currently-snoozed
+rows so the UI can render the "Snoozed" filter chip. `all`
+ignores the snooze column entirely.
+
+ */
+  snoozed?: ListOpportunitiesSnoozed;
   /**
    * @minimum 1
    * @maximum 200

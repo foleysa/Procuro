@@ -688,6 +688,14 @@ export interface Opportunity {
   rejectedAt?: string | null;
   executingAt?: string | null;
   realizedAt?: string | null;
+  /** Snooze deadline. When set and in the future, the row is
+"snoozed": still in `proposed` status (audit lifecycle is
+preserved), but excluded from the Today page Pending approvals
+card and from the default opportunities list. Rows reappear
+automatically once this passes; clients can also clear it
+explicitly via `bulk-unsnooze`.
+ */
+  snoozedUntil?: string | null;
   createdAt: string;
 }
 
@@ -744,6 +752,8 @@ export const DecisionEventType = {
   reject: "reject",
   execute: "execute",
   realize: "realize",
+  snooze: "snooze",
+  unsnooze: "unsnooze",
 } as const;
 
 export interface Decision {
@@ -787,6 +797,80 @@ export interface RejectOpportunityRequest {
 export interface RealizeOpportunityRequest {
   realizedSavingsUsd: number;
   notes?: string;
+}
+
+/**
+ * Outcome of a bulk action. The server processes every requested
+id and bucketises each into exactly one of the four counts.
+`succeeded` rows changed state and wrote a `decisions` audit
+event. `skippedNoPermission` rows were filtered out because the
+caller lacks `opp:approve` on that row's tenant. `skippedWrongStatus`
+rows were not in the right precondition (e.g. trying to approve
+a row that is already `executing`, or unsnoozing a row that has
+no snooze set). `failed` rows hit a server-side error and were
+rolled back. The four counts always sum to the requested batch
+size.
+
+ */
+export interface BulkOpportunityActionResult {
+  /**
+   * Number of ids the caller asked the server to process.
+   * @minimum 0
+   */
+  requested: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  skippedNoPermission: number;
+  /** @minimum 0 */
+  skippedWrongStatus: number;
+  /** @minimum 0 */
+  failed: number;
+  /** Ids that successfully transitioned. Useful for the UI to update its local cache. */
+  succeededIds: string[];
+}
+
+export interface BulkApproveOpportunitiesRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  ids: string[];
+  /** Optional approval notes applied to every successfully-approved row. */
+  notes?: string;
+}
+
+export interface BulkRejectOpportunitiesRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  ids: string[];
+  reasonCode: RejectionReasonCode;
+  /** Optional free-text rejection note applied to every successfully-rejected row. */
+  reasonText?: string;
+}
+
+export interface BulkSnoozeOpportunitiesRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  ids: string[];
+  /** Wall-clock deadline at which the snooze expires. Must be
+strictly in the future. The server clamps the maximum
+allowed snooze to 365 days so dropdown UIs cannot accidentally
+hide a row forever.
+ */
+  snoozedUntil: string;
+}
+
+export interface BulkUnsnoozeOpportunitiesRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  ids: string[];
 }
 
 export type CycleStatus = (typeof CycleStatus)[keyof typeof CycleStatus];
@@ -3658,6 +3742,15 @@ normalised supplier link yet.
  */
   supplierId?: string;
   /**
+ * Filter on the snooze window. `exclude` (default) hides rows whose
+`snoozedUntil` is in the future — these are the rows that the
+Today page also hides. `only` returns just the currently-snoozed
+rows so the UI can render the "Snoozed" filter chip. `all`
+ignores the snooze column entirely.
+
+ */
+  snoozed?: ListOpportunitiesSnoozed;
+  /**
    * @minimum 1
    * @maximum 200
    */
@@ -3675,6 +3768,15 @@ export const ListOpportunitiesStatus = {
   executing: "executing",
   realized: "realized",
   expired: "expired",
+} as const;
+
+export type ListOpportunitiesSnoozed =
+  (typeof ListOpportunitiesSnoozed)[keyof typeof ListOpportunitiesSnoozed];
+
+export const ListOpportunitiesSnoozed = {
+  exclude: "exclude",
+  only: "only",
+  all: "all",
 } as const;
 
 export type RunNextCycleParams = {

@@ -916,6 +916,7 @@ export const OverrideSupplierBillingCurrencyResponse = zod.object({
 /**
  * @summary List opportunities, optionally filtered
  */
+export const listOpportunitiesQuerySnoozedDefault = `exclude`;
 export const listOpportunitiesQueryLimitDefault = 100;
 export const listOpportunitiesQueryLimitMax = 200;
 
@@ -952,6 +953,12 @@ export const ListOpportunitiesQueryParams = zod.object({
     .optional()
     .describe(
       "Restrict to opportunities scoped to one supplier. Matches both\nthe canonical `supplier_id` column and the `inputs.supplierId`\nfield that lever code stamps when a row is built without a\nnormalised supplier link yet.\n",
+    ),
+  snoozed: zod
+    .enum(["exclude", "only", "all"])
+    .default(listOpportunitiesQuerySnoozedDefault)
+    .describe(
+      'Filter on the snooze window. `exclude` (default) hides rows whose\n`snoozedUntil` is in the future — these are the rows that the\nToday page also hides. `only` returns just the currently-snoozed\nrows so the UI can render the \"Snoozed\" filter chip. `all`\nignores the snooze column entirely.\n',
     ),
   limit: zod.coerce
     .number()
@@ -1027,11 +1034,275 @@ export const ListOpportunitiesResponse = zod.object({
       rejectedAt: zod.coerce.date().nullish(),
       executingAt: zod.coerce.date().nullish(),
       realizedAt: zod.coerce.date().nullish(),
+      snoozedUntil: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+        ),
       createdAt: zod.coerce.date(),
     }),
   ),
   nextCursor: zod.string().nullish(),
 });
+
+/**
+ * Single-shot bulk approve. The server processes every requested
+id, gates each by `opp:approve` permission, and skips rows whose
+current status is not `proposed` so the call is safe to retry.
+Each successful row writes one `decisions` audit event and the
+affected analysis cycles have their aggregates refreshed.
+
+ * @summary Approve a batch of pending opportunities in one call
+ */
+export const BulkApproveOpportunitiesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const bulkApproveOpportunitiesBodyIdsMax = 1000;
+
+export const BulkApproveOpportunitiesBody = zod.object({
+  ids: zod.array(zod.string()).min(1).max(bulkApproveOpportunitiesBodyIdsMax),
+  notes: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional approval notes applied to every successfully-approved row.",
+    ),
+});
+
+export const bulkApproveOpportunitiesResponseRequestedMin = 0;
+
+export const bulkApproveOpportunitiesResponseSucceededMin = 0;
+
+export const bulkApproveOpportunitiesResponseSkippedNoPermissionMin = 0;
+
+export const bulkApproveOpportunitiesResponseSkippedWrongStatusMin = 0;
+
+export const bulkApproveOpportunitiesResponseFailedMin = 0;
+
+export const BulkApproveOpportunitiesResponse = zod
+  .object({
+    requested: zod
+      .number()
+      .min(bulkApproveOpportunitiesResponseRequestedMin)
+      .describe("Number of ids the caller asked the server to process."),
+    succeeded: zod.number().min(bulkApproveOpportunitiesResponseSucceededMin),
+    skippedNoPermission: zod
+      .number()
+      .min(bulkApproveOpportunitiesResponseSkippedNoPermissionMin),
+    skippedWrongStatus: zod
+      .number()
+      .min(bulkApproveOpportunitiesResponseSkippedWrongStatusMin),
+    failed: zod.number().min(bulkApproveOpportunitiesResponseFailedMin),
+    succeededIds: zod
+      .array(zod.string())
+      .describe(
+        "Ids that successfully transitioned. Useful for the UI to update its local cache.",
+      ),
+  })
+  .describe(
+    "Outcome of a bulk action. The server processes every requested\nid and bucketises each into exactly one of the four counts.\n`succeeded` rows changed state and wrote a `decisions` audit\nevent. `skippedNoPermission` rows were filtered out because the\ncaller lacks `opp:approve` on that row's tenant. `skippedWrongStatus`\nrows were not in the right precondition (e.g. trying to approve\na row that is already `executing`, or unsnoozing a row that has\nno snooze set). `failed` rows hit a server-side error and were\nrolled back. The four counts always sum to the requested batch\nsize.\n",
+  );
+
+/**
+ * Single-shot bulk reject. The structured rejection reason is
+applied to every successfully-rejected row and an audit event
+is written per row. Rows already in a non-`proposed` status are
+silently skipped via `skippedWrongStatus`.
+
+ * @summary Reject a batch of pending opportunities in one call
+ */
+export const BulkRejectOpportunitiesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const bulkRejectOpportunitiesBodyIdsMax = 1000;
+
+export const BulkRejectOpportunitiesBody = zod.object({
+  ids: zod.array(zod.string()).min(1).max(bulkRejectOpportunitiesBodyIdsMax),
+  reasonCode: zod.enum([
+    "supplier_strategic_do_not_consolidate",
+    "supplier_dei_or_diverse_program",
+    "compliance_or_legal_block",
+    "quality_risk_too_high",
+    "timing_blocked_by_business",
+    "savings_overstated",
+    "already_actioned",
+    "other",
+  ]),
+  reasonText: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional free-text rejection note applied to every successfully-rejected row.",
+    ),
+});
+
+export const bulkRejectOpportunitiesResponseRequestedMin = 0;
+
+export const bulkRejectOpportunitiesResponseSucceededMin = 0;
+
+export const bulkRejectOpportunitiesResponseSkippedNoPermissionMin = 0;
+
+export const bulkRejectOpportunitiesResponseSkippedWrongStatusMin = 0;
+
+export const bulkRejectOpportunitiesResponseFailedMin = 0;
+
+export const BulkRejectOpportunitiesResponse = zod
+  .object({
+    requested: zod
+      .number()
+      .min(bulkRejectOpportunitiesResponseRequestedMin)
+      .describe("Number of ids the caller asked the server to process."),
+    succeeded: zod.number().min(bulkRejectOpportunitiesResponseSucceededMin),
+    skippedNoPermission: zod
+      .number()
+      .min(bulkRejectOpportunitiesResponseSkippedNoPermissionMin),
+    skippedWrongStatus: zod
+      .number()
+      .min(bulkRejectOpportunitiesResponseSkippedWrongStatusMin),
+    failed: zod.number().min(bulkRejectOpportunitiesResponseFailedMin),
+    succeededIds: zod
+      .array(zod.string())
+      .describe(
+        "Ids that successfully transitioned. Useful for the UI to update its local cache.",
+      ),
+  })
+  .describe(
+    "Outcome of a bulk action. The server processes every requested\nid and bucketises each into exactly one of the four counts.\n`succeeded` rows changed state and wrote a `decisions` audit\nevent. `skippedNoPermission` rows were filtered out because the\ncaller lacks `opp:approve` on that row's tenant. `skippedWrongStatus`\nrows were not in the right precondition (e.g. trying to approve\na row that is already `executing`, or unsnoozing a row that has\nno snooze set). `failed` rows hit a server-side error and were\nrolled back. The four counts always sum to the requested batch\nsize.\n",
+  );
+
+/**
+ * Snoozed rows stay in `proposed` status and remain visible on the
+snoozed-only filter, but disappear from the Today page Pending
+approvals card and from the default opportunities list view
+until `snoozedUntil` passes. Each affected row records a
+`snooze` event in the audit log.
+
+ * @summary Snooze a batch of pending opportunities until a future date
+ */
+export const BulkSnoozeOpportunitiesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const bulkSnoozeOpportunitiesBodyIdsMax = 1000;
+
+export const BulkSnoozeOpportunitiesBody = zod.object({
+  ids: zod.array(zod.string()).min(1).max(bulkSnoozeOpportunitiesBodyIdsMax),
+  snoozedUntil: zod.coerce
+    .date()
+    .describe(
+      "Wall-clock deadline at which the snooze expires. Must be\nstrictly in the future. The server clamps the maximum\nallowed snooze to 365 days so dropdown UIs cannot accidentally\nhide a row forever.\n",
+    ),
+});
+
+export const bulkSnoozeOpportunitiesResponseRequestedMin = 0;
+
+export const bulkSnoozeOpportunitiesResponseSucceededMin = 0;
+
+export const bulkSnoozeOpportunitiesResponseSkippedNoPermissionMin = 0;
+
+export const bulkSnoozeOpportunitiesResponseSkippedWrongStatusMin = 0;
+
+export const bulkSnoozeOpportunitiesResponseFailedMin = 0;
+
+export const BulkSnoozeOpportunitiesResponse = zod
+  .object({
+    requested: zod
+      .number()
+      .min(bulkSnoozeOpportunitiesResponseRequestedMin)
+      .describe("Number of ids the caller asked the server to process."),
+    succeeded: zod.number().min(bulkSnoozeOpportunitiesResponseSucceededMin),
+    skippedNoPermission: zod
+      .number()
+      .min(bulkSnoozeOpportunitiesResponseSkippedNoPermissionMin),
+    skippedWrongStatus: zod
+      .number()
+      .min(bulkSnoozeOpportunitiesResponseSkippedWrongStatusMin),
+    failed: zod.number().min(bulkSnoozeOpportunitiesResponseFailedMin),
+    succeededIds: zod
+      .array(zod.string())
+      .describe(
+        "Ids that successfully transitioned. Useful for the UI to update its local cache.",
+      ),
+  })
+  .describe(
+    "Outcome of a bulk action. The server processes every requested\nid and bucketises each into exactly one of the four counts.\n`succeeded` rows changed state and wrote a `decisions` audit\nevent. `skippedNoPermission` rows were filtered out because the\ncaller lacks `opp:approve` on that row's tenant. `skippedWrongStatus`\nrows were not in the right precondition (e.g. trying to approve\na row that is already `executing`, or unsnoozing a row that has\nno snooze set). `failed` rows hit a server-side error and were\nrolled back. The four counts always sum to the requested batch\nsize.\n",
+  );
+
+/**
+ * Clears `snoozedUntil` so the rows become visible again on the
+Today page and the default opportunities list. Rows that have no
+snooze set (or that are not in `proposed` status) are silently
+skipped via `skippedWrongStatus`. Each affected row records an
+`unsnooze` event in the audit log.
+
+ * @summary Clear the snooze deadline on a batch of opportunities
+ */
+export const BulkUnsnoozeOpportunitiesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const bulkUnsnoozeOpportunitiesBodyIdsMax = 1000;
+
+export const BulkUnsnoozeOpportunitiesBody = zod.object({
+  ids: zod.array(zod.string()).min(1).max(bulkUnsnoozeOpportunitiesBodyIdsMax),
+});
+
+export const bulkUnsnoozeOpportunitiesResponseRequestedMin = 0;
+
+export const bulkUnsnoozeOpportunitiesResponseSucceededMin = 0;
+
+export const bulkUnsnoozeOpportunitiesResponseSkippedNoPermissionMin = 0;
+
+export const bulkUnsnoozeOpportunitiesResponseSkippedWrongStatusMin = 0;
+
+export const bulkUnsnoozeOpportunitiesResponseFailedMin = 0;
+
+export const BulkUnsnoozeOpportunitiesResponse = zod
+  .object({
+    requested: zod
+      .number()
+      .min(bulkUnsnoozeOpportunitiesResponseRequestedMin)
+      .describe("Number of ids the caller asked the server to process."),
+    succeeded: zod.number().min(bulkUnsnoozeOpportunitiesResponseSucceededMin),
+    skippedNoPermission: zod
+      .number()
+      .min(bulkUnsnoozeOpportunitiesResponseSkippedNoPermissionMin),
+    skippedWrongStatus: zod
+      .number()
+      .min(bulkUnsnoozeOpportunitiesResponseSkippedWrongStatusMin),
+    failed: zod.number().min(bulkUnsnoozeOpportunitiesResponseFailedMin),
+    succeededIds: zod
+      .array(zod.string())
+      .describe(
+        "Ids that successfully transitioned. Useful for the UI to update its local cache.",
+      ),
+  })
+  .describe(
+    "Outcome of a bulk action. The server processes every requested\nid and bucketises each into exactly one of the four counts.\n`succeeded` rows changed state and wrote a `decisions` audit\nevent. `skippedNoPermission` rows were filtered out because the\ncaller lacks `opp:approve` on that row's tenant. `skippedWrongStatus`\nrows were not in the right precondition (e.g. trying to approve\na row that is already `executing`, or unsnoozing a row that has\nno snooze set). `failed` rows hit a server-side error and were\nrolled back. The four counts always sum to the requested batch\nsize.\n",
+  );
 
 /**
  * @summary Opportunity detail
@@ -1105,6 +1376,12 @@ export const GetOpportunityResponse = zod
     rejectedAt: zod.coerce.date().nullish(),
     executingAt: zod.coerce.date().nullish(),
     realizedAt: zod.coerce.date().nullish(),
+    snoozedUntil: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+      ),
     createdAt: zod.coerce.date(),
   })
   .and(
@@ -1142,7 +1419,14 @@ export const GetOpportunityResponse = zod
           zod.object({
             id: zod.string(),
             opportunityId: zod.string(),
-            eventType: zod.enum(["approve", "reject", "execute", "realize"]),
+            eventType: zod.enum([
+              "approve",
+              "reject",
+              "execute",
+              "realize",
+              "snooze",
+              "unsnooze",
+            ]),
             actorEmail: zod.string(),
             rejectedReasonCode: zod
               .enum([
@@ -1241,6 +1525,12 @@ export const ApproveOpportunityResponse = zod.object({
   rejectedAt: zod.coerce.date().nullish(),
   executingAt: zod.coerce.date().nullish(),
   realizedAt: zod.coerce.date().nullish(),
+  snoozedUntil: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -1329,6 +1619,12 @@ export const RejectOpportunityResponse = zod.object({
   rejectedAt: zod.coerce.date().nullish(),
   executingAt: zod.coerce.date().nullish(),
   realizedAt: zod.coerce.date().nullish(),
+  snoozedUntil: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -1403,6 +1699,12 @@ export const ExecuteOpportunityResponse = zod.object({
   rejectedAt: zod.coerce.date().nullish(),
   executingAt: zod.coerce.date().nullish(),
   realizedAt: zod.coerce.date().nullish(),
+  snoozedUntil: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -1482,6 +1784,12 @@ export const RealizeOpportunityResponse = zod.object({
   rejectedAt: zod.coerce.date().nullish(),
   executingAt: zod.coerce.date().nullish(),
   realizedAt: zod.coerce.date().nullish(),
+  snoozedUntil: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 

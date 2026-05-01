@@ -411,6 +411,26 @@ paths:
         schema:
           type: string
       - in: query
+        name: snoozed
+        description: 'Filter on the snooze window. `exclude` (default) hides rows whose
+
+          `snoozedUntil` is in the future — these are the rows that the
+
+          Today page also hides. `only` returns just the currently-snoozed
+
+          rows so the UI can render the "Snoozed" filter chip. `all`
+
+          ignores the snooze column entirely.
+
+          '
+        schema:
+          type: string
+          enum:
+          - exclude
+          - only
+          - all
+          default: exclude
+      - in: query
         name: limit
         schema:
           type: integer
@@ -428,6 +448,132 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OpportunityListResponse'
+  /opportunities/bulk-approve:
+    post:
+      operationId: bulkApproveOpportunities
+      tags:
+      - opportunities
+      summary: Approve a batch of pending opportunities in one call
+      description: 'Single-shot bulk approve. The server processes every requested
+
+        id, gates each by `opp:approve` permission, and skips rows whose
+
+        current status is not `proposed` so the call is safe to retry.
+
+        Each successful row writes one `decisions` audit event and the
+
+        affected analysis cycles have their aggregates refreshed.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkApproveOpportunitiesRequest'
+      responses:
+        '200':
+          description: Per-id outcome of the bulk approve
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOpportunityActionResult'
+  /opportunities/bulk-reject:
+    post:
+      operationId: bulkRejectOpportunities
+      tags:
+      - opportunities
+      summary: Reject a batch of pending opportunities in one call
+      description: 'Single-shot bulk reject. The structured rejection reason is
+
+        applied to every successfully-rejected row and an audit event
+
+        is written per row. Rows already in a non-`proposed` status are
+
+        silently skipped via `skippedWrongStatus`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkRejectOpportunitiesRequest'
+      responses:
+        '200':
+          description: Per-id outcome of the bulk reject
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOpportunityActionResult'
+  /opportunities/bulk-snooze:
+    post:
+      operationId: bulkSnoozeOpportunities
+      tags:
+      - opportunities
+      summary: Snooze a batch of pending opportunities until a future date
+      description: 'Snoozed rows stay in `proposed` status and remain visible on the
+
+        snoozed-only filter, but disappear from the Today page Pending
+
+        approvals card and from the default opportunities list view
+
+        until `snoozedUntil` passes. Each affected row records a
+
+        `snooze` event in the audit log.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkSnoozeOpportunitiesRequest'
+      responses:
+        '200':
+          description: Per-id outcome of the bulk snooze
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOpportunityActionResult'
+  /opportunities/bulk-unsnooze:
+    post:
+      operationId: bulkUnsnoozeOpportunities
+      tags:
+      - opportunities
+      summary: Clear the snooze deadline on a batch of opportunities
+      description: 'Clears `snoozedUntil` so the rows become visible again on the
+
+        Today page and the default opportunities list. Rows that have no
+
+        snooze set (or that are not in `proposed` status) are silently
+
+        skipped via `skippedWrongStatus`. Each affected row records an
+
+        `unsnooze` event in the audit log.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkUnsnoozeOpportunitiesRequest'
+      responses:
+        '200':
+          description: Per-id outcome of the bulk unsnooze
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOpportunityActionResult'
   /opportunities/{id}:
     get:
       operationId: getOpportunity
@@ -4323,6 +4469,23 @@ components:
           type: string
           format: date-time
           nullable: true
+        snoozedUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Snooze deadline. When set and in the future, the row is
+
+            "snoozed": still in `proposed` status (audit lifecycle is
+
+            preserved), but excluded from the Today page Pending approvals
+
+            card and from the default opportunities list. Rows reappear
+
+            automatically once this passes; clients can also clear it
+
+            explicitly via `bulk-unsnooze`.
+
+            '
         createdAt:
           type: string
           format: date-time
@@ -4444,6 +4607,8 @@ components:
           - reject
           - execute
           - realize
+          - snooze
+          - unsnooze
         actorEmail:
           type: string
         rejectedReasonCode:
@@ -4485,6 +4650,127 @@ components:
           type: number
         notes:
           type: string
+    BulkOpportunityActionResult:
+      type: object
+      description: 'Outcome of a bulk action. The server processes every requested
+
+        id and bucketises each into exactly one of the four counts.
+
+        `succeeded` rows changed state and wrote a `decisions` audit
+
+        event. `skippedNoPermission` rows were filtered out because the
+
+        caller lacks `opp:approve` on that row''s tenant. `skippedWrongStatus`
+
+        rows were not in the right precondition (e.g. trying to approve
+
+        a row that is already `executing`, or unsnoozing a row that has
+
+        no snooze set). `failed` rows hit a server-side error and were
+
+        rolled back. The four counts always sum to the requested batch
+
+        size.
+
+        '
+      required:
+      - requested
+      - succeeded
+      - skippedNoPermission
+      - skippedWrongStatus
+      - failed
+      - succeededIds
+      properties:
+        requested:
+          type: integer
+          minimum: 0
+          description: Number of ids the caller asked the server to process.
+        succeeded:
+          type: integer
+          minimum: 0
+        skippedNoPermission:
+          type: integer
+          minimum: 0
+        skippedWrongStatus:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        succeededIds:
+          type: array
+          description: Ids that successfully transitioned. Useful for the UI to
+            update its local cache.
+          items:
+            type: string
+    BulkApproveOpportunitiesRequest:
+      type: object
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+        notes:
+          type: string
+          description: Optional approval notes applied to every successfully-approved
+            row.
+    BulkRejectOpportunitiesRequest:
+      type: object
+      required:
+      - ids
+      - reasonCode
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+        reasonCode:
+          $ref: '#/components/schemas/RejectionReasonCode'
+        reasonText:
+          type: string
+          description: Optional free-text rejection note applied to every
+            successfully-rejected row.
+    BulkSnoozeOpportunitiesRequest:
+      type: object
+      required:
+      - ids
+      - snoozedUntil
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+        snoozedUntil:
+          type: string
+          format: date-time
+          description: 'Wall-clock deadline at which the snooze expires. Must be
+
+            strictly in the future. The server clamps the maximum
+
+            allowed snooze to 365 days so dropdown UIs cannot accidentally
+
+            hide a row forever.
+
+            '
+    BulkUnsnoozeOpportunitiesRequest:
+      type: object
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
     Cycle:
       type: object
       required:
