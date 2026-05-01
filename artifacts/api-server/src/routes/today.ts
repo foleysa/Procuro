@@ -48,6 +48,7 @@ import {
 } from "@workspace/db";
 import { and, eq, desc, gte, isNull, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { resolveRbacContext } from "../lib/rbac";
 import {
   getRecentAutoAnnotations,
   getCycleConversionRateDeltas,
@@ -119,18 +120,27 @@ async function safe<T>(
   fn: () => Promise<T>,
   errors: Array<{ source: string; error: string }>,
   log: { error: (...args: unknown[]) => void },
+  // Admin gate: when the caller is org_admin/platform_admin, we
+  // PRESERVE the raw error text in the response so the client-side
+  // <details>"What happened?" disclosure can show the real technical
+  // detail to the operator who is actually allowed to see it. For
+  // every other caller we scrub at the network boundary so raw SQL /
+  // file paths / stack frames never reach a non-admin browser.
+  // The client also runs scrubError() at render time, so non-admin
+  // UIs get defense-in-depth even if a downstream caller bypasses
+  // this gate.
+  callerIsAdmin: boolean,
 ): Promise<T | null> {
   try {
     return await fn();
   } catch (e) {
-    // Log the FULL unscrubbed error to server logs for ops/observability.
+    // Log the FULL unscrubbed error to server logs for ops/observability,
+    // regardless of role.
     log.error({ source, err: e }, "today.feed source failed");
     const raw = e instanceof Error ? e.message : String(e);
     errors.push({
       source,
-      // Network-boundary scrub — non-admin clients should never see
-      // raw SQL/paths/stack frames in the response payload.
-      error: scrubServerError(raw),
+      error: callerIsAdmin ? raw : scrubServerError(raw),
     });
     return null;
   }
@@ -155,6 +165,17 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
   const errors: Array<{ source: string; error: string }> = [];
   const now = new Date();
   const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  // Network-boundary scrubbing of `errors[].error` is gated on caller
+  // role: admins (org_admin, platform_admin) get the raw text so the
+  // client's `<details>` "What happened?" disclosure can show the
+  // original technical detail to the operator authorized to see it;
+  // every other role gets scrubbed text. The client also runs its own
+  // scrubError() at render time as defense-in-depth.
+  const rbac = await resolveRbacContext(req);
+  const callerIsAdmin = rbac.roles.some(
+    (r) => r === "org_admin" || r === "platform_admin",
+  );
 
   // 1. Alerts summary (open + critical/high) — schema-drift-safe.
   await safe(
@@ -229,6 +250,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   // 2. Proposed-bucket opportunities (top 5 by projected savings).
@@ -283,6 +305,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   // 3. Recently failed jobs (last 24h). Enrichment: when zero failed,
@@ -363,6 +386,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   // 4. Pending approvals = opportunities still in 'proposed' (no
@@ -457,6 +481,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   // 5. Recent auto-annotations from the funnel substrate (#185 → #204).
@@ -481,6 +506,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   // 6. Conversion-rate deltas between the two most recent funnel
@@ -506,6 +532,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
     },
     errors,
     req.log,
+    callerIsAdmin,
   );
 
   const response: FeedResponse = {

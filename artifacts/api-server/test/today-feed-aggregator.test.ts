@@ -269,14 +269,15 @@ test("/today/feed alerts query succeeds against the real shipping schema (#209 s
   assert.equal(payload.topAlert.severity, "high");
 });
 
-test("/today/feed scrubs raw SQL / paths / stack frames out of errors[].error at the network boundary (#209 review)", async () => {
-  // Defense-in-depth: even if the UI scrubber regresses, the API
-  // payload itself must not ship raw internals to non-admin clients.
+test("/today/feed: admin caller gets RAW errors[].error so the UI disclosure can show original technical detail (#209 review)", async () => {
+  // The dev-header path (x-org-id only, no Bearer) maps to
+  // platform_admin. Spec: admins (org_admin / platform_admin) MUST
+  // receive the original unscrubbed error in the response payload so
+  // the client's "What happened?" <details> disclosure can show real
+  // technical detail to operators authorized to see it.
   // The funnel-substrate sources currently throw `parserOpenTable`
-  // errors (a separate pre-existing schema-drift issue noted in
-  // replit.md), which gives us a real, repeatable error string to
-  // assert against. Forbidden substrings: every leak marker the
-  // scrubber denylists.
+  // errors (separate pre-existing schema-drift, noted in replit.md),
+  // which gives us a real, repeatable error string to assert against.
   const r = await fetch(`${baseUrl}/api/today/feed`, {
     headers: { "x-org-id": orgId },
   });
@@ -284,6 +285,57 @@ test("/today/feed scrubs raw SQL / paths / stack frames out of errors[].error at
     errors: Array<{ source: string; error: string }>;
   };
 
+  // At least one of the funnel sources should be in errors[] given
+  // the known schema-drift; if not, the test environment changed and
+  // we should skip rather than false-pass.
+  const funnelErr = body.errors.find(
+    (e) =>
+      e.source === "funnelAutoAnnotations" ||
+      e.source === "funnelConversionDeltas",
+  );
+  if (!funnelErr) return;
+
+  // Admins SHOULD see the raw `parserOpenTable` marker; if this stops
+  // firing, the gate has regressed and admins are getting scrubbed
+  // text — which would silently hide the "What happened?" disclosure.
+  assert.match(
+    funnelErr.error,
+    /parserOpenTable|funnel_annotations|column .* does not exist/i,
+    `admin must receive raw error text, got: ${funnelErr.error}`,
+  );
+});
+
+test("/today/feed: non-admin caller gets SCRUBBED errors[].error at the network boundary (#209 review)", async () => {
+  // Issue an api_key with `analyst` scope (non-admin), then call the
+  // endpoint with `Authorization: Bearer <key>`. The bearer path in
+  // resolveRbacContext takes precedence over dev-header and assigns
+  // exactly the `scopeRole` of the key — so the request is authorized
+  // as a plain analyst and MUST receive scrubbed text.
+  const { hashToken } = await import("../src/lib/auth.js");
+  const { apiKeysTable, db } = await import("@workspace/db");
+
+  const plain = `proc_test_${RUN}_${Math.random().toString(36).slice(2, 10)}`;
+  await db.insert(apiKeysTable).values({
+    id: `ak_test_${RUN}`,
+    orgId,
+    label: "test analyst key",
+    prefix: plain.slice(0, 13),
+    tokenHash: hashToken(plain),
+    scopeRole: "analyst",
+    createdBy: "test",
+  });
+
+  const r = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: {
+      "x-org-id": orgId,
+      Authorization: `Bearer ${plain}`,
+    },
+  });
+  const body = (await r.json()) as {
+    errors: Array<{ source: string; error: string }>;
+  };
+
+  // Forbidden substrings: every leak marker the scrubber denylists.
   for (const e of body.errors) {
     assert.doesNotMatch(
       e.error,
@@ -314,6 +366,11 @@ test("/today/feed scrubs raw SQL / paths / stack frames out of errors[].error at
       e.error,
       /\bat\s+\w+\s*\(/,
       `errors[${e.source}] must not contain a stack frame: ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /parserOpenTable/,
+      `errors[${e.source}] must not contain raw parser internals: ${e.error}`,
     );
   }
 });
