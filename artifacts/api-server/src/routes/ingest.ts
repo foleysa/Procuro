@@ -32,6 +32,11 @@ const STREAM_CSV_ENTITIES: ReadonlySet<CsvEntity> = new Set([
   "invoices",
   "payments",
   "shipments",
+  // Task #214 — services taxonomy.
+  "statements_of_work",
+  "rate_cards",
+  "rate_card_lines",
+  "time_entries",
 ]);
 
 const router: IRouter = Router();

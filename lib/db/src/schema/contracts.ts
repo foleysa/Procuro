@@ -22,6 +22,28 @@ export const contractStatusValues = [
 ] as const;
 export type ContractStatus = (typeof contractStatusValues)[number];
 
+/**
+ * Commercial structure of the contract. Drives downstream analyzers
+ * (savings vs. timing-of-cash, T&M utilization, milestone burn-down,
+ * etc.) and unlocks services-side intelligence in Tasks #3/#4.
+ *
+ * - `goods`: classic unit-priced supply agreement (default for legacy rows).
+ * - `t_and_m`: time-and-materials; rates live on a linked `rate_card`.
+ * - `fixed_price`: lump-sum services contract.
+ * - `milestone`: deliverable-based; tracked in `sow_milestones`.
+ * - `retainer`: recurring fixed fee for ongoing services.
+ * - `outcome`: success-fee / outcome-based commercial model.
+ */
+export const contractTypeValues = [
+  "goods",
+  "t_and_m",
+  "fixed_price",
+  "milestone",
+  "retainer",
+  "outcome",
+] as const;
+export type ContractType = (typeof contractTypeValues)[number];
+
 export const contractsTable = pgTable(
   "contracts",
   {
@@ -38,6 +60,31 @@ export const contractsTable = pgTable(
     contractNumber: text("contract_number").notNull(),
     title: text("title").notNull(),
     status: text("status").$type<ContractStatus>().notNull().default("active"),
+    /**
+     * Commercial structure (#214). Defaults to `goods` so all pre-existing
+     * contracts stay back-compatible without a data migration; new ingest
+     * paths populate it explicitly when the source distinguishes services
+     * vs. goods (e.g. Coupa contract type, MSA + SOW pairs).
+     */
+    contractType: text("contract_type")
+      .$type<ContractType>()
+      .notNull()
+      .default("goods"),
+    /**
+     * Self-FK pointing to the parent MSA when this row is itself a child
+     * SOW/agreement under a master agreement. Nullable for top-level
+     * contracts (the common case). Resolved at ingest time when payloads
+     * declare a `msaParentExternalId`.
+     */
+    msaParentId: text("msa_parent_id"),
+    /**
+     * Free-form SLA terms — typed as `unknown` so the column can store
+     * either a structured object (`{ uptimePct: 99.9, mttrHours: 4 }`)
+     * emitted by adapters or a partner's verbatim text payload. Nullable.
+     */
+    serviceLevelTerms: jsonb("service_level_terms").$type<unknown>(),
+    /** Plain-text acceptance criteria (services contracts). Nullable. */
+    acceptanceCriteria: text("acceptance_criteria"),
     startDate: timestamp("start_date", { withTimezone: true }).notNull(),
     endDate: timestamp("end_date", { withTimezone: true }).notNull(),
     paymentTermsDays: integer("payment_terms_days"),
@@ -102,6 +149,8 @@ export const contractsTable = pgTable(
     index("contracts_category_idx").on(t.orgId, t.categoryId),
     index("contracts_category_fk_idx").on(t.categoryId),
     index("contracts_end_date_idx").on(t.orgId, t.endDate),
+    index("contracts_type_idx").on(t.orgId, t.contractType),
+    index("contracts_msa_parent_idx").on(t.msaParentId),
     uniqueIndex("contracts_source_uq").on(
       t.orgId,
       t.sourceSystem,

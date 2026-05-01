@@ -3593,6 +3593,10 @@ export const IngestCsvStreamQueryParams = zod.object({
       "invoices",
       "payments",
       "shipments",
+      "statements_of_work",
+      "rate_cards",
+      "rate_card_lines",
+      "time_entries",
     ])
     .describe("Which entity the CSV rows describe."),
 });

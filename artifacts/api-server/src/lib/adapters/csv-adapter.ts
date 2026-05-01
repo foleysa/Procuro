@@ -10,6 +10,10 @@ import {
   invoicesTable,
   paymentsTable,
   shipmentsTable,
+  statementsOfWorkTable,
+  rateCardsTable,
+  rateCardLinesTable,
+  timeEntriesTable,
 } from "@workspace/db";
 import { sql, and, eq, inArray } from "drizzle-orm";
 import { parse, type Parser } from "csv-parse";
@@ -245,7 +249,15 @@ export type CsvEntity =
   | "po_lines"
   | "invoices"
   | "payments"
-  | "shipments";
+  | "shipments"
+  // Task #214 — services taxonomy entities. Each streams the table's
+  // own rows; nested children (sow milestones, change orders) are
+  // currently only available via the structured JSON `IngestPayload`
+  // path because they don't have a 1:1 streamable shape.
+  | "statements_of_work"
+  | "rate_cards"
+  | "rate_card_lines"
+  | "time_entries";
 
 export interface StreamCsvResult {
   entity: CsvEntity;
@@ -1037,6 +1049,435 @@ async function flushBatch(
           },
         })
         .returning({ id: shipmentsTable.id });
+      return out.length;
+    }
+    case "statements_of_work": {
+      // Resolve parent contract + supplier external IDs.
+      const ctExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["contractExternalId"]!)
+            .filter(Boolean) as string[],
+        ),
+      );
+      const supExtIds = Array.from(
+        new Set(
+          rows.map((r) => r["supplierExternalId"]!).filter(Boolean) as string[],
+        ),
+      );
+      const ctLookup = new Map<string, string>();
+      const supLookup = new Map<string, string>();
+      if (ctExtIds.length > 0) {
+        const ctRows = await db
+          .select({
+            id: contractsTable.id,
+            ext: contractsTable.sourceExternalId,
+          })
+          .from(contractsTable)
+          .where(
+            and(
+              eq(contractsTable.orgId, orgId),
+              eq(contractsTable.sourceSystem, SOURCE),
+              inArray(contractsTable.sourceExternalId, ctExtIds),
+            ),
+          );
+        for (const r of ctRows) if (r.ext) ctLookup.set(r.ext, r.id);
+      }
+      if (supExtIds.length > 0) {
+        const supRows = await db
+          .select({
+            id: suppliersTable.id,
+            ext: suppliersTable.sourceExternalId,
+          })
+          .from(suppliersTable)
+          .where(
+            and(
+              eq(suppliersTable.orgId, orgId),
+              eq(suppliersTable.sourceSystem, SOURCE),
+              inArray(suppliersTable.sourceExternalId, supExtIds),
+            ),
+          );
+        for (const r of supRows) if (r.ext) supLookup.set(r.ext, r.id);
+      }
+      const v = rows
+        .filter(
+          (r) =>
+            r["externalId"] &&
+            ctLookup.has(r["contractExternalId"] ?? "") &&
+            supLookup.has(r["supplierExternalId"] ?? ""),
+        )
+        .map((r) => ({
+          id: newId("sow"),
+          orgId,
+          contractId: ctLookup.get(r["contractExternalId"]!)!,
+          supplierId: supLookup.get(r["supplierExternalId"]!)!,
+          sowNumber: r["sowNumber"] ?? r["externalId"]!,
+          title: r["title"] ?? r["sowNumber"] ?? r["externalId"]!,
+          status:
+            (r["status"] as
+              | "draft"
+              | "active"
+              | "completed"
+              | "cancelled") ?? "active",
+          startDate: new Date(r["startDate"]!),
+          endDate: new Date(r["endDate"]!),
+          totalValueUsd: r["totalValueUsd"]
+            ? Number(r["totalValueUsd"]).toFixed(2)
+            : null,
+          billingCurrency: r["billingCurrency"] ?? null,
+          acceptanceCriteria: r["acceptanceCriteria"] ?? null,
+          sourceSystem: SOURCE,
+          sourceExternalId: r["externalId"]!,
+        }));
+      if (v.length === 0) return 0;
+      const out = await db
+        .insert(statementsOfWorkTable)
+        .values(v)
+        .onConflictDoUpdate({
+          target: [
+            statementsOfWorkTable.orgId,
+            statementsOfWorkTable.sourceSystem,
+            statementsOfWorkTable.sourceExternalId,
+          ],
+          set: {
+            title: sql`excluded.title`,
+            status: sql`excluded.status`,
+            startDate: sql`excluded.start_date`,
+            endDate: sql`excluded.end_date`,
+            totalValueUsd: sql`excluded.total_value_usd`,
+            billingCurrency: sql`excluded.billing_currency`,
+            acceptanceCriteria: sql`excluded.acceptance_criteria`,
+            sourceSyncedAt: sql`now()`,
+          },
+        })
+        .returning({ id: statementsOfWorkTable.id });
+      return out.length;
+    }
+    case "rate_cards": {
+      const ctExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["contractExternalId"]!)
+            .filter(Boolean) as string[],
+        ),
+      );
+      const sowExtIds = Array.from(
+        new Set(
+          rows.map((r) => r["sowExternalId"]!).filter(Boolean) as string[],
+        ),
+      );
+      const supExtIds = Array.from(
+        new Set(
+          rows.map((r) => r["supplierExternalId"]!).filter(Boolean) as string[],
+        ),
+      );
+      const ctLookup = new Map<string, string>();
+      const sowLookup = new Map<string, string>();
+      const supLookup = new Map<string, string>();
+      if (ctExtIds.length > 0) {
+        const ctRows = await db
+          .select({
+            id: contractsTable.id,
+            ext: contractsTable.sourceExternalId,
+          })
+          .from(contractsTable)
+          .where(
+            and(
+              eq(contractsTable.orgId, orgId),
+              eq(contractsTable.sourceSystem, SOURCE),
+              inArray(contractsTable.sourceExternalId, ctExtIds),
+            ),
+          );
+        for (const r of ctRows) if (r.ext) ctLookup.set(r.ext, r.id);
+      }
+      if (sowExtIds.length > 0) {
+        const sowRows = await db
+          .select({
+            id: statementsOfWorkTable.id,
+            ext: statementsOfWorkTable.sourceExternalId,
+          })
+          .from(statementsOfWorkTable)
+          .where(
+            and(
+              eq(statementsOfWorkTable.orgId, orgId),
+              eq(statementsOfWorkTable.sourceSystem, SOURCE),
+              inArray(statementsOfWorkTable.sourceExternalId, sowExtIds),
+            ),
+          );
+        for (const r of sowRows) if (r.ext) sowLookup.set(r.ext, r.id);
+      }
+      if (supExtIds.length > 0) {
+        const supRows = await db
+          .select({
+            id: suppliersTable.id,
+            ext: suppliersTable.sourceExternalId,
+          })
+          .from(suppliersTable)
+          .where(
+            and(
+              eq(suppliersTable.orgId, orgId),
+              eq(suppliersTable.sourceSystem, SOURCE),
+              inArray(suppliersTable.sourceExternalId, supExtIds),
+            ),
+          );
+        for (const r of supRows) if (r.ext) supLookup.set(r.ext, r.id);
+      }
+      const v = rows
+        .filter(
+          (r) =>
+            r["externalId"] && supLookup.has(r["supplierExternalId"] ?? ""),
+        )
+        .map((r) => ({
+          id: newId("rc"),
+          orgId,
+          contractId: r["contractExternalId"]
+            ? ctLookup.get(r["contractExternalId"]) ?? null
+            : null,
+          sowId: r["sowExternalId"]
+            ? sowLookup.get(r["sowExternalId"]) ?? null
+            : null,
+          supplierId: supLookup.get(r["supplierExternalId"]!)!,
+          name: r["name"] ?? r["externalId"]!,
+          currency: r["currency"] ?? "USD",
+          effectiveDate: new Date(r["effectiveDate"]!),
+          expiryDate: r["expiryDate"] ? new Date(r["expiryDate"]) : null,
+          sourceSystem: SOURCE,
+          sourceExternalId: r["externalId"]!,
+        }));
+      if (v.length === 0) return 0;
+      const out = await db
+        .insert(rateCardsTable)
+        .values(v)
+        .onConflictDoUpdate({
+          target: [
+            rateCardsTable.orgId,
+            rateCardsTable.sourceSystem,
+            rateCardsTable.sourceExternalId,
+          ],
+          set: {
+            name: sql`excluded.name`,
+            currency: sql`excluded.currency`,
+            effectiveDate: sql`excluded.effective_date`,
+            expiryDate: sql`excluded.expiry_date`,
+            sourceSyncedAt: sql`now()`,
+          },
+        })
+        .returning({ id: rateCardsTable.id });
+      return out.length;
+    }
+    case "rate_card_lines": {
+      // Lookup parent rate cards by external id.
+      const rcExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["rateCardExternalId"]!)
+            .filter(Boolean) as string[],
+        ),
+      );
+      const rcLookup = new Map<string, string>();
+      if (rcExtIds.length > 0) {
+        const rcRows = await db
+          .select({
+            id: rateCardsTable.id,
+            ext: rateCardsTable.sourceExternalId,
+          })
+          .from(rateCardsTable)
+          .where(
+            and(
+              eq(rateCardsTable.orgId, orgId),
+              eq(rateCardsTable.sourceSystem, SOURCE),
+              inArray(rateCardsTable.sourceExternalId, rcExtIds),
+            ),
+          );
+        for (const r of rcRows) if (r.ext) rcLookup.set(r.ext, r.id);
+      }
+      const v = rows
+        .filter(
+          (r) => r["role"] && rcLookup.has(r["rateCardExternalId"] ?? ""),
+        )
+        .map((r) => ({
+          id: newId("rcl"),
+          orgId,
+          rateCardId: rcLookup.get(r["rateCardExternalId"]!)!,
+          role: r["role"]!,
+          seniority: r["seniority"] ?? null,
+          hourlyRate: r["hourlyRate"]
+            ? Number(r["hourlyRate"]).toFixed(4)
+            : null,
+          dailyRate: r["dailyRate"]
+            ? Number(r["dailyRate"]).toFixed(4)
+            : null,
+          roleCode: r["roleCode"] ?? null,
+        }));
+      if (v.length === 0) return 0;
+      // Upsert on (rate_card_id, role, seniority). Drizzle's
+      // `onConflictDoUpdate` `target` accepts the composite index columns.
+      const out = await db
+        .insert(rateCardLinesTable)
+        .values(v)
+        .onConflictDoUpdate({
+          target: [
+            rateCardLinesTable.rateCardId,
+            rateCardLinesTable.role,
+            rateCardLinesTable.seniority,
+          ],
+          set: {
+            hourlyRate: sql`excluded.hourly_rate`,
+            dailyRate: sql`excluded.daily_rate`,
+            roleCode: sql`excluded.role_code`,
+          },
+        })
+        .returning({ id: rateCardLinesTable.id });
+      return out.length;
+    }
+    case "time_entries": {
+      // Resolve supplier (required) + optional contract / SOW / rate-card.
+      const supExtIds = Array.from(
+        new Set(
+          rows.map((r) => r["supplierExternalId"]!).filter(Boolean) as string[],
+        ),
+      );
+      const ctExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["contractExternalId"]!)
+            .filter(Boolean) as string[],
+        ),
+      );
+      const sowExtIds = Array.from(
+        new Set(
+          rows.map((r) => r["sowExternalId"]!).filter(Boolean) as string[],
+        ),
+      );
+      const rcExtIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r["rateCardExternalId"]!)
+            .filter(Boolean) as string[],
+        ),
+      );
+      const supLookup = new Map<string, string>();
+      const ctLookup = new Map<string, string>();
+      const sowLookup = new Map<string, string>();
+      const rcLookup = new Map<string, string>();
+      if (supExtIds.length > 0) {
+        const supRows = await db
+          .select({
+            id: suppliersTable.id,
+            ext: suppliersTable.sourceExternalId,
+          })
+          .from(suppliersTable)
+          .where(
+            and(
+              eq(suppliersTable.orgId, orgId),
+              eq(suppliersTable.sourceSystem, SOURCE),
+              inArray(suppliersTable.sourceExternalId, supExtIds),
+            ),
+          );
+        for (const r of supRows) if (r.ext) supLookup.set(r.ext, r.id);
+      }
+      if (ctExtIds.length > 0) {
+        const ctRows = await db
+          .select({
+            id: contractsTable.id,
+            ext: contractsTable.sourceExternalId,
+          })
+          .from(contractsTable)
+          .where(
+            and(
+              eq(contractsTable.orgId, orgId),
+              eq(contractsTable.sourceSystem, SOURCE),
+              inArray(contractsTable.sourceExternalId, ctExtIds),
+            ),
+          );
+        for (const r of ctRows) if (r.ext) ctLookup.set(r.ext, r.id);
+      }
+      if (sowExtIds.length > 0) {
+        const sowRows = await db
+          .select({
+            id: statementsOfWorkTable.id,
+            ext: statementsOfWorkTable.sourceExternalId,
+          })
+          .from(statementsOfWorkTable)
+          .where(
+            and(
+              eq(statementsOfWorkTable.orgId, orgId),
+              eq(statementsOfWorkTable.sourceSystem, SOURCE),
+              inArray(statementsOfWorkTable.sourceExternalId, sowExtIds),
+            ),
+          );
+        for (const r of sowRows) if (r.ext) sowLookup.set(r.ext, r.id);
+      }
+      if (rcExtIds.length > 0) {
+        const rcRows = await db
+          .select({
+            id: rateCardsTable.id,
+            ext: rateCardsTable.sourceExternalId,
+          })
+          .from(rateCardsTable)
+          .where(
+            and(
+              eq(rateCardsTable.orgId, orgId),
+              eq(rateCardsTable.sourceSystem, SOURCE),
+              inArray(rateCardsTable.sourceExternalId, rcExtIds),
+            ),
+          );
+        for (const r of rcRows) if (r.ext) rcLookup.set(r.ext, r.id);
+      }
+      const v = rows
+        .filter(
+          (r) =>
+            r["externalId"] && supLookup.has(r["supplierExternalId"] ?? ""),
+        )
+        .map((r) => ({
+          id: newId("te"),
+          orgId,
+          supplierId: supLookup.get(r["supplierExternalId"]!)!,
+          contractId: r["contractExternalId"]
+            ? ctLookup.get(r["contractExternalId"]) ?? null
+            : null,
+          sowId: r["sowExternalId"]
+            ? sowLookup.get(r["sowExternalId"]) ?? null
+            : null,
+          rateCardId: r["rateCardExternalId"]
+            ? rcLookup.get(r["rateCardExternalId"]) ?? null
+            : null,
+          rateCardLineId: null,
+          resource: r["resource"] ?? "unknown",
+          role: r["role"] ?? null,
+          seniority: r["seniority"] ?? null,
+          workDate: new Date(r["workDate"]!),
+          hours: Number(r["hours"] ?? "0").toFixed(2),
+          billRateUsd: r["billRateUsd"]
+            ? Number(r["billRateUsd"]).toFixed(4)
+            : null,
+          amountUsd: r["amountUsd"]
+            ? Number(r["amountUsd"]).toFixed(2)
+            : null,
+          description: r["description"] ?? null,
+          sourceSystem: SOURCE,
+          sourceExternalId: r["externalId"]!,
+        }));
+      if (v.length === 0) return 0;
+      const out = await db
+        .insert(timeEntriesTable)
+        .values(v)
+        .onConflictDoUpdate({
+          target: [
+            timeEntriesTable.orgId,
+            timeEntriesTable.sourceSystem,
+            timeEntriesTable.sourceExternalId,
+          ],
+          set: {
+            hours: sql`excluded.hours`,
+            billRateUsd: sql`excluded.bill_rate_usd`,
+            amountUsd: sql`excluded.amount_usd`,
+            workDate: sql`excluded.work_date`,
+            description: sql`excluded.description`,
+            sourceSyncedAt: sql`now()`,
+          },
+        })
+        .returning({ id: timeEntriesTable.id });
       return out.length;
     }
     default: {

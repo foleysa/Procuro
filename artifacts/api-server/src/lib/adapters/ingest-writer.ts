@@ -10,6 +10,16 @@ import {
   invoicesTable,
   paymentsTable,
   shipmentsTable,
+  statementsOfWorkTable,
+  sowMilestonesTable,
+  sowChangeOrdersTable,
+  rateCardsTable,
+  rateCardLinesTable,
+  timeEntriesTable,
+  type ContractType,
+  type SowStatus,
+  type SowMilestoneStatus,
+  type SowChangeOrderStatus,
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { newId } from "../ids";
@@ -170,6 +180,13 @@ export interface IngestPayload {
     code: string;
     name: string;
     class: "direct" | "indirect" | "service";
+    /** UNSPSC code (#214) — optional cross-walk identifier. */
+    unspscCode?: string;
+    /** UNSPSC family (#214) — first 2 segments of the code; auto-derived
+     * from `unspscCode` if omitted. */
+    unspscFamily?: string;
+    /** NAICS code (#214) — optional industry mapping. */
+    naicsCode?: string;
   }>;
   items?: Array<{
     externalId: string;
@@ -192,11 +209,107 @@ export interface IngestPayload {
     referenceIndex?: string;
     billingCurrency?: string;
     annualBaselineUsd?: number;
+    /**
+     * Commercial structure (Task #214). Defaults to `goods` server-side
+     * if omitted so legacy CSV/ERP feeds keep working unchanged. Adapters
+     * that distinguish services contracts (e.g. Coupa) populate this
+     * explicitly.
+     */
+    contractType?: ContractType;
+    /**
+     * `externalId` of the parent MSA contract in the same payload.
+     * Resolved against `contractMap` after the contracts batch upsert,
+     * so MSA + child SOWs in the same upload link correctly even when
+     * row order isn't guaranteed.
+     */
+    msaParentExternalId?: string;
+    /** Optional structured SLA / typed object payload. */
+    serviceLevelTerms?: unknown;
+    /** Optional plain-text acceptance criteria for services contracts. */
+    acceptanceCriteria?: string;
     items: Array<{
       sku: string;
       contractedUnitPriceUsd: number;
       tiers?: { minQty: number; unitPriceUsd: number }[];
     }>;
+  }>;
+  /**
+   * Statements of Work — child agreements under a parent contract (#214).
+   * `contractExternalId` must reference a contract in this payload (or
+   * already-ingested) for the SOW to land; orphan SOWs are dropped with
+   * a warning rather than failing the whole batch.
+   */
+  statementsOfWork?: Array<{
+    externalId: string;
+    sowNumber: string;
+    title: string;
+    contractExternalId: string;
+    supplierExternalId: string;
+    status?: SowStatus;
+    startDate: string;
+    endDate: string;
+    totalValueUsd?: number;
+    billingCurrency?: string;
+    scope?: unknown;
+    acceptanceCriteria?: string;
+    milestones?: Array<{
+      milestoneNumber: number;
+      title: string;
+      description?: string;
+      dueDate?: string;
+      valueUsd?: number;
+      status?: SowMilestoneStatus;
+      deliveredAt?: string;
+      acceptedAt?: string;
+    }>;
+    changeOrders?: Array<{
+      externalId?: string;
+      changeOrderNumber: string;
+      title: string;
+      description?: string;
+      status?: SowChangeOrderStatus;
+      valueDeltaUsd?: number;
+      dateDeltaDays?: number;
+      proposedAt?: string;
+      executedAt?: string;
+    }>;
+  }>;
+  /**
+   * Rate cards (#214). Either `contractExternalId` or `sowExternalId`
+   * must be set so the resolver can attach to the right parent.
+   */
+  rateCards?: Array<{
+    externalId: string;
+    name: string;
+    supplierExternalId: string;
+    contractExternalId?: string;
+    sowExternalId?: string;
+    currency?: string;
+    effectiveDate: string;
+    expiryDate?: string;
+    lines?: Array<{
+      role: string;
+      seniority?: string;
+      hourlyRate?: number;
+      dailyRate?: number;
+      roleCode?: string;
+    }>;
+  }>;
+  /** Time entries (#214) — actuals reported against a SOW/rate card. */
+  timeEntries?: Array<{
+    externalId: string;
+    supplierExternalId: string;
+    contractExternalId?: string;
+    sowExternalId?: string;
+    rateCardExternalId?: string;
+    resource: string;
+    role?: string;
+    seniority?: string;
+    workDate: string;
+    hours: number;
+    billRateUsd?: number;
+    amountUsd?: number;
+    description?: string;
   }>;
   purchaseOrders?: Array<{
     externalId: string;
@@ -303,13 +416,26 @@ export async function writeIngestPayload(
   // 1. Categories.
   const categoryMap = new Map<string, string>();
   if (payload.categories?.length) {
-    const rows = payload.categories.map((c) => ({
-      id: newId("cat"),
-      orgId,
-      code: c.code,
-      name: c.name,
-      class: c.class,
-    }));
+    const rows = payload.categories.map((c) => {
+      // Derive UNSPSC family from full code when caller didn't supply
+      // it explicitly. Family = first 4 chars (= 2 segments) per UNSPSC
+      // hierarchy. Skipped when the code is too short to slice safely.
+      const family =
+        c.unspscFamily ??
+        (c.unspscCode && c.unspscCode.length >= 4
+          ? c.unspscCode.slice(0, 4)
+          : null);
+      return {
+        id: newId("cat"),
+        orgId,
+        code: c.code,
+        name: c.name,
+        class: c.class,
+        unspscCode: c.unspscCode ?? null,
+        unspscFamily: family,
+        naicsCode: c.naicsCode ?? null,
+      };
+    });
     await bulkC(rows, async (chunk) => {
       const inserted = await db
         .insert(categoriesTable)
@@ -319,6 +445,9 @@ export async function writeIngestPayload(
           set: {
             name: sql`excluded.name`,
             class: sql`excluded.class`,
+            unspscCode: sql`coalesce(excluded.unspsc_code, ${categoriesTable.unspscCode})`,
+            unspscFamily: sql`coalesce(excluded.unspsc_family, ${categoriesTable.unspscFamily})`,
+            naicsCode: sql`coalesce(excluded.naics_code, ${categoriesTable.naicsCode})`,
           },
         })
         .returning({ id: categoriesTable.id, code: categoriesTable.code });
@@ -480,6 +609,9 @@ export async function writeIngestPayload(
           : null,
         contractNumber: c.contractNumber,
         title: c.title,
+        contractType: c.contractType ?? "goods",
+        serviceLevelTerms: c.serviceLevelTerms ?? null,
+        acceptanceCriteria: c.acceptanceCriteria ?? null,
         startDate: new Date(c.startDate),
         endDate: new Date(c.endDate),
         paymentTermsDays: c.paymentTermsDays ?? null,
@@ -502,6 +634,9 @@ export async function writeIngestPayload(
           set: {
             title: sql`excluded.title`,
             endDate: sql`excluded.end_date`,
+            contractType: sql`excluded.contract_type`,
+            serviceLevelTerms: sql`excluded.service_level_terms`,
+            acceptanceCriteria: sql`excluded.acceptance_criteria`,
             billingCurrency: sql`excluded.billing_currency`,
             sourceSyncedAt: sql`now()`,
           },
@@ -512,6 +647,25 @@ export async function writeIngestPayload(
         });
       for (const r of inserted) if (r.ext) contractMap.set(r.ext, r.id);
     });
+    // Second pass: link MSA parents now that every contract row has an
+    // id. Needed because both rows can appear in the same batch with
+    // arbitrary order — we resolve `msaParentExternalId` against the
+    // freshly-populated `contractMap` and patch the FK column. Skipped
+    // when no payload row declares a parent.
+    const msaUpdates = payload.contracts
+      .filter((c) => c.msaParentExternalId)
+      .map((c) => ({
+        childExt: c.externalId,
+        parentExt: c.msaParentExternalId!,
+      }))
+      .filter(
+        (u) => contractMap.has(u.childExt) && contractMap.has(u.parentExt),
+      );
+    for (const u of msaUpdates) {
+      await db.execute(
+        sql`UPDATE contracts SET msa_parent_id = ${contractMap.get(u.parentExt)!} WHERE id = ${contractMap.get(u.childExt)!}`,
+      );
+    }
     for (const c of payload.contracts) {
       const cid = contractMap.get(c.externalId);
       if (!cid) continue;
@@ -534,6 +688,304 @@ export async function writeIngestPayload(
     created += payload.contracts.length;
     processed += payload.contracts.length;
     await onProgress?.({ recordsProcessed: processed });
+  }
+
+  await checkpoint();
+
+  // 4b. Statements of Work + milestones + change orders (#214). Must
+  // run after contracts since SOWs FK to `contracts.id`.
+  const sowMap = new Map<string, string>();
+  if (payload.statementsOfWork?.length) {
+    const valid = payload.statementsOfWork.filter(
+      (s) =>
+        contractMap.has(s.contractExternalId) &&
+        supplierMap.has(s.supplierExternalId),
+    );
+    const skipped = payload.statementsOfWork.length - valid.length;
+    if (skipped > 0) {
+      logger.warn(
+        { orgId, skipped, total: payload.statementsOfWork.length },
+        "ingest: dropped SOWs with unresolved contract or supplier",
+      );
+    }
+    if (valid.length > 0) {
+      const rows = valid.map((s) => ({
+        id: newId("sow"),
+        orgId,
+        contractId: contractMap.get(s.contractExternalId)!,
+        supplierId: supplierMap.get(s.supplierExternalId)!,
+        sowNumber: s.sowNumber,
+        title: s.title,
+        status: s.status ?? "active",
+        startDate: new Date(s.startDate),
+        endDate: new Date(s.endDate),
+        totalValueUsd: s.totalValueUsd?.toFixed(2) ?? null,
+        billingCurrency: s.billingCurrency ?? null,
+        scope: s.scope ?? null,
+        acceptanceCriteria: s.acceptanceCriteria ?? null,
+        sourceSystem,
+        sourceExternalId: s.externalId,
+      }));
+      await bulkC(rows, async (chunk) => {
+        const inserted = await db
+          .insert(statementsOfWorkTable)
+          .values(chunk)
+          .onConflictDoUpdate({
+            target: [
+              statementsOfWorkTable.orgId,
+              statementsOfWorkTable.sourceSystem,
+              statementsOfWorkTable.sourceExternalId,
+            ],
+            set: {
+              title: sql`excluded.title`,
+              status: sql`excluded.status`,
+              endDate: sql`excluded.end_date`,
+              totalValueUsd: sql`excluded.total_value_usd`,
+              billingCurrency: sql`excluded.billing_currency`,
+              scope: sql`excluded.scope`,
+              acceptanceCriteria: sql`excluded.acceptance_criteria`,
+              sourceSyncedAt: sql`now()`,
+            },
+          })
+          .returning({
+            id: statementsOfWorkTable.id,
+            ext: statementsOfWorkTable.sourceExternalId,
+          });
+        for (const r of inserted) if (r.ext) sowMap.set(r.ext, r.id);
+      });
+
+      // Milestones — replace-in-place per SOW so re-ingest of the same
+      // SOW with edited milestones reflects the new state without
+      // duplicating rows. Mirrors the contract-items pattern above.
+      for (const s of valid) {
+        const sid = sowMap.get(s.externalId);
+        if (!sid) continue;
+        if (s.milestones && s.milestones.length > 0) {
+          await db.execute(
+            sql`DELETE FROM sow_milestones WHERE sow_id = ${sid}`,
+          );
+          const mRows = s.milestones.map((m) => ({
+            id: newId("sowm"),
+            orgId,
+            sowId: sid,
+            milestoneNumber: m.milestoneNumber,
+            title: m.title,
+            description: m.description ?? null,
+            dueDate: m.dueDate ? new Date(m.dueDate) : null,
+            valueUsd: m.valueUsd?.toFixed(2) ?? null,
+            status: m.status ?? "pending",
+            deliveredAt: m.deliveredAt ? new Date(m.deliveredAt) : null,
+            acceptedAt: m.acceptedAt ? new Date(m.acceptedAt) : null,
+          }));
+          await bulkC(mRows, (chunk) =>
+            db.insert(sowMilestonesTable).values(chunk),
+          );
+        }
+
+        // Change orders — upserted (rather than replaced) since each
+        // change order has its own external id we want to keep stable
+        // across syncs.
+        if (s.changeOrders && s.changeOrders.length > 0) {
+          const coRows = s.changeOrders.map((co) => ({
+            id: newId("sowco"),
+            orgId,
+            sowId: sid,
+            changeOrderNumber: co.changeOrderNumber,
+            title: co.title,
+            description: co.description ?? null,
+            status: co.status ?? "proposed",
+            valueDeltaUsd: co.valueDeltaUsd?.toFixed(2) ?? null,
+            dateDeltaDays: co.dateDeltaDays ?? null,
+            proposedAt: co.proposedAt ? new Date(co.proposedAt) : null,
+            executedAt: co.executedAt ? new Date(co.executedAt) : null,
+            sourceSystem,
+            sourceExternalId:
+              co.externalId ?? `${s.externalId}#${co.changeOrderNumber}`,
+          }));
+          await bulkC(coRows, (chunk) =>
+            db
+              .insert(sowChangeOrdersTable)
+              .values(chunk)
+              .onConflictDoUpdate({
+                target: [
+                  sowChangeOrdersTable.orgId,
+                  sowChangeOrdersTable.sourceSystem,
+                  sowChangeOrdersTable.sourceExternalId,
+                ],
+                set: {
+                  title: sql`excluded.title`,
+                  description: sql`excluded.description`,
+                  status: sql`excluded.status`,
+                  valueDeltaUsd: sql`excluded.value_delta_usd`,
+                  dateDeltaDays: sql`excluded.date_delta_days`,
+                  proposedAt: sql`excluded.proposed_at`,
+                  executedAt: sql`excluded.executed_at`,
+                },
+              }),
+          );
+        }
+      }
+      created += valid.length;
+      processed += valid.length;
+      await onProgress?.({ recordsProcessed: processed });
+    }
+  }
+
+  await checkpoint();
+
+  // 4c. Rate cards + lines (#214). Belong with services contracts so
+  // they live alongside the contract/SOW write block.
+  const rateCardMap = new Map<string, string>();
+  if (payload.rateCards?.length) {
+    const valid = payload.rateCards.filter(
+      (rc) =>
+        supplierMap.has(rc.supplierExternalId) &&
+        // Either a contract or a SOW must resolve. Orphan rate cards are
+        // dropped with a warning so a typo upstream doesn't silently
+        // attach the rate to nothing.
+        ((rc.contractExternalId && contractMap.has(rc.contractExternalId)) ||
+          (rc.sowExternalId && sowMap.has(rc.sowExternalId))),
+    );
+    const skipped = payload.rateCards.length - valid.length;
+    if (skipped > 0) {
+      logger.warn(
+        { orgId, skipped, total: payload.rateCards.length },
+        "ingest: dropped rate cards with unresolved parent contract/sow/supplier",
+      );
+    }
+    if (valid.length > 0) {
+      const rows = valid.map((rc) => ({
+        id: newId("rc"),
+        orgId,
+        contractId: rc.contractExternalId
+          ? contractMap.get(rc.contractExternalId) ?? null
+          : null,
+        sowId: rc.sowExternalId ? sowMap.get(rc.sowExternalId) ?? null : null,
+        supplierId: supplierMap.get(rc.supplierExternalId)!,
+        name: rc.name,
+        currency: rc.currency ?? "USD",
+        effectiveDate: new Date(rc.effectiveDate),
+        expiryDate: rc.expiryDate ? new Date(rc.expiryDate) : null,
+        sourceSystem,
+        sourceExternalId: rc.externalId,
+      }));
+      await bulkC(rows, async (chunk) => {
+        const inserted = await db
+          .insert(rateCardsTable)
+          .values(chunk)
+          .onConflictDoUpdate({
+            target: [
+              rateCardsTable.orgId,
+              rateCardsTable.sourceSystem,
+              rateCardsTable.sourceExternalId,
+            ],
+            set: {
+              name: sql`excluded.name`,
+              currency: sql`excluded.currency`,
+              effectiveDate: sql`excluded.effective_date`,
+              expiryDate: sql`excluded.expiry_date`,
+              sourceSyncedAt: sql`now()`,
+            },
+          })
+          .returning({
+            id: rateCardsTable.id,
+            ext: rateCardsTable.sourceExternalId,
+          });
+        for (const r of inserted) if (r.ext) rateCardMap.set(r.ext, r.id);
+      });
+
+      // Replace-in-place lines so a re-ingest of the same rate card
+      // with new role rows reflects the new state without duplicates.
+      for (const rc of valid) {
+        const rcid = rateCardMap.get(rc.externalId);
+        if (!rcid) continue;
+        if (!rc.lines || rc.lines.length === 0) continue;
+        await db.execute(
+          sql`DELETE FROM rate_card_lines WHERE rate_card_id = ${rcid}`,
+        );
+        const lineRows = rc.lines.map((ln) => ({
+          id: newId("rcl"),
+          orgId,
+          rateCardId: rcid,
+          role: ln.role,
+          seniority: ln.seniority ?? null,
+          hourlyRate: ln.hourlyRate?.toFixed(4) ?? null,
+          dailyRate: ln.dailyRate?.toFixed(4) ?? null,
+          roleCode: ln.roleCode ?? null,
+        }));
+        await bulkC(lineRows, (chunk) =>
+          db.insert(rateCardLinesTable).values(chunk),
+        );
+      }
+      created += valid.length;
+      processed += valid.length;
+      await onProgress?.({ recordsProcessed: processed });
+    }
+  }
+
+  await checkpoint();
+
+  // 4d. Time entries (#214). Drops rows with unresolved supplier so a
+  // bad ID doesn't fail the whole upload; rate-card / sow / contract
+  // FK fields fall back to null so the entry still lands.
+  if (payload.timeEntries?.length) {
+    const valid = payload.timeEntries.filter((t) =>
+      supplierMap.has(t.supplierExternalId),
+    );
+    const skipped = payload.timeEntries.length - valid.length;
+    if (skipped > 0) {
+      logger.warn(
+        { orgId, skipped, total: payload.timeEntries.length },
+        "ingest: dropped time entries with unresolved supplier",
+      );
+    }
+    if (valid.length > 0) {
+      const rows = valid.map((t) => ({
+        id: newId("te"),
+        orgId,
+        supplierId: supplierMap.get(t.supplierExternalId)!,
+        contractId: t.contractExternalId
+          ? contractMap.get(t.contractExternalId) ?? null
+          : null,
+        sowId: t.sowExternalId ? sowMap.get(t.sowExternalId) ?? null : null,
+        rateCardId: t.rateCardExternalId
+          ? rateCardMap.get(t.rateCardExternalId) ?? null
+          : null,
+        rateCardLineId: null,
+        resource: t.resource,
+        role: t.role ?? null,
+        seniority: t.seniority ?? null,
+        workDate: new Date(t.workDate),
+        hours: t.hours.toFixed(2),
+        billRateUsd: t.billRateUsd?.toFixed(4) ?? null,
+        amountUsd: t.amountUsd?.toFixed(2) ?? null,
+        description: t.description ?? null,
+        sourceSystem,
+        sourceExternalId: t.externalId,
+      }));
+      await bulkC(rows, (chunk) =>
+        db
+          .insert(timeEntriesTable)
+          .values(chunk)
+          .onConflictDoUpdate({
+            target: [
+              timeEntriesTable.orgId,
+              timeEntriesTable.sourceSystem,
+              timeEntriesTable.sourceExternalId,
+            ],
+            set: {
+              hours: sql`excluded.hours`,
+              billRateUsd: sql`excluded.bill_rate_usd`,
+              amountUsd: sql`excluded.amount_usd`,
+              description: sql`excluded.description`,
+              sourceSyncedAt: sql`now()`,
+            },
+          }),
+      );
+      created += valid.length;
+      processed += valid.length;
+      await onProgress?.({ recordsProcessed: processed });
+    }
   }
 
   await checkpoint();

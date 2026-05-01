@@ -191,6 +191,133 @@ function classFromCommodity(
   return spendClassFromCommodity(commodity);
 }
 
+/**
+ * Map a Coupa commodity → one of our canonical category codes from
+ * `lib/db/seeds/taxonomy.sql` (Task #214). Pattern-matches on the
+ * commodity name first (more reliable than Coupa's free-form `code`).
+ *
+ * Returns `null` when no confident mapping exists; the caller is
+ * expected to fall back to its existing classification flow (which
+ * eventually surfaces the row as `INDIRECT_OTHER`).
+ *
+ * Kept conservative on purpose — false-positive category mappings
+ * are worse than misses because they pin a contract to the wrong
+ * band and route it to the wrong levers.
+ */
+export function categoryCodeFromCommodity(
+  commodity: CoupaPoLine["commodity"],
+): string | null {
+  const name = (commodity?.name ?? "").toLowerCase();
+  if (!name) return null;
+
+  // Professional services
+  if (/\blegal\b|law firm|outside counsel/.test(name)) return "PROF_LEGAL";
+  if (/\baudit\b|tax advisory|big four/.test(name)) return "PROF_AUDIT_TAX";
+  if (/strategy consulting|management consult/.test(name))
+    return "PROF_CONSULTING_STRATEGY";
+  if (/operations consulting|process consulting|implementation/.test(name))
+    return "PROF_CONSULTING_OPS";
+  if (/m&a|investment bank|transaction advisor/.test(name))
+    return "PROF_M_AND_A_ADVISORY";
+  if (/consulting/.test(name)) return "PROF_CONSULTING_OPS";
+
+  // IT services / SaaS
+  if (/\bsaas\b|software as a service|cloud subscription/.test(name))
+    return "IT_SAAS";
+  if (/managed service|\bmsp\b/.test(name)) return "IT_MANAGED_SERVICES";
+  if (/cyber|infosec|security service/.test(name)) return "IT_CYBER";
+  if (/help desk|service desk|it support/.test(name)) return "IT_HELP_DESK";
+  if (/application development|software development|custom software/.test(name))
+    return "IT_APP_DEV";
+  if (/datacenter|cloud infrastructure|it infrastructure/.test(name))
+    return "IT_INFRA";
+
+  // HR / contingent
+  if (/staff aug|temp labor|temp staffing|contingent labor|staffing agency/.test(name))
+    return "HR_CONTINGENT_LABOR";
+  if (/recruit|talent acquisition|executive search/.test(name))
+    return "HR_RECRUITING";
+  if (/training|learning & development|\bl&d\b/.test(name))
+    return "HR_TRAINING";
+  if (/payroll|benefits administration/.test(name))
+    return "HR_PAYROLL_BENEFITS";
+
+  // Marketing
+  if (/martech|marketing automation/.test(name))
+    return "MKT_MARTECH_SAAS";
+  if (/media buying|programmatic ad/.test(name)) return "MKT_MEDIA_BUYING";
+  if (/public relations|\bpr agency\b/.test(name)) return "MKT_PR";
+  if (/trade show|event/.test(name)) return "MKT_EVENTS_TRADE_SHOWS";
+  if (/market research|consumer insight/.test(name)) return "MKT_RESEARCH";
+  if (/creative agency|ad agency|brand agency/.test(name))
+    return "MKT_AGENCY_CREATIVE";
+
+  // Facilities
+  if (/janitorial|cleaning service|facility cleaning/.test(name))
+    return "FAC_JANITORIAL";
+  if (/security guard|physical security/.test(name)) return "FAC_SECURITY";
+  if (/landscaping|grounds maintenance/.test(name)) return "FAC_LANDSCAPING";
+  if (/cafeteria|catering/.test(name)) return "FAC_CATERING";
+  if (/building maintenance|hvac/.test(name)) return "FAC_MAINTENANCE";
+  if (/lease|property rent|office rent/.test(name)) return "FAC_LEASES";
+  if (/utilit|water & sewer|waste disposal/.test(name)) return "FAC_UTILITIES";
+
+  // Logistics
+  if (/ocean freight|\bfcl\b|\blcl\b/.test(name)) return "LOG_FREIGHT_OCEAN";
+  if (/air freight|airfreight/.test(name)) return "LOG_FREIGHT_AIR";
+  if (/last mile|final mile/.test(name)) return "LOG_LAST_MILE";
+  if (/customs broker/.test(name)) return "LOG_CUSTOMS_BROKERAGE";
+  if (/parcel|express shipping/.test(name)) return "LOG_PARCEL";
+  if (/3pl/.test(name)) return "LOG_3PL";
+
+  // Telecom
+  if (/wireless|cellular/.test(name)) return "TEL_WIRELESS";
+  if (/conferencing/.test(name)) return "TEL_CONFERENCING";
+  if (/network service|\bwan\b|\bmpls\b/.test(name)) return "TEL_NETWORK";
+
+  // Travel
+  if (/travel management|\btmc\b/.test(name)) return "TRV_TMC";
+  if (/airfare|corporate air/.test(name)) return "TRV_AIR";
+  if (/hotel|lodging/.test(name)) return "TRV_HOTEL";
+  if (/car rental|rideshare|ground transport/.test(name)) return "TRV_GROUND";
+
+  // Financial
+  if (/insurance/.test(name)) return "FIN_INSURANCE";
+  if (/treasury|cash management/.test(name)) return "FIN_TREASURY";
+  if (/external audit|statutory audit/.test(name)) return "FIN_AUDIT_EXTERNAL";
+  if (/banking|bank fee/.test(name)) return "FIN_BANKING";
+
+  // Engineering
+  if (/r&d|research & development/.test(name)) return "ENG_RND";
+  if (/engineering design|product design/.test(name)) return "ENG_DESIGN";
+  if (/testing & certification|quality certif/.test(name))
+    return "ENG_TESTING_CERT";
+
+  return null;
+}
+
+/**
+ * Infer the contract commercial structure (Task #214) from Coupa's free-form
+ * commodity name + the contract's payment terms shape. Defaults to `goods`
+ * for any contract we can't confidently classify so the back-compatible
+ * default is preserved.
+ */
+function contractTypeFromCoupa(
+  c: CoupaContract,
+): "goods" | "t_and_m" | "fixed_price" | "milestone" | "retainer" | "outcome" {
+  const name = (c.name ?? "").toLowerCase();
+  if (/retainer|monthly fee/.test(name)) return "retainer";
+  if (/outcome|success fee|gain.?share/.test(name)) return "outcome";
+  if (/milestone|deliverable/.test(name)) return "milestone";
+  if (/time & material|t&m|hourly/.test(name)) return "t_and_m";
+  if (/fixed price|lump sum|fixed fee/.test(name)) return "fixed_price";
+  // Service-flavored consulting / staffing without explicit T&M wording
+  // tends to be T&M in practice.
+  if (/consult|staff|advisor|managed service|sow/.test(name))
+    return "t_and_m";
+  return "goods";
+}
+
 // ---------- Mappers --------------------------------------------------
 
 type SupplierItem = NonNullable<IngestPayload["suppliers"]>[number];
@@ -233,6 +360,9 @@ export function mapContract(
     paymentTermsDays: c.paymentTerms?.netDays ?? undefined,
     billingCurrency: c.totalValue?.currencyCode ?? undefined,
     annualBaselineUsd: num(c.totalValue?.value, 0),
+    // Task #214 — pre-populate the commercial structure so downstream
+    // analyzers (T&M utilization, milestone burn-down) can scope.
+    contractType: contractTypeFromCoupa(c),
     items: [],
   };
 }
@@ -386,4 +516,6 @@ export function buildIngestPayload(
 export const _testHelpers = {
   classFromCommodity,
   normalizeInvoiceStatus,
+  categoryCodeFromCommodity,
+  contractTypeFromCoupa,
 };

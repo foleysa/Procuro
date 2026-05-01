@@ -24,4 +24,8 @@ export const IngestCsvStreamEntity = {
   invoices: "invoices",
   payments: "payments",
   shipments: "shipments",
+  statements_of_work: "statements_of_work",
+  rate_cards: "rate_cards",
+  rate_card_lines: "rate_card_lines",
+  time_entries: "time_entries",
 } as const;

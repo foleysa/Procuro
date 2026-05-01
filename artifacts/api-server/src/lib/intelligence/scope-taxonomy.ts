@@ -53,6 +53,80 @@ export const CANONICAL_CATEGORY_CODES = [
   "RAIL_FREIGHT",
   "WAREHOUSING_STORAGE",
   "FREIGHT_BROKERAGE",
+
+  // ─── Services-side codes (Task #214) ───────────────────────────────
+  // Each tower below carries 3-7 sub-codes covering the bulk of F500
+  // services spend. Band assignments live in `lib/db/seeds/taxonomy.sql`
+  // (see Task #214 step 8). Once Task #3 collectors emit signals scoped
+  // to these codes, routing fires automatically via `category_bands`.
+
+  // Professional Services
+  "PROF_CONSULTING_STRATEGY",
+  "PROF_CONSULTING_OPS",
+  "PROF_LEGAL",
+  "PROF_AUDIT_TAX",
+  "PROF_M_AND_A_ADVISORY",
+
+  // IT / SaaS
+  "IT_APP_DEV",
+  "IT_INFRA",
+  "IT_CYBER",
+  "IT_SAAS",
+  "IT_MANAGED_SERVICES",
+  "IT_HELP_DESK",
+
+  // HR / Contingent Labor
+  "HR_CONTINGENT_LABOR",
+  "HR_RECRUITING",
+  "HR_TRAINING",
+  "HR_PAYROLL_BENEFITS",
+
+  // Marketing & Creative
+  "MKT_AGENCY_CREATIVE",
+  "MKT_MEDIA_BUYING",
+  "MKT_PR",
+  "MKT_EVENTS_TRADE_SHOWS",
+  "MKT_RESEARCH",
+  "MKT_MARTECH_SAAS",
+
+  // Facilities
+  "FAC_JANITORIAL",
+  "FAC_SECURITY",
+  "FAC_MAINTENANCE",
+  "FAC_LANDSCAPING",
+  "FAC_CATERING",
+  "FAC_LEASES",
+  "FAC_UTILITIES",
+
+  // Logistics (extended — existing freight/warehousing codes above stay)
+  "LOG_FREIGHT_OCEAN",
+  "LOG_FREIGHT_AIR",
+  "LOG_LAST_MILE",
+  "LOG_3PL",
+  "LOG_CUSTOMS_BROKERAGE",
+  "LOG_PARCEL",
+
+  // Telecom
+  "TEL_NETWORK",
+  "TEL_WIRELESS",
+  "TEL_CONFERENCING",
+
+  // Travel & Expense
+  "TRV_TMC",
+  "TRV_AIR",
+  "TRV_HOTEL",
+  "TRV_GROUND",
+
+  // Financial Services
+  "FIN_BANKING",
+  "FIN_INSURANCE",
+  "FIN_TREASURY",
+  "FIN_AUDIT_EXTERNAL",
+
+  // Engineering Services
+  "ENG_RND",
+  "ENG_DESIGN",
+  "ENG_TESTING_CERT",
 ] as const;
 export type CanonicalCategoryCode = (typeof CANONICAL_CATEGORY_CODES)[number];
 

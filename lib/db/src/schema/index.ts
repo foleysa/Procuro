@@ -10,6 +10,8 @@ export * from "./suppliers";
 export * from "./supplierAuditLog";
 export * from "./contracts";
 export * from "./contractAuditLog";
+export * from "./statementsOfWork";
+export * from "./rateCards";
 export * from "./alerts";
 export * from "./purchaseOrders";
 export * from "./invoices";

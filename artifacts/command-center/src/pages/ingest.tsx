@@ -39,7 +39,12 @@ type EntityKey =
   | "purchaseOrderLines"
   | "invoices"
   | "payments"
-  | "shipments";
+  | "shipments"
+  // Task #214 — services taxonomy entities (streaming-only).
+  | "statementsOfWork"
+  | "rateCards"
+  | "rateCardLines"
+  | "timeEntries";
 
 interface EntityDef {
   key: EntityKey;
@@ -82,6 +87,13 @@ const STREAM_ENTITY_FOR: Record<EntityKey, IngestCsvStreamEntity | null> = {
   invoices: "invoices",
   payments: "payments",
   shipments: "shipments",
+  // Task #214 — all four are streaming-only because their nested children
+  // (sow milestones, rate-card lines tied to a specific card) are surfaced
+  // as their own row-by-row entities below.
+  statementsOfWork: "statements_of_work",
+  rateCards: "rate_cards",
+  rateCardLines: "rate_card_lines",
+  timeEntries: "time_entries",
 };
 
 /**
@@ -93,6 +105,11 @@ const STREAM_ENTITY_FOR: Record<EntityKey, IngestCsvStreamEntity | null> = {
  */
 const STREAM_ONLY: ReadonlySet<EntityKey> = new Set<EntityKey>([
   "purchaseOrderLines",
+  // Task #214 — services entities are streaming-only.
+  "statementsOfWork",
+  "rateCards",
+  "rateCardLines",
+  "timeEntries",
 ]);
 
 function formatBytes(n: number): string {
@@ -600,6 +617,135 @@ const ENTITIES: EntityDef[] = [
         spendClass: "indirect",
         uom: "EA",
         orderDate: "2024-01-15",
+      },
+    ],
+  },
+  // ── Task #214 — services taxonomy entities (streaming-only). ─────────
+  {
+    key: "statementsOfWork",
+    label: "Statements of Work",
+    description:
+      "Streaming-only. SOWs hang off a parent MSA contract; carry the engagement-level scope, value, and dates.",
+    required: [
+      "externalId",
+      "contractExternalId",
+      "supplierExternalId",
+      "sowNumber",
+      "title",
+      "startDate",
+      "endDate",
+    ],
+    optional: [
+      "status",
+      "totalValueUsd",
+      "billingCurrency",
+      "acceptanceCriteria",
+    ],
+    toPayload: () => [],
+    examples: [
+      {
+        externalId: "SOW-001",
+        contractExternalId: "MSA-001",
+        supplierExternalId: "SUP-001",
+        sowNumber: "SOW-2025-001",
+        title: "Q1 implementation services",
+        startDate: "2025-01-01",
+        endDate: "2025-06-30",
+        status: "active",
+        totalValueUsd: "250000.00",
+        billingCurrency: "USD",
+        acceptanceCriteria: "Final deliverables accepted by client PM.",
+      },
+    ],
+  },
+  {
+    key: "rateCards",
+    label: "Rate Cards",
+    description:
+      "Streaming-only. Labor-rate matrix anchored to a contract or SOW. Upload rate-card lines separately.",
+    required: [
+      "externalId",
+      "supplierExternalId",
+      "name",
+      "effectiveDate",
+    ],
+    optional: [
+      "contractExternalId",
+      "sowExternalId",
+      "currency",
+      "expiryDate",
+    ],
+    toPayload: () => [],
+    examples: [
+      {
+        externalId: "RC-001",
+        supplierExternalId: "SUP-001",
+        name: "FY25 Standard Rates",
+        effectiveDate: "2025-01-01",
+        contractExternalId: "MSA-001",
+        sowExternalId: "",
+        currency: "USD",
+        expiryDate: "2025-12-31",
+      },
+    ],
+  },
+  {
+    key: "rateCardLines",
+    label: "Rate Card Lines",
+    description:
+      "Streaming-only. Role × seniority × rate. Upload after the parent rate card.",
+    required: ["rateCardExternalId", "role"],
+    optional: ["seniority", "hourlyRate", "dailyRate", "roleCode"],
+    toPayload: () => [],
+    examples: [
+      {
+        rateCardExternalId: "RC-001",
+        role: "Consultant",
+        seniority: "senior",
+        hourlyRate: "275.0000",
+        dailyRate: "2200.0000",
+        roleCode: "CONS-SR",
+      },
+    ],
+  },
+  {
+    key: "timeEntries",
+    label: "Time Entries",
+    description:
+      "Streaming-only. Resource time actuals — drives T&M utilization and burn-rate analyzers.",
+    required: [
+      "externalId",
+      "supplierExternalId",
+      "resource",
+      "workDate",
+      "hours",
+    ],
+    optional: [
+      "contractExternalId",
+      "sowExternalId",
+      "rateCardExternalId",
+      "role",
+      "seniority",
+      "billRateUsd",
+      "amountUsd",
+      "description",
+    ],
+    toPayload: () => [],
+    examples: [
+      {
+        externalId: "TE-001",
+        supplierExternalId: "SUP-001",
+        resource: "Jane Smith",
+        workDate: "2025-03-10",
+        hours: "8.00",
+        contractExternalId: "MSA-001",
+        sowExternalId: "SOW-001",
+        rateCardExternalId: "RC-001",
+        role: "Consultant",
+        seniority: "senior",
+        billRateUsd: "275.0000",
+        amountUsd: "2200.00",
+        description: "Discovery workshops with finance team.",
       },
     ],
   },
