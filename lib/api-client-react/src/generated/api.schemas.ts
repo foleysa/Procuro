@@ -3527,7 +3527,13 @@ export const TodayFeedItemSeverity = {
 } as const;
 
 export interface TodayFeedItem {
-  /** Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending). */
+  /** Logical category of this feed item. Today aggregator emits:
+`alerts.summary`, `opportunities.proposed`, `jobs.failed`,
+`approvals.pending`, `funnel.auto_annotations` (substrate
+stage_drop/spike annotations from #185), and
+`funnel.conversion_deltas` (per-transition conversion-rate
+diff between the two most recent funnel snapshots).
+ */
   kind: string;
   /** Name of the underlying handler that produced this item (e.g. getAlertsSummary). */
   source: string;

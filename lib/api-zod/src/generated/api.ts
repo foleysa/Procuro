@@ -6283,7 +6283,7 @@ export const GetTodayFeedResponse = zod.object({
       kind: zod
         .string()
         .describe(
-          "Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending).",
+          "Logical category of this feed item. Today aggregator emits:\n`alerts.summary`, `opportunities.proposed`, `jobs.failed`,\n`approvals.pending`, `funnel.auto_annotations` (substrate\nstage_drop\/spike annotations from #185), and\n`funnel.conversion_deltas` (per-transition conversion-rate\ndiff between the two most recent funnel snapshots).\n",
         ),
       source: zod
         .string()
@@ -6341,7 +6341,7 @@ export const GetOperationsHealthResponse = zod.object({
       kind: zod
         .string()
         .describe(
-          "Logical category of this feed item (e.g. alerts.summary, opportunities.proposed, jobs.failed, approvals.pending).",
+          "Logical category of this feed item. Today aggregator emits:\n`alerts.summary`, `opportunities.proposed`, `jobs.failed`,\n`approvals.pending`, `funnel.auto_annotations` (substrate\nstage_drop\/spike annotations from #185), and\n`funnel.conversion_deltas` (per-transition conversion-rate\ndiff between the two most recent funnel snapshots).\n",
         ),
       source: zod
         .string()

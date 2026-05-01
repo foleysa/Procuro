@@ -947,3 +947,226 @@ export async function backfillFunnelSnapshotsForAllTenants(opts: {
   }
   return reports;
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Today-feed readers (task #204)
+//
+// Thin per-tenant queries that surface substrate state on the operator's
+// landing page. Both readers are read-only, return plain JSON-friendly
+// shapes, and never throw on "no data" — the Today aggregator wraps each
+// in its `safe()` helper so a reader-level exception still degrades the
+// feed to `partial=true` rather than failing the response.
+// ────────────────────────────────────────────────────────────────────────
+
+export interface RecentAutoAnnotation {
+  id: string;
+  snapshotId: string;
+  cycleGeneration: number;
+  kind: string;
+  targetStage: string | null;
+  targetLeverId: string | null;
+  summary: string;
+  createdAt: string;
+  ackedAt: string | null;
+}
+
+/**
+ * Most-recent auto annotations for a tenant, ordered newest first.
+ * Joined to `funnel_snapshots` so the Today card can show "what cycle
+ * fired this" alongside the human summary. Capped at `limit` (default
+ * 10) so a noisy detector can't blow up the feed payload.
+ *
+ * Operator annotations are excluded — the daily flow card is for
+ * substrate-emitted "what changed since yesterday" deltas, not free-form
+ * notes (which live on the engine page where the operator wrote them).
+ */
+export async function getRecentAutoAnnotations(
+  orgId: string,
+  opts: { limit?: number } = {},
+): Promise<RecentAutoAnnotation[]> {
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
+  const rows = await db
+    .select({
+      id: funnelAnnotationsTable.id,
+      snapshotId: funnelAnnotationsTable.snapshotId,
+      kind: funnelAnnotationsTable.kind,
+      targetStage: funnelAnnotationsTable.targetStage,
+      targetLeverId: funnelAnnotationsTable.targetLeverId,
+      summary: funnelAnnotationsTable.summary,
+      createdAt: funnelAnnotationsTable.createdAt,
+      ackedAt: funnelAnnotationsTable.ackedAt,
+      cycleGeneration: funnelSnapshotsTable.cycleGeneration,
+    })
+    .from(funnelAnnotationsTable)
+    .innerJoin(
+      funnelSnapshotsTable,
+      and(
+        eq(funnelAnnotationsTable.snapshotId, funnelSnapshotsTable.id),
+        // Defense-in-depth: require the joined snapshot to belong to the
+        // same org. Annotations already carry org_id, but this prevents
+        // any cross-tenant leak if a row's org_id were ever wrong.
+        eq(funnelSnapshotsTable.orgId, orgId),
+      ),
+    )
+    .where(
+      and(
+        eq(funnelAnnotationsTable.orgId, orgId),
+        eq(funnelAnnotationsTable.source, "auto"),
+      ),
+    )
+    .orderBy(desc(funnelAnnotationsTable.createdAt))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    id: r.id,
+    snapshotId: r.snapshotId,
+    cycleGeneration: r.cycleGeneration,
+    kind: r.kind,
+    targetStage: r.targetStage,
+    targetLeverId: r.targetLeverId,
+    summary: r.summary,
+    createdAt: r.createdAt.toISOString(),
+    ackedAt: r.ackedAt ? r.ackedAt.toISOString() : null,
+  }));
+}
+
+/** Conversion-rate transitions we surface on the Today delta card. */
+const CONVERSION_TRANSITIONS: Array<[string, string, string]> = [
+  ["drafts→post_exclusion", "drafts_produced", "drafts_post_exclusion"],
+  ["post_exclusion→persisted", "drafts_post_exclusion", "opps_persisted"],
+  ["persisted→approved_30d", "opps_persisted", "opps_approved_30d"],
+  ["approved_30d→realized_30d", "opps_approved_30d", "opps_realized_30d"],
+];
+
+export interface ConversionRateDelta {
+  transition: string;
+  numeratorStage: string;
+  denominatorStage: string;
+  /** Rate as a 0..1 fraction. `null` when the denominator was 0. */
+  prevRate: number | null;
+  currentRate: number | null;
+  /**
+   * `currentRate - prevRate`. `null` when either side is `null`. Negative
+   * means the funnel got worse this cycle, positive means it improved.
+   */
+  delta: number | null;
+}
+
+export interface ConversionRateDeltasResult {
+  /** ISO timestamp of the most recent snapshot's cycle (or null if none). */
+  currentCycleAt: string | null;
+  currentCycleGeneration: number | null;
+  prevCycleAt: string | null;
+  prevCycleGeneration: number | null;
+  /** Sorted by absolute delta descending; transitions with no delta come last. */
+  transitions: ConversionRateDelta[];
+}
+
+/**
+ * Per-cycle conversion-rate deltas between the two most recent funnel
+ * snapshots for a tenant. Powers the Today "what changed since last
+ * cycle" card.
+ *
+ * Returns an empty `transitions` array when the tenant has fewer than
+ * two snapshots — the UI renders an "insufficient history" hint rather
+ * than treating the empty case as a hard error. Transitions where the
+ * denominator was 0 in either cycle surface as `null` rates so the UI
+ * can distinguish "no change" from "no signal."
+ */
+export async function getCycleConversionRateDeltas(
+  orgId: string,
+): Promise<ConversionRateDeltasResult> {
+  const rows = await db
+    .select({
+      stages: funnelSnapshotsTable.stages,
+      cycleGeneration: funnelSnapshotsTable.cycleGeneration,
+      createdAt: funnelSnapshotsTable.createdAt,
+    })
+    .from(funnelSnapshotsTable)
+    .where(eq(funnelSnapshotsTable.orgId, orgId))
+    .orderBy(desc(funnelSnapshotsTable.cycleGeneration))
+    .limit(2);
+
+  const empty: ConversionRateDeltasResult = {
+    currentCycleAt: null,
+    currentCycleGeneration: null,
+    prevCycleAt: null,
+    prevCycleGeneration: null,
+    transitions: [],
+  };
+  if (rows.length === 0) return empty;
+  const current = rows[0]!;
+  const prev = rows[1] ?? null;
+
+  if (!prev) {
+    return {
+      currentCycleAt: current.createdAt.toISOString(),
+      currentCycleGeneration: current.cycleGeneration,
+      prevCycleAt: null,
+      prevCycleGeneration: null,
+      transitions: [],
+    };
+  }
+
+  const rateOf = (
+    stages: Record<string, unknown>,
+    numKey: string,
+    denKey: string,
+  ): number | null => {
+    const num = Number(
+      (stages?.[numKey] as { count?: number } | undefined)?.count ?? 0,
+    );
+    const den = Number(
+      (stages?.[denKey] as { count?: number } | undefined)?.count ?? 0,
+    );
+    if (!isFinite(num) || !isFinite(den)) return null;
+    if (den === 0) return null;
+    return num / den;
+  };
+
+  const transitions: ConversionRateDelta[] = CONVERSION_TRANSITIONS.map(
+    ([name, denStage, numStage]) => {
+      const currRate = rateOf(
+        current.stages as Record<string, unknown>,
+        numStage,
+        denStage,
+      );
+      const prevRate = rateOf(
+        prev.stages as Record<string, unknown>,
+        numStage,
+        denStage,
+      );
+      const delta =
+        currRate === null || prevRate === null ? null : currRate - prevRate;
+      return {
+        transition: name,
+        numeratorStage: numStage,
+        denominatorStage: denStage,
+        prevRate: prevRate === null ? null : round4(prevRate),
+        currentRate: currRate === null ? null : round4(currRate),
+        delta: delta === null ? null : round4(delta),
+      };
+    },
+  );
+
+  // Largest absolute movement first; null deltas sink to the bottom so
+  // the operator sees real changes before "no signal" rows.
+  transitions.sort((a, b) => {
+    const aHas = a.delta !== null;
+    const bHas = b.delta !== null;
+    if (aHas && !bHas) return -1;
+    if (!aHas && bHas) return 1;
+    if (!aHas && !bHas) return 0;
+    return Math.abs(b.delta!) - Math.abs(a.delta!);
+  });
+
+  return {
+    currentCycleAt: current.createdAt.toISOString(),
+    currentCycleGeneration: current.cycleGeneration,
+    prevCycleAt: prev.createdAt.toISOString(),
+    prevCycleGeneration: prev.cycleGeneration,
+    transitions,
+  };
+}
+
+const round4 = (n: number) => Math.round(n * 10000) / 10000;

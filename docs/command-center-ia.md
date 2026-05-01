@@ -40,6 +40,28 @@ Old `/` content (the Command Center dashboard) is preserved at
 `/dashboard` (renamed analytics page). Today is now the canonical
 landing at `/`.
 
+### Choice (β) status: **shipped (#204).**
+
+The substrate-driven Today follow-up landed. The Today aggregator now
+joins two more sources alongside the original four:
+
+- `funnel.auto_annotations` — recent `stage_drop`/`stage_spike`
+  annotations emitted by `detectAndAnnotateDeltas`. Operator notes
+  are excluded; the Today card is for substrate-emitted deltas.
+- `funnel.conversion_deltas` — per-transition conversion-rate diff
+  between the two most recent funnel snapshots
+  (drafts→post_exclusion, post_exclusion→persisted,
+  persisted→approved_30d, approved_30d→realized_30d).
+
+Both flow through thin readers in
+`artifacts/api-server/src/lib/ooda/funnel.ts`
+(`getRecentAutoAnnotations`, `getCycleConversionRateDeltas`) and are
+wrapped in the existing `safe()` helper so a reader-level failure still
+degrades the feed to `partial=true` rather than failing the response.
+The Today UI renders them as a single "What changed since last cycle"
+card below the four triage cards, with explicit empty states for
+"insufficient history" so silence is distinguishable from an error.
+
 ## Friendlier funnel path (step 6)
 
 Funnel substrate friendlier path: **`/engine`** (UI route).

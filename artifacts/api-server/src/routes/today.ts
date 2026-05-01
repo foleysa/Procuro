@@ -1,5 +1,5 @@
 /**
- * Today aggregator (#199, step 4 path b).
+ * Today aggregator (#199 step 4 path b, extended in #204).
  *
  * Thin server-side composition of existing handlers into a single
  * landing feed for the operator's morning. Per-source failures are
@@ -7,15 +7,27 @@
  * failing the whole response — the daily flow must not stop because
  * one upstream source is down.
  *
+ * Six sources today, each contributing one feed item by `kind`:
+ *   1. `alerts.summary`             — open critical/high alert counts
+ *   2. `opportunities.proposed`     — top proposed-bucket savings
+ *   3. `jobs.failed`                — last-24h failed jobs
+ *   4. `approvals.pending`          — count of pending approvals
+ *   5. `funnel.auto_annotations`    — recent stage_drop/spike annotations
+ *      from the funnel substrate (#185)
+ *   6. `funnel.conversion_deltas`   — per-transition conversion-rate
+ *      diff between the two most recent funnel snapshots
+ *
  * No persistence; per-request cache only. Each call hits the database
- * fresh. The substrate-driven Today (auto-annotations + conversion-rate
- * deltas) is a follow-up that lights up once those substrate endpoints
- * exist (#185 readiness review).
+ * fresh.
  */
 import { Router, type IRouter, type Request } from "express";
 import { db, alertsTable, opportunitiesTable, jobsTable } from "@workspace/db";
 import { and, eq, desc, gte, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import {
+  getRecentAutoAnnotations,
+  getCycleConversionRateDeltas,
+} from "../lib/ooda/funnel";
 
 type FeedItem = {
   kind: string;
@@ -175,6 +187,53 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
         payload: { pending: n },
         occurredAt: now.toISOString(),
         severity: "info",
+      });
+    },
+    errors,
+  );
+
+  // 5. Recent auto-annotations from the funnel substrate (#185 → #204).
+  // These are "what changed since yesterday" deltas the substrate's
+  // delta detector emitted post-snapshot. Operator notes are excluded —
+  // the today feed is for substrate-emitted signals, not free-form
+  // engine-page commentary.
+  await safe(
+    "funnelAutoAnnotations",
+    async () => {
+      const annotations = await getRecentAutoAnnotations(orgId, { limit: 10 });
+      // `stage_drop` is operator-meaningful (the funnel got worse) so we
+      // surface it as `warn`; spikes and other kinds are informational.
+      const hasDrop = annotations.some((a) => a.kind === "stage_drop");
+      items.push({
+        kind: "funnel.auto_annotations",
+        source: "funnelAutoAnnotations",
+        payload: { count: annotations.length, recent: annotations },
+        occurredAt: now.toISOString(),
+        severity: hasDrop ? "warn" : "info",
+      });
+    },
+    errors,
+  );
+
+  // 6. Conversion-rate deltas between the two most recent funnel
+  // snapshots. Empty `transitions` (fewer than two snapshots) is a
+  // legitimate "insufficient history" state, not an error — the UI
+  // renders it as a hint.
+  await safe(
+    "funnelConversionDeltas",
+    async () => {
+      const result = await getCycleConversionRateDeltas(orgId);
+      // Treat any negative delta as a warn — the funnel got worse on at
+      // least one transition vs the previous cycle.
+      const hasNegative = result.transitions.some(
+        (t) => t.delta !== null && t.delta < 0,
+      );
+      items.push({
+        kind: "funnel.conversion_deltas",
+        source: "funnelConversionDeltas",
+        payload: { ...result },
+        occurredAt: now.toISOString(),
+        severity: hasNegative ? "warn" : "info",
       });
     },
     errors,

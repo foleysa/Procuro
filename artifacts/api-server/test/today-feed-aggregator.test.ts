@@ -76,7 +76,7 @@ after(async () => {
   await pool.end();
 });
 
-test("/today/feed returns the discriminated-union shape with all four kinds", async () => {
+test("/today/feed returns the discriminated-union shape with all six kinds", async () => {
   const r = await fetch(`${baseUrl}/api/today/feed`, {
     headers: { "x-org-id": orgId },
   });
@@ -106,9 +106,9 @@ test("/today/feed returns the discriminated-union shape with all four kinds", as
     assert.equal(typeof item.payload, "object");
   }
 
-  // The four kinds must all be present for a healthy org. If any one
-  // fails the corresponding source must show up in `errors[]` —
-  // there must be no silent gaps.
+  // All six kinds must be accounted for: present in `items` for a
+  // healthy source, or surfaced in `errors[]` if the source failed.
+  // There must be no silent gaps.
   const successfulKinds = new Set(body.items.map((i) => i.kind));
   const failedSources = new Set(body.errors.map((e) => e.source));
   const SOURCE_TO_KIND: Record<string, string> = {
@@ -116,6 +116,10 @@ test("/today/feed returns the discriminated-union shape with all four kinds", as
     listOpportunities: "opportunities.proposed",
     listJobs: "jobs.failed",
     approvalsPending: "approvals.pending",
+    // Substrate sources added in #204. Both must either contribute an
+    // item or surface in errors[] — no silent gaps allowed.
+    funnelAutoAnnotations: "funnel.auto_annotations",
+    funnelConversionDeltas: "funnel.conversion_deltas",
   };
   for (const [source, kind] of Object.entries(SOURCE_TO_KIND)) {
     const succeeded = successfulKinds.has(kind);
