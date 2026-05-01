@@ -3,11 +3,12 @@ import {
   analysisCyclesTable,
   opportunitiesTable,
   decisionsTable,
+  categoriesTable,
   type LeverId,
   type OpportunityRow,
   type AnalysisCycleRow,
 } from "@workspace/db";
-import { eq, and, asc, desc, gt, lte, sql } from "drizzle-orm";
+import { eq, and, asc, desc, gt, inArray, lte, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
@@ -29,6 +30,11 @@ import {
   type LeverAnalyzer,
   type OpportunityDraft,
 } from "../levers/types";
+import {
+  determineOpportunityMappedVia,
+  leversForCategory,
+  leversInFragmentedFallback,
+} from "../intelligence/routing";
 import { captureFunnelSnapshot } from "./funnel";
 
 export interface RunCycleResult {
@@ -206,12 +212,128 @@ export async function runAnalysisCycle(args: {
     const created: OpportunityRow[] = [];
     const refreshed: OpportunityRow[] = [];
     let totalProjected = 0;
-    for (const { lever, draft } of drafts) {
+    // Pre-resolve canonical category codes + tenant-supplied names for
+    // every draft that has a categoryId so we only do one batched read
+    // instead of N round trips. The `code` feeds routing provenance
+    // (`mappedVia`); the `name` is stamped onto the opportunity as
+    // `source_tenant_category_string` so a later Layer-C resolution
+    // can audit-flag the historical row (Task #213).
+    const categoryIds = Array.from(
+      new Set(
+        drafts
+          .map((d) => d.draft.categoryId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    // Single map carrying canonical code + tenant-supplied display
+    // name per category. The `code` feeds routing provenance
+    // (`mappedVia`); the `name` is stamped onto each opportunity as
+    // `source_tenant_category_string` so the Layer C resolution audit
+    // (queue.ts) can flag historical opps that originated from a
+    // since-resolved tenant string.
+    const categoryMetaById = new Map<
+      string,
+      { code: string; name: string }
+    >();
+    if (categoryIds.length > 0) {
+      const cats = await db
+        .select({
+          id: categoriesTable.id,
+          code: categoriesTable.code,
+          name: categoriesTable.name,
+        })
+        .from(categoriesTable)
+        .where(
+          and(
+            eq(categoriesTable.orgId, orgId),
+            inArray(categoriesTable.id, categoryIds),
+          ),
+        );
+      for (const c of cats) {
+        categoryMetaById.set(c.id, { code: c.code, name: c.name });
+      }
+    }
+
+    // Category × band × lever applicability gate (task #213).
+    //
+    // Lever analyzers run org-wide and may emit drafts whose
+    // (lever, category) combination is not allowed by the routing
+    // model — e.g. a "concentrated" lever recommendation against a
+    // category whose band is "fragmented". Without this gate, the
+    // routing model has no teeth on the decide stage; drafts get
+    // persisted regardless of the band's lever assignments.
+    //
+    // We pre-resolve the allowed lever set once per distinct canonical
+    // code, then drop drafts whose lever isn't in that set. Drafts
+    // without a category, with a category that has no canonical code,
+    // or whose canonical code has no `category_bands` row all fall
+    // through to the FRAGMENTED FALLBACK lever set — i.e. the union
+    // of levers any fragmented-band category permits. This is the
+    // only safe default; allowing unrouted categories through
+    // unconditionally would let a concentrated-only lever persist
+    // against an unmapped category and silently break the spine.
+    const distinctCanonicalCodes = Array.from(
+      new Set(Array.from(categoryMetaById.values()).map((m) => m.code)),
+    );
+    const allowedLeversByCode = new Map<string, Set<string>>();
+    for (const code of distinctCanonicalCodes) {
+      const rows = await leversForCategory(code);
+      allowedLeversByCode.set(code, new Set(rows.map((r) => r.leverId)));
+    }
+    const fragmentedFallbackLevers = await leversInFragmentedFallback();
+    const drafts5Pre = drafts.length;
+    const filteredDrafts = drafts.filter((d) => {
+      // Resolve the applicable lever set for this draft. Three layers:
+      //   1. categoryId present + canonical code present + non-empty
+      //      band rows → that category's allowed lever set
+      //   2. categoryId present but unrouted (no code or no band rows)
+      //      → the Fragmented fallback set
+      //   3. no categoryId at all → the Fragmented fallback set
+      let allowed: Set<string> | undefined;
+      if (d.draft.categoryId) {
+        const code = categoryMetaById.get(d.draft.categoryId)?.code;
+        if (code) {
+          const codeSet = allowedLeversByCode.get(code);
+          if (codeSet && codeSet.size > 0) allowed = codeSet;
+        }
+      }
+      const effective = allowed ?? fragmentedFallbackLevers;
+      // Defensive: if neither set has any levers (e.g. mappings table
+      // hasn't been seeded yet) fall open rather than dropping every
+      // draft and breaking the cycle entirely.
+      if (effective.size === 0) return true;
+      return effective.has(d.draft.leverId);
+    });
+    const draftsDroppedByBandFilter = drafts5Pre - filteredDrafts.length;
+    if (draftsDroppedByBandFilter > 0) {
+      logger.info(
+        {
+          orgId,
+          cycleId,
+          draftsDroppedByBandFilter,
+          draftsBefore: drafts5Pre,
+          draftsAfter: filteredDrafts.length,
+        },
+        "Pruned drafts via category × band × lever applicability",
+      );
+    }
+
+    for (const { lever, draft } of filteredDrafts) {
       await checkpoint();
       const prior = priors[draft.leverId];
       const projected = draft.rawProjectedSavingsUsd * prior.projectionMultiplier;
       totalProjected += projected;
       const tier = ALL_LEVERS.find((l) => l.leverId === draft.leverId)!.tier;
+      // Routing provenance (task #213). Drafts without a category fall
+      // back to the Fragmented band — tagged `unmapped_default` so
+      // calibration excludes them.
+      const meta = draft.categoryId
+        ? categoryMetaById.get(draft.categoryId) ?? null
+        : null;
+      const canonicalCode = meta?.code ?? null;
+      const sourceTenantCategoryString = meta?.name ?? null;
+      const mappedVia = await determineOpportunityMappedVia(canonicalCode);
+      // Task #219 dedupe key — see header comment for the design.
       const signalKey = composeSignalKey(lever, draft);
       const inputsPayload = {
         ...draft.inputs,
@@ -226,6 +348,9 @@ export async function runAnalysisCycle(args: {
       // builder. We reuse the `cycleStartedAt` timestamp for
       // `last_seen_at` so all refreshes within one cycle share one
       // monotonic value the auto-expire job can compare against.
+      // Routing provenance (`mapped_via`, `source_tenant_category_string`)
+      // is preserved across refreshes so retroactive Layer-C resolutions
+      // can still find and audit-flag the historical rows.
       interface UpsertRowSnake extends Record<string, unknown> {
         id: string;
         org_id: string;
@@ -248,6 +373,9 @@ export async function runAnalysisCycle(args: {
         rejected_reason_note: string | null;
         signal_key: string | null;
         last_seen_at: Date | null;
+        mapped_via: OpportunityRow["mappedVia"];
+        source_tenant_category_string: string | null;
+        re_categorized_after_persistence: boolean;
         created_at: Date;
         inserted: boolean;
       }
@@ -256,7 +384,8 @@ export async function runAnalysisCycle(args: {
           id, org_id, cycle_id, lever_id, tier, title, rationale,
           recommended_action, supplier_id, category_id,
           raw_projected_savings_usd, projected_savings_usd, confidence,
-          inputs, signal_key, last_seen_at
+          inputs, signal_key, last_seen_at,
+          mapped_via, source_tenant_category_string
         ) VALUES (
           ${newId("opp")},
           ${orgId},
@@ -273,7 +402,9 @@ export async function runAnalysisCycle(args: {
           ${prior.confidenceWeight.toFixed(4)},
           ${JSON.stringify(inputsPayload)}::jsonb,
           ${signalKey},
-          ${cycleStartedAt}
+          ${cycleStartedAt},
+          ${mappedVia},
+          ${sourceTenantCategoryString}
         )
         ON CONFLICT (org_id, lever_id, signal_key)
           WHERE status IN ('proposed', 'approved', 'executing')
@@ -289,7 +420,9 @@ export async function runAnalysisCycle(args: {
           confidence = EXCLUDED.confidence,
           inputs = EXCLUDED.inputs,
           last_seen_at = EXCLUDED.last_seen_at,
-          tier = EXCLUDED.tier
+          tier = EXCLUDED.tier,
+          mapped_via = EXCLUDED.mapped_via,
+          source_tenant_category_string = EXCLUDED.source_tenant_category_string
         RETURNING *, (xmax = 0) AS inserted
       `);
       const raw = upsertRes.rows[0];
@@ -316,6 +449,9 @@ export async function runAnalysisCycle(args: {
         rejectedReasonNote: raw.rejected_reason_note,
         signalKey: raw.signal_key,
         lastSeenAt: raw.last_seen_at,
+        mappedVia: raw.mapped_via,
+        sourceTenantCategoryString: raw.source_tenant_category_string,
+        reCategorizedAfterPersistence: raw.re_categorized_after_persistence,
         createdAt: raw.created_at,
       };
       if (raw.inserted) created.push(row);
@@ -324,6 +460,12 @@ export async function runAnalysisCycle(args: {
 
     const decidePayload = {
       candidatesEvaluated: drafts.length,
+      // Drafts that survived the band-applicability gate (post-pruning,
+      // pre-persistence). Useful for funnel diagnostics: the gap
+      // between `candidatesEvaluated` and `candidatesPostBandGate`
+      // attributes how much the routing model is influencing decide.
+      candidatesPostBandGate: filteredDrafts.length,
+      draftsDroppedByBandFilter,
       opportunitiesCreated: created.length,
       opportunitiesRefreshed: refreshed.length,
       topByLever: summarizeTopByLever(created),
@@ -473,6 +615,10 @@ export async function collectOutcomesSinceLastCycle(
   if (!since) return [];
 
   // Pull every decision event since `since` joined with its opportunity.
+  // Calibration-integrity rule (task #213): exclude opportunities whose
+  // mapped_via is `unmapped_default`. Their category is the fragmented
+  // fallback, not the tenant's actual category, so they would
+  // contaminate per-lever priors.
   const rows = await db
     .select({
       decisionId: decisionsTable.id,
@@ -494,6 +640,7 @@ export async function collectOutcomesSinceLastCycle(
       and(
         eq(decisionsTable.orgId, orgId),
         gt(decisionsTable.createdAt, since),
+        sql`${opportunitiesTable.mappedVia} IS DISTINCT FROM 'unmapped_default'`,
       ),
     );
 

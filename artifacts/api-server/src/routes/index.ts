@@ -31,6 +31,7 @@ import onboardingRouter from "./onboarding";
 import funnelRouter from "./funnel";
 import todayRouter from "./today";
 import operationsRouter from "./operations";
+import routingRouter from "./routing";
 
 const router: IRouter = Router();
 
@@ -66,5 +67,6 @@ router.use(onboardingRouter);
 router.use(funnelRouter);
 router.use(todayRouter);
 router.use(operationsRouter);
+router.use(routingRouter);
 
 export default router;

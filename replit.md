@@ -67,6 +67,15 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
     - Routes (`/api/defense-packs/...`): `GET /` list, `POST /` generate, `GET /:id`, `GET /:id/pdf` PDF download, `POST /:id/feedback`.
     - Tests: `defense-pack-sanitize.test.ts`, `defense-pack-verify.test.ts` (pure-function unit tests, no DB).
 
+- **Bands routing model + 4-layer category resolution (task #213):**
+    - Truth tables: `category_bands` (category code → band) and `lever_bands` (lever id → band, with `rank`). Materialized view `v_category_lever_mappings` joins them and is refreshed by AFTER INSERT/DELETE triggers (`bootstrapCategoryLeverMappings()` runs at boot).
+    - Tenant-string resolution layers: A `synonym_registry` (global + tenant-scoped, `source` filter excludes auto-only rows in v1) → B `unmapped_category_queue` fallback (auto-enqueues misses, accumulates 90d spend on conflict) → C admin operator resolution → D learning (out of scope for v1).
+    - `opportunities.mapped_via` is stamped at insert time by `cycle.ts` (uses `determineOpportunityMappedVia()`); `funnel.ts` calibration WHERE excludes `mapped_via = 'unmapped_default'` so unrouted strings can't poison weights. Resolving a queue entry is **forward-only**: existing matching opportunities get `re_categorized_after_persistence=1` for audit traceability but their `mapped_via` is never rewritten.
+    - Public API surface: only `lib/intelligence/routing/index.ts`. The `routing-boundary.test.ts` guardrail fails any deep import of `routing/synonym`, `routing/queue`, etc. from outside the routing dir.
+    - Operational health: `routing_health_check` job kind runs every 6h (`startRoutingHealthScheduler`), counts `category_bands ⋈ lever_bands` vs the materialized view, attempts a refresh, and throws `UnrecoverableJobError` if drift remains. The resulting `failed` job row is picked up by `synthesize_operational_alerts` as `operational_job_failed` — the snapshot-failure-style alert path.
+    - Admin UI: `/admin/funnel` → "Routing" tab surfaces `MappingDataHealthCard` (queue depth, oldest age, unmapped spend, materialized view status) and `RoutingQueueTab` (queue list with canonical-code dropdown, scope toggle global/tenant, collision detection on resolve).
+    - REST: `/api/admin/routing/{queue,queue/:id/resolve,canonical-codes,health}` and `/api/admin/funnel/mapping-data-health`.
+
 - **Contracts UI + renewal alerts:**
     - `/contracts` list with cursor pagination, status / supplier / category / currency / owner filters, and a `?view=calendar` toggle that renders the next 12 months on a colour-coded grid.
     - `/contracts/:id` detail page surfaces header KPIs, an inline edit form (owner / internalNotes / renewalTargetDate / renewalTargetAction), linked opportunities (via `inputs.contractId`), an FX-trend card filtered to the contract's billing-currency pair, a market-signals (PPI) card, disclosure-policy-aware citations, contracted items, and an activity timeline backed by `contract_audit_log` (one row per changed field, written transactionally inside PATCH).

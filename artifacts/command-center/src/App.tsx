@@ -45,6 +45,7 @@ import Admin from "./pages/admin";
 import Today from "./pages/today";
 import Operations from "./pages/operations";
 import Engine from "./pages/engine";
+import TaxonomyQueue from "./pages/taxonomy-queue";
 import WhatsNew from "./pages/whats-new";
 import TrustPage from "./pages/trust";
 import { SignInPage, SignUpPage } from "./pages/auth";
@@ -145,6 +146,11 @@ const ADMIN_PAGE_BLURBS: Record<
     name: "Engine",
     what:
       "Engine is where admins run the procurement pipeline — ingest jobs, collectors, approvals routing, and other operational controls.",
+  },
+  "/admin/taxonomy": {
+    name: "Taxonomy queue",
+    what:
+      "Taxonomy queue is where admins map tenant-supplied category strings to canonical codes so the routing model can place the right levers against them.",
   },
   "/operations": {
     name: "Operations",
@@ -302,6 +308,18 @@ function AppRoutes() {
               <AdminGuard>
                 <Engine />
               </AdminGuard>
+            </Route>
+            {/* Taxonomy queue (#213). Lives under /admin/taxonomy/queue
+              * per spec — operators reach it from the Engine section
+              * nav, but funnel observability also embeds the same
+              * component as a tab so the breakdown links resolve. */}
+            <Route path="/admin/taxonomy/queue">
+              <AdminGuard>
+                <TaxonomyQueue />
+              </AdminGuard>
+            </Route>
+            <Route path="/admin/taxonomy">
+              <Redirect to="/admin/taxonomy/queue" />
             </Route>
             {/* Backward-compat redirects (#199 step 7). Old links keep
               * resolving so external bookmarks and email deep-links don't

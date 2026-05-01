@@ -43,6 +43,11 @@ import { requirePlatformAdmin } from "../lib/platform-admin";
 import { ALL_LEVERS } from "../lib/levers";
 import { toAnalyzeResult, type LeverAnalyzer } from "../lib/levers/types";
 import { loadPriors } from "../lib/ooda/priors";
+import {
+  summarizeQueue,
+  countOpportunitiesByMappedVia,
+  checkRoutingHealth,
+} from "../lib/intelligence/routing";
 
 const router: IRouter = Router();
 
@@ -118,6 +123,85 @@ router.get(
         snapshotsOlderThanMs: retention.snapshotsOlderThanMs,
         failuresOlderThanMs: retention.failuresOlderThanMs,
       },
+    });
+  },
+);
+
+/**
+ * Mapping-data-health surface (task #213).
+ *
+ * Spec contract — top-level fields mandated by task #213:
+ *   - `unmappedQueueDepth`     — count of open queue rows
+ *   - `oldestUnmappedAgeDays`  — age of oldest open queue row, in days
+ *   - `unmappedSpendPct`       — share of trailing-90d spend that is
+ *                                still unmapped (queue spend / (queue
+ *                                spend + mapped opportunity spend))
+ *
+ * `materializedView` carries the live drift verdict from
+ * `checkRoutingHealth()` so admins get it in the same round trip.
+ * `queue` and `opportunities` retain richer breakdowns for the admin UI.
+ *
+ * Surfaced under the existing audit-read permission since it sits on
+ * the funnel observability page alongside snapshots — operators with
+ * audit access already see the rest of the funnel.
+ */
+router.get(
+  "/admin/funnel/mapping-data-health",
+  tenantMiddleware,
+  requirePermission("audit:read"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const [queue, byVia, mappedSpendRow, viewHealth] = await Promise.all([
+      summarizeQueue(orgId),
+      countOpportunitiesByMappedVia(orgId),
+      // Mapped trailing-90d spend baseline: derived from active
+      // contracts whose category is RESOLVED (categoryId IS NOT NULL,
+      // i.e. they're attached to the canonical taxonomy). We
+      // approximate trailing-90d as `annual_baseline_usd * 90/365`
+      // since contracts carry an annual figure rather than a rolling
+      // window. This is a real spend signal — `projected_savings_usd`
+      // is a savings estimate, not spend, and would mis-anchor the
+      // unmapped-spend ratio.
+      db.execute(sql`
+        SELECT COALESCE(SUM(annual_baseline_usd * 90.0 / 365.0), 0)::text
+            AS mapped_spend
+          FROM contracts
+         WHERE org_id = ${orgId}
+           AND status = 'active'
+           AND category_id IS NOT NULL
+      `),
+      checkRoutingHealth(),
+    ]);
+    const total = Object.values(byVia).reduce((s, n) => s + n, 0);
+    const unmapped = byVia["unmapped_default"] ?? 0;
+    const unmappedDefaultPct = total > 0 ? unmapped / total : 0;
+    const mappedSpendUsd = Number(
+      (mappedSpendRow.rows?.[0] as { mapped_spend?: string } | undefined)
+        ?.mapped_spend ?? 0,
+    );
+    const totalSpendBaseline = mappedSpendUsd + queue.unmappedSpendUsd;
+    const unmappedSpendPct =
+      totalSpendBaseline > 0 ? queue.unmappedSpendUsd / totalSpendBaseline : 0;
+    const oldestUnmappedAgeDays = queue.oldestOpenAt
+      ? Math.max(
+          0,
+          (Date.now() - new Date(queue.oldestOpenAt).getTime()) / 86_400_000,
+        )
+      : 0;
+    res.json({
+      // ── Spec-required top-level fields ─────────────────────────────
+      unmappedQueueDepth: queue.openCount,
+      oldestUnmappedAgeDays,
+      unmappedSpendPct,
+      // ── Richer breakdowns kept for the admin UI ───────────────────
+      queue,
+      opportunities: {
+        total,
+        byMappedVia: byVia,
+        unmappedDefaultPct,
+        mappedSpendUsd,
+      },
+      materializedView: viewHealth,
     });
   },
 );

@@ -34,6 +34,9 @@ import {
   marketSignalsTable,
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 const SEED_ORG = {
   id: "org_seed_default",
@@ -236,9 +239,30 @@ async function seedFxExposureDemo(): Promise<void> {
   );
 }
 
+/**
+ * Apply the bands routing taxonomy seed (`lib/db/seeds/taxonomy.sql`).
+ *
+ * The SQL file is the single source of truth for category/lever bands +
+ * the global synonym registry. It is fully idempotent (every INSERT
+ * uses `ON CONFLICT DO NOTHING`), so re-running it is a no-op once the
+ * rows already exist. We resolve the path relative to this script
+ * rather than `process.cwd()` so the seed works whether invoked from
+ * the workspace root or the `scripts/` package directory.
+ */
+async function seedTaxonomyBands(): Promise<void> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist path: scripts/dist/seed.js → ../../lib/db/seeds/taxonomy.sql
+  // src path:  scripts/src/seed.ts  → ../../lib/db/seeds/taxonomy.sql
+  const sqlPath = resolve(here, "..", "..", "lib", "db", "seeds", "taxonomy.sql");
+  const seedSql = readFileSync(sqlPath, "utf8");
+  await pool.query(seedSql);
+  console.log(`[seed] taxonomy bands + synonym registry ensured`);
+}
+
 async function main(): Promise<void> {
   console.log(`[seed] starting at ${new Date().toISOString()}`);
   await seedOrgs();
+  await seedTaxonomyBands();
   await seedFxExposureDemo();
   console.log(`[seed] complete`);
 }

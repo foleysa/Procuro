@@ -27,6 +27,7 @@ import {
   startRenewalScanScheduler,
   startAnalysisCycleScheduler,
   startExpireStaleOpportunitiesScheduler,
+  startRoutingHealthScheduler,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
@@ -43,6 +44,7 @@ import {
   syncErpConnectionHandler,
   runRenewalAlertScanHandler,
   synthesizeOperationalAlertsHandler,
+  runRoutingHealthCheckHandler,
 } from "./lib/jobs/handlers";
 import { registerErpConnector } from "./lib/connectors/erp-connector";
 import { coupaConnector } from "./lib/connectors/coupa/adapter";
@@ -51,6 +53,7 @@ import {
   startAlertsEscalationScheduler,
   startOperationalSynthScheduler,
 } from "./lib/alerts/schedulers";
+import { bootstrapCategoryLeverMappings } from "./lib/intelligence/routing";
 
 const rawPort = process.env["PORT"];
 
@@ -156,6 +159,7 @@ registerJobHandler(
   "expire_stale_opportunities",
   expireStaleOpportunitiesHandler,
 );
+registerJobHandler("routing_health_check", runRoutingHealthCheckHandler);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -163,9 +167,26 @@ registerJobHandler(
 // register a connector that no DB row could ever reference.
 registerErpConnector(coupaConnector);
 
-app.listen(port, (err) => {
+app.listen(port, async (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
+    process.exit(1);
+  }
+
+  // Bootstrap the routing materialized view + refresh triggers BEFORE
+  // any worker / scheduler starts. Routing reads (cycle.ts,
+  // health.ts, queue health checks) hit the view directly, so a race
+  // where workers fire while the view does not yet exist would
+  // surface as runtime errors. Idempotent: see
+  // lib/intelligence/routing/materialized-view.ts.
+  try {
+    await bootstrapCategoryLeverMappings();
+    logger.info("Routing materialized view bootstrapped");
+  } catch (e) {
+    logger.error(
+      { err: e },
+      "Routing materialized view bootstrap failed — refusing to start workers",
+    );
     process.exit(1);
   }
 
@@ -178,9 +199,10 @@ app.listen(port, (err) => {
   startAlertsEscalationScheduler();
   startOperationalSynthScheduler();
   startExpireStaleOpportunitiesScheduler();
+  startRoutingHealthScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert + expire-stale-opps schedulers started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers + expire-stale-opportunities started",
   );
 
   void seedCollectorRegistry().then(

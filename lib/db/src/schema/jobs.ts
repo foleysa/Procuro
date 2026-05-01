@@ -36,6 +36,7 @@ export const jobKindValues = [
   // unrefreshed for `OPPORTUNITY_QUIET_CYCLES` cycles) to `expired`
   // so the pending-approvals queue stops growing forever.
   "expire_stale_opportunities",
+  "routing_health_check",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 

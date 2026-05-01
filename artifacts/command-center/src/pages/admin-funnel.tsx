@@ -18,6 +18,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -25,6 +32,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 
 interface SnapshotListRow {
@@ -684,6 +699,9 @@ export default function AdminFunnelPage() {
           <TabsTrigger value="failures" data-testid="tab-failures">
             Failures
           </TabsTrigger>
+          <TabsTrigger value="routing" data-testid="tab-routing">
+            Routing
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="snapshots" className="space-y-4">
           <SnapshotsTab
@@ -700,7 +718,535 @@ export default function AdminFunnelPage() {
         <TabsContent value="failures">
           <FailuresTab />
         </TabsContent>
+        <TabsContent value="routing" className="space-y-4">
+          <MappingDataHealthCard />
+          <RoutingQueueTab />
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// ───────────────────────── Routing tab (task #213) ────────────────────
+
+interface MappingDataHealthResp {
+  // Spec-required top-level fields (task #213).
+  unmappedQueueDepth: number;
+  oldestUnmappedAgeDays: number;
+  unmappedSpendPct: number;
+  queue: {
+    openCount: number;
+    oldestOpenAt: string | null;
+    unmappedSpendUsd: number;
+  };
+  opportunities: {
+    total: number;
+    byMappedVia: Record<string, number>;
+    unmappedDefaultPct: number;
+    mappedSpendUsd: number;
+  };
+  materializedView: {
+    ok: boolean;
+    expectedRowCount: number;
+    viewRowCount: number;
+    drift: number;
+    recoveredByRefresh: boolean;
+    checkedAt: string;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    consecutiveFailures: number;
+    driftSamples: Array<{
+      side: "expected_only" | "view_only";
+      categoryCode: string;
+      leverId: string;
+      band: string;
+    }>;
+  };
+}
+
+function MappingDataHealthCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["routing", "mapping-data-health"],
+    queryFn: () =>
+      fetchJson<MappingDataHealthResp>(
+        "/api/admin/funnel/mapping-data-health",
+      ),
+    refetchInterval: 30_000,
+  });
+  if (isLoading || !data) {
+    return (
+      <Card data-testid="card-mapping-data-health">
+        <CardHeader>
+          <CardTitle>Mapping data health</CardTitle>
+        </CardHeader>
+        <CardContent>Loading…</CardContent>
+      </Card>
+    );
+  }
+  const oldestAgeRounded = Math.round(data.oldestUnmappedAgeDays);
+  return (
+    <Card data-testid="card-mapping-data-health">
+      <CardHeader>
+        <CardTitle>Mapping data health</CardTitle>
+        <CardDescription>
+          Routing queue depth, oldest open age, and share of trailing-90d
+          spend that is still unmapped.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <div className="text-muted-foreground">Unmapped queue depth</div>
+            <div
+              className="text-2xl font-semibold"
+              data-testid="stat-queue-depth"
+            >
+              {data.unmappedQueueDepth}
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">
+              Oldest unmapped age
+            </div>
+            <div
+              className="text-2xl font-semibold"
+              data-testid="stat-queue-oldest"
+            >
+              {data.unmappedQueueDepth > 0 ? `${oldestAgeRounded}d` : "—"}
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">
+              Unmapped spend share (90d)
+            </div>
+            <div
+              className="text-2xl font-semibold"
+              data-testid="stat-queue-spend"
+            >
+              {(data.unmappedSpendPct * 100).toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">
+              `unmapped_default` opps
+            </div>
+            <div
+              className="text-2xl font-semibold"
+              data-testid="stat-unmapped-pct"
+            >
+              {(data.opportunities.unmappedDefaultPct * 100).toFixed(1)}%
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+          <div>
+            Materialized view:{" "}
+            <Badge
+              variant={data.materializedView.ok ? "default" : "destructive"}
+              data-testid="badge-view-health"
+            >
+              {data.materializedView.ok
+                ? data.materializedView.recoveredByRefresh
+                  ? "recovered"
+                  : "ok"
+                : "drift"}
+            </Badge>{" "}
+            ({data.materializedView.viewRowCount}/
+            {data.materializedView.expectedRowCount} rows)
+            {data.materializedView.consecutiveFailures > 0 && (
+              <span data-testid="stat-consecutive-failures">
+                {" · "}
+                {data.materializedView.consecutiveFailures} consecutive failures
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-x-4">
+            <span data-testid="stat-last-success">
+              Last success:{" "}
+              {data.materializedView.lastSuccessAt
+                ? fmtTime(data.materializedView.lastSuccessAt)
+                : "—"}
+            </span>
+            <span data-testid="stat-last-failure">
+              Last failure:{" "}
+              {data.materializedView.lastFailureAt
+                ? fmtTime(data.materializedView.lastFailureAt)
+                : "—"}
+            </span>
+          </div>
+          {data.materializedView.driftSamples.length > 0 && (
+            <details data-testid="details-drift-samples">
+              <summary className="cursor-pointer">
+                Drift samples ({data.materializedView.driftSamples.length})
+              </summary>
+              <ul className="mt-1 space-y-0.5 font-mono">
+                {data.materializedView.driftSamples
+                  .slice(0, 25)
+                  .map((s, idx) => (
+                    <li key={`${s.side}-${s.categoryCode}-${s.leverId}-${idx}`}>
+                      <span
+                        className={
+                          s.side === "expected_only"
+                            ? "text-amber-700 dark:text-amber-400"
+                            : "text-rose-700 dark:text-rose-400"
+                        }
+                      >
+                        [{s.side}]
+                      </span>{" "}
+                      {s.categoryCode} → {s.leverId} ({s.band})
+                    </li>
+                  ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface QueueEntry {
+  id: string;
+  orgId: string;
+  tenantString: string;
+  normalized: string;
+  spendTrailing90dUsd: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+interface QueueResp { entries: QueueEntry[]; }
+interface CanonicalCodesResp { codes: string[]; }
+
+type ResolveDecision =
+  | "accept_existing"
+  | "force_override"
+  | "escalate_to_global"
+  | "narrow_to_tenant";
+
+interface CollisionState {
+  queueId: string;
+  tenantString: string;
+  requested: { canonicalCode: string; scope: "global" | "tenant_scoped" };
+  existing: {
+    registryId: string;
+    canonicalCode: string;
+    scope: "global" | "tenant_scoped";
+    orgId: string | null;
+  };
+}
+
+export function RoutingQueueTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const queue = useQuery({
+    queryKey: ["routing", "queue"],
+    queryFn: () => fetchJson<QueueResp>("/api/admin/routing/queue?limit=200"),
+  });
+  const codes = useQuery({
+    queryKey: ["routing", "canonical-codes"],
+    queryFn: () =>
+      fetchJson<CanonicalCodesResp>("/api/admin/routing/canonical-codes"),
+  });
+  const [picks, setPicks] = useState<
+    Record<string, { code: string; scope: "global" | "tenant_scoped" }>
+  >({});
+  const [collision, setCollision] = useState<CollisionState | null>(null);
+
+  // Single mutation handles both first-attempt and decision-followup
+  // calls; the difference is whether `decision` is set in the body.
+  const resolveMut = useMutation({
+    mutationFn: async (args: {
+      id: string;
+      canonicalCode: string;
+      scope: "global" | "tenant_scoped";
+      decision?: ResolveDecision;
+      tenantString: string;
+    }) => {
+      const res = await fetch(`/api/admin/routing/queue/${args.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          canonicalCode: args.canonicalCode,
+          scope: args.scope,
+          ...(args.decision ? { decision: args.decision } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        return {
+          collision: true as const,
+          body,
+          requestedArgs: args,
+        };
+      }
+      if (!res.ok) {
+        throw new Error(body?.error ?? `${res.status}`);
+      }
+      return { collision: false as const, body };
+    },
+    onSuccess: (result) => {
+      if (result.collision) {
+        // Surface the collision modal so the operator can pick a
+        // resolution path. The follow-up call repeats the resolve
+        // request with `decision` set.
+        setCollision({
+          queueId: result.requestedArgs.id,
+          tenantString: result.requestedArgs.tenantString,
+          requested: {
+            canonicalCode: result.requestedArgs.canonicalCode,
+            scope: result.requestedArgs.scope,
+          },
+          existing: result.body.existing,
+        });
+        return;
+      }
+      setCollision(null);
+      toast({
+        title: "Mapped",
+        description: `Audit-flagged ${result.body?.reCategorizedOpportunityCount ?? 0} historical opportunities.`,
+      });
+      void qc.invalidateQueries({ queryKey: ["routing"] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Resolve failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  function decideCollision(decision: ResolveDecision) {
+    if (!collision) return;
+    resolveMut.mutate({
+      id: collision.queueId,
+      canonicalCode: collision.requested.canonicalCode,
+      scope: collision.requested.scope,
+      decision,
+      tenantString: collision.tenantString,
+    });
+  }
+
+  if (queue.isLoading || codes.isLoading) return <div>Loading…</div>;
+
+  return (
+    <Card data-testid="card-routing-queue">
+      <CardHeader>
+        <CardTitle>Unmapped categories</CardTitle>
+        <CardDescription>
+          Tenant-supplied category strings that didn't match any synonym.
+          Mapping a string adds a synonym registry row going forward; existing
+          opportunities are not rewritten — they're audit-flagged for
+          traceability.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tenant string</TableHead>
+              <TableHead>90d spend</TableHead>
+              <TableHead>First seen</TableHead>
+              <TableHead>Map to</TableHead>
+              <TableHead>Scope</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(queue.data?.entries ?? []).length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-muted-foreground">
+                  Queue is empty.
+                </TableCell>
+              </TableRow>
+            )}
+            {(queue.data?.entries ?? []).map((e) => {
+              const pick = picks[e.id] ?? { code: "", scope: "global" as const };
+              return (
+                <TableRow key={e.id} data-testid={`row-queue-${e.id}`}>
+                  <TableCell className="font-mono text-xs">
+                    {e.tenantString}
+                  </TableCell>
+                  <TableCell>{fmtUsd(e.spendTrailing90dUsd)}</TableCell>
+                  <TableCell>{fmtTime(e.firstSeenAt)}</TableCell>
+                  <TableCell>
+                    <Select
+                      value={pick.code}
+                      onValueChange={(v) =>
+                        setPicks((p) => ({
+                          ...p,
+                          [e.id]: { ...pick, code: v },
+                        }))
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-56"
+                        data-testid={`select-code-${e.id}`}
+                      >
+                        <SelectValue placeholder="Pick canonical code" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(codes.data?.codes ?? []).map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={pick.scope}
+                      onValueChange={(v) =>
+                        setPicks((p) => ({
+                          ...p,
+                          [e.id]: {
+                            ...pick,
+                            scope: v as "global" | "tenant_scoped",
+                          },
+                        }))
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-36"
+                        data-testid={`select-scope-${e.id}`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="global">global</SelectItem>
+                        <SelectItem value="tenant_scoped">
+                          tenant-scoped
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      disabled={!pick.code || resolveMut.isPending}
+                      onClick={() =>
+                        resolveMut.mutate({
+                          id: e.id,
+                          canonicalCode: pick.code,
+                          scope: pick.scope,
+                          tenantString: e.tenantString,
+                        })
+                      }
+                      data-testid={`btn-resolve-${e.id}`}
+                    >
+                      Map
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+      <CollisionDialog
+        state={collision}
+        onClose={() => setCollision(null)}
+        onDecide={decideCollision}
+        isPending={resolveMut.isPending}
+      />
+    </Card>
+  );
+}
+
+function CollisionDialog(props: {
+  state: CollisionState | null;
+  onClose: () => void;
+  onDecide: (decision: ResolveDecision) => void;
+  isPending: boolean;
+}) {
+  const { state, onClose, onDecide, isPending } = props;
+  if (!state) return null;
+  const { existing, requested, tenantString } = state;
+  // Branch the available actions on the relationship between the
+  // requested scope and the existing scope. Cross-scope decisions
+  // (escalate / narrow) are only legal in their respective directions.
+  const showEscalate = requested.scope === "tenant_scoped";
+  const showNarrow = requested.scope === "global";
+  return (
+    <Dialog
+      open={Boolean(state)}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <DialogContent
+        className="max-w-lg"
+        data-testid="dialog-routing-collision"
+      >
+        <DialogHeader>
+          <DialogTitle>Synonym already exists</DialogTitle>
+          <DialogDescription>
+            “{tenantString}” already maps at the {existing.scope} scope to{" "}
+            <span className="font-mono">{existing.canonicalCode}</span>. Pick
+            how you want to resolve this conflict — the registry is
+            append-only, so no history is lost.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2 text-sm">
+          <div>
+            <span className="text-muted-foreground">You requested:</span>{" "}
+            <span className="font-mono">{requested.canonicalCode}</span> at{" "}
+            <span className="font-mono">{requested.scope}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Currently mapped:</span>{" "}
+            <span className="font-mono">{existing.canonicalCode}</span> at{" "}
+            <span className="font-mono">{existing.scope}</span>
+          </div>
+        </div>
+        <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
+          <Button
+            variant="outline"
+            onClick={() => onDecide("accept_existing")}
+            disabled={isPending}
+            data-testid="btn-collision-accept-existing"
+          >
+            Accept existing mapping ({existing.canonicalCode})
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => onDecide("force_override")}
+            disabled={isPending}
+            data-testid="btn-collision-force-override"
+          >
+            Override at the same scope
+          </Button>
+          {showEscalate && (
+            <Button
+              variant="secondary"
+              onClick={() => onDecide("escalate_to_global")}
+              disabled={isPending}
+              data-testid="btn-collision-escalate-global"
+            >
+              Add as global mapping (keep tenant row)
+            </Button>
+          )}
+          {showNarrow && (
+            <Button
+              variant="secondary"
+              onClick={() => onDecide("narrow_to_tenant")}
+              disabled={isPending}
+              data-testid="btn-collision-narrow-tenant"
+            >
+              Add as tenant-scoped mapping (keep global row)
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            disabled={isPending}
+            data-testid="btn-collision-cancel"
+          >
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

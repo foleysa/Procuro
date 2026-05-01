@@ -592,6 +592,14 @@ async function computeCalibration(
             eq(opportunitiesTable.orgId, orgId),
             eq(decisionsTable.eventType, "realize"),
             gte(decisionsTable.createdAt, since),
+            // Calibration integrity (task #213): exclude opportunities
+            // routed via the Layer-B fallback. `unmapped_default` rows
+            // are scope-mismatched by construction (Fragmented band
+            // catch-all), so including them in per-lever median-error
+            // would contaminate the prior. `IS DISTINCT FROM` also
+            // keeps legacy NULL-mapped_via rows in the calibration
+            // sample so the historical baseline is preserved.
+            sql`${opportunitiesTable.mappedVia} IS DISTINCT FROM 'unmapped_default'`,
           ),
         );
 

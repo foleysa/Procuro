@@ -177,6 +177,47 @@ export const opportunitiesTable = pgTable(
      * legacy-row reason as `signalKey`.
      */
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    /**
+     * Provenance for category routing (task #213).
+     *
+     * `null` for legacy rows persisted before bands routing landed.
+     * Newly-routed rows are tagged via the routing helpers:
+     *   - `synonym_global`        — Layer A hit on the global registry
+     *   - `synonym_tenant_scoped` — Layer A hit on a tenant-scoped row
+     *   - `unmapped_default`      — Layer B fallback (Fragmented band)
+     *
+     * The calibration job (lib/ooda/funnel.ts) excludes
+     * `unmapped_default` opportunities from per-lever scoring so the
+     * fallback routing never contaminates the prior.
+     */
+    mappedVia: text("mapped_via").$type<
+      "synonym_global" | "synonym_tenant_scoped" | "unmapped_default"
+    >(),
+    /**
+     * Originating tenant-supplied category string for opportunities
+     * that came in through the unmapped path (Layer B fallback). This
+     * is the raw string the tenant uploaded BEFORE normalization, kept
+     * verbatim so we can audit-flag the right rows when an admin later
+     * resolves the matching queue entry. Null for rows that didn't
+     * originate from a tenant category string (analyzer-derived,
+     * synonym-routed, or pre-#213 legacy rows).
+     */
+    sourceTenantCategoryString: text("source_tenant_category_string"),
+    /**
+     * Audit-only flag set by the admin queue resolver when an
+     * operator maps a tenant string AFTER opportunities tagged with
+     * the unresolved category have already been persisted. Going-forward
+     * routing changes immediately; this flag exists purely so admins
+     * can trace which historical opportunities were derived from a
+     * since-resolved category — `category_code`, `mappedVia`, and
+     * cohort assignment are NEVER rewritten. Matched via
+     * `source_tenant_category_string` provenance — NOT category code,
+     * which would mismatch since unmapped opps point to placeholder
+     * categories, not the eventually-resolved canonical code.
+     */
+    reCategorizedAfterPersistence: integer("re_categorized_after_persistence")
+      .notNull()
+      .default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -203,6 +244,13 @@ export const opportunitiesTable = pgTable(
     // Drives the auto-expire scan: per-org filter + status filter +
     // last_seen_at range scan against the quiet-cycle cutoff.
     index("opps_status_last_seen_idx").on(t.orgId, t.status, t.lastSeenAt),
+    index("opps_mapped_via_idx").on(t.orgId, t.mappedVia),
+    // Lookup index for queue-resolution audit-flag matching
+    // (resolveQueueEntry filters by org_id + source_tenant_category_string).
+    index("opps_source_tenant_string_idx").on(
+      t.orgId,
+      t.sourceTenantCategoryString,
+    ),
   ],
 );
 

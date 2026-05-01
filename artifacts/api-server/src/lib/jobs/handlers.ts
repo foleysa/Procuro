@@ -670,3 +670,43 @@ export async function synthesizeOperationalAlertsHandler(
   const result = await synthesizeOperationalAlerts();
   return result as unknown as Record<string, unknown>;
 }
+
+/**
+ * Routing health check (task #213).
+ *
+ * Compares the `category_bands ⋈ lever_bands` truth table against the
+ * `v_category_lever_mappings` materialized view; the helper itself
+ * runs a refresh-and-recount on first miss so transient staleness from
+ * concurrent writes self-heals. Only after BOTH counts still disagree
+ * does the helper return `ok = false`, at which point we throw so the
+ * job lands in `failed` and `synthesize_operational_alerts` raises the
+ * resulting `operational_job_failed` alert on its next tick — matching
+ * the snapshot-failure-style alerting the spec calls for.
+ *
+ * The thrown error is `UnrecoverableJobError` so the queue's retry
+ * loop short-circuits to a permanent failure (see the comment on
+ * `MAX_ATTEMPTS_BY_KIND.routing_health_check` for why we don't want
+ * automatic retries here).
+ */
+export async function runRoutingHealthCheckHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const { checkRoutingHealth } = await import("../intelligence/routing");
+  // Scheduled health-check semantics: always REFRESH first, then
+  // row-level diff. Refreshing up front absorbs `confidence_weight`
+  // UPDATEs (which the row-trigger does not see — triggers only fire
+  // on truth-table writes, and even there we want a periodic safety
+  // net for any cluster that loses a trigger fire). After the
+  // refresh, any remaining drift is a true desync that must surface
+  // as an alert, so we skip the per-call autoRefreshOnDrift retry.
+  const report = await checkRoutingHealth({
+    refreshFirst: true,
+    autoRefreshOnDrift: false,
+  });
+  if (!report.ok) {
+    throw new UnrecoverableJobError(
+      `Routing materialized view drift unrecoverable: expected=${report.expectedRowCount}, view=${report.viewRowCount}, drift=${report.drift}`,
+    );
+  }
+  return report as unknown as Record<string, unknown>;
+}

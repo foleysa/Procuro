@@ -24,6 +24,7 @@ import {
   Activity,
   Cpu,
   Bookmark,
+  Tag,
 } from "lucide-react";
 import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
@@ -101,7 +102,10 @@ const NAV_GROUPS: NavGroup[] = [
   {
     id: "engine",
     label: "Engine",
-    items: [{ href: "/engine", label: "Engine", icon: Cpu, minRole: "org_admin" }],
+    items: [
+      { href: "/engine", label: "Engine", icon: Cpu, minRole: "org_admin" },
+      { href: "/admin/taxonomy/queue", label: "Taxonomy Queue", icon: Tag, minRole: "org_admin" },
+    ],
   },
   {
     id: "org",

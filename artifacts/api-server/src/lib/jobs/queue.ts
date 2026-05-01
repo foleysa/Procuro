@@ -66,6 +66,13 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // housekeeping with no upstream API calls; same retry budget as
   // the other pruners.
   expire_stale_opportunities: 3,
+  // Routing materialized-view drift check is intentionally NOT retried:
+  // the handler's own refresh-and-recount step already absorbs transient
+  // staleness. If a run still ends with `ok=false` we want the failed
+  // job row visible immediately so `synthesize_operational_alerts`
+  // raises `operational_job_failed` on the next tick instead of waiting
+  // for the retry budget to drain.
+  routing_health_check: 1,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */
@@ -1262,6 +1269,95 @@ export function stopAnalysisCycleScheduler(): void {
   if (analysisCycleHandle) clearInterval(analysisCycleHandle);
   analysisCycleHandle = null;
   analysisCycleStarted = false;
+}
+
+// ─── Periodic routing health-check scheduler (task #213) ──────────────
+//
+// Same shape as the renewal-alert scheduler: a fixed advisory-lock-
+// protected "ensure exactly one pending/running routing_health_check"
+// helper plus a process-local interval. The routing health check is
+// system-scoped (no `org_id`) — it compares the global truth tables
+// against the global materialized view. If drift is detected and a
+// refresh can't recover, the handler throws and the resulting failed
+// job row gets picked up by `synthesize_operational_alerts` as an
+// `operational_job_failed` alert on the next tick — the
+// "snapshot-failure-style alert" the routing spec calls for.
+
+const ROUTING_HEALTH_LOCK_KEY = 0x52545448; // "RTTH"
+const DEFAULT_ROUTING_HEALTH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+
+export async function ensureRoutingHealthCheckScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${ROUTING_HEALTH_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'routing_health_check' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'routing_health_check', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let routingHealthStarted = false;
+let routingHealthHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic routing-health scheduler. Enqueues a
+ * `routing_health_check` job at boot, then again on a fixed interval
+ * (default 6h, overridable via `ROUTING_HEALTH_INTERVAL_MS`).
+ * Idempotent — calling twice has no effect.
+ */
+export function startRoutingHealthScheduler(intervalMs?: number): void {
+  if (routingHealthStarted) return;
+  routingHealthStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "ROUTING_HEALTH_INTERVAL_MS",
+      DEFAULT_ROUTING_HEALTH_INTERVAL_MS,
+    );
+
+  void ensureRoutingHealthCheckScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial routing_health_check",
+    );
+  });
+
+  routingHealthHandle = setInterval(() => {
+    ensureRoutingHealthCheckScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled routing_health_check",
+      );
+    });
+  }, ms);
+}
+
+export function stopRoutingHealthScheduler(): void {
+  if (routingHealthHandle) clearInterval(routingHealthHandle);
+  routingHealthHandle = null;
+  routingHealthStarted = false;
 }
 
 /**

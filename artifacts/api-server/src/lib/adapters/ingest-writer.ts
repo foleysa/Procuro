@@ -16,6 +16,10 @@ import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
 import { resolveBillingCurrency } from "../suppliers/billing-currency-resolver";
+import {
+  routeTenantCategory,
+  isCanonicalCodeRouted,
+} from "../intelligence/routing";
 import type {
   IsCancelledFn,
   SyncProgress,
@@ -323,6 +327,24 @@ export async function writeIngestPayload(
     for (const c of payload.categories) {
       const id = categoryMap.get(c.code);
       if (id) categoryMap.set(c.externalId, id);
+    }
+    // Route each tenant-supplied category through the 4-layer
+    // resolver. `routeTenantCategory` self-enqueues on a Layer-B miss,
+    // so we just fire the call once per non-canonical code. This is
+    // the production wire-in for the routing model — without it the
+    // queue stays empty in real traffic and the Layer C admin surface
+    // is informational only.
+    for (const c of payload.categories) {
+      try {
+        if (await isCanonicalCodeRouted(c.code)) continue;
+        await routeTenantCategory({ orgId, tenantString: c.name });
+      } catch (err) {
+        // Routing must never block ingest — log and continue.
+        logger.warn(
+          { err, orgId, code: c.code, name: c.name },
+          "ingest: routing wire-in failed for category (continuing)",
+        );
+      }
     }
     created += payload.categories.length;
     processed += payload.categories.length;
