@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "test": "PG_POOL_MAX=${PG_POOL_MAX:-30} NODE_OPTIONS=--expose-gc node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit"
+    "typecheck": "tsc -b ../../tsconfig.json && tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@clerk/express": "^2.1.10",

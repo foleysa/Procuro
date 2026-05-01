@@ -9,7 +9,7 @@
     "dedupe-market-signals": "tsx ./src/dedupe-market-signals.ts",
     "replay-collector": "tsx ./src/replay-collector.ts",
     "backfill-funnel-snapshots": "tsx ./src/backfill-funnel-snapshots.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@workspace/db": "workspace:*",
