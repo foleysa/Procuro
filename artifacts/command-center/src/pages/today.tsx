@@ -12,20 +12,39 @@ import {
   TrendingDown,
   Minus,
 } from "lucide-react";
+import { scrubError } from "@/lib/scrub-error";
+import { useMyRole } from "@/lib/use-my-role";
+import { leverLabel, formatUsd } from "@/lib/format";
 
 /**
- * Today — operator landing page (#199 step 4 path b, extended in #204).
+ * Today — operator landing page (#199 step 4 path b, extended in #204,
+ * enriched in #209).
  *
  * Renders the fail-soft `/api/today/feed` aggregator into a four-card
  * triage view (alerts, proposed opportunities, pending approvals,
  * recently failed jobs) plus a "What changed since last cycle" deltas
  * card sourced from the funnel substrate (auto-annotations and
- * cycle-over-cycle conversion-rate diffs). Per-source errors surface as
- * muted ribbons inside each card so the operator can see exactly what
- * is or isn't loaded.
+ * cycle-over-cycle conversion-rate diffs).
+ *
+ * #209 contracts (these are TESTS, not just style):
+ *
+ *  - **No raw SQL on the screen.** Every per-source error string is
+ *    routed through `scrubError()` before it hits the DOM. The original
+ *    unscrubbed text is shown ONLY inside a role-gated `<details>`
+ *    disclosure visible to org_admin / platform_admin.
+ *  - **Empty and failure are mutually exclusive.** A card that has a
+ *    per-source error renders the failure ribbon and SUPPRESSES the
+ *    empty state ("No alerts data."), and vice versa. Same card never
+ *    shows both.
+ *  - **Capability-gated context lines (RT-92, RT-100).** Each card
+ *    renders an extra context line under its big number ONLY when the
+ *    payload includes the new #209 fields. Missing/undefined/null
+ *    falls back to the original number-only rendering — so the page
+ *    works whether #209 has shipped or not.
  */
 export default function Today() {
   const { data, isLoading, isError } = useGetTodayFeed();
+  const { isOrgAdmin } = useMyRole();
 
   if (isLoading) {
     return (
@@ -75,95 +94,26 @@ export default function Today() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <TriageCard
-          title="Alerts"
-          icon={AlertTriangle}
-          severity={alerts?.severity ?? "info"}
-          href="/alerts"
+        <AlertsCard
+          item={alerts}
           error={errFor("getAlertsSummary")}
-          testId="today-card-alerts"
-        >
-          {alerts ? (
-            <>
-              <p className="text-3xl font-bold tabular-nums">
-                {(alerts.payload as { openCriticalOrHigh?: number })
-                  .openCriticalOrHigh ?? 0}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Open critical / high alerts —{" "}
-                {(alerts.payload as { openTotal?: number }).openTotal ?? 0}{" "}
-                open total
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">No alerts data.</p>
-          )}
-        </TriageCard>
-
-        <TriageCard
-          title="Proposed opportunities"
-          icon={Sparkles}
-          severity={opps?.severity ?? "info"}
-          href="/opportunities"
+          isAdmin={isOrgAdmin}
+        />
+        <OpportunitiesCard
+          item={opps}
           error={errFor("listOpportunities")}
-          testId="today-card-opportunities"
-        >
-          {opps ? (
-            <>
-              <p className="text-3xl font-bold tabular-nums">
-                {(opps.payload as { count?: number }).count ?? 0}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Top by projected savings
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No opportunity data.
-            </p>
-          )}
-        </TriageCard>
-
-        <TriageCard
-          title="Pending approvals"
-          icon={CheckSquare}
-          severity={approvals?.severity ?? "info"}
-          href="/approvals"
+          isAdmin={isOrgAdmin}
+        />
+        <ApprovalsCard
+          item={approvals}
           error={errFor("approvalsPending")}
-          testId="today-card-approvals"
-        >
-          {approvals ? (
-            <p className="text-3xl font-bold tabular-nums">
-              {(approvals.payload as { pending?: number }).pending ?? 0}
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No approvals data.
-            </p>
-          )}
-        </TriageCard>
-
-        <TriageCard
-          title="Operations health"
-          icon={Activity}
-          severity={jobs?.severity ?? "info"}
-          href="/operations"
+          isAdmin={isOrgAdmin}
+        />
+        <OpsHealthCard
+          item={jobs}
           error={errFor("listJobs")}
-          testId="today-card-jobs"
-        >
-          {jobs ? (
-            <>
-              <p className="text-3xl font-bold tabular-nums">
-                {(jobs.payload as { count?: number }).count ?? 0}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Failed jobs in the last 24h
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">No job data.</p>
-          )}
-        </TriageCard>
+          isAdmin={isOrgAdmin}
+        />
       </div>
 
       <DeltasCard
@@ -171,10 +121,263 @@ export default function Today() {
         conversionDeltas={conversionDeltas}
         annotationsError={errFor("funnelAutoAnnotations")}
         conversionError={errFor("funnelConversionDeltas")}
+        isAdmin={isOrgAdmin}
       />
     </div>
   );
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Per-card components. Each capability-gates its enriched context line
+// against the actual payload it received — missing #209 fields fall
+// back to the pre-#209 number-only rendering.
+// ────────────────────────────────────────────────────────────────────
+
+interface FeedItem {
+  payload: Record<string, unknown>;
+  severity: "info" | "warn" | "error";
+}
+
+interface CardCommon {
+  item: FeedItem | undefined;
+  error: string | undefined;
+  isAdmin: boolean;
+}
+
+interface TopAlertPayload {
+  id: string;
+  title: string;
+  severity: string;
+  ageMs: number;
+}
+
+function AlertsCard({ item, error, isAdmin }: CardCommon) {
+  const payload = (item?.payload ?? {}) as {
+    openTotal?: number;
+    openCriticalOrHigh?: number;
+    topAlert?: TopAlertPayload;
+  };
+  const openCH = payload.openCriticalOrHigh ?? 0;
+  const openTotal = payload.openTotal ?? 0;
+  // Deep-link: pre-filter the alerts page to `state:open`. The card
+  // counts open critical OR high, which the documented `?filter`
+  // convention would express as two repeated `severity` keys — but
+  // the alerts page's severity filter is a single-select today, so a
+  // multi-value link would silently collapse to one severity and
+  // mis-represent the slice. Until the alerts page grows a
+  // multi-select severity (reserved for #204), the deep-link
+  // intentionally lands on `state:open` only and lets the operator
+  // pick a severity if they want to narrow further. Documented in
+  // `docs/command-center-ia.md`.
+  const href = "/alerts?filter=state:open";
+  return (
+    <TriageCard
+      title="Alerts"
+      icon={AlertTriangle}
+      severity={item?.severity ?? "info"}
+      href={href}
+      error={error}
+      isAdmin={isAdmin}
+      testId="today-card-alerts"
+    >
+      {error ? null : item ? (
+        <>
+          <p className="text-3xl font-bold tabular-nums">{openCH}</p>
+          <p
+            className="text-xs text-muted-foreground mt-1"
+            data-testid="today-card-alerts-context"
+          >
+            Open critical / high — {openTotal} open total
+            {payload.topAlert ? (
+              <>
+                {" · top: "}
+                <span className="font-medium text-foreground/80">
+                  &ldquo;{payload.topAlert.title}&rdquo;
+                </span>
+                {" · "}
+                {formatAge(payload.topAlert.ageMs)} ago
+              </>
+            ) : null}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">No alerts data.</p>
+      )}
+    </TriageCard>
+  );
+}
+
+interface TopOpportunityPayload {
+  id: string;
+  title: string;
+  leverId: string;
+  projectedSavingsUsd: number;
+}
+
+function OpportunitiesCard({ item, error, isAdmin }: CardCommon) {
+  const payload = (item?.payload ?? {}) as {
+    count?: number;
+    topOpportunity?: TopOpportunityPayload;
+  };
+  const href = "/opportunities?filter=status:proposed";
+  return (
+    <TriageCard
+      title="Proposed opportunities"
+      icon={Sparkles}
+      severity={item?.severity ?? "info"}
+      href={href}
+      error={error}
+      isAdmin={isAdmin}
+      testId="today-card-opportunities"
+    >
+      {error ? null : item ? (
+        <>
+          <p className="text-3xl font-bold tabular-nums">
+            {payload.count ?? 0}
+          </p>
+          <p
+            className="text-xs text-muted-foreground mt-1"
+            data-testid="today-card-opportunities-context"
+          >
+            {payload.topOpportunity ? (
+              <>
+                top: {leverLabel(payload.topOpportunity.leverId)}
+                {" · "}
+                {formatUsd(payload.topOpportunity.projectedSavingsUsd, {
+                  compact: true,
+                })}{" "}
+                projected
+              </>
+            ) : (
+              "Top by projected savings"
+            )}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No opportunity data.
+        </p>
+      )}
+    </TriageCard>
+  );
+}
+
+function ApprovalsCard({ item, error, isAdmin }: CardCommon) {
+  const payload = (item?.payload ?? {}) as {
+    pending?: number;
+    needsActionToday?: number;
+    oldestAgeMs?: number;
+  };
+  const total = payload.pending ?? 0;
+  // RT-83: when the enriched split is present, the headline is the
+  // actionable number (proposed in last 24h), with the structural
+  // backlog total as muted secondary context. When the enrichment is
+  // missing (older server, partial deploy), fall back to the pre-#209
+  // total-only rendering — never two numbers competing for attention.
+  // RT-92/RT-100: gate must treat both `undefined` AND `null` as
+  // absent (JSON serialization of an explicit-null field is a real
+  // wire shape we have to handle), and only consider numeric values
+  // as a valid split.
+  const hasSplit = typeof payload.needsActionToday === "number";
+  const head = hasSplit ? payload.needsActionToday! : total;
+  const href = "/approvals";
+  return (
+    <TriageCard
+      title="Pending approvals"
+      icon={CheckSquare}
+      severity={item?.severity ?? "info"}
+      href={href}
+      error={error}
+      isAdmin={isAdmin}
+      testId="today-card-approvals"
+    >
+      {error ? null : item ? (
+        <>
+          <p className="text-3xl font-bold tabular-nums">{head}</p>
+          {hasSplit ? (
+            <p
+              className="text-xs text-muted-foreground mt-1"
+              data-testid="today-card-approvals-context"
+            >
+              Need action today (proposed in last 24h)
+              {" · "}
+              {total.toLocaleString()} total pending
+              {payload.oldestAgeMs !== undefined && total > 0 ? (
+                <> · oldest {formatAge(payload.oldestAgeMs)}</>
+              ) : null}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No approvals data.
+        </p>
+      )}
+    </TriageCard>
+  );
+}
+
+interface TopFailedPayload {
+  kind: string;
+  ageMs: number;
+}
+interface LastCyclePayload {
+  generation: number;
+  completedAt: string;
+  ageMs: number;
+}
+
+function OpsHealthCard({ item, error, isAdmin }: CardCommon) {
+  const payload = (item?.payload ?? {}) as {
+    count?: number;
+    topFailed?: TopFailedPayload;
+    lastSuccessfulCycle?: LastCyclePayload;
+  };
+  const failedCount = payload.count ?? 0;
+  const href = "/operations";
+  return (
+    <TriageCard
+      title="Operations health"
+      icon={Activity}
+      severity={item?.severity ?? "info"}
+      href={href}
+      error={error}
+      isAdmin={isAdmin}
+      testId="today-card-jobs"
+    >
+      {error ? null : item ? (
+        <>
+          <p className="text-3xl font-bold tabular-nums">{failedCount}</p>
+          <p
+            className="text-xs text-muted-foreground mt-1"
+            data-testid="today-card-jobs-context"
+          >
+            {failedCount > 0 && payload.topFailed ? (
+              <>
+                Failed in last 24h · last: {payload.topFailed.kind} ·{" "}
+                {formatAge(payload.topFailed.ageMs)} ago
+              </>
+            ) : failedCount === 0 && payload.lastSuccessfulCycle ? (
+              <>
+                Failed jobs in the last 24h · last cycle ran{" "}
+                {formatAge(payload.lastSuccessfulCycle.ageMs)} ago
+              </>
+            ) : (
+              "Failed jobs in the last 24h"
+            )}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">No job data.</p>
+      )}
+    </TriageCard>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Deltas card (#204) — unchanged structurally; per-source error strings
+// now flow through the scrubber.
+// ────────────────────────────────────────────────────────────────────
 
 interface AutoAnnotation {
   id: string;
@@ -200,31 +403,20 @@ interface ConversionDeltasPayload {
   transitions: ConversionTransition[];
 }
 
-interface FeedItem {
-  payload: Record<string, unknown>;
-}
-
 interface DeltasCardProps {
   annotations: FeedItem | undefined;
   conversionDeltas: FeedItem | undefined;
   annotationsError: string | undefined;
   conversionError: string | undefined;
+  isAdmin: boolean;
 }
 
-/**
- * Substrate-driven "what changed since last cycle" panel (#204). Shows
- * recent auto-annotations from the funnel substrate's delta detector
- * alongside per-transition conversion-rate diffs between the two most
- * recent cycles. Empty states are explicit ("no notable changes",
- * "insufficient history") so the operator can tell silence apart from
- * a broken source — a per-source error ribbon shows when a feed source
- * actually failed.
- */
 function DeltasCard({
   annotations,
   conversionDeltas,
   annotationsError,
   conversionError,
+  isAdmin,
 }: DeltasCardProps) {
   const annPayload = (annotations?.payload ?? {}) as {
     count?: number;
@@ -259,12 +451,11 @@ function DeltasCard({
             Auto-annotations
           </h3>
           {annotationsError ? (
-            <p
-              data-testid="today-deltas-annotations-error"
-              className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1"
-            >
-              Source unavailable: {annotationsError}
-            </p>
+            <FailureRibbon
+              error={annotationsError}
+              isAdmin={isAdmin}
+              testId="today-deltas-annotations-error"
+            />
           ) : recent.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No notable stage drops or spikes in recent cycles.
@@ -309,12 +500,11 @@ function DeltasCard({
               )}
           </h3>
           {conversionError ? (
-            <p
-              data-testid="today-deltas-conversion-error"
-              className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1"
-            >
-              Source unavailable: {conversionError}
-            </p>
+            <FailureRibbon
+              error={conversionError}
+              isAdmin={isAdmin}
+              testId="today-deltas-conversion-error"
+            />
           ) : transitions.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Need at least two cycles to compute conversion deltas. Check back
@@ -389,6 +579,7 @@ interface TriageCardProps {
   severity: "info" | "warn" | "error";
   href: string;
   error: string | undefined;
+  isAdmin: boolean;
   testId: string;
   children: React.ReactNode;
 }
@@ -399,6 +590,7 @@ function TriageCard({
   severity,
   href,
   error,
+  isAdmin,
   testId,
   children,
 }: TriageCardProps) {
@@ -427,14 +619,76 @@ function TriageCard({
       <CardContent>
         {children}
         {error && (
-          <p
-            data-testid={`${testId}-error`}
-            className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1"
-          >
-            Source unavailable: {error}
-          </p>
+          <FailureRibbon
+            error={error}
+            isAdmin={isAdmin}
+            testId={`${testId}-error`}
+          />
         )}
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * The error/failure rendering boundary (#209 step 1, RT-91).
+ *
+ * Every per-source error string flows through `scrubError()` here, so
+ * raw SQL / param markers / file paths / stack frames never reach the
+ * DOM. The original unscrubbed string is rendered ONLY inside a
+ * `<details>` disclosure visible to org_admin / platform_admin (RT-85,
+ * matching the #205 disclosure pattern). Non-admin users see no
+ * "What happened?" affordance at all.
+ */
+function FailureRibbon({
+  error,
+  isAdmin,
+  testId,
+  className,
+}: {
+  error: string;
+  isAdmin: boolean;
+  testId: string;
+  className?: string;
+}) {
+  const safe = scrubError(error);
+  return (
+    <div
+      data-testid={testId}
+      className={
+        className ??
+        "mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1"
+      }
+    >
+      <p>Couldn&rsquo;t load this right now. {safe}</p>
+      {isAdmin ? (
+        <details className="mt-1" data-testid={`${testId}-disclosure`}>
+          <summary className="cursor-pointer text-amber-800/80 hover:text-amber-900">
+            What happened?
+          </summary>
+          <pre
+            className="mt-1 whitespace-pre-wrap break-words text-[11px] text-amber-900/80"
+            data-testid={`${testId}-disclosure-body`}
+          >
+            {error}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Tiny age formatter — keeps the muted secondary line short.
+// ────────────────────────────────────────────────────────────────────
+function formatAge(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const d = Math.floor(hr / 24);
+  return `${d}d`;
 }

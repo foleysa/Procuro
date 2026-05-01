@@ -13,6 +13,24 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 
 /**
- * Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.
+ * Source-specific payload. Shape is documented per `kind` in
+the design doc; unknown keys are tolerated.
+
+#209 enrichments (additive, all optional — clients capability-gate):
+
+* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and
+  optionally `topAlert: { id, title, severity, ageMs }` when
+  there is at least one open alert.
+* `opportunities.proposed` — `count`, `top` (raw rows), and
+  optionally `topOpportunity: { id, title, leverId,
+  projectedSavingsUsd }`.
+* `jobs.failed` — `count`, `recent` (raw rows), and
+  optionally `topFailed: { kind, ageMs }` when count > 0;
+  optionally `lastSuccessfulCycle: { generation,
+  completedAt, ageMs }` when count == 0 (or in addition).
+* `approvals.pending` — `pending` (total backlog),
+  `needsActionToday` (proposed in last 24h, RT-83 primary
+  number), and optionally `oldestAgeMs` (oldest pending row).
+
  */
 export type TodayFeedItemPayload = { [key: string]: unknown };

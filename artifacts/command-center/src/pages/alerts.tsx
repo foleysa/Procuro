@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
+import { parseFilters, firstFilterValue } from "@/lib/url-filters";
 import {
   useListAlerts,
   useGetAlertsSummary,
@@ -90,8 +92,49 @@ export default function Alerts() {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const [severity, setSeverity] = useState<"all" | AlertSeverity>("all");
-  const [state, setState] = useState<"all" | AlertState>("open");
+  // #209 step 7: deep-links from the Today aggregator land here with
+  // `?filter=state:open&filter=severity:critical` etc. Whitelist three
+  // keys (`state`, `severity`, `source`); anything else is ignored.
+  // Multi-value `severity` collapses to the first match because the
+  // page's UI only renders a single-select (a future multi-select
+  // would consume the full Set instead). Initial-state-only — manual
+  // filter changes do not write back to the URL, by design (we don't
+  // want bookmark drift).
+  const search = useSearch();
+  const initial = useMemo(() => {
+    const f = parseFilters(search);
+    const validSeverity = new Set<AlertSeverity>([
+      "info",
+      "low",
+      "medium",
+      "high",
+      "critical",
+    ]);
+    const validState = new Set<AlertState>([
+      "open",
+      "acknowledged",
+      "snoozed",
+      "resolved",
+    ]);
+    const sev = firstFilterValue(f, "severity", "all");
+    const st = firstFilterValue(f, "state", "open");
+    return {
+      severity: validSeverity.has(sev as AlertSeverity)
+        ? (sev as AlertSeverity)
+        : ("all" as const),
+      state: validState.has(st as AlertState)
+        ? (st as AlertState)
+        : ("open" as const),
+    };
+    // Initial state captured once; subsequent URL edits don't reflow
+    // local state (intentional — same as opportunities.tsx).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [severity, setSeverity] = useState<"all" | AlertSeverity>(
+    initial.severity,
+  );
+  const [state, setState] = useState<"all" | AlertState>(initial.state);
   const [source, setSource] = useState<"all" | AlertSource>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

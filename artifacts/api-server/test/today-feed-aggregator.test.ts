@@ -11,9 +11,19 @@
  *     the response — sibling sources still run and contribute their items.
  *   - `partial` is `true` iff `errors.length > 0`.
  *
- * This contract is what lets the operator's daily-flow page degrade
- * gracefully when an upstream system is down. Breaking it would
- * silently take the operator's morning offline.
+ * #209 additions:
+ *
+ *   - The Alerts query MUST succeed end-to-end against the real
+ *     shipping schema (which omits the new `state`, `source`, `payload`
+ *     columns the #117 source schema declares). The test seeds an
+ *     `alerts` row using ONLY the columns that exist in both the
+ *     legacy and #117 schemas, then asserts the alerts source did
+ *     not land in `errors[]`.
+ *   - The Pending Approvals payload exposes BOTH the actionable
+ *     `needsActionToday` (proposed in last 24h) and the structural
+ *     `pending` total — RT-83's split. We seed two opportunities, one
+ *     dated yesterday and one dated last month, and assert both
+ *     numbers appear correctly.
  *
  * Strategy: mount the route against a real Postgres pool, against an
  * org id we created in `before()`. The alerts query happens to be a
@@ -33,8 +43,10 @@ import { randomUUID } from "node:crypto";
 process.env["NODE_ENV"] = process.env["NODE_ENV"] ?? "development";
 process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 
-const { db, orgsTable, pool } = await import("@workspace/db");
-const { eq } = await import("drizzle-orm");
+const { db, orgsTable, opportunitiesTable, pool } = await import(
+  "@workspace/db"
+);
+const { eq, sql } = await import("drizzle-orm");
 const todayRouter = (await import("../src/routes/today")).default;
 
 const RUN = `t199-today-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
@@ -49,6 +61,67 @@ before(async () => {
     name: `${RUN} Today Test Org`,
     slug: RUN,
   });
+
+  // Seed two proposed opportunities — one fresh (≤24h, so it counts
+  // toward `needsActionToday`), one a month old (so it only counts
+  // toward `pending`). The lever IDs and savings values are arbitrary;
+  // the contract under test is the COUNT split, not the row contents.
+  // Seed values cover only the notNull columns that lack defaults.
+  // `inputs`, `status`, `realizedSavingsUsd`, `createdAt` have defaults
+  // and are intentionally omitted (the createdAt default is what makes
+  // the fresh row land inside the 24h window).
+  const baseSeed = {
+    cycleId: `cycle_${RUN}`,
+    tier: 1,
+    rationale: "test rationale",
+    recommendedAction: "test action",
+    rawProjectedSavingsUsd: "1000",
+  };
+  await db.insert(opportunitiesTable).values([
+    {
+      ...baseSeed,
+      id: `opp_fresh_${RUN}`,
+      orgId,
+      title: "fresh opp",
+      leverId: "spot_vs_contract",
+      projectedSavingsUsd: "1000",
+      confidence: "0.5",
+    },
+    {
+      ...baseSeed,
+      id: `opp_old_${RUN}`,
+      orgId,
+      title: "old opp",
+      leverId: "maverick_spend",
+      projectedSavingsUsd: "500",
+      confidence: "0.5",
+    },
+  ]);
+
+  // Backdate the second opportunity by 30 days. Doing this in a
+  // separate UPDATE is clearer than fighting Drizzle's defaultNow over
+  // the insert path.
+  await db.execute(sql`
+    UPDATE opportunities
+       SET created_at = now() - interval '30 days'
+     WHERE id = ${`opp_old_${RUN}`}
+  `);
+
+  // Seed an alerts row using ONLY the column set that exists in BOTH
+  // the legacy and #117 schemas. `resolved_at IS NULL` is what makes
+  // it count as "open" for the schema-drift-safe query (#209).
+  // We use raw SQL because the Drizzle `alertsTable` declares columns
+  // that don't exist in the legacy DB and inserting through it would
+  // crash in the same way the original Today query did.
+  await db.execute(sql`
+    INSERT INTO alerts (
+      id, org_id, kind, severity, title, dedupe_key, created_at
+    ) VALUES (
+      ${`alt_${RUN}`}, ${orgId}, 'test_alert', 'high',
+      'Test alert from #209 contract test',
+      ${`dedupe_${RUN}`}, now()
+    )
+  `);
 
   const app: Express = express();
   app.use(express.json());
@@ -72,6 +145,7 @@ after(async () => {
   await new Promise<void>((resolve, reject) =>
     server.close((err) => (err ? reject(err) : resolve())),
   );
+  // Cascade-on-delete handles opportunities + alerts + decisions.
   await db.delete(orgsTable).where(eq(orgsTable.id, orgId));
   await pool.end();
 });
@@ -132,4 +206,131 @@ test("/today/feed returns the discriminated-union shape with all six kinds", asy
 
   // partial = true iff there is at least one error.
   assert.equal(body.partial, body.errors.length > 0);
+});
+
+test("/today/feed alerts query succeeds against the real shipping schema (#209 step 3)", async () => {
+  // The previous Today route grouped by `alertsTable.state`, a column
+  // that doesn't exist in the live database. The schema-drift-safe
+  // rewrite must not appear in errors[] given a real seeded row, AND
+  // must reflect that row's severity in the open count.
+  const r = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: { "x-org-id": orgId },
+  });
+  const body = (await r.json()) as {
+    items: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+    }>;
+    errors: Array<{ source: string; error: string }>;
+  };
+
+  const alertsErr = body.errors.find((e) => e.source === "getAlertsSummary");
+  assert.equal(
+    alertsErr,
+    undefined,
+    `alerts source must succeed, got: ${alertsErr?.error}`,
+  );
+
+  const alerts = body.items.find((i) => i.kind === "alerts.summary");
+  assert.ok(alerts, "alerts.summary item must be present");
+  const payload = alerts.payload as {
+    openTotal: number;
+    openCriticalOrHigh: number;
+    topAlert?: { title: string; severity: string };
+  };
+  assert.ok(
+    payload.openTotal >= 1,
+    `openTotal should reflect the seeded high-severity alert (got ${payload.openTotal})`,
+  );
+  assert.ok(
+    payload.openCriticalOrHigh >= 1,
+    `openCriticalOrHigh should reflect the seeded high-severity alert (got ${payload.openCriticalOrHigh})`,
+  );
+  assert.ok(payload.topAlert, "topAlert enrichment must be present");
+  assert.equal(payload.topAlert.severity, "high");
+});
+
+test("/today/feed scrubs raw SQL / paths / stack frames out of errors[].error at the network boundary (#209 review)", async () => {
+  // Defense-in-depth: even if the UI scrubber regresses, the API
+  // payload itself must not ship raw internals to non-admin clients.
+  // The funnel-substrate sources currently throw `parserOpenTable`
+  // errors (a separate pre-existing schema-drift issue noted in
+  // replit.md), which gives us a real, repeatable error string to
+  // assert against. Forbidden substrings: every leak marker the
+  // scrubber denylists.
+  const r = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: { "x-org-id": orgId },
+  });
+  const body = (await r.json()) as {
+    errors: Array<{ source: string; error: string }>;
+  };
+
+  for (const e of body.errors) {
+    assert.doesNotMatch(
+      e.error,
+      /\bselect\b/i,
+      `errors[${e.source}] must not contain SQL keyword 'select': ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /\bfrom\b/i,
+      `errors[${e.source}] must not contain SQL keyword 'from': ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /\$\d+/,
+      `errors[${e.source}] must not contain $N param markers: ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /\bparams\s*:/i,
+      `errors[${e.source}] must not contain a 'params:' blob: ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /\.ts:/,
+      `errors[${e.source}] must not contain a TS file path: ${e.error}`,
+    );
+    assert.doesNotMatch(
+      e.error,
+      /\bat\s+\w+\s*\(/,
+      `errors[${e.source}] must not contain a stack frame: ${e.error}`,
+    );
+  }
+});
+
+test("/today/feed approvals payload splits needs-action-today vs total pending (RT-83)", async () => {
+  const r = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: { "x-org-id": orgId },
+  });
+  const body = (await r.json()) as {
+    items: Array<{ kind: string; payload: Record<string, unknown> }>;
+  };
+
+  const approvals = body.items.find((i) => i.kind === "approvals.pending");
+  assert.ok(approvals, "approvals.pending item must be present");
+  const payload = approvals.payload as {
+    pending: number;
+    needsActionToday: number;
+    oldestAgeMs?: number;
+  };
+  // Two seeded opportunities, one fresh + one 30 days old.
+  assert.ok(
+    payload.pending >= 2,
+    `pending total should include both seeded rows (got ${payload.pending})`,
+  );
+  assert.ok(
+    payload.needsActionToday >= 1,
+    `needsActionToday should reflect the fresh seeded row (got ${payload.needsActionToday})`,
+  );
+  assert.ok(
+    payload.pending > payload.needsActionToday,
+    "pending must be greater than needsActionToday because the old row exists",
+  );
+  // 30-day-old row sets the floor on `oldestAgeMs`.
+  assert.ok(payload.oldestAgeMs !== undefined, "oldestAgeMs must be set");
+  assert.ok(
+    payload.oldestAgeMs! > 25 * 24 * 60 * 60 * 1000,
+    `oldestAgeMs should reflect the 30-day-old seeded row (got ${payload.oldestAgeMs}ms)`,
+  );
 });

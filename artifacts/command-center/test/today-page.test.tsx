@@ -21,6 +21,11 @@ import { Router } from "wouter";
 
 import Today from "../src/pages/today";
 
+// Default the role mock to non-admin; individual tests can override.
+vi.mock("@/lib/use-my-role", () => ({
+  useMyRole: () => ({ isOrgAdmin: false, role: "member" }),
+}));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -141,5 +146,284 @@ describe("<Today />", () => {
     expect(screen.getByTestId("today-card-alerts-error").textContent).toMatch(
       /alerts table missing/,
     );
+  });
+
+  // ───────────────────────────────────────────────────────────────
+  // #209 contract tests.
+  // ───────────────────────────────────────────────────────────────
+
+  test("scrubs raw SQL / file paths / stack frames out of error rendering (#209 step 1)", async () => {
+    // The error string here is the EXACT shape we observed in the
+    // production logs that motivated #209: "Failed query: select ..."
+    // followed by `params: ...`, file paths, and stack frames. None of
+    // it should reach the DOM.
+    const dirty =
+      'Failed query: select "id", "org_id", "state" from "alerts" where "alerts"."org_id" = $1 group by "alerts"."state" params: ["org_2zT"] at QueryClient.query (/home/runner/workspace/artifacts/api-server/src/db.ts:42:11)';
+    mockFeed({
+      items: [
+        {
+          kind: "opportunities.proposed",
+          source: "listOpportunities",
+          payload: { count: 0 },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: true,
+      errors: [{ source: "getAlertsSummary", error: dirty }],
+    });
+
+    renderWithProviders(<Today />);
+
+    const ribbon = await screen.findByTestId("today-card-alerts-error");
+    const txt = ribbon.textContent ?? "";
+    // Forbidden substrings: every leak marker the scrubber denylists.
+    expect(txt).not.toMatch(/select/i);
+    expect(txt).not.toMatch(/from/i);
+    expect(txt).not.toMatch(/group by/i);
+    expect(txt).not.toMatch(/\$\d+/);
+    expect(txt).not.toMatch(/params\s*:/i);
+    expect(txt).not.toMatch(/\.ts:/);
+    expect(txt).not.toMatch(/\bat\s+\w+\s*\(/);
+    // And the "What happened?" disclosure must NOT be present for a
+    // non-admin viewer — the mock role above is `member`.
+    expect(screen.queryByTestId("today-card-alerts-error-disclosure")).toBeNull();
+  });
+
+  test('admin sees a "What happened?" disclosure with the original unscrubbed error (#209 step 1)', async () => {
+    // Override the role mock to admin for this test only.
+    vi.doMock("@/lib/use-my-role", () => ({
+      useMyRole: () => ({ isOrgAdmin: true, role: "org_admin" }),
+    }));
+    vi.resetModules();
+    const TodayAdmin = (await import("../src/pages/today")).default;
+
+    const dirty =
+      'Failed query: select "id" from "alerts" params: ["x"] at f (/a/b.ts:1:1)';
+    mockFeed({
+      items: [
+        {
+          kind: "opportunities.proposed",
+          source: "listOpportunities",
+          payload: { count: 0 },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: true,
+      errors: [{ source: "getAlertsSummary", error: dirty }],
+    });
+
+    renderWithProviders(<TodayAdmin />);
+
+    const disclosure = await screen.findByTestId(
+      "today-card-alerts-error-disclosure",
+    );
+    expect(disclosure).toBeTruthy();
+    // The disclosure body retains the original unscrubbed string —
+    // the whole point of role-gating is that admins can still
+    // diagnose. `<details>` keeps its content in the DOM regardless
+    // of open state, so the assertion is reliable.
+    const body = screen.getByTestId(
+      "today-card-alerts-error-disclosure-body",
+    );
+    expect(body.textContent).toBe(dirty);
+
+    // Restore the default mock for subsequent tests.
+    vi.doMock("@/lib/use-my-role", () => ({
+      useMyRole: () => ({ isOrgAdmin: false, role: "member" }),
+    }));
+    vi.resetModules();
+  });
+
+  test("renders enriched context line for alerts when topAlert is present (RT-92 capability gate)", async () => {
+    mockFeed({
+      items: [
+        {
+          kind: "alerts.summary",
+          source: "getAlertsSummary",
+          payload: {
+            openTotal: 7,
+            openCriticalOrHigh: 2,
+            topAlert: {
+              id: "a1",
+              title: "Stripe webhook lag spiked",
+              severity: "critical",
+              ageMs: 3600_000, // 1 hour
+            },
+          },
+          occurredAt: NOW,
+          severity: "warn",
+        },
+        {
+          kind: "opportunities.proposed",
+          source: "listOpportunities",
+          payload: { count: 0 },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: false,
+      errors: [],
+    });
+
+    renderWithProviders(<Today />);
+
+    const ctx = await screen.findByTestId("today-card-alerts-context");
+    // Context line must include both totals and the topAlert title.
+    expect(ctx.textContent).toMatch(/7 open total/);
+    expect(ctx.textContent).toMatch(/Stripe webhook lag spiked/);
+    expect(ctx.textContent).toMatch(/1h ago/);
+  });
+
+  test("falls back to number-only when payload lacks #209 enrichment (RT-100 capability gate)", async () => {
+    // No topAlert / topOpportunity / etc. — the page MUST keep
+    // working: render the number, omit the enriched line gracefully.
+    mockFeed({
+      items: [
+        {
+          kind: "alerts.summary",
+          source: "getAlertsSummary",
+          payload: { openTotal: 4, openCriticalOrHigh: 1 },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: false,
+      errors: [],
+    });
+
+    renderWithProviders(<Today />);
+
+    const ctx = await screen.findByTestId("today-card-alerts-context");
+    expect(ctx.textContent).toMatch(/4 open total/);
+    // No topAlert mention, no "ago" string.
+    expect(ctx.textContent).not.toMatch(/top:/);
+    expect(ctx.textContent).not.toMatch(/ago/);
+  });
+
+  test("approvals card shows needsActionToday as headline + total as muted secondary (RT-83)", async () => {
+    mockFeed({
+      items: [
+        {
+          kind: "approvals.pending",
+          source: "approvalsPending",
+          payload: {
+            pending: 4080,
+            needsActionToday: 12,
+            oldestAgeMs: 30 * 24 * 60 * 60 * 1000,
+          },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: false,
+      errors: [],
+    });
+
+    renderWithProviders(<Today />);
+
+    const card = await screen.findByTestId("today-card-approvals");
+    // Headline number is the actionable one.
+    expect(card.querySelector(".text-3xl")?.textContent).toBe("12");
+    // Context line carries the structural total.
+    const ctx = screen.getByTestId("today-card-approvals-context");
+    expect(ctx.textContent).toMatch(/4,080 total pending/);
+    expect(ctx.textContent).toMatch(/oldest 30d/);
+  });
+
+  test("error and empty states are mutually exclusive on the same card", async () => {
+    // Sources that error must NOT also render their pre-#209 empty
+    // state ("No alerts data."). Otherwise the operator sees a card
+    // that's screaming both "broken" and "nothing here" simultaneously,
+    // which was one of the original #209 complaints.
+    mockFeed({
+      items: [
+        {
+          kind: "opportunities.proposed",
+          source: "listOpportunities",
+          payload: { count: 1 },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: true,
+      errors: [
+        { source: "getAlertsSummary", error: "boom" },
+        { source: "listJobs", error: "boom" },
+        { source: "approvalsPending", error: "boom" },
+      ],
+    });
+
+    renderWithProviders(<Today />);
+
+    await screen.findByTestId("today-card-alerts");
+    expect(screen.queryByText(/No alerts data\./)).toBeNull();
+    expect(screen.queryByText(/No job data\./)).toBeNull();
+    expect(screen.queryByText(/No approvals data\./)).toBeNull();
+  });
+
+  test("alerts deep-link uses ?filter=state:open only — destination is single-select (#209 review)", async () => {
+    // The alerts card counts open critical OR high. Naively we'd
+    // emit `filter=severity:critical&filter=severity:high` per the
+    // documented OR convention, BUT the alerts destination's
+    // severity filter is a single-`<Select>` today and would
+    // silently collapse to one of those values, mis-representing
+    // the slice. Until the alerts page grows a multi-select
+    // severity (a #204 follow-up), the deep-link is intentionally
+    // single-key.
+    mockFeed({
+      items: [
+        {
+          kind: "alerts.summary",
+          source: "getAlertsSummary",
+          payload: { openTotal: 7, openCriticalOrHigh: 2 },
+          occurredAt: NOW,
+          severity: "warn",
+        },
+      ],
+      partial: false,
+      errors: [],
+    });
+
+    renderWithProviders(<Today />);
+
+    const card = await screen.findByTestId("today-card-alerts");
+    const link = card.querySelector("a");
+    expect(link).toBeTruthy();
+    const href = link!.getAttribute("href") ?? "";
+    // `:` is a sub-delim per RFC 3986 and is allowed unencoded in
+    // query values; we keep them readable in the deep-link.
+    expect(href).toBe("/alerts?filter=state:open");
+  });
+
+  test("approvals split gate treats null as absent (#209 review)", async () => {
+    // RT-92/RT-100: capability-gating must reject `null` as well as
+    // `undefined`. JSON serialization of an explicit-null field is a
+    // real wire shape that any older server might emit. Without this
+    // fix the headline number would render as `null` literally.
+    mockFeed({
+      items: [
+        {
+          kind: "approvals.pending",
+          source: "approvalsPending",
+          payload: { pending: 12, needsActionToday: null },
+          occurredAt: NOW,
+          severity: "info",
+        },
+      ],
+      partial: false,
+      errors: [],
+    });
+
+    renderWithProviders(<Today />);
+
+    const card = await screen.findByTestId("today-card-approvals");
+    // Headline must fall back to `pending` (12), and the secondary
+    // line must NOT render (no split available).
+    expect(card.querySelector(".text-3xl")?.textContent).toBe("12");
+    expect(
+      screen.queryByTestId("today-card-approvals-context"),
+    ).toBeNull();
   });
 });

@@ -148,6 +148,49 @@ fail-soft behaviour and per-request caching only.
 
 Both use the existing OpenAPI codegen workflow.
 
+## Today deep-link query convention (#209)
+
+The Today aggregator's "Open →" links carry a `?filter=key:value`
+repeatable query param so the destination page lands pre-filtered to
+the slice the operator was looking at. Convention:
+
+- Param name is always `filter`.
+- Each occurrence is `<key>:<value>`. Repeats on the same key OR
+  together (a multi-select).
+- Destination pages whitelist their own keys; unknown keys are
+  silently ignored, so adding a stray `?filter=foo:bar` to a deep-link
+  is non-breaking.
+- Initial-state-only: pages seed local filter state from the URL on
+  first render, but manual filter changes do **not** write back to the
+  URL (intentional — avoids bookmark drift).
+
+Today's current deep-links:
+
+| Card | Destination | Query string |
+|---|---|---|
+| Alerts | `/alerts` | `filter=state:open` |
+| Proposed opportunities | `/opportunities` | `filter=status:proposed` |
+| Pending approvals | `/approvals` | _(no filter)_ |
+| Operations health | `/operations` | _(no filter)_ |
+
+**Single-select destinations and multi-value keys.** The alerts card
+counts open critical OR high, which the convention would naturally
+express as `filter=severity:critical&filter=severity:high`. The alerts
+page's severity filter is currently a single-`<Select>`, so a
+multi-value link would silently collapse to one severity and
+mis-represent the slice the operator just clicked. Until the alerts
+page grows a multi-select severity (a #204 follow-up), its deep-link
+lands on `state:open` only and lets the operator pick a severity
+manually. Other destinations that grow multi-select UI should consume
+the full `Set` from `parseFilters()` instead of `firstFilterValue()`.
+
+Helper lives at `artifacts/command-center/src/lib/url-filters.ts`
+(`parseFilters` returns `Map<key, Set<value>>`; `firstFilterValue` is
+a convenience for single-select destination UIs). Add new card
+deep-links via the same helper rather than inventing new query
+shapes — this is the convention the substrate-driven Today (#204)
+will inherit.
+
 ## Migration banner copy (step 7)
 
 One-time, dismissable banner shown on first sign-in post-deploy. Three

@@ -6293,7 +6293,7 @@ export const GetTodayFeedResponse = zod.object({
       payload: zod
         .record(zod.string(), zod.unknown())
         .describe(
-          "Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.",
+          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (proposed in last 24h, RT-83 primary\n  number), and optionally `oldestAgeMs` (oldest pending row).\n",
         ),
       occurredAt: zod.coerce
         .date()
@@ -6351,7 +6351,7 @@ export const GetOperationsHealthResponse = zod.object({
       payload: zod
         .record(zod.string(), zod.unknown())
         .describe(
-          "Source-specific payload. Shape is documented per `kind` in the design doc; unknown keys are tolerated.",
+          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (proposed in last 24h, RT-83 primary\n  number), and optionally `oldestAgeMs` (oldest pending row).\n",
         ),
       occurredAt: zod.coerce
         .date()

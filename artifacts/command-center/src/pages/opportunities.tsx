@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   useListOpportunities,
   LeverId,
   ListOpportunitiesStatus,
   type Opportunity,
 } from "@workspace/api-client-react";
+import { parseFilters, firstFilterValue } from "@/lib/url-filters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,8 +30,25 @@ const STATUS_OPTS = [
 ];
 
 export default function Opportunities() {
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [leverFilter, setLeverFilter] = useState<string>("all");
+  // #209 step 7: deep-links from the Today aggregator land here with
+  // `?filter=status:proposed&filter=leverId:spot_vs_contract`. Initial-
+  // state-only — manual changes don't write back to the URL (mirror of
+  // the alerts page contract). Unknown values fall through to "all".
+  const search = useSearch();
+  const initial = useMemo(() => {
+    const f = parseFilters(search);
+    const validStatus = new Set<string>(Object.values(ListOpportunitiesStatus));
+    const validLever = new Set<string>(Object.values(LeverId));
+    const status = firstFilterValue(f, "status", "all");
+    const lever = firstFilterValue(f, "leverId", "all");
+    return {
+      status: validStatus.has(status) ? status : "all",
+      lever: validLever.has(lever) ? lever : "all",
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [statusFilter, setStatusFilter] = useState<string>(initial.status);
+  const [leverFilter, setLeverFilter] = useState<string>(initial.lever);
 
   const params = useMemo(() => {
     const p: Record<string, string | number> = { limit: 200 };
