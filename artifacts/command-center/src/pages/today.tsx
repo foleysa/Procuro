@@ -270,10 +270,12 @@ function ApprovalsCard({ item, error, isAdmin }: CardCommon) {
   };
   const total = payload.pending ?? 0;
   // RT-83: when the enriched split is present, the headline is the
-  // actionable number (proposed in last 24h), with the structural
-  // backlog total as muted secondary context. When the enrichment is
-  // missing (older server, partial deploy), fall back to the pre-#209
-  // total-only rendering — never two numbers competing for attention.
+  // actionable number — opportunities that are EITHER fresh (created
+  // in the last 24h) OR aging past the soft deadline (still pending
+  // and >7 days old). The structural backlog total appears as muted
+  // secondary context. When the enrichment is missing (older server,
+  // partial deploy), fall back to the pre-#209 total-only rendering —
+  // never two numbers competing for attention.
   // RT-92/RT-100: gate must treat both `undefined` AND `null` as
   // absent (JSON serialization of an explicit-null field is a real
   // wire shape we have to handle), and only consider numeric values
@@ -299,7 +301,7 @@ function ApprovalsCard({ item, error, isAdmin }: CardCommon) {
               className="text-xs text-muted-foreground mt-1"
               data-testid="today-card-approvals-context"
             >
-              Need action today (proposed in last 24h)
+              Need action today (new in last 24h or aged past 7 days)
               {" · "}
               {total.toLocaleString()} total pending
               {payload.oldestAgeMs !== undefined && total > 0 ? (
