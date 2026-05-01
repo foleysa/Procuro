@@ -372,6 +372,24 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
   // The client renders `needsActionToday` as the headline number and
   // `pending` (total) muted underneath; the verification log lives in
   // the implementation summary.
+  // RT-83: `needsActionToday` is the OPERATOR'S morning queue. It is
+  // explicitly defined as the disjunction of TWO populations:
+  //   (a) freshly-proposed opportunities (created in the last 24h) —
+  //       new work the operator hasn't triaged yet, AND
+  //   (b) opportunities aging into the soft deadline (default >7d
+  //       still pending) — work the operator put off and that should
+  //       no longer be ignored.
+  // Implementing only (a) under-counts a real-world backlog where the
+  // bulk of pending work isn't fresh — the situation we have today
+  // (4080/4080 in the live data because everything was bulk-seeded
+  // recently, but the moment the next cycle runs, only the new rows
+  // would be "actionable" without (b)).
+  // The 7-day soft deadline matches the verification log threshold;
+  // the same constant is referenced in `replit.md`. If we ever need
+  // it per-org, it can move to `orgs.settings`.
+  const SOFT_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
+  const softDeadline = new Date(now.getTime() - SOFT_DEADLINE_MS);
+
   await safe(
     "approvalsPending",
     async () => {
@@ -386,6 +404,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
         );
       const pending = totalRow?.n ?? 0;
 
+      // (a) OR (b) — single round-trip via OR-of-conditions in WHERE.
       const [todayRow] = await db
         .select({ n: sql<number>`COUNT(*)::int` })
         .from(opportunitiesTable)
@@ -393,7 +412,10 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
           and(
             eq(opportunitiesTable.orgId, orgId),
             eq(opportunitiesTable.status, "proposed"),
-            gte(opportunitiesTable.createdAt, last24h),
+            sql`(
+              ${opportunitiesTable.createdAt} >= ${last24h}
+              OR ${opportunitiesTable.createdAt} <= ${softDeadline}
+            )`,
           ),
         );
       const needsActionToday = todayRow?.n ?? 0;

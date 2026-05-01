@@ -1,0 +1,383 @@
+RESEARCH:
+What I have:
+
+The six bands from the prior turn (Indexable, Concentrated, Fragmented, Subscription, Capital, Pure-Services).
+Lever names referenced across #185 and prior turns: spot-vs-contract, material-index-arbitrage, supplier_fx_exposure, raw_material_hedging, index_based_pricing, supplier_consolidation, volume_rebate_optimization, payment_term_extension, contract_renegotiation, tail_spend_rationalization, catalog_compliance, p-card_optimization, maverick_spend, subscription_audit, license_rightsizing, renewal_negotiation, should_cost_modeling, total_cost_of_ownership, capex_governance, rate_card_benchmarking, scope_management, hours_audit, sku_price_benchmark, contract_leakage, duplicate_payment, payment_term_extension (already counted), outcome_based_contract.
+The funnel substrate (#185) already has cohortKey() per lever and scope_category_code on signals. The data model spine exists.
+Bands map to lever sets, not single levers (many-to-many).
+Categories map to bands many-to-many.
+
+What I'm assuming:
+
+The 28-lever count from #185 is approximate; some lever names are inferred from earlier conversation. I'll flag any inferred ones.
+The data model uses Drizzle ORM with PostgreSQL JSONB based on #185's schema patterns.
+Layer 1 categories follow the structure I gave you in the prior turn (Direct/Indirect with the ten Indirect families and their MRO sub-categories).
+
+What I should test for:
+
+A lever that doesn't fit any band cleanly is a signal the band model is missing something.
+A category that maps to zero bands is a routing dead-end.
+A category-band-lever combination producing zero opportunities historically would be a low-confidence mapping the system shouldn't trust.
+
+THINK:
+The mapping table needs to support three queries the platform will run constantly:
+
+Signal-to-lever routing. "A signal arrived tagged with category X. Which levers should consume it?" Answer: find the bands category X belongs to, find the levers in those bands.
+Lever-to-category applicability. "Lever Y is being scheduled for cycle. Which categories should it actually run on?" Answer: find the bands lever Y belongs to, find the categories in those bands.
+Calibration-driven tier assignment. "For category X in band Z, what's the realization-vs-projection track record? Should this combination be Tier A, B, C?" Answer: query funnel calibration data filtered by category and band.
+
+The schema needs to support all three without forcing N+1 queries.
+Two table options:
+Option A — Two many-to-many tables.
+
+category_bands (category_code, band)
+lever_bands (lever_id, band)
+
+Routing queries become joins through the band column. Clean, normalized, easy to extend.
+Option B — One denormalized mapping table.
+
+category_lever_mappings (category_code, band, lever_id, attribution_tier, confidence_weight)
+
+Materialized join. Faster reads, but inserts are explosive (every category × every applicable lever × every band combination is a row) and maintenance is harder when a lever joins or leaves a band.
+Recommendation: Option A for canonical truth, with a denormalized view (v_category_lever_mappings) for the routing-hot-path. Best of both — normalization for maintenance, denormalization for query performance. Refresh the view when the truth tables change.
+Going with Option A.
+The band-to-lever mapping is the more interesting work. Let me walk all 28 levers and assign bands. Some levers belong to multiple bands; that's expected.
+PLAN:
+
+Schema: two tables (category_bands, lever_bands) plus a refreshable denormalized view.
+Walk all 28 levers, assign bands, flag ambiguities.
+Walk the Layer 1 categories, assign bands.
+Show the routing queries.
+Flag what to do about levers that don't fit cleanly and categories with no band match.
+
+BUILD DRAFT — not for shipping:
+Schema
+Two truth tables, one denormalized view. Drizzle definitions in the existing schema location (likely lib/db/src/schema/taxonomy.ts or extending funnel.ts).
+typescript// Truth table 1: which bands a category belongs to
+export const categoryBands = pgTable('category_bands', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  categoryCode: varchar('category_code', { length: 64 }).notNull(),
+  band: bandEnum('band').notNull(),
+  // Confidence in this mapping, calibrated over time from realization data.
+  // Defaults to 1.0; updated by a periodic job that consumes funnel_snapshots
+  // prior_calibration data per category-band combination.
+  confidenceWeight: real('confidence_weight').default(1.0).notNull(),
+  // Where the mapping came from. 'seed' for initial taxonomy, 'learned' for
+  // mappings the calibration job adjusted, 'manual' for operator overrides.
+  source: mappingSourceEnum('source').default('seed').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => ({
+  categoryBandUnique: uniqueIndex('category_bands_unique').on(t.categoryCode, t.band),
+  categoryIdx: index('category_bands_category_idx').on(t.categoryCode),
+  bandIdx: index('category_bands_band_idx').on(t.band),
+}));
+
+// Truth table 2: which bands a lever belongs to
+export const leverBands = pgTable('lever_bands', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  leverId: varchar('lever_id', { length: 64 }).notNull(),
+  band: bandEnum('band').notNull(),
+  // Whether this lever is the primary fit for the band, or a secondary lever
+  // that fires when the primary is excluded. Used for ranking inside a band.
+  fitRank: integer('fit_rank').default(1).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => ({
+  leverBandUnique: uniqueIndex('lever_bands_unique').on(t.leverId, t.band),
+  leverIdx: index('lever_bands_lever_idx').on(t.leverId),
+  bandIdx: index('lever_bands_band_idx').on(t.band),
+}));
+
+// Enums
+export const bandEnum = pgEnum('band', [
+  'indexable',
+  'concentrated',
+  'fragmented',
+  'subscription',
+  'capital',
+  'services',
+]);
+
+export const mappingSourceEnum = pgEnum('mapping_source', [
+  'seed',
+  'learned',
+  'manual',
+]);
+
+// Denormalized view, refreshed by a job when the truth tables change.
+// Materializes the join for the routing hot path.
+export const categoryLeverMappings = pgMaterializedView('v_category_lever_mappings').as(
+  (qb) => qb
+    .select({
+      categoryCode: categoryBands.categoryCode,
+      band: categoryBands.band,
+      leverId: leverBands.leverId,
+      categoryConfidence: categoryBands.confidenceWeight,
+      leverFitRank: leverBands.fitRank,
+    })
+    .from(categoryBands)
+    .innerJoin(leverBands, eq(categoryBands.band, leverBands.band))
+);
+The materialized view refreshes on insert/update/delete to either truth table (trigger-based) or on a schedule (every cycle's prep step). Trigger-based is cleaner; schedule-based is safer if the trigger overhead becomes a concern.
+
+Band-to-lever mapping (all 28 levers)
+Walking each lever, assigning bands, flagging ambiguities.
+Indexable band — price index drives the opportunity:
+
+spot_vs_contract — primary fit. Compares spot index against contracted price.
+material_index_arbitrage — primary fit. Direct index-vs-paid arbitrage.
+supplier_fx_exposure — primary fit. Currency index moves vs. contracted supplier prices.
+raw_material_hedging — primary fit. Index-driven hedge timing.
+index_based_pricing — primary fit. Recommends index-linked clauses for non-indexed buys.
+sku_price_benchmark — secondary fit. Benchmarks SKU prices against market reference; sometimes index-backed, sometimes peer-reference.
+
+Concentrated band — share-of-wallet leverage drives the opportunity:
+7. supplier_consolidation — primary fit.
+8. volume_rebate_optimization — primary fit.
+9. contract_renegotiation — primary fit.
+10. payment_term_extension — primary fit (negotiable when share-of-wallet matters).
+11. contract_leakage — primary fit. Identifies off-contract buying that should consolidate back.
+12. outcome_based_contract — primary fit. Restructures concentrated relationships toward outcome pricing.
+Fragmented band — process and compliance drive the opportunity:
+13. tail_spend_rationalization — primary fit.
+14. catalog_compliance — primary fit.
+15. p_card_optimization — primary fit.
+16. maverick_spend — primary fit.
+17. duplicate_payment — primary fit. High-transaction-count process control.
+Subscription band — renewal and license rightsizing drive the opportunity:
+18. subscription_audit — primary fit.
+19. license_rightsizing — primary fit.
+20. renewal_negotiation — primary fit.
+Capital band — pre-commitment cost modeling drives the opportunity:
+21. should_cost_modeling — primary fit.
+22. total_cost_of_ownership — primary fit.
+23. capex_governance — primary fit.
+Services band — rate cards and scope discipline drive the opportunity:
+24. rate_card_benchmarking — primary fit.
+25. scope_management — primary fit.
+26. hours_audit — primary fit.
+That's 26. Two more from #185 references I haven't placed:
+
+payment_term_extension — already in Concentrated (counted #10). Skip.
+— there's a 28th lever in #185 I don't have a name for. The funnel substrate spec mentioned ~28 levers but only named about 22 directly. Likely candidates I missed:
+
+
+demand_aggregation — Concentrated band (aggregating demand to negotiate as one).
+specification_optimization — could be Capital band (should-cost-adjacent) or Indexable (reduces cost via redesign).
+supplier_diversification — Concentrated band (anti-consolidation, but same band).
+dual_sourcing_strategy — Concentrated band.
+vendor_managed_inventory — Concentrated or Fragmented depending on context.
+
+This is a flag: the spec doesn't enumerate all 28 levers in one place. The first action for the executor is to query lever.types.ts (per #185's lever lineage step) for the canonical list and reconcile against this mapping. Levers I've named that don't exist need to be removed; levers in code that I haven't named need to be added.
+
+Levers that don't fit cleanly into one band
+Three levers fire across multiple bands and need explicit dual-band assignments:
+
+sku_price_benchmark — Indexable when the benchmark is index-backed; Fragmented when it's peer-reference on tail items. Two lever_bands rows: (sku_price_benchmark, indexable, fit_rank=2) and (sku_price_benchmark, fragmented, fit_rank=1).
+payment_term_extension — primarily Concentrated (negotiable terms), but also fires in Subscription (renewal-time payment term moves). Two rows: (payment_term_extension, concentrated, fit_rank=1) and (payment_term_extension, subscription, fit_rank=2).
+contract_renegotiation — primarily Concentrated, but Capital band when the contract is project-based. Two rows.
+
+The fit_rank field handles the ambiguity. Routing logic prefers fit_rank=1 levers; falls back to fit_rank=2 if the primary is excluded for that tenant.
+
+Layer 1 categories to bands
+This is the customer-facing-to-platform-routing bridge. Walking the categories from the prior turn:
+Direct:
+
+Raw materials → Indexable (primary). Concentrated when supplier base is small.
+Components and parts → Indexable + Concentrated. The split depends on commodity content vs. engineered specification.
+Packaging → Indexable + Concentrated.
+Contract manufacturing → Concentrated + Capital (CapEx-style for new tooling).
+Ingredients → Indexable + Concentrated.
+
+Indirect:
+
+MRO / PVF → Indexable + Concentrated.
+MRO / Rotating machinery → Concentrated + Capital (when new units, not parts).
+MRO / OCTG → Indexable + Concentrated.
+MRO / Boilers and generators → Concentrated + Capital.
+MRO / Bearings, seals, gaskets → Indexable (small) + Fragmented (mostly).
+MRO / Refrigerants and lubricants → Indexable + Concentrated.
+MRO / Tools and shop supplies → Fragmented.
+MRO / Electrical and instrumentation → Concentrated + Fragmented.
+MRO / Safety and PPE → Fragmented.
+Capital equipment / CapEx → Capital (primary) + Concentrated.
+Facilities — leases → Concentrated + Services.
+Facilities — janitorial, landscaping, security → Services + Fragmented.
+Facilities — utilities → Indexable (energy) + Concentrated.
+Logistics — freight (TL/LTL/intermodal) → Indexable (lane indices) + Concentrated.
+Logistics — parcel and courier → Concentrated.
+Logistics — warehousing/3PL → Concentrated + Services.
+IT — hardware → Concentrated + Fragmented (depending on volume).
+IT — software/SaaS → Subscription (primary) + Concentrated.
+IT — telecom → Subscription + Concentrated.
+IT — IT services → Services + Concentrated.
+IT — cybersecurity → Subscription + Services.
+Professional services — all → Services (primary) + Concentrated (for named-firm relationships).
+Marketing — agency → Services + Concentrated.
+Marketing — digital/martech → Subscription + Services.
+Marketing — trade shows/print → Fragmented + Concentrated.
+HR — staffing/contingent (MSP/VMS) → Services + Concentrated.
+HR — benefits, payroll → Services + Concentrated.
+HR — training, recruiting → Services + Fragmented.
+T&E — all → Fragmented + Concentrated (program-level negotiation with airlines/hotels).
+Financial/insurance — banking → Concentrated + Services.
+Financial/insurance — insurance → Concentrated + Services.
+
+Most categories map to two bands. A few map to three (rare, usually large heterogeneous categories). None should map to zero — if a category has no band, it's either out of scope or needs a new band.
+
+Routing queries
+Three queries the platform will run constantly. Using the materialized view:
+Signal-to-lever routing:
+sqlSELECT DISTINCT lever_id, MIN(lever_fit_rank) as best_fit
+FROM v_category_lever_mappings
+WHERE category_code = $1
+GROUP BY lever_id
+ORDER BY best_fit ASC;
+Lever-to-category applicability:
+sqlSELECT DISTINCT category_code, MAX(category_confidence) as best_confidence
+FROM v_category_lever_mappings
+WHERE lever_id = $1
+GROUP BY category_code
+ORDER BY best_confidence DESC;
+Tier assignment query (joins to funnel calibration):
+sqlSELECT 
+  m.category_code,
+  m.band,
+  m.lever_id,
+  c.realization_count,
+  c.delta_median_abs_error,
+  CASE
+    WHEN c.realization_count < 10 THEN 'insufficient_data'
+    WHEN c.delta_median_abs_error < -100 THEN 'tier_a'
+    WHEN c.delta_median_abs_error BETWEEN -100 AND 100 THEN 'tier_b'
+    ELSE 'tier_c_or_d'
+  END as suggested_tier
+FROM v_category_lever_mappings m
+LEFT JOIN funnel_prior_calibration c 
+  ON c.lever_id = m.lever_id 
+  AND c.category_code = m.category_code 
+  AND c.window_days = 90;
+The tier suggestion uses the prior calibration math from #185 (median absolute error, n≥10 gating, $100 dead-band).
+
+Seed data approach
+Two ways to populate the truth tables initially:
+
+Option 1: SQL seed file committed to the repo. Reproducible, version-controlled, easy to review. Good for the initial mapping. Drizzle migrations support seed scripts.
+Option 2: Admin UI for the operator to populate via /admin/funnel or a new /admin/taxonomy surface. Better for ongoing maintenance once the platform is live and operators are tuning the mappings.
+
+Recommend: SQL seed for v1 (gets the platform shipping); admin UI as a follow-up task once tenant-side category drift starts forcing manual overrides.
+
+Where this lands in the codebase
+
+Schema: lib/db/src/schema/taxonomy.ts — new file, exports categoryBands, leverBands, the enums, the materialized view definition.
+Seed data: lib/db/seeds/taxonomy.sql — populates both truth tables and refreshes the view.
+Routing helpers: lib/intelligence/src/routing/ — new module, exports findLeversForCategory(categoryCode), findCategoriesForLever(leverId), suggestTierForCategoryLever(categoryCode, leverId).
+Migration: standard Drizzle migration adding the tables, enums, and view. The materialized view's refresh trigger goes in the same migration.
+Tests: lib/intelligence/src/routing/__tests__/ — verify routing queries, verify the materialized view stays consistent with truth tables, verify confidence-weight updates from calibration data don't corrupt the seed mappings.
+
+
+Open questions for the executor
+Three things I can't resolve without inspecting the codebase:
+
+Canonical lever list. The 28 levers I worked with are partial — some inferred. The executor must query lever.types.ts (per #185) for the canonical list and reconcile. Levers I named that don't exist get dropped; levers in code I didn't name get assigned bands using the framework above.
+Existing category code shape. I assumed scope_category_code is a string identifier like "MRO_PVF" or a UNSPSC code. The seed data structure depends on what the codebase uses. Probably 64 chars is enough; might need to be longer.
+Materialized view refresh strategy. Trigger-based is cleaner for correctness; cycle-prep-based is cleaner for performance. The right call depends on how often the truth tables change. If they change rarely (operator overrides + occasional seed updates), trigger-based wins. If the calibration job updates confidence_weight on every cycle, cycle-prep batch refresh wins.
+
+
+What this enables next
+Once this lands, three things become possible that aren't today:
+
+Lever scheduling becomes category-aware. The cycle's prep step can ask "for this tenant, given their tagged categories, which levers are even worth running?" Saves compute on no-applicable-category combinations.
+Tier assignment becomes data-driven. The funnel substrate's calibration data feeds tier suggestions per category-lever pair. Tier A/B/C/D becomes observable rather than asserted.
+New-lever onboarding has a checklist. Adding a lever requires declaring its bands. New-category onboarding requires declaring its bands. The taxonomy structure makes the right question askable at definition time.
+
+
+RED TEAM:
+Three challenges:
+
+"You're inventing names for levers that may not exist." Hit. Several lever names in my mapping (raw_material_hedging, index_based_pricing, capex_governance, scope_management, hours_audit, contract_leakage, outcome_based_contract, demand_aggregation, etc.) are inferred from prior context, not confirmed against the codebase. The mapping is shape-correct but the lever IDs need verification. Calling this out as the first executor action.
+"The fit_rank=1 vs fit_rank=2 design doesn't have selection criteria." Hit. I introduced fit_rank to handle dual-band levers but didn't say what the routing logic does with it. Selection criteria: prefer fit_rank=1 levers in a band; fall back to fit_rank=2 only if the primary is explicitly excluded for the tenant (via exclusion_rules). This needs to be in the routing helpers spec, not implicit.
+"Materialized view + triggers is reasonable but introduces a failure mode the spec doesn't address." Hit. If a trigger fails or the view becomes stale, routing queries return wrong answers silently. The spec needs a consistency check job — periodic comparison of the view against a fresh join on the truth tables, alerting on drift. Otherwise the platform routes based on stale data and the bug is invisible.
+
+REBUILD: Three additions: explicit "verify levers against codebase first" step, fit_rank selection criteria in the routing logic, and a consistency-check job for the materialized view.
+
+SHIP:
+Schema (Drizzle, PostgreSQL)
+Two truth tables and a materialized view in lib/db/src/schema/taxonomy.ts:
+
+category_bands (id, category_code, band, confidence_weight default 1.0, source enum default 'seed', timestamps). Unique on (category_code, band). Indexed on each.
+lever_bands (id, lever_id, band, fit_rank default 1, created_at). Unique on (lever_id, band). Indexed on each.
+Enum band: indexable, concentrated, fragmented, subscription, capital, services.
+Enum mapping_source: seed, learned, manual.
+Materialized view v_category_lever_mappings joining the two truth tables on band. Refreshed via trigger on either truth table changing.
+Consistency-check job (RT-3): a periodic task (every 6h or per-cycle) computes the join fresh and asserts it matches the materialized view. If drift detected, alert via the existing snapshot-failure banner mechanism from #209.
+
+Band-to-lever mapping
+Six bands, mapping each lever:
+
+Indexable: spot_vs_contract, material_index_arbitrage, supplier_fx_exposure, raw_material_hedging, index_based_pricing, sku_price_benchmark (fit_rank=2).
+Concentrated: supplier_consolidation, volume_rebate_optimization, contract_renegotiation, payment_term_extension, contract_leakage, outcome_based_contract.
+Fragmented: tail_spend_rationalization, catalog_compliance, p_card_optimization, maverick_spend, duplicate_payment, sku_price_benchmark (fit_rank=1 in this band).
+Subscription: subscription_audit, license_rightsizing, renewal_negotiation, payment_term_extension (fit_rank=2).
+Capital: should_cost_modeling, total_cost_of_ownership, capex_governance, contract_renegotiation (fit_rank=2 for project-based).
+Services: rate_card_benchmarking, scope_management, hours_audit.
+
+Three levers fire across multiple bands with explicit fit_rank: sku_price_benchmark, payment_term_extension, contract_renegotiation. Routing logic prefers fit_rank=1 levers in any given band; falls back to fit_rank=2 only when the primary is excluded for the tenant via exclusion_rules.
+First executor action — verify levers against the codebase. Several lever IDs in this mapping are inferred from prior context, not confirmed. The executor must query the canonical lever list (likely in lever.types.ts or wherever ALL_LEVERS is defined per #185) and reconcile: drop levers I named that don't exist, add levers in code I didn't name. The band assignment framework holds; the IDs need verification.
+Layer 1 categories to bands
+Direct categories map predominantly to Indexable + Concentrated. Indirect categories spread across all six bands depending on sub-category:
+
+Direct (raw materials, components, packaging, contract mfg, ingredients) → Indexable primary, Concentrated secondary.
+MRO sub-categories split: PVF/OCTG/refrigerants → Indexable + Concentrated. Rotating machinery/boilers → Concentrated + Capital (when new units). Bearings/electrical → Indexable + Fragmented. Tools/PPE → Fragmented.
+Capital equipment → Capital + Concentrated.
+Facilities — utilities → Indexable + Concentrated; janitorial/security → Services + Fragmented.
+Logistics — freight → Indexable + Concentrated; warehousing → Concentrated + Services.
+IT — SaaS/telecom → Subscription + Concentrated; hardware → Concentrated + Fragmented; IT services → Services + Concentrated.
+Professional services → Services primary, Concentrated for named-firm relationships.
+Marketing — agency → Services + Concentrated; digital/martech → Subscription + Services.
+HR — contingent labor/benefits/payroll → Services + Concentrated.
+T&E → Fragmented + Concentrated.
+Financial/insurance → Concentrated + Services.
+
+Most categories map to two bands. None should map to zero — a category with no band is either out of scope for the platform or signals a missing band.
+Routing queries
+Three SQL queries, all hitting the materialized view:
+
+Signal-to-lever: given category_code, return distinct lever_ids with min fit_rank.
+Lever-to-category: given lever_id, return distinct category_codes with max confidence.
+Tier suggestion: join to funnel_prior_calibration from #185, gate on n≥10, classify by delta_median_abs_error against the $100 dead-band → tier_a / tier_b / tier_c_or_d.
+
+The tier suggestion query is the active learning loop — categories where realization data shows priors consistently helping become Tier A candidates; categories where calibration is noisy or inverted demote toward C.
+Seed approach
+SQL seed file (lib/db/seeds/taxonomy.sql) for v1, populating both truth tables and refreshing the view. Admin UI for overrides is a follow-up task once tenant-side category drift starts requiring manual adjustments.
+Routing helpers
+New module lib/intelligence/src/routing/:
+
+findLeversForCategory(categoryCode) — returns levers ordered by best fit_rank.
+findCategoriesForLever(leverId) — returns categories ordered by confidence.
+suggestTierForCategoryLever(categoryCode, leverId) — joins calibration data, returns tier suggestion or 'insufficient_data'.
+
+Each helper exists as a typed function with explicit return shapes; the routing logic on top of these is where fit_rank selection happens (prefer rank 1; fall back to rank 2 only if rank 1 is excluded).
+Tests
+
+Routing queries return expected results on seeded data.
+Materialized view stays consistent with truth tables after insert/update/delete.
+Consistency-check job detects synthetic drift and alerts.
+fit_rank fallback fires only when primary is excluded.
+Confidence-weight updates from calibration data don't corrupt seed mappings (they update only the confidence column, not the existence of the row).
+
+What this enables once landed
+
+Cycle prep can prune lever runs to applicable categories per tenant — saves compute on no-applicable-category combinations.
+Tier assignment becomes observable rather than asserted; the funnel substrate's calibration data drives the suggestion.
+New-lever and new-category onboarding has a checklist: declare bands at definition time. The structure makes the right question askable rather than discoverable later.
+
+The taxonomy isn't static. Annual refresh cadence per the prior turn, plus immediate updates whenever a new lever family ships or a new band emerges from observed lever behavior that doesn't fit the existing six.
+That's the structure. Verify the lever list against the codebase, populate the seed, ship the schema, wire the routing helpers, then watch the calibration data start sharpening the tier assignments over the next few cycles.
+
+Learning footer: No new correction-log rule fires. Existing rules applied:
+
+Validate against real data shape — the lever list must be verified against the codebase before seed data is written. RT-1 caught me inventing lever names from inferred context.
+Forced choices in specs need criteria — fit_rank selection criteria (prefer 1, fall back to 2 only if excluded) made explicit in the routing logic spec.
+Structures, not surfaces — the schema is the structure; the routing helpers are the API surface that emerges from it.
+Smoke-word principle — checked. No "etc.," no "lightweight," no example values masquerading as commitments. The fit_rank=2 fallbacks are explicit, not "where needed."

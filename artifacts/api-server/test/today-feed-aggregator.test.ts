@@ -62,10 +62,13 @@ before(async () => {
     slug: RUN,
   });
 
-  // Seed two proposed opportunities — one fresh (≤24h, so it counts
-  // toward `needsActionToday`), one a month old (so it only counts
-  // toward `pending`). The lever IDs and savings values are arbitrary;
-  // the contract under test is the COUNT split, not the row contents.
+  // Seed THREE proposed opportunities for the RT-83 split contract:
+  //   - "fresh"  : created in the last 24h        → counts toward (a)
+  //   - "stale"  : created 30 days ago, > soft    → counts toward (b)
+  //   - "middle" : created 3 days ago, < soft     → ONLY in `pending`
+  // `needsActionToday` MUST equal (a) OR (b) = 2; `pending` MUST be 3.
+  // This is the test that pins the OR semantics: implementing only
+  // (a) would yield needsActionToday=1 and miss the aging row.
   // Seed values cover only the notNull columns that lack defaults.
   // `inputs`, `status`, `realizedSavingsUsd`, `createdAt` have defaults
   // and are intentionally omitted (the createdAt default is what makes
@@ -89,22 +92,38 @@ before(async () => {
     },
     {
       ...baseSeed,
-      id: `opp_old_${RUN}`,
+      id: `opp_middle_${RUN}`,
       orgId,
-      title: "old opp",
+      title: "middle opp",
+      leverId: "contract_leakage",
+      projectedSavingsUsd: "750",
+      confidence: "0.5",
+    },
+    {
+      ...baseSeed,
+      id: `opp_stale_${RUN}`,
+      orgId,
+      title: "stale opp",
       leverId: "maverick_spend",
       projectedSavingsUsd: "500",
       confidence: "0.5",
     },
   ]);
 
-  // Backdate the second opportunity by 30 days. Doing this in a
-  // separate UPDATE is clearer than fighting Drizzle's defaultNow over
-  // the insert path.
+  // Backdate the middle row to 3 days ago (younger than the 7d soft
+  // deadline → only in `pending`) and the stale row to 30 days ago
+  // (older than 7d → counts toward needsActionToday). Doing this in
+  // separate UPDATEs is clearer than fighting Drizzle's defaultNow
+  // over the insert path.
+  await db.execute(sql`
+    UPDATE opportunities
+       SET created_at = now() - interval '3 days'
+     WHERE id = ${`opp_middle_${RUN}`}
+  `);
   await db.execute(sql`
     UPDATE opportunities
        SET created_at = now() - interval '30 days'
-     WHERE id = ${`opp_old_${RUN}`}
+     WHERE id = ${`opp_stale_${RUN}`}
   `);
 
   // Seed an alerts row using ONLY the column set that exists in BOTH
@@ -314,18 +333,19 @@ test("/today/feed approvals payload splits needs-action-today vs total pending (
     needsActionToday: number;
     oldestAgeMs?: number;
   };
-  // Two seeded opportunities, one fresh + one 30 days old.
+  // Three seeded rows: fresh (<24h), middle (3d), stale (30d).
+  // pending = 3; needsActionToday = (fresh) OR (stale) = 2.
   assert.ok(
-    payload.pending >= 2,
-    `pending total should include both seeded rows (got ${payload.pending})`,
+    payload.pending >= 3,
+    `pending total should include all three seeded rows (got ${payload.pending})`,
   );
   assert.ok(
-    payload.needsActionToday >= 1,
-    `needsActionToday should reflect the fresh seeded row (got ${payload.needsActionToday})`,
+    payload.needsActionToday >= 2,
+    `needsActionToday must include the fresh AND aging rows (got ${payload.needsActionToday})`,
   );
   assert.ok(
     payload.pending > payload.needsActionToday,
-    "pending must be greater than needsActionToday because the old row exists",
+    "pending must be greater than needsActionToday because the middle row exists (3d old, < 7d soft deadline)",
   );
   // 30-day-old row sets the floor on `oldestAgeMs`.
   assert.ok(payload.oldestAgeMs !== undefined, "oldestAgeMs must be set");

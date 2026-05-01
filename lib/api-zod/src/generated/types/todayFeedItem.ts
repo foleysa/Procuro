@@ -41,8 +41,11 @@ the design doc; unknown keys are tolerated.
   optionally `lastSuccessfulCycle: { generation,
   completedAt, ageMs }` when count == 0 (or in addition).
 * `approvals.pending` — `pending` (total backlog),
-  `needsActionToday` (proposed in last 24h, RT-83 primary
-  number), and optionally `oldestAgeMs` (oldest pending row).
+  `needsActionToday` (RT-83 primary number: proposed
+  opportunities that are EITHER fresh (created in the last
+  24h) OR aging past the soft deadline (still pending and
+  older than 7 days) — i.e. the operator's morning queue),
+  and optionally `oldestAgeMs` (oldest pending row).
  */
   payload: TodayFeedItemPayload;
   /** When the underlying event happened (or now() for synthesized rollups). */
