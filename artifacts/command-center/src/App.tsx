@@ -4,9 +4,19 @@ import { ClerkProvider, useClerk } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
 import { useQueryClient } from "@tanstack/react-query";
+import { Lock } from "lucide-react";
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import NotFound from "@/pages/not-found";
 
 import { Layout } from "./components/layout";
@@ -118,13 +128,39 @@ const clerkAppearance = {
 };
 
 /**
- * Gate the /admin route on the resolved RBAC role from
- * `/api/admin/whoami`. Non-admins get a friendly 403; unauthenticated
- * users (no roles + no API key) are sent to /sign-in.
+ * Gate admin-only routes (Engine, Operations, Admin) on the resolved
+ * RBAC role from `/api/admin/whoami`. Non-admins see a friendly empty
+ * state explaining what the page does and how to request access;
+ * unauthenticated users (no roles + no API key) are sent to /sign-in.
+ *
+ * Engine is the most-trafficked entry after the IA flip (#199), so its
+ * description is the most specific. Operations and Admin get their own
+ * shorter blurbs; everything else falls back to a generic message.
  */
+const ADMIN_PAGE_BLURBS: Record<
+  string,
+  { name: string; what: string }
+> = {
+  "/engine": {
+    name: "Engine",
+    what:
+      "Engine is where admins run the procurement pipeline — ingest jobs, collectors, approvals routing, and other operational controls.",
+  },
+  "/operations": {
+    name: "Operations",
+    what:
+      "Operations is the admin view of pipeline health — collector runs, ingest queues, and system status across the workspace.",
+  },
+  "/admin": {
+    name: "Admin",
+    what:
+      "Admin is where workspace owners manage members, roles, API keys, and tenant settings.",
+  },
+};
+
 function AdminGuard({ children }: { children: React.ReactNode }) {
   const { data, isLoading, isOrgAdmin } = useMyRole();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!isLoading && data && data.roles.length === 0) {
@@ -138,12 +174,63 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isOrgAdmin) {
+    // Pick the right blurb for the route the user landed on. Match by
+    // prefix so nested admin paths still resolve correctly. Fall back to
+    // a generic message if the route isn't in the map.
+    const blurb =
+      Object.entries(ADMIN_PAGE_BLURBS).find(([prefix]) =>
+        location === prefix || location.startsWith(`${prefix}/`),
+      )?.[1] ?? {
+        name: "this page",
+        what: "This page contains admin-only tooling for your workspace.",
+      };
+
+    // Build a mailto: with subject + body pre-filled. We don't know who
+    // the workspace's owner is, so we leave the recipient blank — the
+    // user picks their own admin from their address book. Including the
+    // signed-in email in the body lets the admin grant access without a
+    // round-trip.
+    const userEmail = data?.email ?? "";
+    const subject = encodeURIComponent(
+      `Requesting access to Procuro ${blurb.name}`,
+    );
+    const body = encodeURIComponent(
+      [
+        "Hi,",
+        "",
+        `Could you grant me access to the ${blurb.name} area in Procuro? I need it for my work.`,
+        "",
+        userEmail ? `My account: ${userEmail}` : "",
+        "",
+        "Thanks!",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    const mailto = `mailto:?subject=${subject}&body=${body}`;
     return (
-      <div className="p-12">
-        <h1 className="text-2xl font-bold mb-2">403 — Forbidden</h1>
-        <p className="text-muted-foreground">
-          You need the org_admin role to view this page.
-        </p>
+      <div className="p-6 md:p-12">
+        <Empty className="border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Lock aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle>This page is for workspace admins</EmptyTitle>
+            <EmptyDescription>
+              {blurb.what} Your account doesn&rsquo;t have admin access
+              yet, so there&rsquo;s nothing to show here.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild>
+              <a href={mailto}>Request access from your admin</a>
+            </Button>
+            <p className="text-muted-foreground text-xs">
+              Already have access on another account? Sign in with that
+              email instead.
+            </p>
+          </EmptyContent>
+        </Empty>
       </div>
     );
   }
