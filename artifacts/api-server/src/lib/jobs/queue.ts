@@ -2,6 +2,7 @@ import {
   db,
   jobsTable,
   jobKindSettingsTable,
+  orgsTable,
   type JobKind,
   type JobRow,
 } from "@workspace/db";
@@ -61,6 +62,10 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   escalate_alerts: 3,
   // Synthesizer is internal — same reasoning as the pruner.
   synthesize_operational_alerts: 3,
+  // Auto-expire of stale `proposed` opportunities is internal DB
+  // housekeeping with no upstream API calls; same retry budget as
+  // the other pruners.
+  expire_stale_opportunities: 3,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */
@@ -1371,4 +1376,250 @@ export async function ensureOrgAnalysisCycleScheduled(
     throw new Error("Failed to retrieve enqueued analysis-cycle job");
   }
   return { enqueued: true, job: row };
+}
+
+// ─── Auto-expire stale `proposed` opportunities (task #219) ──────────────
+//
+// Without this, the pending-approvals queue grows forever: every cycle
+// that observes the same signal would either re-insert a duplicate
+// (pre-#219) or refresh-in-place (post-#219), but signals that GO AWAY
+// would still leave the original `proposed` row sitting there
+// indefinitely. This sweep flips rows that have either:
+//
+//   (a) sat in `proposed` past the absolute TTL (`OPPORTUNITY_TTL_DAYS`,
+//       default 30d), measured against `created_at`, OR
+//   (b) been quiet for `OPPORTUNITY_QUIET_CYCLES` consecutive completed
+//       cycles (default 3), measured against `last_seen_at` vs the
+//       Nth-most-recent completed cycle's `completed_at`.
+//
+// to status `expired`. Expired rows are excluded from the pending
+// counts (Today, opportunities list defaults) but stay queryable via
+// `?status=expired` so an operator can audit what went away. The
+// scheduler runs once a day by default; the per-org cycle-count check
+// is a single subquery so a tenant with 10k tenants still finishes in
+// well under the worker timeout.
+
+const EXPIRE_STALE_OPPS_LOCK_KEY = 0x45585053; // "EXPS"
+const DEFAULT_OPPORTUNITY_TTL_DAYS = 30;
+const DEFAULT_OPPORTUNITY_QUIET_CYCLES = 3;
+const DEFAULT_EXPIRE_STALE_OPPS_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+export interface OpportunityExpiryConfig {
+  /** Absolute age cutoff measured from `opportunities.created_at`. */
+  ttlDays: number;
+  /**
+   * Number of consecutive completed cycles a row may go unrefreshed
+   * before it ages out. The handler resolves the Nth-most-recent
+   * cycle's `completed_at` per org and treats `last_seen_at` strictly
+   * older than that as stale.
+   */
+  quietCycles: number;
+}
+
+export function getOpportunityExpiryConfig(): OpportunityExpiryConfig {
+  return {
+    ttlDays: envPositiveNumber(
+      "OPPORTUNITY_TTL_DAYS",
+      DEFAULT_OPPORTUNITY_TTL_DAYS,
+    ),
+    quietCycles: Math.max(
+      1,
+      Math.floor(
+        envPositiveNumber(
+          "OPPORTUNITY_QUIET_CYCLES",
+          DEFAULT_OPPORTUNITY_QUIET_CYCLES,
+        ),
+      ),
+    ),
+  };
+}
+
+export interface ExpireStaleOpportunitiesResult {
+  orgsScanned: number;
+  ttlExpired: number;
+  quietCyclesExpired: number;
+  totalExpired: number;
+  ttlDays: number;
+  quietCycles: number;
+}
+
+/**
+ * Walk every tenant and flip stale `proposed` opportunities to
+ * `expired`. Per-org so the cycle-count subquery can use the per-org
+ * `analysis_cycles` index without scanning the whole table.
+ *
+ * The two cutoff predicates (TTL and quiet-cycles) are deliberately
+ * applied in two separate UPDATEs so the result row can report each
+ * cause's count independently — operators on the System / Jobs page
+ * want to know "are we expiring on age or on quietness" without
+ * digging through individual rows.
+ *
+ * NULL `last_seen_at` rows (legacy, pre-#219) are only candidates for
+ * the TTL sweep; the quiet-cycles SQL `last_seen_at < <cutoff>` is
+ * NULL-comparing to NULL → the row simply isn't matched. That's the
+ * correct behaviour: a row with no `last_seen_at` carries no signal
+ * about cycle freshness, so only the absolute TTL applies.
+ */
+export async function expireStaleOpportunities(
+  overrides: Partial<OpportunityExpiryConfig> = {},
+): Promise<ExpireStaleOpportunitiesResult> {
+  const cfg = getOpportunityExpiryConfig();
+  const ttlDays = overrides.ttlDays ?? cfg.ttlDays;
+  const quietCycles = Math.max(
+    1,
+    Math.floor(overrides.quietCycles ?? cfg.quietCycles),
+  );
+  const ttlCutoff = new Date(
+    Date.now() - ttlDays * DAY_MS,
+  ).toISOString();
+
+  // TTL sweep — applies to every org in one statement; doesn't need
+  // any cycle lookup.
+  const ttlRes = await db.execute(sql`
+    UPDATE opportunities
+    SET status = 'expired'
+    WHERE status = 'proposed'
+      AND created_at < ${ttlCutoff}
+    RETURNING id
+  `);
+  const ttlExpired = ttlRes.rows?.length ?? 0;
+
+  // Quiet-cycles sweep — needs the per-org Nth-most-recent completed
+  // cycle's `completed_at` so we issue one UPDATE per org. The
+  // correlated subquery uses LIMIT 1 OFFSET (quietCycles - 1) on the
+  // per-org cycles index, which is cheap.
+  const orgs = await db
+    .select({ id: orgsTable.id })
+    .from(orgsTable);
+  let quietCyclesExpired = 0;
+  let orgsScanned = 0;
+  for (const org of orgs) {
+    orgsScanned += 1;
+    const offset = quietCycles - 1;
+    const res = await db.execute(sql`
+      UPDATE opportunities
+      SET status = 'expired'
+      WHERE org_id = ${org.id}
+        AND status = 'proposed'
+        AND last_seen_at IS NOT NULL
+        AND last_seen_at < (
+          SELECT completed_at
+          FROM analysis_cycles
+          WHERE org_id = ${org.id}
+            AND status = 'completed'
+            AND completed_at IS NOT NULL
+          ORDER BY generation DESC
+          OFFSET ${offset}
+          LIMIT 1
+        )
+      RETURNING id
+    `);
+    quietCyclesExpired += res.rows?.length ?? 0;
+  }
+
+  const totalExpired = ttlExpired + quietCyclesExpired;
+  if (totalExpired > 0) {
+    logger.info(
+      {
+        orgsScanned,
+        ttlExpired,
+        quietCyclesExpired,
+        totalExpired,
+        ttlDays,
+        quietCycles,
+      },
+      "Auto-expired stale opportunities",
+    );
+  }
+
+  return {
+    orgsScanned,
+    ttlExpired,
+    quietCyclesExpired,
+    totalExpired,
+    ttlDays,
+    quietCycles,
+  };
+}
+
+/**
+ * Enqueue exactly one `expire_stale_opportunities` job iff there is
+ * not already one pending or running. Same advisory-lock-protected
+ * shape as the prune schedulers above.
+ */
+export async function ensureExpireStaleOpportunitiesScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${EXPIRE_STALE_OPPS_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'expire_stale_opportunities' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'expire_stale_opportunities', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let expireStaleOppsStarted = false;
+let expireStaleOppsHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic auto-expire scheduler. Enqueues an
+ * `expire_stale_opportunities` job at boot, then again on a fixed
+ * interval (default 24h, overridable via
+ * `EXPIRE_STALE_OPPS_INTERVAL_MS`). Idempotent — calling twice has
+ * no effect.
+ */
+export function startExpireStaleOpportunitiesScheduler(
+  intervalMs?: number,
+): void {
+  if (expireStaleOppsStarted) return;
+  expireStaleOppsStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "EXPIRE_STALE_OPPS_INTERVAL_MS",
+      DEFAULT_EXPIRE_STALE_OPPS_INTERVAL_MS,
+    );
+
+  void ensureExpireStaleOpportunitiesScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial expire_stale_opportunities",
+    );
+  });
+
+  expireStaleOppsHandle = setInterval(() => {
+    ensureExpireStaleOpportunitiesScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled expire_stale_opportunities",
+      );
+    });
+  }, ms);
+}
+
+export function stopExpireStaleOpportunitiesScheduler(): void {
+  if (expireStaleOppsHandle) clearInterval(expireStaleOppsHandle);
+  expireStaleOppsHandle = null;
+  expireStaleOppsStarted = false;
 }

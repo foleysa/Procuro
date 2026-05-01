@@ -31,6 +31,11 @@ export const jobKindValues = [
   "deliver_alerts",
   "escalate_alerts",
   "synthesize_operational_alerts",
+  // Auto-expires stale `proposed` opportunities (task #219). Walks
+  // every tenant; flips rows older than `OPPORTUNITY_TTL_DAYS` (or
+  // unrefreshed for `OPPORTUNITY_QUIET_CYCLES` cycles) to `expired`
+  // so the pending-approvals queue stops growing forever.
+  "expire_stale_opportunities",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 

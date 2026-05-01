@@ -27,6 +27,7 @@ const STATUS_OPTS = [
   { v: ListOpportunitiesStatus.executing, l: "Executing" },
   { v: ListOpportunitiesStatus.realized, l: "Realized" },
   { v: ListOpportunitiesStatus.rejected, l: "Rejected" },
+  { v: ListOpportunitiesStatus.expired, l: "Expired" },
 ];
 
 export default function Opportunities() {

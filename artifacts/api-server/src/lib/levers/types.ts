@@ -121,7 +121,12 @@ export function toAnalyzeResult(
 
 /**
  * Compose the cohort identity key for a draft. Centralised so the
- * snapshot writer and admin UI agree on the format.
+ * snapshot writer and admin UI agree on the format. This is the
+ * ANALYTICS bucket key — collisions are EXPECTED (and desired) so
+ * the funnel snapshot can roll up multiple drafts into one cohort.
+ *
+ * Do NOT use this as the dedupe key for the opportunities table.
+ * For per-draft dedupe identity, use `composeSignalKey` below.
  */
 export function composeCohortKey(
   lever: LeverAnalyzer,
@@ -130,4 +135,52 @@ export function composeCohortKey(
   const primary = draft.supplierId ?? draft.categoryId ?? "";
   const leverKey = lever.cohortKey ? lever.cohortKey(draft) : "";
   return `${lever.leverId}:${primary}:${leverKey}`;
+}
+
+/**
+ * Compose the per-draft DEDUPE identity key for a draft (task #219).
+ * Used as the value of `opportunities.signal_key` against the partial
+ * unique index `opps_signal_key_uq`.
+ *
+ * The contract is: if the SAME underlying signal re-fires on the next
+ * cycle (e.g. the same supplier/SKU/contract still trips the same
+ * lever rule), the resulting draft MUST produce the SAME signal key
+ * so the upsert refreshes the existing row in place — even when the
+ * narrative fields (title, rationale) and the metric fields
+ * (projected savings, aggregates inside `inputs`) drift cycle to
+ * cycle as the source data changes. Conversely, two genuinely
+ * different signals (e.g. two SKUs in `sku_price_benchmark`, two
+ * contracts in `contract_leakage`) MUST produce DIFFERENT signal
+ * keys so they don't collapse.
+ *
+ * To honour both halves of the contract we use ONLY stable identity
+ * fields:
+ *   - `lever.leverId` — the lever family.
+ *   - `draft.supplierId` / `draft.categoryId` — structural anchors
+ *     when present (they're stable IDs, never volatile metrics).
+ *   - `lever.cohortKey?.(draft)` — the lever-declared per-signal
+ *     identity (e.g. `sku` for `sku_price_benchmark`, `contractId`
+ *     for `missed_volume_threshold`). This is the contract method
+ *     each lever uses to tell us "what makes this signal unique
+ *     within my family". Mutable narrative or metric fields MUST NOT
+ *     appear here.
+ *
+ * Returns `null` when the draft carries no stable identity (no
+ * supplier, no category, and the lever doesn't override
+ * `cohortKey()`). The cycle Act step writes NULL into `signal_key`,
+ * which the partial unique index excludes — so the row inserts
+ * without participating in dedupe (legacy escape hatch). This is
+ * safer than fabricating a key from volatile fields, which would
+ * stack a new row each cycle.
+ */
+export function composeSignalKey(
+  lever: LeverAnalyzer,
+  draft: OpportunityDraft,
+): string | null {
+  const supplier = draft.supplierId ?? "";
+  const category = draft.categoryId ?? "";
+  const leverKey = lever.cohortKey ? lever.cohortKey(draft) : "";
+  // No stable identity at all → don't dedupe, leave signal_key NULL.
+  if (!supplier && !category && !leverKey) return null;
+  return `${lever.leverId}:${supplier}:${category}:${leverKey}`;
 }

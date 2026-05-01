@@ -26,6 +26,14 @@ export const skuPriceBenchmarkLever: LeverAnalyzer = {
   label: "SKU Price Benchmarking",
   description:
     "Same item bought at materially different unit prices across POs / sites / business units. Move all buys to the lowest verified price.",
+  // Task #219 dedupe identity: SKU is the immutable thing this lever
+  // is talking about. Per-cycle re-runs for the same SKU MUST collapse
+  // onto the same signal_key so the upsert refreshes the row rather
+  // than stacking duplicates as the metric inputs drift week-to-week.
+  cohortKey(draft) {
+    const sku = (draft.inputs as { sku?: unknown } | null)?.sku;
+    return typeof sku === "string" ? `sku:${sku}` : "";
+  },
   async analyze({ orgId }) {
     // Aggregate per (item normalized key): min/max/avg unit price + total volume.
     // Only flag items where (max - min)/min > threshold and total spend material.
@@ -103,6 +111,13 @@ export const maverickSpendLever: LeverAnalyzer = {
   label: "Maverick Spend Detection",
   description:
     "Spend placed outside of an existing contract for items/categories that are under contract. Redirect to the contracted supplier at the contracted price.",
+  // Task #219 dedupe identity: each draft is "this SKU is leaking
+  // off-contract"; the SKU + supplierId (contracted supplier set on
+  // the draft) are the stable keys.
+  cohortKey(draft) {
+    const sku = (draft.inputs as { sku?: unknown } | null)?.sku;
+    return typeof sku === "string" ? `sku:${sku}` : "";
+  },
   async analyze({ orgId }) {
     const rows = await db.execute(sql`
       WITH contract_skus AS (
@@ -187,6 +202,17 @@ export const contractLeakageLever: LeverAnalyzer = {
   label: "Contract Leakage",
   description:
     "Buying from a non-preferred supplier when a contracted preferred supplier exists for the same category at better terms.",
+  // Task #219 dedupe identity: each draft is "this category is
+  // leaking from leakSupplier to non-preferred". The (category,
+  // preferred supplier) pair is on the draft already (categoryId +
+  // supplierId), but the leak supplier varies independently — encode
+  // it here so two leaks against the same preferred contract don't
+  // collapse onto one row.
+  cohortKey(draft) {
+    const leak = (draft.inputs as { leakSupplierId?: unknown } | null)
+      ?.leakSupplierId;
+    return typeof leak === "string" ? `leak:${leak}` : "";
+  },
   async analyze({ orgId }) {
     const rows = await db.execute(sql`
       WITH preferred AS (
@@ -268,6 +294,14 @@ export const duplicatePaymentLever: LeverAnalyzer = {
   label: "Duplicate PO / Payment Detection",
   description:
     "Invoices paid twice, near-duplicate POs, and identical line items billed across invoices. Recovery + prevention.",
+  // Task #219 dedupe identity: the invoice dedup_key is the immutable
+  // identity of "this set of duplicate invoices". The supplier is
+  // already on the draft via supplierId — together they uniquely
+  // identify this duplicate-payment signal across cycles.
+  cohortKey(draft) {
+    const dedupKey = (draft.inputs as { dedupKey?: unknown } | null)?.dedupKey;
+    return typeof dedupKey === "string" ? `dedup:${dedupKey}` : "";
+  },
   async analyze({ orgId }) {
     const rows = await db.execute(sql`
       SELECT i.dedup_key,
@@ -331,6 +365,17 @@ export const missedVolumeThresholdLever: LeverAnalyzer = {
   label: "Missed Volume-Discount Thresholds",
   description:
     "Tier-priced contracts where actual volume landed just below a breakpoint. Aggregate or time-shift demand to clear the next tier.",
+  // Task #219 dedupe identity: the contract_item id is the immutable
+  // anchor — every cycle re-evaluates the same contract item against
+  // its tiers; the metrics (qty, gap) drift but the identity does not.
+  cohortKey(draft) {
+    const contractItemId = (
+      draft.inputs as { contractItemId?: unknown } | null
+    )?.contractItemId;
+    return typeof contractItemId === "string"
+      ? `ci:${contractItemId}`
+      : "";
+  },
   async analyze({ orgId }) {
     const ciRows = await db
       .select({
@@ -460,6 +505,14 @@ export const tailSpendRationalizationLever: LeverAnalyzer = {
   label: "Tail-Spend Rationalization",
   description:
     "Long tail of one-off / low-volume suppliers in non-strategic categories. Consolidate to a managed-tail or P-card program.",
+  // Task #219 dedupe identity: this lever produces ONE roll-up draft
+  // per org per cycle (the entire tail). The cohort identity is the
+  // lever itself — a constant key so cycle re-runs refresh that one
+  // row in place rather than appending a new tail-spend row each
+  // cycle (which would defeat the whole anti-growth contract).
+  cohortKey() {
+    return "tail";
+  },
   async analyze({ orgId }) {
     const rows = await db.execute(sql`
       WITH supplier_spend AS (

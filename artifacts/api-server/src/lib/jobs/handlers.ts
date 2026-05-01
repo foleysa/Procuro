@@ -24,6 +24,7 @@ import { decryptCredentials } from "../erp/crypto";
 import { runCollector } from "../intelligence/runtime";
 import {
   ensureOrgAnalysisCycleScheduled,
+  expireStaleOpportunities,
   isJobCancelRequested,
   pruneOldFunnelSnapshots,
   pruneOldJobs,
@@ -240,6 +241,21 @@ export async function pruneFunnelSnapshotsHandler(
   _job: JobRow,
 ): Promise<Record<string, unknown>> {
   const result = await pruneOldFunnelSnapshots();
+  return result as unknown as Record<string, unknown>;
+}
+
+/**
+ * Daily housekeeping (task #219): flip stale `proposed`
+ * opportunities to `expired` so the pending-approvals queue can't
+ * grow without bound. Runs across every tenant; the result row
+ * surfaces TTL vs quiet-cycles expiry counts independently so
+ * operators on the System / Jobs page can tell at a glance which
+ * cause is dominant.
+ */
+export async function expireStaleOpportunitiesHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const result = await expireStaleOpportunities();
   return result as unknown as Record<string, unknown>;
 }
 

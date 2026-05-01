@@ -411,3 +411,75 @@ test("/today/feed approvals payload splits needs-action-today vs total pending (
     `oldestAgeMs should reflect the 30-day-old seeded row (got ${payload.oldestAgeMs}ms)`,
   );
 });
+
+test("/today/feed approvals payload excludes `expired` opportunities from pending count (#219)", async () => {
+  // Task #219: the auto-expire job flips stale `proposed` rows to
+  // `expired`. Those rows MUST NOT inflate any pending count surfaced
+  // on the Today feed — both `pending` and `needsActionToday` are
+  // strictly proposed-only. Without this assertion the prior task
+  // could regress silently: nothing else in the test suite pins
+  // status='proposed' filtering on the approvals source.
+  //
+  // We snapshot the counts, flip one of the existing seed rows to
+  // `expired` in-place, refetch, and assert both counts drop by
+  // exactly one and `oldestAgeMs` recomputes to a smaller value.
+  const before = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: { "x-org-id": orgId },
+  });
+  const beforeBody = (await before.json()) as {
+    items: Array<{ kind: string; payload: Record<string, unknown> }>;
+  };
+  const beforePayload = beforeBody.items.find(
+    (i) => i.kind === "approvals.pending",
+  )?.payload as
+    | { pending: number; needsActionToday: number; oldestAgeMs?: number }
+    | undefined;
+  assert.ok(beforePayload, "baseline approvals payload must exist");
+
+  // Flip the 30-day-old "stale" seed to `expired`. It contributed
+  // to BOTH pending (it's > 7d so counts as needs-action) AND set
+  // the floor on oldestAgeMs. After expiry, both numbers must drop.
+  await db.execute(sql`
+    UPDATE opportunities
+       SET status = 'expired'
+     WHERE id = ${`opp_stale_${RUN}`}
+  `);
+
+  const after = await fetch(`${baseUrl}/api/today/feed`, {
+    headers: { "x-org-id": orgId },
+  });
+  const afterBody = (await after.json()) as {
+    items: Array<{ kind: string; payload: Record<string, unknown> }>;
+  };
+  const afterPayload = afterBody.items.find(
+    (i) => i.kind === "approvals.pending",
+  )?.payload as
+    | { pending: number; needsActionToday: number; oldestAgeMs?: number }
+    | undefined;
+  assert.ok(afterPayload, "post-expiry approvals payload must exist");
+
+  assert.equal(
+    afterPayload.pending,
+    beforePayload.pending - 1,
+    `pending must drop by 1 once the row flips to 'expired' (before=${beforePayload.pending}, after=${afterPayload.pending})`,
+  );
+  assert.equal(
+    afterPayload.needsActionToday,
+    beforePayload.needsActionToday - 1,
+    `needsActionToday must drop by 1 once the 30d-old proposed row flips to 'expired' (before=${beforePayload.needsActionToday}, after=${afterPayload.needsActionToday})`,
+  );
+  // The 30-day-old row was the floor; the next-oldest is the 3-day
+  // "middle" row, so oldestAgeMs must shrink substantially.
+  assert.ok(
+    afterPayload.oldestAgeMs! < beforePayload.oldestAgeMs!,
+    `oldestAgeMs must recompute downward once the floor row expires (before=${beforePayload.oldestAgeMs}, after=${afterPayload.oldestAgeMs})`,
+  );
+
+  // Restore so other tests in this file (or re-runs) see the original
+  // seed state.
+  await db.execute(sql`
+    UPDATE opportunities
+       SET status = 'proposed'
+     WHERE id = ${`opp_stale_${RUN}`}
+  `);
+});

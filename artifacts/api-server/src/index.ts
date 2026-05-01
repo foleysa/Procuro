@@ -26,11 +26,13 @@ import {
   startFunnelSnapshotPruner,
   startRenewalScanScheduler,
   startAnalysisCycleScheduler,
+  startExpireStaleOpportunitiesScheduler,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
   deliverAlertsHandler,
   escalateAlertsHandler,
+  expireStaleOpportunitiesHandler,
   ingestCsvHandler,
   ingestMockErpHandler,
   pruneFunnelSnapshotsHandler,
@@ -150,6 +152,10 @@ registerJobHandler(
   "synthesize_operational_alerts",
   synthesizeOperationalAlertsHandler,
 );
+registerJobHandler(
+  "expire_stale_opportunities",
+  expireStaleOpportunitiesHandler,
+);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -171,9 +177,10 @@ app.listen(port, (err) => {
   startAlertsDeliveryScheduler();
   startAlertsEscalationScheduler();
   startOperationalSynthScheduler();
+  startExpireStaleOpportunitiesScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert + expire-stale-opps schedulers started",
   );
 
   void seedCollectorRegistry().then(

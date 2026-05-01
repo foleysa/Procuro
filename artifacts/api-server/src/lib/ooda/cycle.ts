@@ -23,6 +23,7 @@ import {
   type PriorMap,
 } from "./priors";
 import {
+  composeSignalKey,
   toAnalyzeResult,
   type AnalyzeResult,
   type LeverAnalyzer,
@@ -176,45 +177,155 @@ export async function runAnalysisCycle(args: {
     // --- 5. Act ---
     // Each opportunity insert is its own DB round trip; checkpoint inside
     // the loop so a 200-opportunity write doesn't ignore Cancel.
+    //
+    // Task #219 dedupe: each draft gets a stable `signalKey` from
+    // `composeSignalKey(lever, draft)`, built from STABLE identity
+    // fields only — (leverId, supplierId, categoryId, lever-declared
+    // cohortKey()). It deliberately does NOT include narrative
+    // fields (title, rationale) or volatile metric fields (projected
+    // savings, aggregates inside `inputs`) — those drift cycle-to-
+    // cycle as source data updates and would otherwise force a fresh
+    // INSERT each time, defeating dedupe. When a lever provides no
+    // identifiable stable key for a draft, `composeSignalKey` returns
+    // null and the row inserts with `signal_key IS NULL` (the partial
+    // unique index excludes NULLs → legacy escape hatch, no dedupe
+    // for that draft).
+    //
+    // We INSERT ... ON CONFLICT against the partial unique index
+    // `opps_signal_key_uq` which covers (org_id, lever_id,
+    // signal_key) WHERE status IN ('proposed','approved','executing').
+    // On conflict we UPDATE the existing row's content (title/
+    // rationale/projection/inputs/last_seen_at) so an operator
+    // looking at it sees the freshest signal, but we DO NOT touch
+    // `status`, `created_at`, or `cycle_id` — those anchor the row's
+    // lifecycle. The Postgres `(xmax = 0)` idiom in RETURNING tells
+    // us per-row whether we inserted (true) or updated (false),
+    // which the funnel snapshot writer uses to keep `opps_persisted`
+    // honest.
+    const cycleStartedAt = new Date();
     const created: OpportunityRow[] = [];
+    const refreshed: OpportunityRow[] = [];
     let totalProjected = 0;
-    for (const { draft } of drafts) {
+    for (const { lever, draft } of drafts) {
       await checkpoint();
       const prior = priors[draft.leverId];
       const projected = draft.rawProjectedSavingsUsd * prior.projectionMultiplier;
       totalProjected += projected;
       const tier = ALL_LEVERS.find((l) => l.leverId === draft.leverId)!.tier;
-      const [row] = await db
-        .insert(opportunitiesTable)
-        .values({
-          id: newId("opp"),
-          orgId,
-          cycleId,
-          leverId: draft.leverId,
-          tier,
-          title: draft.title,
-          rationale: draft.rationale,
-          recommendedAction: draft.recommendedAction,
-          supplierId: draft.supplierId ?? null,
-          categoryId: draft.categoryId ?? null,
-          rawProjectedSavingsUsd: draft.rawProjectedSavingsUsd.toFixed(2),
-          projectedSavingsUsd: projected.toFixed(2),
-          confidence: prior.confidenceWeight.toFixed(4),
-          inputs: {
-            ...draft.inputs,
-            __priorApplied: {
-              projectionMultiplier: prior.projectionMultiplier,
-              confidenceWeight: prior.confidenceWeight,
-            },
-          },
-        })
-        .returning();
-      if (row) created.push(row);
+      const signalKey = composeSignalKey(lever, draft);
+      const inputsPayload = {
+        ...draft.inputs,
+        __priorApplied: {
+          projectionMultiplier: prior.projectionMultiplier,
+          confidenceWeight: prior.confidenceWeight,
+        },
+      };
+      // Raw SQL upsert because the partial unique index has a WHERE
+      // clause and we need the `(xmax = 0) AS inserted` flag in
+      // RETURNING — neither is supported by Drizzle's typed insert
+      // builder. We reuse the `cycleStartedAt` timestamp for
+      // `last_seen_at` so all refreshes within one cycle share one
+      // monotonic value the auto-expire job can compare against.
+      interface UpsertRowSnake extends Record<string, unknown> {
+        id: string;
+        org_id: string;
+        cycle_id: string;
+        lever_id: LeverId;
+        tier: number;
+        title: string;
+        rationale: string;
+        recommended_action: string;
+        supplier_id: string | null;
+        category_id: string | null;
+        raw_projected_savings_usd: string;
+        projected_savings_usd: string;
+        confidence: string;
+        inputs: Record<string, unknown>;
+        status: OpportunityRow["status"];
+        realized_savings_usd: string;
+        realized_at: Date | null;
+        rejected_reason_code: OpportunityRow["rejectedReasonCode"];
+        rejected_reason_note: string | null;
+        signal_key: string | null;
+        last_seen_at: Date | null;
+        created_at: Date;
+        inserted: boolean;
+      }
+      const upsertRes = await db.execute<UpsertRowSnake>(sql`
+        INSERT INTO opportunities (
+          id, org_id, cycle_id, lever_id, tier, title, rationale,
+          recommended_action, supplier_id, category_id,
+          raw_projected_savings_usd, projected_savings_usd, confidence,
+          inputs, signal_key, last_seen_at
+        ) VALUES (
+          ${newId("opp")},
+          ${orgId},
+          ${cycleId},
+          ${draft.leverId},
+          ${tier},
+          ${draft.title},
+          ${draft.rationale},
+          ${draft.recommendedAction},
+          ${draft.supplierId ?? null},
+          ${draft.categoryId ?? null},
+          ${draft.rawProjectedSavingsUsd.toFixed(2)},
+          ${projected.toFixed(2)},
+          ${prior.confidenceWeight.toFixed(4)},
+          ${JSON.stringify(inputsPayload)}::jsonb,
+          ${signalKey},
+          ${cycleStartedAt}
+        )
+        ON CONFLICT (org_id, lever_id, signal_key)
+          WHERE status IN ('proposed', 'approved', 'executing')
+            AND signal_key IS NOT NULL
+        DO UPDATE SET
+          title = EXCLUDED.title,
+          rationale = EXCLUDED.rationale,
+          recommended_action = EXCLUDED.recommended_action,
+          supplier_id = EXCLUDED.supplier_id,
+          category_id = EXCLUDED.category_id,
+          raw_projected_savings_usd = EXCLUDED.raw_projected_savings_usd,
+          projected_savings_usd = EXCLUDED.projected_savings_usd,
+          confidence = EXCLUDED.confidence,
+          inputs = EXCLUDED.inputs,
+          last_seen_at = EXCLUDED.last_seen_at,
+          tier = EXCLUDED.tier
+        RETURNING *, (xmax = 0) AS inserted
+      `);
+      const raw = upsertRes.rows[0];
+      if (!raw) continue;
+      const row: OpportunityRow = {
+        id: raw.id,
+        orgId: raw.org_id,
+        cycleId: raw.cycle_id,
+        leverId: raw.lever_id,
+        tier: raw.tier,
+        title: raw.title,
+        rationale: raw.rationale,
+        recommendedAction: raw.recommended_action,
+        supplierId: raw.supplier_id,
+        categoryId: raw.category_id,
+        rawProjectedSavingsUsd: raw.raw_projected_savings_usd,
+        projectedSavingsUsd: raw.projected_savings_usd,
+        confidence: raw.confidence,
+        inputs: raw.inputs,
+        status: raw.status,
+        realizedSavingsUsd: raw.realized_savings_usd,
+        realizedAt: raw.realized_at,
+        rejectedReasonCode: raw.rejected_reason_code,
+        rejectedReasonNote: raw.rejected_reason_note,
+        signalKey: raw.signal_key,
+        lastSeenAt: raw.last_seen_at,
+        createdAt: raw.created_at,
+      };
+      if (raw.inserted) created.push(row);
+      else refreshed.push(row);
     }
 
     const decidePayload = {
       candidatesEvaluated: drafts.length,
       opportunitiesCreated: created.length,
+      opportunitiesRefreshed: refreshed.length,
       topByLever: summarizeTopByLever(created),
     };
 
@@ -226,6 +337,7 @@ export async function runAnalysisCycle(args: {
 
     const actPayload = {
       pendingApproval: created.length,
+      refreshedExisting: refreshed.length,
       previousCycleId,
     };
 
@@ -260,6 +372,7 @@ export async function runAnalysisCycle(args: {
       leverResults,
       draftsPostExclusion: drafts.map(({ lever, draft }) => ({ lever, draft })),
       persistedOpps: created,
+      refreshedOpps: refreshed,
       priorDeltas,
     });
 

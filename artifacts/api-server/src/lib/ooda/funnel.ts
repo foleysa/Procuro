@@ -100,8 +100,22 @@ export interface CycleSnapshotInputs {
   leverResults: Array<{ lever: LeverAnalyzer; result: AnalyzeResult }>;
   /** Drafts that survived the exclusion gate. */
   draftsPostExclusion: Array<{ lever: LeverAnalyzer; draft: OpportunityDraft }>;
-  /** Persisted opportunities (after Act). */
+  /**
+   * Newly-inserted opportunities (Act step). Excludes rows whose
+   * signal was matched against the partial unique index and refreshed
+   * in place — those go in `refreshedOpps` so the funnel stage
+   * `opps_persisted` doesn't double-count an unchanged signal as
+   * "fresh persistence" each cycle (task #219 dedupe).
+   */
   persistedOpps: OpportunityRow[];
+  /**
+   * Existing opportunity rows the Act step refreshed this cycle (same
+   * `(orgId, leverId, signalKey)` as a still-live row). Captured
+   * separately from `persistedOpps` so the funnel snapshot can report
+   * `opps_persisted.refreshed_count` for delta-detection without
+   * inflating the underlying "newly persisted" count.
+   */
+  refreshedOpps?: OpportunityRow[];
   /** Prior deltas the Learn step applied this cycle. */
   priorDeltas: PriorDelta[];
 }
@@ -120,6 +134,14 @@ interface StagePayload {
   total_projected_usd?: number;
   total_realized_usd?: number;
   dropped_by_exclusion?: number;
+  /**
+   * Number of existing opportunity rows the Act step refreshed in
+   * place this cycle (task #219 dedupe). Surfaced on `opps_persisted`
+   * so a hot tenant where the same signals re-fire each cycle no
+   * longer looks like a brand-new burst of work in the funnel
+   * timeline. Does NOT contribute to `count`.
+   */
+  refreshed_count?: number;
   deltas?: PriorDelta[];
 }
 
@@ -366,6 +388,7 @@ function capturePersistedStage(
     totalProjected += Number(o.projectedSavingsUsd);
   }
   const capped = inputs.persistedOpps.length > STAGE_SAMPLE_CAPS.opps_persisted;
+  const refreshedCount = inputs.refreshedOpps?.length ?? 0;
   return {
     opps_persisted: {
       count: inputs.persistedOpps.length,
@@ -375,6 +398,7 @@ function capturePersistedStage(
       sample_ids: inputs.persistedOpps
         .slice(0, STAGE_SAMPLE_CAPS.opps_persisted)
         .map((o) => o.id),
+      ...(refreshedCount > 0 ? { refreshed_count: refreshedCount } : {}),
     },
   };
 }

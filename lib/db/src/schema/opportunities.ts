@@ -4,9 +4,11 @@ import {
   timestamp,
   numeric,
   index,
+  uniqueIndex,
   jsonb,
   integer,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
 import { suppliersTable } from "./suppliers";
 import { categoriesTable } from "./categories";
@@ -147,6 +149,34 @@ export const opportunitiesTable = pgTable(
     realizedAt: timestamp("realized_at", { withTimezone: true }),
     rejectedReasonCode: text("rejected_reason_code").$type<RejectionReasonCode>(),
     rejectedReasonNote: text("rejected_reason_note"),
+    /**
+     * Stable cohort identity key for the underlying signal a row was
+     * raised from (task #219). Computed by `composeSignalKey(lever,
+     * draft)` at Act time from STABLE identity fields ONLY
+     * (leverId, supplierId, categoryId, lever-declared `cohortKey()`)
+     * and used as the dedupe key so re-runs of the same OODA cycle
+     * don't grow a forever-growing pile of duplicate `proposed`
+     * opportunities for the same supplier/category/lever. Narrative
+     * fields (title, rationale) and volatile metrics (projected
+     * savings, aggregates) are intentionally excluded so that
+     * regenerated drafts refresh the existing row in place rather
+     * than producing a fresh INSERT each cycle.
+     *
+     * Nullable so historical rows (pre-#219) can co-exist; the partial
+     * unique index below is `WHERE signal_key IS NOT NULL` so legacy
+     * rows never conflict on insert.
+     */
+    signalKey: text("signal_key"),
+    /**
+     * Last cycle timestamp at which the underlying signal was still
+     * present (i.e. the lever produced a draft with the same
+     * `signalKey`). Refreshed on every cycle that touches the row;
+     * used by the `expire_stale_opportunities` job to flip rows to
+     * `expired` after `OPPORTUNITY_QUIET_CYCLES` quiet cycles have
+     * elapsed without the signal re-firing. Nullable for the same
+     * legacy-row reason as `signalKey`.
+     */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -160,6 +190,19 @@ export const opportunitiesTable = pgTable(
     index("opps_supplier_fk_idx").on(t.supplierId),
     index("opps_category_idx").on(t.orgId, t.categoryId),
     index("opps_category_fk_idx").on(t.categoryId),
+    // Partial unique index — only the live (non-terminal) lifecycle
+    // states participate in dedupe so the same signal can produce a
+    // new `proposed` row after the previous one was rejected/expired
+    // /realized. NULL signal_key rows (legacy) are excluded so the
+    // backfill never violates the constraint.
+    uniqueIndex("opps_signal_key_uq")
+      .on(t.orgId, t.leverId, t.signalKey)
+      .where(
+        sql`status IN ('proposed', 'approved', 'executing') AND signal_key IS NOT NULL`,
+      ),
+    // Drives the auto-expire scan: per-org filter + status filter +
+    // last_seen_at range scan against the quiet-cycle cutoff.
+    index("opps_status_last_seen_idx").on(t.orgId, t.status, t.lastSeenAt),
   ],
 );
 
