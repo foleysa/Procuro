@@ -1,0 +1,154 @@
+ROUTE: Red team on patch task #209 against the live screenshot. Skills: cross-domain-trace (cascading failure modes), strategy-frameworks (scope vs symptom). Standing rules in force: smoke-word principle, structures-not-surfaces, forced-choices-need-criteria. The relevant prior context: #185 funnel substrate, #199 IA redesign with Today landing forced to pick path (a) or (b). The screenshot confirms #199 shipped path (b) — feed-only Today. #209 is the patch task for what shipped.
+RESEARCH:
+What I see in the screenshot:
+
+Today page rendering with the four cards from #199 step 3 path (b).
+Alerts card: "No alerts data" + raw SQL leak ("Source unavailable: Failed query: select 'state', 'severity', COUNT(*)::int from 'alerts' where 'alerts'.'org_id' = $1 group by 'alerts'.'state', 'alerts'.'severity' params: org_scis_proc"). Confirms what the spec says.
+Proposed opportunities: "5" with subtitle "Top by projected savings" but no actual top.
+Pending approvals: "3822" with no context.
+Operations health: "0" with subtitle "Failed jobs in the last 24h."
+Banner: "Partial — 1 source(s) unavailable" — the fail-soft behavior from #199 is working.
+Sidebar shows the IA grouping from #199: Today / Workspace / Intelligence / Operations. Alerts appears under Intelligence as a top-level item still — interesting, suggests #199's "Alerts becomes a tab inside Intelligence" intent (step 4) was relaxed.
+"The navigation changed. See what moved →" banner — RT-74's migration banner from #199 round 2 is implemented.
+
+What the spec proposes:
+
+Three fixes: stop the leak, fix the broken query, enrich the four KPIs with one context line each.
+Explicit out-of-scope: the alerts schema migration (separate task), the substrate-driven deltas section (#204 owns), redesigns of destination pages, replacing the four-bucket layout.
+Coordinates with #204 by NOT adding new TodayFeedItem.kind values.
+
+What I'm assuming:
+
+The schema-drift claim is accurate (alerts table has body/ref_type/ref_id/metadata/resolved_at, not state/source/payload).
+Task #208 exists and has the diagnosis the spec corrects.
+Task #204 is in-flight as described.
+
+THINK:
+The patch task is well-shaped at the surgical level. It correctly diagnoses three layered failures (UI leak, schema drift, vacuous numbers) and proposes proportional fixes for each. The fail-soft architecture from #199 is working as designed (the "Partial — 1 source(s) unavailable" banner appears correctly).
+But there's a structural question hovering above the patch: the screenshot shows 3,822 pending approvals. That's not a content gap to fix with "oldest age + count today" context — that's a system-level signal that something upstream is producing approvals faster than they're being approved. Adding a context line will make the card more informative, but it won't address why the number is 3,822 in the first place. This is the RT-21 pattern from the funnel substrate red team: surfaces shouldn't recommend interventions, but they also shouldn't silently render alarming numbers as if they're normal.
+The deeper question: is #209 the right scope, or is it a polish patch on a Today page whose underlying premise is wrong?
+Per #199 the executor picked path (b) — feed-only Today, not substrate-driven. The trigger condition for the substrate-driven follow-up was "#185's behavioral verification complete and outputs trustworthy." Has that happened? If yes, #209 is a polish patch on a stopgap that should be replaced. If no, #209 is the right patch for now.
+The screenshot can't tell me which. The spec doesn't address it. That's worth flagging.
+Beyond that strategic question, there are tactical issues with the patch:
+
+The patch adds enrichment without testing what happens when enrichment data sources fail.
+The deep-link conventions for "Open →" aren't uniform across destination pages.
+The schema-drift acknowledgment in replit.md is a documentation patch on a load-bearing structural problem.
+The "no raw SQL in DOM" contract is right but its scope is narrower than the actual leak surface (other queries in the codebase could leak too).
+The disclosure for engineers ("What happened?") is good but its activation is undefined — does it require a role, a query param, dev-mode?
+
+PLAN:
+
+Test whether #209's scope is right or whether it patches a stopgap that should be replaced.
+Test the three proposed fixes for completeness and edge cases.
+Test what's missing structurally (the 3,822 problem, the disclosure scope, the deep-link conventions).
+Hunt smoke words.
+Honest assessment.
+
+BUILD DRAFT — not for shipping:
+Verdict preview: ship #209 with three meaningful edits and one open strategic question. The patch is correctly scoped at the surgical level — fix the leak, fix the query, enrich the cards. But the strategic question of whether path (b) Today should still be patched or replaced with path (a) is unaddressed and the spec assumes (b) without checking the trigger condition.
+
+HIGH — strategic scope question the spec doesn't address
+RT-82. The spec patches a path-(b) Today without checking whether the path-(a) trigger condition has been met.
+Per #199 step 3, the executor picked path (b) feed-only Today with the explicit follow-up: "create the substrate-driven Today task once the funnel substrate's behavioural verification (per #185) is complete and its outputs are considered trustworthy." This patch task (#209) doesn't ask the question — has #185's behavioral verification completed? If yes, the substrate-driven Today follow-up should already be queued or running, and #209 is investing in a surface that's about to be replaced.
+Two scenarios:
+
+(i) Substrate is now trustworthy. #209 should be merged with whatever substrate-driven Today task exists, so the enrichment work isn't done twice.
+(ii) Substrate is not yet trustworthy. #209 is the right patch for now. But the spec should explicitly state this and identify the trigger that retires #209's patch in favor of the substrate-driven Today.
+
+The spec implicitly assumes (ii) but doesn't say so. The executor will absorb the patch without checking, and any substrate-driven Today work happening in parallel (or about to start) won't coordinate with #209.
+Severity: high. Not because the patch is wrong, but because the strategic question is unaddressed and the spec has been treating the path-(b) Today as the long-term shape rather than a temporary stopgap.
+Fix: add to the "Why" section — "This task assumes the funnel substrate from #185 is not yet trustworthy per its behavioral verification step. If that verification has completed and the substrate-driven Today follow-up (per #199 step 3 path (a)) is queued or running, #209's enrichment work must coordinate with that follow-up — the four cards will eventually move to substrate-driven data sources, and the enrichments here should not lock in feed-only patterns that the substrate-driven version will need to undo. The executor must confirm the substrate's verification status before starting."
+
+HIGH — the 3,822 problem
+RT-83. The Pending Approvals card shows 3,822, and #209 proposes adding "oldest 14d · +6 today" context. That makes the number more legible but doesn't address what the number is signaling.
+3,822 pending approvals with an oldest age of 14 days is not a "today" signal. It's a backlog that's been growing for weeks. The Today page's tagline is "What needs your attention this morning." 3,822 approvals is not this morning's problem — it's a structural pile-up.
+The proposed context line ("+6 today") will help the operator see today's contribution, but the underlying card is still showing a number that's a year of work disguised as a daily attention signal. RT-21 from the funnel substrate red team applied: surfaces shouldn't silently render alarming numbers as if they're normal.
+Two possible reads:
+
+(a) 3,822 is actually correct and operators need to power through. The patch is fine; the number is what it is.
+(b) 3,822 is wrong — it's a counting bug, a stale-rows issue, a never-pruned backlog from before the system worked. The patch papers over it.
+
+The spec doesn't ask which.
+Severity: high. If (b), the patch is misleading by design — a more informative card on a wrong number is a more confidently wrong card. If (a), the spec should add a "structural backlog" treatment (e.g., separate "needs-action-today" count from "total pending").
+Fix: add to step 4 (rendering enrichment) — "The Pending Approvals card must distinguish 'needs-action-today' (newly pending OR aging into a deadline) from 'total pending.' If the latter is meaningfully higher than the former (e.g., 100x), render the today number as the primary and the total as secondary context. The executor must verify whether the current 3,822 figure represents a real working backlog or a counting artifact (stale rows, missed cleanup) before shipping; if it's an artifact, file a separate cleanup task and have this card show the real working number."
+
+MEDIUM — completeness of the three proposed fixes
+RT-84. The "no raw SQL in DOM" contract is correctly scoped at the failed-source level but doesn't account for partial failures within a successful response.
+The spec says: "Today page never displays a raw SQL error string, query parameters, or stack-trace text. When a source is unavailable, the card shows a short, plain-language message."
+But the aggregator's discriminated-union response (from #199) has both a partial: boolean flag and per-source errors: Array<{source, error}>. The patch covers the case where the source is in errors (failed). It doesn't cover the case where a source returns a successful response that contains an error string — e.g., if alerts returns {state: "error", message: "Failed query: select ..."} instead of throwing. The current screenshot is exactly this case: the page shows "No alerts data" AND a raw SQL string, suggesting the alerts source is partially returning data alongside the error rather than throwing cleanly.
+Severity: medium. The fix as written likely covers the screenshot's specific case (the SQL is in the failure state), but the contract should be broader.
+Fix: rephrase the contract — "The Today page never displays raw SQL, query parameters, stack-trace text, file paths, or function names anywhere in any rendered card or banner, regardless of whether the underlying source returned a 5xx, returned 200 with an error payload, or returned 200 with malformed data. The contract is enforced via a render-time scrubber that strips known patterns (SQL keywords like 'select/from/where', dollar-prefixed param markers, stack-trace artifacts) from any user-facing error text. The disclosure component is the only place these patterns are allowed."
+RT-85. The "What happened?" disclosure has no activation rule.
+Step 1 says "engineers can click a What happened? disclosure to see the technical detail." But what shows the disclosure? Is it always visible? Role-gated? Dev-mode-only? Hidden behind a feature flag? An admin-only sidebar?
+If always visible, every user sees an inviting "What happened?" link on every error and clicks it expecting a friendly answer, getting a SQL stack trace.
+If role-gated to admin/engineer roles, the spec should say so.
+If dev-mode-only, the spec should say what activates dev mode.
+Severity: medium. The executor will pick something, and the pick will be either wrong (visible to all) or right (gated) but undocumented.
+Fix: specify activation. Recommend: "The disclosure is visible only to users with the operator/admin role. For non-operator users, the card shows the plain-language message with no disclosure affordance. This matches the role-gated nav rendering pattern from #199 step 2."
+RT-86. Deep-link query strings aren't enumerated for the four cards.
+Step 5 says "Deep-link the four card 'Open →' links to the right filtered slice of each destination page. Reuse existing query-param conventions where they exist; add minimal new ones only where needed."
+What do the destination pages support today? "Reuse existing conventions" assumes conventions exist. If they're inconsistent across pages (e.g., Alerts uses ?status=open while Approvals uses ?filter=pending), this becomes an executor-discovery rabbit hole.
+Severity: medium. The work happens, but the executor invents conventions where they don't exist and the result is inconsistent.
+Fix: require the executor to enumerate existing conventions in the four destination pages first, then state in the design doc which conventions are reused vs. added. If new conventions are added, they follow a consistent pattern (recommend ?filter=key:value pairs for consistency).
+
+LOW — polish
+RT-87. The schema-drift acknowledgment in replit.md is documentation, not resolution.
+Step 8 says: "Update replit.md with one short paragraph: the alerts-table schema drift is a known platform issue, and this task fixes the symptom (Today card crash + raw error leak) without resolving the underlying drift."
+This is honest but it's documenting a load-bearing structural problem and treating it as background context. The drift will keep producing failures (the Today card was just the most visible). Other queries elsewhere in the codebase may already be silently failing or returning stale data because they reference state / source / payload columns that don't exist.
+Severity: low for #209 specifically (the patch is correctly scoped). High for the platform overall (the drift is real and load-bearing).
+Fix (optional): add to step 8 — "The replit.md note must include a recommended next action: file or escalate the alerts-schema-migration task as P0/P1, and audit the codebase for other references to alerts.state, alerts.source, alerts.payload that may also be silently failing."
+RT-88. Smoke word check.
+The spec mostly avoids smoke words but a few hedges appear:
+
+"minimal new ones only where needed" — "where needed" is a smoke word. Either enumerate the new params or commit to "no new params." (Covered by RT-86.)
+"where existing query-param conventions exist" — same issue.
+
+Severity: very low. (Covered by RT-86's fix.)
+
+WHAT'S STILL MISSING
+RT-89. The spec doesn't address the "No alerts data" plus "Source unavailable" simultaneous rendering.
+The screenshot shows both "No alerts data." AND the raw SQL error in the same card. That's two contradictory states displayed at once — the card claims empty state AND failure state. The patch fixes the SQL leak but doesn't address the empty-state-plus-failure-state contradiction.
+Severity: medium-leaning-low. The patch likely resolves this incidentally (when the query works, it returns data and the empty state goes away; when it fails, only the failure message shows). But the spec should state the rule.
+Fix: add to step 1 — "When a source fails, the card shows ONLY the plain-language failure message; it does not also render the empty state ('No alerts data'). Failure and empty are mutually exclusive."
+RT-90. The patch doesn't address what happens during the hand-off to #204.
+#204 adds a "what changed since yesterday" section underneath the four cards. #209 patches the four cards. When both ship, the page has the four cards (enriched) plus the new section. The spec says "this task must coexist cleanly with Task #204" but doesn't say what "cleanly" means in render order, page-load coordination, or shared aggregator behavior.
+Severity: low. #204 will probably handle this, but the responsibility isn't named.
+Fix (optional): add to constraints — "If #204 ships before #209, #209 layers its enrichments onto the cards as they exist when this task starts. If #209 ships before #204, the four enriched cards must reserve nothing — #204 adds its section without page-layout coordination from #209."
+
+REBUILD: No structural rebuild. The patch task is correctly scoped at the surgical level. The high-severity items are scope/strategic (RT-82, RT-83) and the medium items are spec completeness (RT-84, RT-85, RT-86). 9 findings total.
+Comparison to standing-rule deceleration check: #199's red team round 3 produced 6 findings, 0 critical, 2 medium. This is round 1 on a different task (#209) with a smaller scope, so the comparison isn't direct. But the finding rate (9 findings, 0 critical, 2 high, 4 medium) is appropriate for a first round on a tactical patch task.
+
+SHIP:
+Verdict: ship #209 with three pre-ship edits and one open strategic question to be answered before the executor starts.
+The patch correctly identifies three layered failures and proposes proportional fixes. The fail-soft architecture from #199 is working as designed (the "Partial — 1 source(s) unavailable" banner is correct). But two structural questions are unaddressed and one tactical contract needs broadening.
+The open strategic question (must answer before executor starts):
+RT-82: Has #185's behavioral verification completed? If yes, #209 should coordinate with the substrate-driven Today follow-up rather than ship as a standalone patch. If no, #209 is the right patch for now and the spec should say so explicitly. The spec must declare which scenario it's operating in.
+The two pre-ship edits:
+
+RT-83: The Pending Approvals card showing 3,822 needs structural treatment, not just an enrichment line. Distinguish "needs-action-today" from "total pending" in the card. If 3,822 is a counting artifact, file a cleanup task before shipping the enrichment.
+RT-85: Specify the activation rule for the "What happened?" disclosure. Recommend role-gated (operator/admin only), matching #199's role-gated nav pattern.
+
+The two should-fix-now items:
+
+RT-84: Broaden the "no raw SQL in DOM" contract to cover render-time scrubbing of SQL keywords and stack-trace artifacts regardless of whether the source threw or returned 200-with-error.
+RT-86: Enumerate existing query-param conventions across the four destination pages before adding new ones. Document in the design doc.
+
+The polish items (RT-87, RT-88, RT-89, RT-90) can ship as-is or be handled in implementation.
+One thing worth saying directly to the agent:
+This patch task is the first downstream consequence of #199's path-(b) Today choice. The screenshot confirms what the standing-rule absorption predicted: feed-only Today produces a page where the numbers are technically correct and rhetorically empty. "3,822 pending approvals" with no context is the surface failure mode that #185's funnel substrate was built to prevent. #209's enrichments will help, but the deeper move is the substrate-driven Today follow-up — and the spec doesn't name that follow-up's status.
+The ROI of this patch is highest if it's explicitly framed as "stopgap improvement until the substrate-driven Today is ready." If it's framed as the long-term shape of Today, it locks in a design that the entire #185 → #199 thread argued against.
+Ask the question first: is #185's behavioral verification done? Then ship #209 with the right framing.
+
+Learning footer:
+No new correction-log rules fire. Existing rules applied:
+
+Forced choices in specs need criteria — applied recursively. RT-83 is the rule applied to "what does this number mean" (3,822 needs a criterion for what's a today-attention signal vs. a structural backlog) and RT-85 is the rule applied to "who sees the disclosure."
+Structures, not surfaces — fired on RT-82 and RT-83. The patch is a surface improvement. The structural question (path-a vs path-b Today) and the structural problem (3,822 backlog) are not what the patch addresses.
+IA redesign must integrate the most recent foundational architectural decision — fired on RT-82. #209 is patching #199's output without checking #185's behavioral-verification status, which is the trigger for #199's path-(a) follow-up. Patches downstream of an IA redesign must check whether the IA's deferred decisions have been re-triggered.
+Smoke-word principle — fired weakly on RT-88 ("where needed," "where existing conventions exist"). Both subsumed under RT-86.
+
+Pattern observation worth noting in next /pattern review:
+This is the first patch task in the spec-iteration arc that started with #185 and continued through #199. Patch tasks have a different shape than foundational specs — they're tactical, surgical, and time-pressure-driven (the Today page is broken now, the operator sees a SQL leak now). The standing rules still apply, but the failure mode is different: foundational specs fail by being too vague at the architecture level; patch specs fail by being too narrow at the structural level. The same rule that catches "this spec doesn't define how to pick" in a foundational context catches "this patch doesn't ask whether it should still ship" in a patch context.
+Worth noting that the patch-task failure mode (RT-82 — patching a stopgap without checking whether the trigger to retire it has fired) is the natural counterpart to the foundational-task failure mode (forced choices without criteria). The rule is the same — "decisions need criteria, including the decision to do this work at all" — but its application differs by task type. Worth elevating in the next /pattern review whether to formalize this as a sub-rule: "patch tasks must check whether the conditions that produced the original stopgap have changed."
+The next iteration on #209 should be: answer RT-82's strategic question, apply RT-83 and RT-85 as pre-ship edits, ship to executor.

@@ -1,0 +1,165 @@
+ROUTE: Round 2 red team on revised patch task #209. Skills: cross-domain-trace, strategy-frameworks. Standing rules in force: smoke-word principle, structures-not-surfaces, forced-choices-need-criteria, IA-must-integrate-most-recent-foundational-decision, stop-when-critical-findings-decelerate, validate-against-real-data. The new sub-rule from prior round (patch tasks must check whether the conditions that produced the original stopgap have changed) is now visible and absorbed.
+RESEARCH:
+What changed:
+
+RT-82 absorbed thoroughly — and changed the outcome. The substrate trigger is already met: #185 is merged with performance guardrails (#190, #197, #198) and snapshot-prune (#189). Task #204 (substrate-driven Today) is in flight. This means #209 is explicitly framed as a stopgap layered onto path-(b) Today while #204 lands path-(a) underneath. That's a different scenario than the prior red team assumed.
+RT-83 absorbed. Pending Approvals card distinguishes "needs-action-today" from "total pending"; executor verifies whether 3,822 is real or artifact before shipping; cleanup is a separate task if artifact.
+RT-84 absorbed. Render-time scrubber, broadened contract covering 200-with-error-payload, scrubber lives at the rendering layer with explicit pattern list.
+RT-85 absorbed. Disclosure role-gated to org_admin / platform_admin, matching the #205 pattern.
+RT-86 absorbed. Step 7 makes enumeration explicit, design doc is named (docs/command-center-ia.md), recommends ?filter=key:value pattern.
+RT-87 absorbed. Schema-drift note is now P1, includes audit recommendation, corrects #208's diagnosis.
+RT-88 absorbed. Smoke words removed and a constraint added: "No smoke words in the spec or in produced UI copy."
+RT-89 absorbed. Failure and empty states mutually exclusive.
+RT-90 absorbed. Hand-off contract with #204 in constraints (DOM, aggregator response shape, data sources).
+
+What I'm assuming:
+
+The codebase claims (#185 merged with guardrails, #204 in flight, #205 already uses role-gating) are accurate per the agent's coordination check.
+The four existing TodayFeedItem.kind values (alerts.summary, opportunities.proposed, approvals.pending, jobs.failed) match what's actually in the codebase.
+Task #208 exists as described.
+
+What to test:
+
+The new framing (explicit stopgap with coordination contract for #204) is a meaningful re-scoping. Does it introduce new gaps?
+The hand-off contract with #204 — is it sufficient to prevent collision?
+The render-time scrubber — is the pattern list complete enough?
+The structural-backlog treatment for Pending Approvals — does it work for the actual data shapes?
+Standing-rule deceleration: if I find polish only, ship.
+
+THINK:
+The prior round produced 9 findings, 2 high (RT-82, RT-83), 4 medium. All absorbed. The agent didn't just patch the spec — they restructured the framing around RT-82's outcome (substrate trigger met), which is a more thoughtful absorption than I expected.
+The expected deceleration shape says round 2 should produce fewer findings, with character shifting from architecture to polish. Let me work through and see.
+The two specific risks I should hunt:
+
+The hand-off contract with #204 has three dimensions (DOM, aggregator response, data sources). Are there others (load order, error coordination, shared state)?
+The scrubber is now load-bearing — it's the contract that prevents SQL leaks. But scrubbers as a class have a famous failure mode: they catch the patterns you anticipated and miss the ones you didn't. What's the regression-test coverage strategy?
+
+PLAN:
+
+Test the hand-off contract for missing dimensions.
+Test the scrubber for completeness and false-positive risk.
+Test the structural-backlog Pending Approvals treatment.
+Test the executor verification step (RT-83 absorption) for criteria.
+Hunt smoke words.
+Honest assessment.
+
+BUILD DRAFT — not for shipping:
+Verdict preview: ship. Two minor edits worth making before executor sees it. Critical-finding rate has hit zero. Decisive deceleration. Round 3 would produce polish only.
+
+MEDIUM — items worth pre-ship attention
+RT-91. The render-time scrubber is load-bearing but its false-positive risk isn't addressed.
+Step 1 says the scrubber strips "SQL keywords (select|from|where|group by|join|insert|update|delete), dollar-prefixed param markers ($1, $2, …), params: blobs, file paths, and stack-frame markers from any string that ends up on the screen."
+Two failure modes:
+
+False positives. A legitimate alert title containing the word "select" (e.g., "Vendor selected for sole-source review" or an opportunity description like "Update from Q3") would get scrubbed. The scrubber would silently mangle real user-facing content.
+Regex coverage gaps. The pattern list is a denylist. Tomorrow a new error format introduces "ERROR at line 47:" or "/usr/local/lib/..." — neither matches the listed patterns. The scrubber catches today's known leaks and silently fails on tomorrow's.
+
+Severity: medium. The scrubber works for the alerts SQL leak shown in the screenshot, but as a long-term contract it has known weaknesses that the spec doesn't acknowledge.
+Fix: add to step 1 — "The scrubber operates at the error-message rendering boundary, not on all rendered text. It scrubs strings flowing into error/failure-state UI components specifically; legitimate card content (alert titles, opportunity descriptions) bypasses the scrubber. The pattern denylist is intentionally narrow for the known leak surface; broader allowlisting (only render error messages from a known-safe template registry) is the correct long-term contract but out of scope for this patch."
+This makes the scrubber's scope explicit and acknowledges it's a tactical fix, not a structural one.
+RT-92. The hand-off contract with #204 has three dimensions but misses load-order timing.
+Constraint says #204/#209 don't collide on DOM, aggregator response shape, or data sources. Good. But:
+
+If both are loaded simultaneously, what's the visual hierarchy? Spec says "if #204 ships first, #209 layers... If #209 ships first, the four enriched cards reserve nothing." But what if both ship in the same release? Or both are in active development and a user gets a partial deploy?
+If the aggregator endpoint is shared (GET /api/today/feed) and both tasks add to its response, what's the version contract? Does the response payload's TodayFeedItem.kind set get bumped, or are #209's enrichments added to existing kinds and #204 adds new kinds, with neither needing a version bump?
+
+The spec says "#204 owns any new kinds and any new substrate-derived fields" which implies the version contract: existing kinds get extended (additive, non-breaking), new kinds get added (additive, non-breaking). Both tasks can ship independently.
+But the load-order question — what does the page render during a deploy where one has shipped and the other hasn't — isn't addressed.
+Severity: medium. Both tasks will probably handle this with feature flags or capability detection in practice, but the spec doesn't name the responsibility.
+Fix: add to constraints — "Load-order resilience: the page renders correctly with any combination of (#209-only, #204-only, both, neither). Each task's enrichments are independently feature-gated by capability detection on the aggregator response (#209 enrichments rendered when the existing TodayFeedItem.kind payloads include the new fields; #204's new section rendered when the response includes its new kinds). The Today page does not assume both tasks have shipped."
+RT-93. The RT-83 structural-backlog verification step ("real working backlog or counting artifact") doesn't have criteria.
+This is the recursive forced-choices-need-criteria pattern again. Step 5 says: "Before shipping, the executor verifies whether the current 3,822 pending-approvals figure represents a real working backlog or a counting artifact (stale rows, never-pruned status, missed cleanup). The verification result is named in the implementation summary."
+But what's the verification method? Sampling 100 rows and inspecting their dates? Querying for never-acknowledged opportunities older than X? Asking an operator? "Verifies" is undefined.
+Severity: medium. The executor will pick a method, and the result is binary (real or artifact), but the method affects the answer.
+Fix: add to step 5 — "Verification method: query for the age distribution of pending approvals (oldest 10, median, newest 10), the per-lever breakdown, and the count of approvals with no activity in 30+ days. If 30+-day-stale approvals are >50% of the total AND the per-lever breakdown shows concentration in a single lever (suggesting a producer side bug rather than legitimate backlog), classify as artifact. Otherwise classify as real working backlog. Include the verification query results in the implementation summary."
+This makes the verification reproducible and the classification boundary explicit.
+
+LOW — polish
+RT-94. The "Engine/Operations role-gating pattern from #205" is referenced but not summarized.
+Step 2 says "This matches the role-gated pattern already used for the Engine/Operations pages (per #205)." Fine — but if the executor needs to look up #205 to know what pattern they're matching, that's a cross-task dependency. If the pattern is simple (org_admin OR platform_admin can see admin-gated UI), it's worth restating in one sentence so the executor doesn't context-switch.
+Severity: very low. The cross-reference is fine; the spec is asking the executor to look up #205, which is a normal workflow.
+Fix (optional): add to step 2 — "Role check: useUserRole().role is one of ['org_admin', 'platform_admin']. Same predicate as #205's admin guards." If the helper exists, naming it saves a lookup.
+RT-95. The aggregator response shape's discriminated-union pattern (from #199) isn't named in #209.
+#199 specified the aggregator response as a discriminated union with items, partial, errors. #209 builds on top of this but doesn't reference the contract. The executor might add fields to TodayFeedItem.kind payloads without considering whether the discriminated-union envelope is also affected.
+Severity: very low. The executor will figure this out from the existing aggregator code. But naming the contract once prevents drift.
+Fix (optional): add to step 4 — "Enrichments extend the payload field of each existing TodayFeedItem.kind variant in the discriminated-union response shape from #199. The envelope (items / partial / errors) is unchanged."
+RT-96. Smoke word check.
+The spec is now disciplined about smoke words and even adds a constraint banning them. Hunting:
+
+"as the alerts schema migration lands" — passive construction, doesn't say who's responsible. But in context (the spec is explicit about it being out of scope), this reads as a forward note rather than a hidden decision. Pass.
+"where new params are needed" in step 7 — but the spec says "where new params are needed, follows a single consistent pattern." This is conditional rendering of the convention, not a hidden decision. Pass.
+The "(recommend ?filter=key:value repeatable)" — recommend is soft. But the spec says the executor enumerates existing conventions first AND documents in the design doc, so the recommendation has to either be adopted or explicitly rejected with rationale. Pass.
+
+No new smoke words found. The spec's own constraint against them is working.
+
+WHAT'S STILL MISSING
+RT-97. The spec doesn't say what happens to #209's enrichments when #204 lands.
+#209 ships enrichments to the four cards. #204 ships substrate-driven Today underneath. Eventually substrate maturity will mean the four cards themselves should be substrate-driven (path-a Today). What's the deprecation path for #209's enrichments?
+Two scenarios:
+
+(i) #204 lands, the new section adds value, the four cards stay enriched as-is. #209's work is permanent.
+(ii) Eventually a future task (#XXX) replaces the four cards entirely with substrate-driven equivalents. #209's enrichments become legacy code.
+
+The spec implies (i) but doesn't say. The patch-task-must-check-whether-stopgap-conditions-have-changed rule applies to the future too: when does someone re-evaluate whether the four cards should still exist?
+Severity: low. This is forward-looking and could be a follow-up note, not a current spec issue.
+Fix (optional): add to the strategic framing section — "When #204 has been live for 30+ days and operator behavior shows the substrate-driven section is the primary attention surface, file a follow-up task to evaluate whether the four feed-only cards should be retired, reduced, or kept as quick-glance summaries. #209's enrichments are not load-bearing for the long-term Today shape."
+RT-98. No spec-level mention of release coordination with #204.
+Both tasks touch the same page, the same aggregator endpoint, possibly overlapping tests. The hand-off contract specifies what each owns, but doesn't mention release sequencing — should one block the other? Should they be released in the same window? Coordinated PRs?
+Severity: very low. This is a project-management concern, not a spec concern. But it's the kind of thing that benefits from being named.
+Fix (optional): add to constraints — "Release sequencing with #204: both tasks ship independently; neither blocks the other. If both are deployment-ready in the same window, release order is at the deployer's discretion (the load-order resilience constraint guarantees correctness either way)."
+
+REBUILD: No structural rebuild. Round 2 produced 8 findings. 0 critical. 3 medium. 5 low. The character is overwhelmingly polish or executor-discovery level.
+Comparison to the prior arc:
+
+#185: 4 rounds, 4 critical → 4 critical → 0 critical → 0 critical (with 1 medium pre-ship fix)
+#199: 3 rounds, 4 critical → 0 critical (2 high) → 0 critical (2 medium pre-ship fix)
+#209 (round 1): 9 findings, 0 critical, 2 high
+#209 (round 2 — this round): 8 findings, 0 critical, 3 medium
+
+The deceleration from 2 high to 3 medium is decisive. Round 3 on #209 would find polish only. The standing rule says ship.
+
+SHIP:
+Verdict: ship the spec. Apply RT-91 and RT-93 before executor sees it; everything else is polish or follow-up. Spec rounds have crossed the diminishing-returns threshold.
+The absorption from round 1 was thorough and structural. The agent didn't just patch the spec — they restructured the framing around RT-82's outcome (substrate trigger met), made #209 an explicit stopgap, named the hand-off contract with #204 across three dimensions, and added a constraint banning smoke words in the spec or produced UI copy. That's deeper absorption than typical patches.
+The two pre-ship edits:
+
+RT-91: The render-time scrubber's scope and limitations need explicit acknowledgment. As written, it reads as a complete contract; in reality it's a tactical denylist with known false-positive risk and unanticipated-pattern-coverage gaps. Add scope language to step 1 — "scrubbing operates at the error-message rendering boundary, not on all rendered text" — so legitimate content (alert titles containing 'select') doesn't get mangled, and acknowledge the long-term contract is template-allowlist, not denylist.
+RT-93: The "real working backlog vs counting artifact" verification step needs criteria for the classification, not just a note that the executor verifies. Add a verification method to step 5 (age distribution query, per-lever breakdown, 30+-day-stale percentage threshold). This is the same forced-choices-need-criteria rule applied recursively to the new sub-decision the patch introduces.
+
+The medium item worth attention but not blocking:
+
+RT-92: Load-order resilience between #209 and #204. Both tasks will probably handle this in practice, but naming the responsibility prevents a deploy-window collision.
+
+The polish items (RT-94, RT-95, RT-97, RT-98) and smoke-word check (RT-96) are clean. Ship as-is.
+One thing worth saying directly to the agent:
+This is the second round on #209 and the eighth cumulative round across the spec arc that started with #185. The deceleration shape is now visible across three specs:
+SpecRoundsRound 1 criticalRound 2 criticalFinal round critical#1854440#1993400#20920 (2 high)0 (3 medium)—
+The compression from 4 rounds to 3 to 2 is the rule-compounding payoff in action. Each new spec absorbs more standing rules into its initial structure. #209's first round had zero critical findings — a first for this arc. Round 2 has zero critical and zero high. The spec is ready.
+If the agent is tempted to run round 3, the question is: are the issues being found at the polish level (RT-94, RT-95, RT-97, RT-98 in this round)? Yes. The standing rule says stop. Apply RT-91 and RT-93, ship to executor.
+One pattern worth flagging across the eight cumulative rounds:
+The standing-rule library is now self-applying. RT-93 in this round caught the forced-choices-need-criteria rule applied recursively to a sub-decision — same pattern as RT-76 in #199 round 3. The rule compounds not just across specs but within each spec, catching its own non-recursive applications. That's the strongest evidence yet that the correction-log discipline is producing structural improvement, not just behavioral compliance.
+The next iteration should be the executor's draft, not another spec round.
+
+Learning footer:
+No new correction-log rules fire. Existing rules applied:
+
+Forced choices in specs need criteria — fired correctly on RT-93. Same recursive application pattern as RT-76 in #199 round 3 (rule applied at top level, not yet at sub-decision level introduced by absorption).
+Stop iterating when critical-finding rate decelerates — fired decisively. Round 1 had 0 critical, 2 high. Round 2 has 0 critical, 0 high, 3 medium. Round 3 would find polish only.
+Patch tasks must check whether the conditions that produced the original stopgap have changed — confirmed working. The agent's RT-82 absorption checked the substrate trigger and discovered it had been met (#185 merged with guardrails, #204 in flight). The patch task was reframed as explicit stopgap rather than long-term shape. This is the rule's first successful application post-formalization.
+Smoke-word principle — fired weakly. The agent's "no smoke words in the spec or in produced UI copy" constraint is the rule absorbed as structural discipline rather than red-team finding.
+
+Pattern observation worth elevating in next /pattern review:
+Three specs, eight rounds, deceleration shape from 4-3-2 rounds. The compounding is real and accelerating. The next major spec from this agent should be expected to ship in 1-2 rounds. If it ships in 1, the system has stabilized and further structural improvement of spec-iteration discipline has hit its asymptote. Worth tracking.
+The standing-rule library across all rounds:
+
+Smoke-word principle (any phrase replaceable with concrete guidance)
+Validate metrics against real data shape
+IA redesign must integrate most recent foundational architectural decision
+Forced choices in specs need criteria (now self-recursive — applies to sub-decisions introduced by absorption)
+Stop iterating when critical-finding rate decelerates
+Example values masquerading as commitments are smoke words
+Structures, not surfaces
+Patch tasks must check whether the conditions that produced the original stopgap have changed
+
+These eight rules now form the spec-discipline canon for this domain. Eight rounds of red team have produced a stable, self-applying ruleset that compresses spec-iteration time by a factor of 2 per spec. Worth formalizing as a "spec discipline checklist" that's read at the start of every new spec drafting session — making the absorption explicit rather than implicit.
+Apply RT-91 and RT-93, ship #209 to executor.
