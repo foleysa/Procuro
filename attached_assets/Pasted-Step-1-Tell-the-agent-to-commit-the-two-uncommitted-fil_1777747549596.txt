@@ -1,0 +1,35 @@
+Step 1: Tell the agent to commit the two uncommitted filesPaste this exactly:
+Two files in the working tree need to land before we lose them: artifacts/api-server/test/schema-introspection.test.ts and the updated artifacts/api-server/test/today-feed-aggregator.test.ts. Both are good work — the regression guard is exactly what we need to prevent another schema drift incident.
+Commit them to main with this message:
+"test: schema introspection regression guard + today-feed aggregator narrative update
+Adds Drizzle getTableColumns-based regression test asserting every declared column on the 8 alerts-family tables and 3 funnel tables exists in live DB (13/13 passing). Updates today-feed-aggregator test header to reflect post-#248 reality (seed uses new schema directly).
+Lands work that was in-flight when #248/#249 task tickets were cancelled. Schema reconciliation itself shipped earlier in the session via #226 patch."
+Confirm the commit lands on main and report back.
+Step 2: File the pre-existing failures as a new taskPaste this:
+File a new task in the queue with this title and body:
+Title: "Pre-existing failures in funnel-snapshot.test.ts (cross-test contamination or mapped_via business logic)"
+Body: "Surfaced during #248 work. Two failures unrelated to schema state:
+
+Row-count mismatch: 36 !== 24 at line 501
+'unmapped_default contaminated rollup: n=57' assertion at line 713
+Both relate to analysis-cycle cohort math and mapped_via filtering. Likely cross-test data contamination or a separate business-logic issue. Pre-existing — not introduced by #248/#249 schema reconciliation. Investigate cohortKey() filtering and ensure tests don't share state."
+
+Confirm the task ID and report back.
+Step 3: Reconcile the cancelled task ticketsThe schema work shipped. The tickets say cancelled. That's a documentation lie that will bite you later when someone (you, future-you, a buyer doing technical diligence) reads the task history.Paste this:
+#248 and #249 got cancelled mid-session, but the actual schema work landed via the #226 patch earlier today. The audit trail is wrong — the work shipped, the tickets say cancelled.
+Two options. Recommend which is cleaner:
+Option A: Re-open #248 and #249 and mark them "completed" with a note pointing at the #226 commit hash that contains the actual schema work.
+Option B: Leave them cancelled and add a closing note on each pointing at the #226 commit, so anyone reading the history understands the work was absorbed into a different ticket.
+Which is more consistent with how this project tracks work? Pick one and execute it.
+Step 4: Confirm gate 1 is actually closedOnce steps 1–3 land, paste this:
+Verify gate-1 production stability is complete. Confirm in writing that the following are all true:
+
+Schema source-of-truth matches dev DB (schema-introspection test green).
+Schema source-of-truth matches prod DB (post-Publish verification ran cleanly).
+Typecheck passes across all 4 packages.
+API server starts cleanly with category_bands and all alerts schedulers running.
+Supplier and Contract detail pages load without error (#238 committed and verified).
+The #209 today-feed workaround has been reverted and the original state-based query is back.
+All 13 alerts tests pass.
+
+If any of these is false or unverified, say so. If all true, say so explicitly. Do not pivot to new feature work until I confirm gate-1 closure.
