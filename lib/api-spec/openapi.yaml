@@ -4544,6 +4544,28 @@ paths:
             text/csv:
               schema:
                 type: string
+  /admin/trust-engagement:
+    get:
+      operationId: getAdminTrustEngagement
+      tags:
+      - admin
+      summary: Trust Center engagement summary for the active tenant
+      description: 'Counts how often /trust/summary has been fetched in the
+        trailing 30 days, plus the timestamp + actor of the most
+        recent view. Backed by the `trust.view` rows in
+        `admin_audit_log`, which are deduped server-side to one event
+        per actor per 5-minute window.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Trust engagement signal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTrustEngagement'
   /admin/sso:
     get:
       operationId: getAdminSsoConfig
@@ -12657,6 +12679,39 @@ components:
           type: string
         count:
           type: integer
+    AdminTrustEngagement:
+      type: object
+      description: 'Engagement signal derived from `trust.view` rows in
+        `admin_audit_log`. Writes are deduped server-side to one event
+        per actor per 5 minutes, so the count approximates distinct
+        view sessions rather than raw fetches.
+
+        '
+      required:
+      - windowDays
+      - viewCount30d
+      - distinctViewers30d
+      - lastViewAt
+      - lastViewer
+      properties:
+        windowDays:
+          type: integer
+          description: Trailing window the count covers. Always 30 today.
+        viewCount30d:
+          type: integer
+          description: Number of `trust.view` events in the trailing window.
+        distinctViewers30d:
+          type: integer
+          description: Distinct actors that viewed the Trust Center in the trailing window.
+        lastViewAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent Trust Center view, ever (not windowed).
+        lastViewer:
+          type: string
+          nullable: true
+          description: Actor (email or system principal) that triggered the most recent view.
     AdminSsoProtocol:
       type: string
       enum:

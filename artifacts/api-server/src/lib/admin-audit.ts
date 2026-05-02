@@ -55,5 +55,10 @@ export const ADMIN_AUDIT_ACTIONS = [
   "onboarding.completed",
   "onboarding.sample_data_installed",
   "onboarding.sample_data_removed",
+  // Trust Center engagement telemetry — emitted on every
+  // /api/trust/summary fetch (with 5-minute per-actor dedup) so
+  // operators can see when a tenant is actively sharing posture
+  // with auditors / prospects without bloating the audit log.
+  "trust.view",
 ] as const;
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

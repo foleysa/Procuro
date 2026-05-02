@@ -25,6 +25,16 @@ import { userRoleNames } from "@workspace/db";
 import {
   MAX_ATTEMPTS_BY_KIND,
 } from "../lib/jobs/queue";
+import { writeAdminAudit } from "../lib/admin-audit";
+
+/**
+ * Window for collapsing repeated `trust.view` events from the same
+ * actor. A reviewer reloading the page or a polling integration would
+ * otherwise drown out the signal — by skipping any duplicate view
+ * inside this window we keep the audit-log table small while still
+ * capturing every meaningful "someone looked at our posture" event.
+ */
+const TRUST_VIEW_DEDUPE_MS = 5 * 60 * 1000;
 
 const router: IRouter = Router();
 
@@ -310,6 +320,41 @@ router.get(
       role,
       permissions: [...rolePermissions(role)],
     }));
+
+    // Record a `trust.view` event so Org Admin can show how often the
+    // page is fetched. Skip if the same actor already logged a view
+    // within the dedupe window — keeps the audit log uncluttered when
+    // a reviewer is rapidly refreshing or a polling integration hits
+    // this endpoint repeatedly.
+    const actor = req.actorEmail ?? "system@procuro.ai";
+    try {
+      const dedupeCutoff = new Date(Date.now() - TRUST_VIEW_DEDUPE_MS);
+      const [recent] = await db
+        .select({ id: adminAuditLogTable.id })
+        .from(adminAuditLogTable)
+        .where(
+          and(
+            eq(adminAuditLogTable.orgId, orgId),
+            eq(adminAuditLogTable.action, "trust.view"),
+            eq(adminAuditLogTable.actor, actor),
+            gte(adminAuditLogTable.createdAt, dedupeCutoff),
+          ),
+        )
+        .limit(1);
+      if (!recent) {
+        await writeAdminAudit({
+          orgId,
+          actor,
+          action: "trust.view",
+          targetId: orgId,
+          targetLabel: org.name,
+          metadata: { authMode: req.authMode ?? "unknown" },
+        });
+      }
+    } catch (err) {
+      // Audit-write failures must never break the trust response.
+      req.log.warn({ err, orgId, actor }, "Failed to record trust.view audit");
+    }
 
     res.json({
       generatedAt: new Date().toISOString(),

@@ -4907,6 +4907,23 @@ export interface AdminAuditActionCount {
   count: number;
 }
 
+/**
+ * Engagement signal derived from `trust.view` rows in `admin_audit_log`. Writes are deduped server-side to one event per actor per 5 minutes, so the count approximates distinct view sessions rather than raw fetches.
+
+ */
+export interface AdminTrustEngagement {
+  /** Trailing window the count covers. Always 30 today. */
+  windowDays: number;
+  /** Number of `trust.view` events in the trailing window. */
+  viewCount30d: number;
+  /** Distinct actors that viewed the Trust Center in the trailing window. */
+  distinctViewers30d: number;
+  /** Timestamp of the most recent Trust Center view, ever (not windowed). */
+  lastViewAt: string | null;
+  /** Actor (email or system principal) that triggered the most recent view. */
+  lastViewer: string | null;
+}
+
 export type AdminSsoProtocol =
   (typeof AdminSsoProtocol)[keyof typeof AdminSsoProtocol];
 

@@ -43,6 +43,7 @@ import {
   RotateCw,
   Copy,
   Download,
+  Eye,
 } from "lucide-react";
 import {
   useListAdminUsers,
@@ -55,6 +56,7 @@ import {
   useRevokeAdminApiKey,
   useListAdminAuditLog,
   useListAdminAuditActions,
+  useGetAdminTrustEngagement,
   useGetAdminSsoConfig,
   useSaveAdminSsoConfig,
   useGetAdminTenantSettings,
@@ -969,6 +971,94 @@ function TenantSettingsTab() {
 
 // ----- Audit log tab ----------------------------------------------
 
+function TrustEngagementCard() {
+  const { data, isLoading } = useGetAdminTrustEngagement();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Eye className="w-5 h-5" />
+          Trust Center engagement
+        </CardTitle>
+        <CardDescription>
+          How often this tenant's posture has been pulled by reviewers.
+          Repeated views from the same actor inside 5 minutes are
+          collapsed into one event so the count tracks distinct review
+          sessions, not raw refreshes.{" "}
+          <Link
+            href="/trust"
+            className="text-primary underline-offset-2 hover:underline"
+            data-testid="link-engagement-trust"
+          >
+            Open the Trust Center
+          </Link>
+          .
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading || !data ? (
+          <div className="text-sm text-muted-foreground flex items-center">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Loading engagement…
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                Views (last {data.windowDays}d)
+              </div>
+              <div
+                className="text-2xl font-semibold"
+                data-testid="text-trust-view-count"
+              >
+                {data.viewCount30d}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {data.distinctViewers30d} distinct{" "}
+                {data.distinctViewers30d === 1 ? "viewer" : "viewers"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                Last viewed
+              </div>
+              <div
+                className="text-sm font-medium"
+                data-testid="text-trust-last-viewed"
+              >
+                {formatTime(data.lastViewAt)}
+              </div>
+              {data.lastViewer ? (
+                <div className="text-xs text-muted-foreground mt-1 truncate">
+                  by {data.lastViewer}
+                </div>
+              ) : null}
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                Signal
+              </div>
+              <div className="text-sm">
+                {data.viewCount30d === 0 ? (
+                  <Badge variant="outline">No views yet</Badge>
+                ) : data.viewCount30d >= 5 ? (
+                  <Badge variant="secondary">Active sharing</Badge>
+                ) : (
+                  <Badge variant="outline">Light activity</Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Filter the log below by <code>trust.view</code> to see
+                each session.
+              </p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AuditTab() {
   const qc = useQueryClient();
   const [actor, setActor] = useState("");
@@ -983,6 +1073,7 @@ function AuditTab() {
 
   return (
     <div className="space-y-6">
+      <TrustEngagementCard />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

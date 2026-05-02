@@ -27,6 +27,7 @@ export * from "./adminSsoConfig";
 export * from "./adminSsoProtocol";
 export * from "./adminTenantDisclosurePolicy";
 export * from "./adminTenantSettings";
+export * from "./adminTrustEngagement";
 export * from "./adminUserRole";
 export * from "./adminUserRow";
 export * from "./adminWhoamiResponse";

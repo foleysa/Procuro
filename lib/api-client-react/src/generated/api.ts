@@ -34,6 +34,7 @@ import type {
   AdminRoleChangeResult,
   AdminSsoConfig,
   AdminTenantSettings,
+  AdminTrustEngagement,
   AdminUserRow,
   AdminWhoamiResponse,
   Alert,
@@ -14140,6 +14141,84 @@ export function useExportAdminAuditLog<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getExportAdminAuditLogQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Counts how often /trust/summary has been fetched in the trailing 30 days, plus the timestamp + actor of the most recent view. Backed by the `trust.view` rows in `admin_audit_log`, which are deduped server-side to one event per actor per 5-minute window.
+
+ * @summary Trust Center engagement summary for the active tenant
+ */
+export const getGetAdminTrustEngagementUrl = () => {
+  return `/api/admin/trust-engagement`;
+};
+
+export const getAdminTrustEngagement = async (
+  options?: RequestInit,
+): Promise<AdminTrustEngagement> => {
+  return customFetch<AdminTrustEngagement>(getGetAdminTrustEngagementUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAdminTrustEngagementQueryKey = () => {
+  return [`/api/admin/trust-engagement`] as const;
+};
+
+export const getGetAdminTrustEngagementQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdminTrustEngagement>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTrustEngagement>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAdminTrustEngagementQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdminTrustEngagement>>
+  > = ({ signal }) => getAdminTrustEngagement({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTrustEngagement>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdminTrustEngagementQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdminTrustEngagement>>
+>;
+export type GetAdminTrustEngagementQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Trust Center engagement summary for the active tenant
+ */
+
+export function useGetAdminTrustEngagement<
+  TData = Awaited<ReturnType<typeof getAdminTrustEngagement>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTrustEngagement>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdminTrustEngagementQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

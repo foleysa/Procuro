@@ -9319,6 +9319,50 @@ export const ExportAdminAuditLogHeader = zod.object({
 });
 
 /**
+ * Counts how often /trust/summary has been fetched in the trailing 30 days, plus the timestamp + actor of the most recent view. Backed by the `trust.view` rows in `admin_audit_log`, which are deduped server-side to one event per actor per 5-minute window.
+
+ * @summary Trust Center engagement summary for the active tenant
+ */
+export const GetAdminTrustEngagementHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetAdminTrustEngagementResponse = zod
+  .object({
+    windowDays: zod
+      .number()
+      .describe("Trailing window the count covers. Always 30 today."),
+    viewCount30d: zod
+      .number()
+      .describe("Number of `trust.view` events in the trailing window."),
+    distinctViewers30d: zod
+      .number()
+      .describe(
+        "Distinct actors that viewed the Trust Center in the trailing window.",
+      ),
+    lastViewAt: zod.coerce
+      .date()
+      .nullable()
+      .describe(
+        "Timestamp of the most recent Trust Center view, ever (not windowed).",
+      ),
+    lastViewer: zod
+      .string()
+      .nullable()
+      .describe(
+        "Actor (email or system principal) that triggered the most recent view.",
+      ),
+  })
+  .describe(
+    "Engagement signal derived from `trust.view` rows in `admin_audit_log`. Writes are deduped server-side to one event per actor per 5 minutes, so the count approximates distinct view sessions rather than raw fetches.\n",
+  );
+
+/**
  * Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /
 OIDC connection; this endpoint stores only the tenant-specific
 metadata operators surface in the admin UI.
