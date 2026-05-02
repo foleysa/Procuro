@@ -1,0 +1,32 @@
+Solid catch. Your dependency chain is right and the duplicate flag on #231/#240 is exactly the kind of pre-execution review that saves three hours of executor confusion.
+Two follow-ups to consider before #248 actually executes:
+
+1. The dependency ordering is correct, but #248 has internal sequencing risk independent of upstream.
+#248 has two parts that could be split:
+
+Part 1 (alerts) — data-preserving, rename-trap migration, high risk
+Part 2 (funnel) — pure CREATE TABLE, low risk
+
+If the alerts migration hits trouble on the live DB (step 3, the rename ambiguity), the executor is instructed to STOP. That's correct behavior, but it means funnel stays broken too because they're shipped together.
+Worth considering: split #248 into #248a (alerts) and #248b (funnel). Funnel ships in 30 minutes. Alerts can take a day if the rename mapping needs review. Right now they're coupled and the easy win is held hostage to the hard one.
+If you'd rather keep them together for the audit-trail simplicity, leave it. But flag this in the task: "If Part 1 stops on a STOP-condition, ship Part 2 as a standalone commit before reporting back, so the funnel substrate is unblocked even if alerts needs human review."
+
+2. #231 vs #240 — confirm before closing one.
+You said both cite the same line in cycle.ts:454. Before closing #240 as a duplicate, double-check that:
+
+Both are describing the same underlying bug (boolean vs integer typecheck) and not two different bugs that happen to surface on the same line
+The fix proposed in each is identical — sometimes two reporters file the "same" bug but propose conflicting fixes, and the dedupe should preserve the better proposal
+Whichever you keep has the more complete repro / context
+
+If both are genuinely identical, close #240 → #231 (keep the lower number, standard convention) and reference the close in #240's comment so the trail is preserved.
+
+3. One thing your dependency chain doesn't capture.
+#226 explicitly punted on alerts/funnel. Whoever wrote #226 made a deliberate decision to ship the rest of the schema and defer these two. There may be context in #226's discussion that's relevant to how #248 should approach the rename — specifically, whether the alerts data-mapping (body → payload, ref_type/ref_id → source/dedupe_key) was already decided and just not executed, or whether it was deferred precisely because the mapping is ambiguous.
+Worth a one-line check: read the #226 thread for any commentary on the alerts rename. If the mapping was already debated and resolved, #248's executor should follow that resolution rather than re-deriving from the schema file. If it was deferred because no one could agree, the executor needs to flag the ambiguity early in step 3, not discover it mid-migration.
+
+Net: your queue review is good. Re-proposing with the dependency chain is the right move. The two small additions I'd make:
+
+Decouple Part 2 (funnel) from Part 1 (alerts) in the task body so the easy win can ship even if alerts blocks
+Read #226's thread for prior context on the alerts rename mapping before the executor starts
+
+Otherwise, #248 is ready to sit in the queue behind #241 → #238 → #231 and execute cleanly when its turn comes.

@@ -1,0 +1,174 @@
+TASK: Fix P1 schema-drift bugs (alerts + funnel tables)
+
+CONTEXT
+Read replit.md under "Known issues / hazards" before starting. There are two P1 
+schema-drift bugs blocking production launch. The Drizzle source schema declares 
+columns and tables that don't exist in the live PostgreSQL database. Any code 
+path that touches the new schema crashes at SQL parse time.
+
+This task fixes both, removes the workarounds, and re-enables the disabled code 
+paths.
+
+PRECONDITIONS — DO THESE FIRST, IN ORDER
+
+1. Take a database backup. Run pg_dump against the live database and save the 
+   output to /tmp/procuro-backup-pre-migration-YYYYMMDD.sql. Confirm the file 
+   exists and is non-zero size before proceeding.
+
+2. Confirm we are working on a feature branch, not main. Create branch:
+   fix/p1-schema-drift-alerts-funnel
+   If not on that branch, create it and check it out.
+
+3. Read these files end-to-end before writing any code:
+   - replit.md (the "Known issues / hazards" section + the alerts and funnel 
+     architecture sections)
+   - lib/db/src/schema/alerts.ts
+   - lib/db/src/schema/funnel-snapshots.ts (or wherever funnel_snapshots is declared)
+   - lib/db/src/schema/funnel-annotations.ts (or wherever funnel_annotations is declared)
+   - artifacts/api-server/src/routes/today.ts (or wherever the Today aggregator lives)
+   - lib/ooda/funnel.ts (the substrate-reader queries: getRecentAutoAnnotations, 
+     getCycleConversionRateDeltas)
+   - The render-time scrubber: artifacts/command-center/src/lib/scrub-error.ts
+
+   Do not skip this. Confirm you've read each file by listing the line counts in 
+   your first response.
+
+PART 1 — ALERTS MIGRATION (#117)
+
+Current live DB schema for alerts:
+   body, ref_type, ref_id, metadata, resolved_at
+
+Declared schema (target state):
+   state, source, payload, acknowledgedAt, snoozedUntil
+
+Steps:
+1.1  Generate the Drizzle migration that transforms live → declared. Use 
+     `pnpm drizzle-kit generate` from the lib/db package. Inspect the SQL it 
+     produces. Do not run it yet.
+
+1.2  Review the generated SQL by hand. Confirm:
+     - It renames or migrates data from old columns to new where semantics map 
+       (body → payload, ref_type/ref_id → source, resolved_at → acknowledgedAt 
+       or similar — verify against the schema file's intent)
+     - It preserves existing alert rows; this is not a drop-and-recreate
+     - It handles NULLs and any constraints correctly
+
+1.3  Apply the migration to a local/dev DB first. Verify with a few sample 
+     queries that existing alert rows survived and have sensible values in the 
+     new columns.
+
+1.4  Apply to the live DB. Confirm with: SELECT column_name FROM 
+     information_schema.columns WHERE table_name = 'alerts'; and check the new 
+     columns are present.
+
+1.5  Remove the workaround in the Today aggregator. Find the alerts sub-query 
+     that filters on resolvedAt IS NULL and groups by severity (the #209 patch). 
+     Replace it with the proper query that uses the new schema (filter on state, 
+     group by source/severity per the original #117 design). Verify the Today 
+     page still loads.
+
+1.6  Audit every other call site that touches the alerts table. Use grep:
+     grep -r "alerts\." --include="*.ts" .
+     grep -r "from.*alerts" --include="*.ts" .
+     For each hit, confirm it now compiles and runs against the new schema. 
+     Re-enable any code that was commented out or stubbed because of the drift.
+
+1.7  Run the test suite. If any alerts-related tests exist, they should now 
+     pass. Add a new test that confirms the alerts table has the expected 
+     columns (a schema-introspection test).
+
+PART 2 — FUNNEL MIGRATION (funnel_snapshots + funnel_annotations)
+
+Same pattern as Part 1.
+
+2.1  Generate the Drizzle migration for funnel_snapshots and funnel_annotations.
+2.2  Review the SQL by hand. Confirm it creates the missing tables/columns 
+     without dropping existing data.
+2.3  Apply to local/dev DB. Verify with sample queries.
+2.4  Apply to live DB. Verify the tables/columns exist with information_schema.
+2.5  Verify getRecentAutoAnnotations and getCycleConversionRateDeltas no longer 
+     throw. Hit /api/today/feed and confirm errors[] no longer contains 
+     funnelAutoAnnotations or funnelConversionDeltas.
+2.6  Confirm the "What changed since last cycle" card on the Today page loads 
+     real data instead of showing the admin-only failure ribbon.
+2.7  Audit other call sites with grep for funnel_snapshots and funnel_annotations.
+
+PART 3 — CLEAN UP
+
+3.1  Update replit.md. Remove both P1 items from the "Known issues / hazards" 
+     section. The section may be empty after this — that's fine, leave the 
+     header with a note that no known P1s remain as of [today's date].
+
+3.2  Remove any TODO or FIXME comments in code that referenced these specific 
+     drifts (search for "schema drift", "#117", "#208", "#209" in comments).
+
+3.3  Run the full test suite one more time. All tests must pass.
+
+3.4  Run a manual smoke test:
+     - Load the Today page in the operator UI. No errors[] entries related to 
+       alerts or funnel.
+     - Trigger an analysis cycle manually. Confirm it writes a funnel_snapshots 
+       row.
+     - Create a test alert (or trigger one through the renewal_alert_scan job). 
+       Confirm it appears with the new schema.
+
+PART 4 — COMMIT AND PUSH
+
+4.1  Stage the changes in two commits, in this order:
+     Commit A: "Migrate alerts table to #117 schema (state, source, payload)"
+     Commit B: "Migrate funnel_snapshots and funnel_annotations to declared schema"
+     If the cleanup in Part 3 produced changes, add a third:
+     Commit C: "Remove P1 workarounds and update replit.md"
+
+4.2  Push the branch to GitHub:
+     git push -u origin fix/p1-schema-drift-alerts-funnel
+
+4.3  Open a pull request from fix/p1-schema-drift-alerts-funnel into main. 
+     PR description must include:
+     - What was broken (the two schema drifts)
+     - What this PR does (the two migrations + workaround removal)
+     - How it was tested (local DB first, then live, plus the smoke test 
+       checklist from 3.4)
+     - Rollback plan: restore from the pg_dump backup taken in step 1
+
+DEFINITION OF DONE
+
+Do not mark this task complete until ALL of these are true. Report back on each 
+item explicitly:
+
+[ ] Database backup file exists and is non-zero size
+[ ] Branch fix/p1-schema-drift-alerts-funnel exists and contains the work
+[ ] alerts table in live DB has columns: state, source, payload, 
+    acknowledged_at, snoozed_until (verified via information_schema)
+[ ] funnel_snapshots and funnel_annotations exist in live DB with declared 
+    columns (verified via information_schema)
+[ ] /api/today/feed returns no errors[] entries for alerts, 
+    funnelAutoAnnotations, or funnelConversionDeltas
+[ ] "What changed since last cycle" card on Today page shows data, not the 
+    failure ribbon
+[ ] All tests pass (paste the test output)
+[ ] Smoke test from 3.4 completed successfully
+[ ] replit.md updated, P1 items removed
+[ ] PR opened on GitHub with full description
+
+CONSTRAINTS
+
+- Do not change any business logic. This is purely a database schema migration 
+  + workaround removal.
+- Do not add new features. If you find a bug while doing this, file it as a 
+  comment in the PR description, do not fix it inline.
+- If a migration step fails on the live DB, STOP. Do not improvise. Report the 
+  error and the state of the database, and wait for instructions before 
+  proceeding.
+- If you discover the schema files themselves are wrong (i.e., the declared 
+  schema doesn't match what the application actually needs), STOP and report. 
+  Do not silently change the schema files to match the live DB — that defeats 
+  the purpose of the migration.
+
+REPORT FORMAT
+
+When done, reply with:
+1. The DEFINITION OF DONE checklist with each item marked ✅ or ❌
+2. The PR URL
+3. A summary of any unexpected issues encountered and how they were resolved
+4. The next task you'd recommend (your judgment, one sentence)
