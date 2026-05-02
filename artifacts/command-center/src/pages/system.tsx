@@ -776,26 +776,62 @@ export default function System() {
                   </div>
                 </div>
                 {cleanupQuery.data.lastJob?.result && (
-                  <pre className="bg-muted text-xs p-2 rounded-md whitespace-pre-wrap break-words max-h-40 overflow-auto">
-                    {JSON.stringify(
-                      cleanupQuery.data.lastJob.result,
-                      null,
-                      2,
-                    )}
-                  </pre>
+                  <div
+                    className="grid grid-cols-2 gap-3 text-sm"
+                    data-testid="grid-cleanup-deleted"
+                  >
+                    <div>
+                      <div className="text-xs uppercase text-muted-foreground">
+                        Succeeded deleted
+                      </div>
+                      <div
+                        className="text-lg font-semibold tabular-nums"
+                        data-testid="text-cleanup-succeeded-deleted"
+                      >
+                        {Number(
+                          (cleanupQuery.data.lastJob.result as Record<string, unknown>)["succeededDeleted"] ?? 0,
+                        ).toLocaleString()}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs uppercase text-muted-foreground">
+                        Failed deleted
+                      </div>
+                      <div
+                        className="text-lg font-semibold tabular-nums"
+                        data-testid="text-cleanup-failed-deleted"
+                      >
+                        {Number(
+                          (cleanupQuery.data.lastJob.result as Record<string, unknown>)["failedDeleted"] ?? 0,
+                        ).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
                 )}
-                <div className="text-xs text-muted-foreground">
-                  Retention windows: succeeded{" "}
-                  {Math.round(
+                <div
+                  className="text-xs text-muted-foreground"
+                  data-testid="text-cleanup-retention"
+                >
+                  Retention windows: succeeded jobs kept for{" "}
+                  {(
                     cleanupQuery.data.retention.succeededOlderThanMs /
-                      (60 * 60 * 1000),
-                  )}
-                  h, failed/cancelled{" "}
-                  {Math.round(
+                    (24 * 60 * 60 * 1000)
+                  ).toLocaleString(undefined, {
+                    maximumFractionDigits: 1,
+                  })}
+                  d, failed/cancelled jobs kept for{" "}
+                  {(
                     cleanupQuery.data.retention.failedOlderThanMs /
-                      (60 * 60 * 1000),
-                  )}
-                  h.
+                    (24 * 60 * 60 * 1000)
+                  ).toLocaleString(undefined, {
+                    maximumFractionDigits: 1,
+                  })}
+                  d. Configure via{" "}
+                  <code className="font-mono">
+                    JOB_RETENTION_SUCCEEDED_DAYS
+                  </code>{" "}
+                  /{" "}
+                  <code className="font-mono">JOB_RETENTION_FAILED_DAYS</code>.
                 </div>
                 <div className="flex justify-end">
                   <Button
