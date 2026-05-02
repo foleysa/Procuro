@@ -376,6 +376,34 @@ paths:
           - medium
           - low
       - in: query
+        name: strategic
+        description: 'When `true`, restricts the result to suppliers flagged
+          `is_strategic`. When `false`, restricts to suppliers NOT flagged
+          strategic. Omit to return both.'
+        schema:
+          type: boolean
+      - in: query
+        name: preferred
+        description: 'When `true`, restricts the result to suppliers flagged
+          `is_preferred`. When `false`, restricts to suppliers NOT flagged
+          preferred. Omit to return both.'
+        schema:
+          type: boolean
+      - in: query
+        name: currency
+        description: 'Filter to suppliers whose `billingCurrency` matches the
+          supplied 3-letter ISO 4217 code (case-insensitive). Suppliers with a
+          null billing currency are excluded when this filter is set. Invalid
+          shapes are ignored.'
+        schema:
+          type: string
+      - in: query
+        name: tag
+        description: 'Filter to suppliers whose `tags` array contains the supplied
+          value (exact match, case-sensitive). Empty values are ignored.'
+        schema:
+          type: string
+      - in: query
         name: limit
         schema:
           type: integer

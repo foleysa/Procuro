@@ -80,6 +80,24 @@ router.get("/suppliers", tenantMiddleware, async (req, res) => {
   const search = (req.query.search as string | undefined)?.trim();
   const missing = (req.query.missing as string | undefined)?.trim();
   const confidence = (req.query.confidence as string | undefined)?.trim();
+  // `?strategic=` / `?preferred=` accept the string "true"/"false" so the
+  // FE can persist the toggle state in the URL with no extra encoding.
+  // Anything else (incl. omitted) leaves the flag untouched.
+  const strategicParam = (req.query.strategic as string | undefined)?.trim();
+  const preferredParam = (req.query.preferred as string | undefined)?.trim();
+  const strategic =
+    strategicParam === "true" ? true : strategicParam === "false" ? false : undefined;
+  const preferred =
+    preferredParam === "true" ? true : preferredParam === "false" ? false : undefined;
+  // `?currency=` is a 3-letter ISO 4217 code; we uppercase for storage
+  // parity. Invalid shapes are ignored to match the `?missing=` /
+  // `?confidence=` quiet-ignore convention.
+  const currencyRaw = (req.query.currency as string | undefined)?.trim().toUpperCase();
+  const currency =
+    currencyRaw && /^[A-Z]{3}$/.test(currencyRaw) ? currencyRaw : undefined;
+  // `?tag=` matches a single value against the jsonb `tags` array via
+  // the `@>` containment operator. Empty values are ignored.
+  const tag = (req.query.tag as string | undefined)?.trim();
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "50", 10) || 50, 1),
     200,
@@ -109,6 +127,20 @@ router.get("/suppliers", tenantMiddleware, async (req, res) => {
   // Unknown values are silently ignored — same convention as `?missing=`.
   if (confidence && CONFIDENCE_FILTER_VALUES.has(confidence)) {
     where.push(eq(suppliersTable.billingCurrencyConfidence, confidence));
+  }
+  if (strategic !== undefined) {
+    where.push(eq(suppliersTable.isStrategic, strategic));
+  }
+  if (preferred !== undefined) {
+    where.push(eq(suppliersTable.isPreferred, preferred));
+  }
+  if (currency) {
+    where.push(eq(suppliersTable.billingCurrency, currency));
+  }
+  if (tag) {
+    // jsonb containment: row matches when its `tags` array contains the
+    // requested value. Parameterised JSON literal keeps it injection-safe.
+    where.push(sql`${suppliersTable.tags} @> ${JSON.stringify([tag])}::jsonb`);
   }
   if (cursor) where.push(gt(suppliersTable.id, cursor));
 

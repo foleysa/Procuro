@@ -5077,6 +5077,22 @@ export type ListSuppliersParams = {
    */
   confidence?: ListSuppliersConfidence;
   /**
+   * When `true`, restricts the result to suppliers flagged `is_strategic`. When `false`, restricts to suppliers NOT flagged strategic. Omit to return both.
+   */
+  strategic?: boolean;
+  /**
+   * When `true`, restricts the result to suppliers flagged `is_preferred`. When `false`, restricts to suppliers NOT flagged preferred. Omit to return both.
+   */
+  preferred?: boolean;
+  /**
+   * Filter to suppliers whose `billingCurrency` matches the supplied 3-letter ISO 4217 code (case-insensitive). Suppliers with a null billing currency are excluded when this filter is set. Invalid shapes are ignored.
+   */
+  currency?: string;
+  /**
+   * Filter to suppliers whose `tags` array contains the supplied value (exact match, case-sensitive). Empty values are ignored.
+   */
+  tag?: string;
+  /**
    * @minimum 1
    * @maximum 200
    */

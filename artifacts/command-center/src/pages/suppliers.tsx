@@ -39,6 +39,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -81,6 +88,31 @@ function readConfidenceParam(search: string): ConfidenceFilter | null {
   return v && (CONFIDENCE_VALUES as readonly string[]).includes(v)
     ? (v as ConfidenceFilter)
     : null;
+}
+
+// Server-backed boolean toggle filters. `?strategic=true` and
+// `?preferred=true` narrow the directory to those flags. We only
+// accept "true"/"false"; any other value is ignored so reload of a
+// hand-edited URL never silently mis-filters.
+function readBoolParam(search: string, key: string): boolean | null {
+  const v = new URLSearchParams(search).get(key);
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return null;
+}
+
+// `?currency=` filters by ISO 4217 billing currency. Loose 3-letter
+// shape check on read so nonsense values don't make it into the API
+// call (server also rejects them, but keeping the FE in lockstep
+// avoids a wasted round-trip).
+function readCurrencyParam(search: string): string | null {
+  const v = new URLSearchParams(search).get("currency")?.trim().toUpperCase();
+  return v && /^[A-Z]{3}$/.test(v) ? v : null;
+}
+
+function readTagParam(search: string): string | null {
+  const v = new URLSearchParams(search).get("tag")?.trim();
+  return v ? v : null;
 }
 
 // Mirrors the source labels used by the Supplier 360 BillingCurrencyCard.
@@ -130,22 +162,47 @@ export default function Suppliers() {
   const [location, setLocation] = useLocation();
   const missing = readMissingParam(searchString);
   const confidenceFilter = readConfidenceParam(searchString);
+  const strategicFilter = readBoolParam(searchString, "strategic");
+  const preferredFilter = readBoolParam(searchString, "preferred");
+  const currencyFilter = readCurrencyParam(searchString);
+  const tagFilter = readTagParam(searchString);
 
   const params = useMemo<ListSuppliersParams>(() => {
     const p: ListSuppliersParams = { limit: 50 };
     if (search.trim()) p.search = search.trim();
     if (missing) p.missing = missing;
     if (confidenceFilter) p.confidence = confidenceFilter;
+    if (strategicFilter !== null) p.strategic = strategicFilter;
+    if (preferredFilter !== null) p.preferred = preferredFilter;
+    if (currencyFilter) p.currency = currencyFilter;
+    if (tagFilter) p.tag = tagFilter;
     if (currentCursor) p.cursor = currentCursor;
     return p;
-  }, [search, missing, confidenceFilter, currentCursor]);
+  }, [
+    search,
+    missing,
+    confidenceFilter,
+    strategicFilter,
+    preferredFilter,
+    currencyFilter,
+    tagFilter,
+    currentCursor,
+  ]);
 
   // Reset pagination whenever filters change so the user never lands
   // on a "page 3" of a freshly narrowed list.
   useEffect(() => {
     setCursorStack([""]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, missing, confidenceFilter]);
+  }, [
+    search,
+    missing,
+    confidenceFilter,
+    strategicFilter,
+    preferredFilter,
+    currencyFilter,
+    tagFilter,
+  ]);
 
   const setUrlParam = (key: string, value: string | null) => {
     const sp = new URLSearchParams(searchString);
@@ -160,6 +217,40 @@ export default function Suppliers() {
   const toggleLowConfidence = () =>
     setUrlParam("confidence", confidenceFilter === "low" ? null : "low");
   const clearConfidence = () => setUrlParam("confidence", null);
+  const toggleStrategic = () =>
+    setUrlParam("strategic", strategicFilter === true ? null : "true");
+  const togglePreferred = () =>
+    setUrlParam("preferred", preferredFilter === true ? null : "true");
+  const setCurrencyFilter = (v: string) => {
+    const trimmed = v.trim().toUpperCase();
+    setUrlParam("currency", trimmed ? trimmed : null);
+  };
+  const setTagFilter = (v: string) => {
+    const trimmed = v.trim();
+    setUrlParam("tag", trimmed ? trimmed : null);
+  };
+  const clearAllFilters = () => {
+    const sp = new URLSearchParams(searchString);
+    [
+      "strategic",
+      "preferred",
+      "currency",
+      "tag",
+      "confidence",
+      "missing",
+    ].forEach((k) => sp.delete(k));
+    const next = sp.toString();
+    const pathname = location.split("?")[0] ?? location;
+    setLocation(`${pathname}${next ? `?${next}` : ""}`, { replace: true });
+  };
+
+  const hasActiveFilter =
+    strategicFilter !== null ||
+    preferredFilter !== null ||
+    currencyFilter !== null ||
+    tagFilter !== null ||
+    confidenceFilter !== null ||
+    missing !== null;
 
   // Cycle: none → asc (low first, the triage default) → desc → none.
   // Limited to the rows on the current page; the cross-page case is
@@ -275,6 +366,35 @@ export default function Suppliers() {
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              variant={strategicFilter === true ? "default" : "outline"}
+              size="sm"
+              onClick={toggleStrategic}
+              data-testid="btn-toggle-strategic"
+              aria-pressed={strategicFilter === true}
+            >
+              <Star className="w-3 h-3 mr-1" />
+              Strategic only
+            </Button>
+            <Button
+              variant={preferredFilter === true ? "default" : "outline"}
+              size="sm"
+              onClick={togglePreferred}
+              data-testid="btn-toggle-preferred"
+              aria-pressed={preferredFilter === true}
+            >
+              <ShieldCheck className="w-3 h-3 mr-1" />
+              Preferred only
+            </Button>
+            <CurrencyFilterControl
+              value={currencyFilter}
+              onChange={setCurrencyFilter}
+            />
+            <TagFilterControl
+              value={tagFilter}
+              suppliers={data?.items ?? []}
+              onChange={setTagFilter}
+            />
+            <Button
               variant={confidenceFilter === "low" ? "default" : "outline"}
               size="sm"
               onClick={toggleLowConfidence}
@@ -286,6 +406,17 @@ export default function Suppliers() {
                 ? "Showing low-confidence only"
                 : "Show low-confidence detections only"}
             </Button>
+            {hasActiveFilter ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAllFilters}
+                data-testid="btn-clear-all-filters"
+              >
+                <X className="w-3 h-3 mr-1" />
+                Clear all filters
+              </Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -625,5 +756,102 @@ function BillingCurrencyCell({ s }: { s: Supplier }) {
         </PopoverContent>
       </Popover>
     </div>
+  );
+}
+
+/**
+ * Currency filter: free-form 3-letter ISO 4217 input. We commit on
+ * blur or Enter so the URL param doesn't churn (and the server doesn't
+ * fire a request) on every keystroke. Invalid shapes are dropped on
+ * commit so the input never lands the page in a "no results because
+ * the URL param is garbage" state.
+ */
+function CurrencyFilterControl({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+  useEffect(() => {
+    setDraft(value ?? "");
+  }, [value]);
+  const commit = () => {
+    const trimmed = draft.trim().toUpperCase();
+    if (trimmed && !/^[A-Z]{3}$/.test(trimmed)) {
+      // Reset to current applied value on invalid input.
+      setDraft(value ?? "");
+      return;
+    }
+    onChange(trimmed);
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.toUpperCase())}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        placeholder="Currency (e.g. EUR)"
+        maxLength={3}
+        className="h-9 w-36 font-mono uppercase"
+        data-testid="input-filter-currency"
+        aria-label="Filter by billing currency"
+      />
+    </div>
+  );
+}
+
+/**
+ * Tag filter: a Select pre-populated with tags seen on the current
+ * page plus a free-form fallback for tags that haven't surfaced yet.
+ * The "All tags" sentinel maps to clearing the filter.
+ */
+function TagFilterControl({
+  value,
+  suppliers,
+  onChange,
+}: {
+  value: string | null;
+  suppliers: Supplier[];
+  onChange: (v: string) => void;
+}) {
+  const ALL = "__all__";
+  const knownTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of suppliers) for (const t of s.tags ?? []) set.add(t);
+    if (value) set.add(value);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [suppliers, value]);
+
+  return (
+    <Select
+      value={value ?? ALL}
+      onValueChange={(v) => onChange(v === ALL ? "" : v)}
+    >
+      <SelectTrigger
+        className="h-9 w-44"
+        data-testid="select-filter-tag"
+        aria-label="Filter by tag"
+      >
+        <SelectValue placeholder="All tags" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL} data-testid="select-tag-all">
+          All tags
+        </SelectItem>
+        {knownTags.map((t) => (
+          <SelectItem key={t} value={t} data-testid={`select-tag-${t}`}>
+            {t}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

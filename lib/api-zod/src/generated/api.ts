@@ -726,6 +726,30 @@ export const ListSuppliersQueryParams = zod.object({
     .describe(
       "Filter to suppliers whose auto-detected `billingCurrency` carries the named confidence rating. Used by the supplier ingest review screen to surface low-confidence guesses (e.g. ambiguous country fallbacks) so an operator can confirm or override them before drafts are produced. Suppliers with a null `billingCurrencyConfidence` (no detection at all) are excluded when this filter is set. Unknown values are ignored.",
     ),
+  strategic: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "When `true`, restricts the result to suppliers flagged `is_strategic`. When `false`, restricts to suppliers NOT flagged strategic. Omit to return both.",
+    ),
+  preferred: zod.coerce
+    .boolean()
+    .optional()
+    .describe(
+      "When `true`, restricts the result to suppliers flagged `is_preferred`. When `false`, restricts to suppliers NOT flagged preferred. Omit to return both.",
+    ),
+  currency: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter to suppliers whose `billingCurrency` matches the supplied 3-letter ISO 4217 code (case-insensitive). Suppliers with a null billing currency are excluded when this filter is set. Invalid shapes are ignored.",
+    ),
+  tag: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter to suppliers whose `tags` array contains the supplied value (exact match, case-sensitive). Empty values are ignored.",
+    ),
   limit: zod.coerce
     .number()
     .min(1)
