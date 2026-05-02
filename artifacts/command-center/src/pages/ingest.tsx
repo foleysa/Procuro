@@ -862,23 +862,120 @@ function downloadEntityTemplate(entity: EntityDef) {
   triggerDownload(blob, `${entity.key}-template.csv`);
 }
 
+/**
+ * Recommended upload order. Drives both the "Recommended upload order"
+ * section in the README and the order in which per-entity sections are
+ * rendered, so a first-time operator can skim the file top-to-bottom
+ * and load each template as they go.
+ *
+ * Ordering rules:
+ *   1. Reference data with no FK deps first (categories, suppliers).
+ *   2. Items (depend on categories) before any transactional entity
+ *      that references SKUs.
+ *   3. Contracts before SOWs / rate cards / POs that reference them.
+ *   4. SOWs and rate cards before time entries.
+ *   5. Rate-card lines after their parent rate card.
+ *   6. PO headers before PO lines.
+ *   7. Invoices after POs (optional FK), payments after invoices.
+ *   8. Shipments after POs.
+ *   9. Time entries last — they reference everything above.
+ */
+const TEMPLATE_UPLOAD_ORDER: EntityKey[] = [
+  "categories",
+  "suppliers",
+  "items",
+  "contracts",
+  "statementsOfWork",
+  "rateCards",
+  "rateCardLines",
+  "purchaseOrders",
+  "purchaseOrderLines",
+  "invoices",
+  "payments",
+  "shipments",
+  "timeEntries",
+];
+
+function entitiesInUploadOrder(): EntityDef[] {
+  const byKey = new Map(ENTITIES.map((e) => [e.key, e] as const));
+  const ordered: EntityDef[] = [];
+  for (const key of TEMPLATE_UPLOAD_ORDER) {
+    const e = byKey.get(key);
+    if (e) ordered.push(e);
+  }
+  // Defensive fallback: if a new entity is added to ENTITIES but not to
+  // TEMPLATE_UPLOAD_ORDER, append it at the end so the README still lists
+  // it instead of silently dropping it from the bundle docs.
+  for (const e of ENTITIES) {
+    if (!TEMPLATE_UPLOAD_ORDER.includes(e.key)) ordered.push(e);
+  }
+  return ordered;
+}
+
 function buildTemplatesReadme(): string {
   const today = new Date().toISOString().slice(0, 10);
-  const entityRows = ENTITIES.map(
-    (e) => `- \`${e.key}-template.csv\` — ${e.label}`,
-  ).join("\n");
+  const ordered = entitiesInUploadOrder();
+
+  const fileList = ordered
+    .map((e) => `- \`${e.key}-template.csv\` — ${e.label}`)
+    .join("\n");
+
+  const uploadOrderList = ordered
+    .map((e, i) => {
+      const streamNote = STREAM_ONLY.has(e.key) ? " _(streaming-only)_" : "";
+      return `${i + 1}. **${e.label}** — \`${e.key}-template.csv\`${streamNote}`;
+    })
+    .join("\n");
+
+  const entitySections = ordered
+    .map((e) => {
+      const requiredList =
+        e.required.length > 0
+          ? e.required.map((c) => `- \`${c}\``).join("\n")
+          : "_(none)_";
+      const optionalList =
+        e.optional.length > 0
+          ? e.optional.map((c) => `- \`${c}\``).join("\n")
+          : "_(none)_";
+      const streamingNote = STREAM_ONLY.has(e.key)
+        ? "\n\n_Streaming-only entity: large files are uploaded directly to the server in chunks; there is no JSON fallback._"
+        : "";
+      return `### ${e.label} — \`${e.key}-template.csv\`
+
+${e.description}${streamingNote}
+
+**Required columns**
+
+${requiredList}
+
+**Optional columns**
+
+${optionalList}`;
+    })
+    .join("\n\n---\n\n");
+
   return `# Procuro CSV Templates
 
 Generated: ${today}
 
 This zip contains a CSV template for each entity Procuro can ingest.
 Each file has a single header row matching the columns the importer
-expects. Replace the example placeholders in the second row with your
-own data, or delete the example row entirely.
+expects, plus one example row to illustrate the expected format.
+Replace the example placeholders with your own data, or delete the
+example row entirely before importing.
 
 ## Files
 
-${entityRows}
+${fileList}
+
+## Recommended upload order
+
+Procuro entities reference each other (line items point at POs, POs
+point at suppliers, etc). Loading them in the order below means every
+foreign-key reference resolves on the first try, so you avoid retry
+loops caused by missing parents.
+
+${uploadOrderList}
 
 ## How to use
 
@@ -891,17 +988,29 @@ ${entityRows}
    entity tab, and drop the file into the upload area (or click
    \`Choose file\` and select it).
 
-## Tips
+## Conventions
 
 - All dates should be ISO-8601 (\`YYYY-MM-DD\` for dates, full
   \`YYYY-MM-DDTHH:mm:ssZ\` for timestamps).
 - Money columns expect a plain decimal number; do not include a
-  currency symbol. Currency is its own column.
-- Foreign-key columns (for example \`supplierId\` on a contract) refer
-  to the natural key of the linked entity — for suppliers this is the
-  \`code\` column.
+  currency symbol. Currency is its own column where applicable.
+- Foreign-key columns ending in \`ExternalId\` (for example
+  \`supplierExternalId\` on a contract) refer to the \`externalId\` of
+  the linked entity — load that entity's template first.
+- List-valued columns such as \`tags\` accept values separated by
+  \`|\`, \`;\`, or \`,\`.
+- Boolean columns accept \`true\` / \`false\`, \`1\` / \`0\`, or
+  \`yes\` / \`no\`.
 - Empty cells are treated as null. Required columns will fail
   validation if left blank.
+
+## Entity reference
+
+Each section below lists the description, required columns, and
+optional columns for one template, in the same order as the
+recommended upload order above.
+
+${entitySections}
 
 ## Need a different template?
 
