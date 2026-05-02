@@ -1587,6 +1587,44 @@ export default function Ingest() {
     [parsed],
   );
 
+  /**
+   * Number of streaming files to surface in the page-level Import button.
+   * While a run is in flight we count the entities that are still actually
+   * uploading (`inFlight`) so the label decrements as files finish — saying
+   * "Importing 3 files" when only one is still being streamed reads as
+   * stale. Outside a run we fall back to the count of selected streaming
+   * files so the unused state still has a sensible value.
+   */
+  const streamingFileCount = useMemo(() => {
+    if (isStreaming) {
+      return Object.values(inFlight).filter(Boolean).length;
+    }
+    return Object.values(parsed).filter((p) => p?.streaming).length;
+  }, [parsed, inFlight, isStreaming]);
+
+  /**
+   * Combined ETA across every currently-streaming entity. Uploads run in
+   * parallel server-side, so the wall-clock time to "all done" is the
+   * *max* of the per-entity ETAs, not the sum. Reuses `deriveServerEta`
+   * per entity and skips streams that haven't reported a rate yet — that
+   * way one slow stream still drives the headline ETA even before its
+   * faster siblings have produced their first sample. Returns `null` when
+   * no stream has reported a usable ETA so the caller can gracefully
+   * fall back to the bytes-only label.
+   */
+  const combinedStreamEtaSeconds = useMemo(() => {
+    let maxEta: number | null = null;
+    for (const e of ENTITIES) {
+      const p = parsed[e.key];
+      if (!p?.streaming) continue;
+      const sp = serverProgress[e.key];
+      const { etaSeconds } = deriveServerEta(sp, p.fileSize);
+      if (etaSeconds === null) continue;
+      if (maxEta === null || etaSeconds > maxEta) maxEta = etaSeconds;
+    }
+    return maxEta;
+  }, [parsed, serverProgress]);
+
   const hasErrors = useMemo(
     () =>
       Object.values(parsed).some(
@@ -1968,7 +2006,13 @@ export default function Ingest() {
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               {isStreaming
-                ? `Uploading ${formatBytes(totalStreamingBytes)}…`
+                ? `Importing ${streamingFileCount} file${
+                    streamingFileCount === 1 ? "" : "s"
+                  } · ${formatBytes(totalStreamingBytes)}${
+                    combinedStreamEtaSeconds !== null
+                      ? ` · ETA ~${formatEtaSeconds(combinedStreamEtaSeconds)} remaining`
+                      : ""
+                  }…`
                 : `Importing ${totalRows.toLocaleString()} rows…`}
             </>
           ) : (
