@@ -11,14 +11,13 @@
  *     the response — sibling sources still run and contribute their items.
  *   - `partial` is `true` iff `errors.length > 0`.
  *
- * #209 additions:
+ * #209 / #248 additions:
  *
- *   - The Alerts query MUST succeed end-to-end against the real
- *     shipping schema (which omits the new `state`, `source`, `payload`
- *     columns the #117 source schema declares). The test seeds an
- *     `alerts` row using ONLY the columns that exist in both the
- *     legacy and #117 schemas, then asserts the alerts source did
- *     not land in `errors[]`.
+ *   - The Alerts query MUST succeed end-to-end against the live
+ *     #117 alerts schema. After #248 reconciled dev with the schema
+ *     source-of-truth, the seed inserts a row using the new shape
+ *     (with `source`) directly; the test then asserts the alerts
+ *     source did not land in `errors[]`.
  *   - The Pending Approvals payload exposes BOTH the actionable
  *     `needsActionToday` (proposed in last 24h) and the structural
  *     `pending` total — RT-83's split. We seed two opportunities, one
