@@ -46,6 +46,8 @@ export const leverIds = [
   "outcome_based_contract",
   "unbundling_rebundling",
   "multi_year_tco",
+  "scope_management",
+  "hours_audit",
 ] as const;
 export type LeverId = (typeof leverIds)[number];
 
@@ -77,6 +79,8 @@ export const tierLabels: Record<LeverId, 1 | 2 | 3 | 4 | 5> = {
   outcome_based_contract: 5,
   unbundling_rebundling: 5,
   multi_year_tco: 5,
+  scope_management: 5,
+  hours_audit: 5,
 };
 
 export const opportunityStatusValues = [

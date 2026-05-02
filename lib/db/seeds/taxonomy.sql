@@ -79,7 +79,16 @@ INSERT INTO lever_bands (id, lever_id, band, fit_rank) VALUES
   ('lvb_svc_services_rate_card_benchmark','services_rate_card_benchmark','services',     1),
   ('lvb_svc_sow_to_msa_conversion',       'sow_to_msa_conversion',       'services',     1),
   ('lvb_svc_outcome_based_contract',      'outcome_based_contract',      'services',     1),
-  ('lvb_svc_unbundling_rebundling',       'unbundling_rebundling',       'services',     1)
+  ('lvb_svc_unbundling_rebundling',       'unbundling_rebundling',       'services',     1),
+  ('lvb_svc_scope_management',            'scope_management',            'services',     1),
+  ('lvb_svc_hours_audit',                 'hours_audit',                 'services',     1),
+
+  -- Dual-band: services-band levers that also fit Concentrated for
+  -- named-firm relationships (Big-4, top consulting, top staffing
+  -- firms). Rank 2 — currently dormant; routing helper filters to
+  -- rank 1 only. Task #216.
+  ('lvb_con_services_rate_card_benchmark_r2','services_rate_card_benchmark','concentrated', 2),
+  ('lvb_con_sow_to_msa_conversion_r2',       'sow_to_msa_conversion',       'concentrated', 2)
 ON CONFLICT (lever_id, band) DO NOTHING;
 
 -- ── 2. Canonical category code → band assignments ───────────────────────────
