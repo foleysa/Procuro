@@ -6,7 +6,7 @@
  * pull every workbench dataset.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListCollectors,
@@ -15,6 +15,7 @@ import {
   useGetCollectorLineage,
   useGetCollectorCoverage,
   useGetCollectorCost,
+  useGetCollectorCostTimeseries,
   useListCollectorRunsAndErrors,
   usePatchCollectorPosture,
   useBroadcastCollectorPosture,
@@ -25,6 +26,14 @@ import {
   useBackfillFredEconomicIndex,
   useListMarketSignals,
 } from "@workspace/api-client-react";
+import {
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Card,
   CardContent,
@@ -1335,7 +1344,23 @@ function PostureTab({ tier }: { tier: TierMode }) {
 // -------- Tab: Cost ----------------------------------------------------
 
 function CostTab({ tier }: { tier: TierMode }) {
-  const { data, isLoading } = useGetCollectorCost({ lookbackHours: 168 });
+  // Trend window — 7d defaults match the operator-favoured horizon
+  // (catches a week-of-data creep) and 30d gives a longer baseline
+  // for fixed-cost collectors. Keep it small and explicit; we don't
+  // need a free-form picker on the workbench.
+  const [lookbackDays, setLookbackDays] = useState<7 | 30>(7);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Single-window snapshot — same source/basis story as before.
+  const { data, isLoading } = useGetCollectorCost({
+    lookbackHours: lookbackDays * 24,
+  });
+  // Per-day timeseries — drives the per-row sparkline + drilldown.
+  // Fetched in parallel with the snapshot so the table renders the
+  // basis chip from `data` while the sparkline renders from `series`.
+  const { data: series, isLoading: isSeriesLoading } =
+    useGetCollectorCostTimeseries({ lookbackDays });
+
   const { data: catalog } = useListCollectorCatalog();
   const tierByCollector = useMemo(() => {
     const m = new Map<string, string>();
@@ -1349,6 +1374,17 @@ function CostTab({ tier }: { tier: TierMode }) {
       ),
     [data, tier, tierByCollector],
   );
+
+  // Index timeseries entries by collector id so each row can pull
+  // its own sparkline / drilldown points without re-scanning.
+  const seriesByCollector = useMemo(() => {
+    const m = new Map<
+      string,
+      NonNullable<typeof series>["entries"][number]
+    >();
+    for (const e of series?.entries ?? []) m.set(e.collectorId, e);
+    return m;
+  }, [series]);
 
   // Source / basis label — kept in one place so the header badge and
   // the explainer paragraph never drift. The four sources collapse
@@ -1387,11 +1423,12 @@ function CostTab({ tier }: { tier: TierMode }) {
   };
   const meta = sourceMeta[source] ?? sourceMeta["proxy"]!;
   const headerBasis = meta.basis === "real" ? "Real" : "Estimated";
+  const seriesSource = series?.source ?? "proxy";
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2 flex-wrap">
           <span>Cost &amp; throughput</span>
           <Badge
             variant={meta.basis === "real" ? "default" : "outline"}
@@ -1400,6 +1437,33 @@ function CostTab({ tier }: { tier: TierMode }) {
           >
             {headerBasis} · {meta.label}
           </Badge>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-normal">
+              Trend window
+            </span>
+            <Select
+              value={String(lookbackDays)}
+              onValueChange={(v) => {
+                setLookbackDays(Number(v) === 30 ? 30 : 7);
+                setExpanded(null);
+              }}
+            >
+              <SelectTrigger
+                data-testid="select-cost-window"
+                className="w-[140px] h-8"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7" data-testid="cost-window-option-7">
+                  Last 7 days
+                </SelectItem>
+                <SelectItem value="30" data-testid="cost-window-option-30">
+                  Last 30 days
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1416,6 +1480,7 @@ function CostTab({ tier }: { tier: TierMode }) {
               <th className="py-2 text-right">Runs</th>
               <th className="py-2 text-right">Rows written</th>
               <th className="py-2 text-right">USD</th>
+              <th className="py-2 w-[140px]">Trend ({lookbackDays}d)</th>
               <th className="py-2 text-right">Basis</th>
             </tr>
           </thead>
@@ -1428,36 +1493,72 @@ function CostTab({ tier }: { tier: TierMode }) {
                 e.costBasis === "real" || e.costBasis === "estimate"
                   ? e.costBasis
                   : meta.basis;
+              const seriesEntry = seriesByCollector.get(e.collectorId);
+              const points = seriesEntry?.points ?? [];
+              const isOpen = expanded === e.collectorId;
               return (
-                <tr
-                  key={e.collectorId}
-                  data-testid={`cost-${e.collectorId}`}
-                  className="border-t"
-                >
-                  <td className="py-2">{e.name}</td>
-                  <td className="py-2 text-right tabular-nums">{e.runs}</td>
-                  <td className="py-2 text-right tabular-nums">
-                    {e.rowsWritten}
-                  </td>
-                  <td className="py-2 text-right tabular-nums">
-                    ${e.estimateUsd.toFixed(4)}
-                  </td>
-                  <td className="py-2 text-right">
-                    <Badge
-                      variant={rowBasis === "real" ? "default" : "outline"}
-                      className="font-normal"
-                      data-testid={`cost-basis-${e.collectorId}`}
+                <Fragment key={e.collectorId}>
+                  <tr
+                    data-testid={`cost-${e.collectorId}`}
+                    className="border-t cursor-pointer hover:bg-muted/40"
+                    onClick={() =>
+                      setExpanded(isOpen ? null : e.collectorId)
+                    }
+                  >
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        className="text-left underline-offset-2 hover:underline"
+                        data-testid={`cost-row-toggle-${e.collectorId}`}
+                      >
+                        {e.name}
+                      </button>
+                    </td>
+                    <td className="py-2 text-right tabular-nums">{e.runs}</td>
+                    <td className="py-2 text-right tabular-nums">
+                      {e.rowsWritten}
+                    </td>
+                    <td className="py-2 text-right tabular-nums">
+                      ${e.estimateUsd.toFixed(4)}
+                    </td>
+                    <td
+                      className="py-2"
+                      data-testid={`cost-spark-${e.collectorId}`}
                     >
-                      {rowBasis === "real" ? "Real" : "Estimate"}
-                    </Badge>
-                  </td>
-                </tr>
+                      <CostSparkline
+                        points={points}
+                        loading={isSeriesLoading}
+                      />
+                    </td>
+                    <td className="py-2 text-right">
+                      <Badge
+                        variant={rowBasis === "real" ? "default" : "outline"}
+                        className="font-normal"
+                        data-testid={`cost-basis-${e.collectorId}`}
+                      >
+                        {rowBasis === "real" ? "Real" : "Estimate"}
+                      </Badge>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="bg-muted/20">
+                      <td colSpan={6} className="p-4">
+                        <CostDetail
+                          collectorName={e.name}
+                          lookbackDays={lookbackDays}
+                          seriesSource={seriesSource}
+                          points={points}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
             {!isLoading && entries.length === 0 && (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="py-4 text-sm text-muted-foreground text-center"
                 >
                   No cost rows match the current tier filter.
@@ -1468,6 +1569,167 @@ function CostTab({ tier }: { tier: TierMode }) {
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+// --- Cost sparkline + drilldown helpers --------------------------------
+
+type CostTimeseriesPoint = {
+  day: string;
+  runs: number;
+  rowsWritten: number;
+  estimateUsd: number;
+};
+
+/**
+ * Compact sparkline rendered inline in the Cost table. Uses the
+ * canonical zero-filled `points[]` so collectors with no runs in the
+ * window still draw a flat baseline rather than disappearing — that
+ * baseline is itself a meaningful signal (a previously-active feed
+ * went silent).
+ */
+function CostSparkline({
+  points,
+  loading,
+}: {
+  points: readonly CostTimeseriesPoint[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="h-8 flex items-center text-xs text-muted-foreground">
+        <Loader2 className="w-3 h-3 animate-spin" />
+      </div>
+    );
+  }
+  if (points.length === 0) {
+    return (
+      <span className="text-xs text-muted-foreground">No data</span>
+    );
+  }
+  const max = points.reduce((m, p) => Math.max(m, p.estimateUsd), 0);
+  if (max === 0) {
+    // Flat-zero sparkline still rendered so the column is never empty
+    // — it tells the operator the trend exists, just at $0.
+    return (
+      <div className="h-8 flex items-center">
+        <div className="h-px w-full bg-border" />
+      </div>
+    );
+  }
+  return (
+    <div className="h-8 w-full" data-testid="cost-sparkline-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={points as CostTimeseriesPoint[]}
+          margin={{ top: 2, right: 2, bottom: 2, left: 2 }}
+        >
+          <XAxis dataKey="day" hide />
+          <YAxis hide domain={[0, "dataMax"]} />
+          <RechartsTooltip
+            cursor={false}
+            contentStyle={{
+              fontSize: "11px",
+              padding: "4px 8px",
+              borderRadius: 6,
+            }}
+            formatter={(value: number | string) => [
+              `$${Number(value).toFixed(4)}`,
+              "USD",
+            ]}
+            labelFormatter={(label: string) => label}
+          />
+          <Line
+            type="monotone"
+            dataKey="estimateUsd"
+            stroke="#2563eb"
+            strokeWidth={1.5}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * Per-collector drilldown panel — shows the full per-day breakdown
+ * (date, runs, rows, USD) for the currently-expanded row. Renders
+ * the same source/basis chip as the parent so the operator never
+ * has to guess where a number came from.
+ */
+function CostDetail({
+  collectorName,
+  lookbackDays,
+  seriesSource,
+  points,
+}: {
+  collectorName: string;
+  lookbackDays: 7 | 30;
+  seriesSource: "bigquery" | "proxy";
+  points: readonly CostTimeseriesPoint[];
+}) {
+  // Newest day first so a creep is the first thing you see.
+  const ordered = useMemo(
+    () => [...points].sort((a, b) => (a.day < b.day ? 1 : -1)),
+    [points],
+  );
+  const total = ordered.reduce((acc, p) => acc + p.estimateUsd, 0);
+  return (
+    <div className="space-y-3" data-testid="cost-detail-panel">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="text-sm">
+          <span className="font-semibold">{collectorName}</span>{" "}
+          <span className="text-muted-foreground">
+            · last {lookbackDays} days · ${total.toFixed(4)} total
+          </span>
+        </div>
+        <Badge
+          variant={seriesSource === "bigquery" ? "default" : "outline"}
+          className="font-normal"
+          data-testid="cost-detail-source"
+        >
+          {seriesSource === "bigquery"
+            ? "BigQuery collector_runs"
+            : "Audit-log proxy"}
+        </Badge>
+      </div>
+      {ordered.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No daily activity recorded for this collector in the window.
+        </p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-muted-foreground uppercase tracking-wide">
+              <th className="py-1">Day</th>
+              <th className="py-1 text-right">Runs</th>
+              <th className="py-1 text-right">Rows written</th>
+              <th className="py-1 text-right">USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map((p) => (
+              <tr
+                key={p.day}
+                className="border-t border-border/50"
+                data-testid={`cost-detail-row-${p.day}`}
+              >
+                <td className="py-1 font-mono">{p.day}</td>
+                <td className="py-1 text-right tabular-nums">{p.runs}</td>
+                <td className="py-1 text-right tabular-nums">
+                  {p.rowsWritten}
+                </td>
+                <td className="py-1 text-right tabular-nums">
+                  ${p.estimateUsd.toFixed(4)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

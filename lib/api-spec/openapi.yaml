@@ -1407,6 +1407,65 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/CollectorCostEntry'
+  /collectors/workbench/cost/timeseries:
+    get:
+      operationId: getCollectorCostTimeseries
+      tags:
+      - collectors
+      summary: Per-collector, per-day cost & throughput trend.
+      description: "Returns a per-day breakdown of cost & throughput for each\n\
+        registered collector over the requested lookback window, used\n\
+        by the Cost tab sparklines and per-collector drilldown.\n\n\
+        Source priority:\n  \
+        1. `bigquery` — bucketed rows from `collector_runs.bytes_raw`\n     \
+          × $5/TB on-demand pricing (cached 24h).\n  \
+        2. `proxy` — derived from the Postgres audit log when the\n     \
+          BigQuery read isn't available, using the same\n     \
+          `max(rowsWritten × $0.0000005, runs × $0.0001)` proxy as the\n     \
+          single-window cost endpoint. `bytesRaw` is omitted in this path.\n\n\
+        The response always includes the canonical `days[]` axis (oldest →\n\
+        newest, UTC) so collectors with zero runs in the window still get\n\
+        a flat sparkline rather than disappearing.\n"
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: lookbackDays
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 7
+      responses:
+        '200':
+          description: Per-day cost trend per collector
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - source
+                - lookbackDays
+                - days
+                - entries
+                properties:
+                  source:
+                    type: string
+                    enum:
+                    - bigquery
+                    - proxy
+                  lookbackDays:
+                    type: integer
+                  days:
+                    type: array
+                    description: 'Canonical day axis (UTC, oldest → newest). Sparklines
+                      should iterate over this axis so collectors with zero
+                      runs render a flat baseline rather than collapsing.'
+                    items:
+                      type: string
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CollectorCostTimeseriesEntry'
   /collectors/workbench/runs:
     get:
       operationId: listCollectorRunsAndErrors
@@ -9080,6 +9139,49 @@ components:
         notes:
           type: string
           nullable: true
+    CollectorCostTimeseriesPoint:
+      type: object
+      required:
+      - day
+      - runs
+      - rowsWritten
+      - estimateUsd
+      properties:
+        day:
+          type: string
+          description: 'ISO date `YYYY-MM-DD` (UTC), anchored on the run start time.'
+        runs:
+          type: integer
+        rowsWritten:
+          type: integer
+        estimateUsd:
+          type: number
+    CollectorCostTimeseriesEntry:
+      type: object
+      required:
+      - collectorId
+      - name
+      - points
+      - totalEstimateUsd
+      - totalRuns
+      - totalRowsWritten
+      properties:
+        collectorId:
+          type: string
+        name:
+          type: string
+        points:
+          type: array
+          description: 'One entry per day in the canonical `days[]` axis (zero-filled
+            so missing days render as a flat baseline rather than dropping out).'
+          items:
+            $ref: '#/components/schemas/CollectorCostTimeseriesPoint'
+        totalEstimateUsd:
+          type: number
+        totalRuns:
+          type: integer
+        totalRowsWritten:
+          type: integer
     ClientDataSource:
       type: object
       required:

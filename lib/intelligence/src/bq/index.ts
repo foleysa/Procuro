@@ -535,6 +535,107 @@ export function __clearCollectorCostCacheForTests(): void {
   costCache.clear();
   billingCostCache.clear();
   informationSchemaCostCache.clear();
+  costTimeseriesCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Per-day cost timeseries — same `bytes_raw × $5/TB` estimate as
+// `getCollectorCostsFromBq`, but bucketed by `DATE(started_at)` so the
+// Cost tab can plot a sparkline / per-day breakdown per collector.
+//
+// Returns `null` when intelligence isn't configured or the BQ query
+// fails — callers are expected to fall back to the audit-log proxy
+// (the route owns that fallback).
+// ---------------------------------------------------------------------------
+
+export interface CollectorCostTimeseriesPoint {
+  collectorId: string;
+  /** ISO date `YYYY-MM-DD` in UTC, anchored on `started_at`. */
+  day: string;
+  runs: number;
+  rowsWritten: number;
+  bytesRaw: number;
+  estimateUsd: number;
+}
+
+interface CostTimeseriesCacheEntry {
+  fetchedAt: number;
+  rows: CollectorCostTimeseriesPoint[];
+}
+const costTimeseriesCache = new Map<string, CostTimeseriesCacheEntry>();
+
+export async function getCollectorCostsTimeseriesFromBq(args: {
+  lookbackDays: number;
+  collectorIds: string[];
+  /** Override cache TTL, primarily for tests. Defaults to 24h. */
+  cacheTtlMs?: number;
+}): Promise<CollectorCostTimeseriesPoint[] | null> {
+  const cfg = resolveIntelligenceConfig();
+  if (!cfg) return null;
+  if (args.collectorIds.length === 0) return [];
+
+  const sortedIds = [...args.collectorIds].sort();
+  const ttl = args.cacheTtlMs ?? COST_CACHE_TTL_MS;
+  const key = `${args.lookbackDays}|${sortedIds.join(",")}`;
+  const cached = costTimeseriesCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < ttl) return cached.rows;
+
+  const bq = await getBigQueryClient();
+  if (!bq) return null;
+
+  try {
+    const sql = `
+      SELECT
+        collector_id,
+        FORMAT_DATE('%Y-%m-%d', DATE(started_at)) AS day,
+        COUNT(*)                       AS runs,
+        IFNULL(SUM(rows_emitted), 0)   AS rows_written,
+        IFNULL(SUM(bytes_raw), 0)      AS bytes_raw
+      FROM \`${cfg.projectId}.${cfg.bqDataset}.collector_runs\`
+      WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),
+                                         INTERVAL @days DAY)
+        AND collector_id IN UNNEST(@ids)
+      GROUP BY collector_id, day
+      ORDER BY collector_id, day
+    `;
+    const [rowsRaw] = await bq.query({
+      query: sql,
+      params: { days: args.lookbackDays, ids: sortedIds },
+      types: { days: "INT64", ids: ["STRING"] },
+      maximumBytesBilled: String(cfg.maxBytesBilled),
+      location: cfg.bqLocation,
+    });
+    const rows: CollectorCostTimeseriesPoint[] = (
+      rowsRaw as Array<Record<string, unknown>>
+    ).map((r) => {
+      const bytes = Number(r["bytes_raw"] ?? 0);
+      const estimate = (bytes / 1e12) * BQ_USD_PER_TB;
+      // BigQuery returns DATE columns as `{ value: 'YYYY-MM-DD' }` from
+      // the Node SDK; the FORMAT_DATE call above already strings it,
+      // but defend against the SDK shape just in case.
+      const dayCell = r["day"];
+      const day =
+        typeof dayCell === "string"
+          ? dayCell
+          : dayCell &&
+              typeof dayCell === "object" &&
+              "value" in (dayCell as Record<string, unknown>)
+            ? String((dayCell as { value: unknown }).value)
+            : "";
+      return {
+        collectorId: String(r["collector_id"]),
+        day,
+        runs: Number(r["runs"] ?? 0),
+        rowsWritten: Number(r["rows_written"] ?? 0),
+        bytesRaw: bytes,
+        estimateUsd: Number(estimate.toFixed(6)),
+      };
+    });
+    costTimeseriesCache.set(key, { fetchedAt: Date.now(), rows });
+    return rows;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

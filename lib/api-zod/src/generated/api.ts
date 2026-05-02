@@ -3119,6 +3119,80 @@ export const GetCollectorCostResponse = zod.object({
 });
 
 /**
+ * Returns a per-day breakdown of cost & throughput for each
+registered collector over the requested lookback window, used
+by the Cost tab sparklines and per-collector drilldown.
+
+Source priority:
+  1. `bigquery` — bucketed rows from `collector_runs.bytes_raw`
+     × $5/TB on-demand pricing (cached 24h).
+  2. `proxy` — derived from the Postgres audit log when the
+     BigQuery read isn't available, using the same
+     `max(rowsWritten × $0.0000005, runs × $0.0001)` proxy as the
+     single-window cost endpoint. `bytesRaw` is omitted in this path.
+
+The response always includes the canonical `days[]` axis (oldest →
+newest, UTC) so collectors with zero runs in the window still get
+a flat sparkline rather than disappearing.
+
+ * @summary Per-collector, per-day cost & throughput trend.
+ */
+export const getCollectorCostTimeseriesQueryLookbackDaysDefault = 7;
+export const getCollectorCostTimeseriesQueryLookbackDaysMax = 90;
+
+export const GetCollectorCostTimeseriesQueryParams = zod.object({
+  lookbackDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getCollectorCostTimeseriesQueryLookbackDaysMax)
+    .default(getCollectorCostTimeseriesQueryLookbackDaysDefault),
+});
+
+export const GetCollectorCostTimeseriesHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetCollectorCostTimeseriesResponse = zod.object({
+  source: zod.enum(["bigquery", "proxy"]),
+  lookbackDays: zod.number(),
+  days: zod
+    .array(zod.string())
+    .describe(
+      "Canonical day axis (UTC, oldest → newest). Sparklines should iterate over this axis so collectors with zero runs render a flat baseline rather than collapsing.",
+    ),
+  entries: zod.array(
+    zod.object({
+      collectorId: zod.string(),
+      name: zod.string(),
+      points: zod
+        .array(
+          zod.object({
+            day: zod
+              .string()
+              .describe(
+                "ISO date `YYYY-MM-DD` (UTC), anchored on the run start time.",
+              ),
+            runs: zod.number(),
+            rowsWritten: zod.number(),
+            estimateUsd: zod.number(),
+          }),
+        )
+        .describe(
+          "One entry per day in the canonical `days[]` axis (zero-filled so missing days render as a flat baseline rather than dropping out).",
+        ),
+      totalEstimateUsd: zod.number(),
+      totalRuns: zod.number(),
+      totalRowsWritten: zod.number(),
+    }),
+  ),
+});
+
+/**
  * Reads the audit log for the past `lookbackHours` and returns
 a flat, paginated stream of run starts/completions and fetch
 errors. Used by the Runs & Errors tab.

@@ -83,6 +83,8 @@ import type {
   EscalationPolicyList,
   GetCollectorCost200,
   GetCollectorCostParams,
+  GetCollectorCostTimeseries200,
+  GetCollectorCostTimeseriesParams,
   GetIntelligenceCoverageGapsParams,
   GetIntelligenceRiskHeatmapParams,
   GetServicesSpendParams,
@@ -4227,6 +4229,131 @@ export function useGetCollectorCost<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetCollectorCostQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns a per-day breakdown of cost & throughput for each
+registered collector over the requested lookback window, used
+by the Cost tab sparklines and per-collector drilldown.
+
+Source priority:
+  1. `bigquery` — bucketed rows from `collector_runs.bytes_raw`
+     × $5/TB on-demand pricing (cached 24h).
+  2. `proxy` — derived from the Postgres audit log when the
+     BigQuery read isn't available, using the same
+     `max(rowsWritten × $0.0000005, runs × $0.0001)` proxy as the
+     single-window cost endpoint. `bytesRaw` is omitted in this path.
+
+The response always includes the canonical `days[]` axis (oldest →
+newest, UTC) so collectors with zero runs in the window still get
+a flat sparkline rather than disappearing.
+
+ * @summary Per-collector, per-day cost & throughput trend.
+ */
+export const getGetCollectorCostTimeseriesUrl = (
+  params?: GetCollectorCostTimeseriesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/collectors/workbench/cost/timeseries?${stringifiedParams}`
+    : `/api/collectors/workbench/cost/timeseries`;
+};
+
+export const getCollectorCostTimeseries = async (
+  params?: GetCollectorCostTimeseriesParams,
+  options?: RequestInit,
+): Promise<GetCollectorCostTimeseries200> => {
+  return customFetch<GetCollectorCostTimeseries200>(
+    getGetCollectorCostTimeseriesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCollectorCostTimeseriesQueryKey = (
+  params?: GetCollectorCostTimeseriesParams,
+) => {
+  return [
+    `/api/collectors/workbench/cost/timeseries`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetCollectorCostTimeseriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCollectorCostTimeseries>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCollectorCostTimeseriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorCostTimeseries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCollectorCostTimeseriesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCollectorCostTimeseries>>
+  > = ({ signal }) =>
+    getCollectorCostTimeseries(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCollectorCostTimeseries>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCollectorCostTimeseriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCollectorCostTimeseries>>
+>;
+export type GetCollectorCostTimeseriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-collector, per-day cost & throughput trend.
+ */
+
+export function useGetCollectorCostTimeseries<
+  TData = Awaited<ReturnType<typeof getCollectorCostTimeseries>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetCollectorCostTimeseriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCollectorCostTimeseries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCollectorCostTimeseriesQueryOptions(
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -20,11 +20,13 @@ export {
   getCollectorCostsFromBq,
   getCollectorCostsFromBilling,
   getCollectorCostsFromInformationSchema,
+  getCollectorCostsTimeseriesFromBq,
   __setRecordCollectorRunOverrideForTests,
   __clearCollectorCostCacheForTests,
   type BqMarketSignalRow,
   type CollectorRunRecord,
   type CollectorCostRow,
+  type CollectorCostTimeseriesPoint,
 } from "./bq/index.js";
 export {
   landRawPayload,

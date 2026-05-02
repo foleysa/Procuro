@@ -276,6 +276,7 @@ test("workbench READ routes are tenant-scoped only — analysts must be able to 
     "/collectors/workbench/lineage",
     "/collectors/workbench/coverage",
     "/collectors/workbench/cost",
+    "/collectors/workbench/cost/timeseries",
     "/collectors/workbench/runs",
   ];
   for (const path of routes) {

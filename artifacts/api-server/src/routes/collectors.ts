@@ -14,6 +14,8 @@ import {
   getCollectorCostsFromBq,
   getCollectorCostsFromBilling,
   getCollectorCostsFromInformationSchema,
+  getCollectorCostsTimeseriesFromBq,
+  type CollectorCostTimeseriesPoint,
 } from "@workspace/intelligence";
 import {
   and,
@@ -1532,6 +1534,200 @@ router.get(
       .sort((a, b) => b.estimateUsd - a.estimateUsd);
 
     res.json({ source: "proxy" as const, lookbackHours, entries });
+  },
+);
+
+// Per-day cost timeseries — feeds the Cost tab sparkline + drilldown.
+// Tries the BigQuery `collector_runs` table first (real bytes_raw
+// bucketed by day); falls back to deriving the same shape from the
+// Postgres audit log when GCP isn't configured locally or the BQ read
+// fails. Both paths emit the same `entries[].points[]` shape so the
+// UI doesn't have to branch.
+router.get(
+  "/collectors/workbench/cost/timeseries",
+  tenantMiddleware,
+  async (req, res) => {
+    const lookbackDays = Math.min(
+      Math.max(
+        parseInt((req.query["lookbackDays"] as string) ?? "7", 10) || 7,
+        1,
+      ),
+      90,
+    );
+    const ids = listRegisteredCollectorIds();
+
+    // Build the canonical day axis (oldest → newest, UTC) so the UI
+    // can render an x-axis even on collectors that had zero runs in
+    // the window (sparkline collapses to a flat line at 0 instead of
+    // disappearing).
+    const days: string[] = [];
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    for (let i = lookbackDays - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+
+    const buildEntries = (
+      points: CollectorCostTimeseriesPoint[],
+    ): Array<{
+      collectorId: string;
+      name: string;
+      points: Array<{
+        day: string;
+        runs: number;
+        rowsWritten: number;
+        estimateUsd: number;
+      }>;
+      totalEstimateUsd: number;
+      totalRuns: number;
+      totalRowsWritten: number;
+    }> => {
+      const byCollector = new Map<
+        string,
+        Map<
+          string,
+          { runs: number; rowsWritten: number; estimateUsd: number }
+        >
+      >();
+      for (const p of points) {
+        const m = byCollector.get(p.collectorId) ?? new Map();
+        m.set(p.day, {
+          runs: p.runs,
+          rowsWritten: p.rowsWritten,
+          estimateUsd: p.estimateUsd,
+        });
+        byCollector.set(p.collectorId, m);
+      }
+      return ids
+        .map((id) => {
+          const reg = getCollector(id)!;
+          const dayMap = byCollector.get(id) ?? new Map();
+          const filledPoints = days.map((day) => {
+            const v = dayMap.get(day);
+            return {
+              day,
+              runs: v?.runs ?? 0,
+              rowsWritten: v?.rowsWritten ?? 0,
+              estimateUsd: v?.estimateUsd ?? 0,
+            };
+          });
+          const totalEstimateUsd = Number(
+            filledPoints
+              .reduce((acc, p) => acc + p.estimateUsd, 0)
+              .toFixed(6),
+          );
+          const totalRuns = filledPoints.reduce((acc, p) => acc + p.runs, 0);
+          const totalRowsWritten = filledPoints.reduce(
+            (acc, p) => acc + p.rowsWritten,
+            0,
+          );
+          return {
+            collectorId: id,
+            name: reg.name,
+            points: filledPoints,
+            totalEstimateUsd,
+            totalRuns,
+            totalRowsWritten,
+          };
+        })
+        .sort((a, b) => b.totalEstimateUsd - a.totalEstimateUsd);
+    };
+
+    let bqPoints: CollectorCostTimeseriesPoint[] | null = null;
+    try {
+      bqPoints = await getCollectorCostsTimeseriesFromBq({
+        lookbackDays,
+        collectorIds: ids,
+      });
+    } catch (err) {
+      req.log?.warn(
+        { err: (err as Error).message },
+        "BigQuery cost timeseries read failed; falling back to audit-log proxy",
+      );
+      bqPoints = null;
+    }
+
+    if (bqPoints) {
+      res.json({
+        source: "bigquery" as const,
+        lookbackDays,
+        days,
+        entries: buildEntries(bqPoints),
+      });
+      return;
+    }
+
+    // Audit-log proxy: same maths as the single-window cost endpoint
+    // (`max(rowsWritten * 0.0000005, runs * 0.0001)`) but bucketed by
+    // UTC day. Lets operators still see a trend line locally even
+    // without GCP credentials.
+    const sinceMs =
+      today.getTime() - (lookbackDays - 1) * 24 * 60 * 60 * 1000;
+    const since = new Date(sinceMs);
+    const auditRows = ids.length
+      ? await db
+          .select()
+          .from(collectorAuditLogTable)
+          .where(
+            and(
+              gte(collectorAuditLogTable.createdAt, since),
+              inArray(collectorAuditLogTable.collectorId, ids),
+            ),
+          )
+      : [];
+
+    type DayBucket = { runs: number; rowsWritten: number };
+    const proxyPoints: CollectorCostTimeseriesPoint[] = [];
+    const grouped = new Map<string, Map<string, DayBucket>>();
+    for (const a of auditRows) {
+      if (a.event !== "fetch_succeeded" && a.event !== "backfill_succeeded") {
+        continue;
+      }
+      const created =
+        a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+      const day = created.toISOString().slice(0, 10);
+      const meta = (a.metadata ?? {}) as Record<string, unknown>;
+      const inserted = Number(
+        meta["inserted"] ?? meta["signalsInserted"] ?? 0,
+      );
+      const collectorMap =
+        grouped.get(a.collectorId) ??
+        new Map<string, DayBucket>();
+      const bucket = collectorMap.get(day) ?? { runs: 0, rowsWritten: 0 };
+      bucket.runs += 1;
+      if (Number.isFinite(inserted)) bucket.rowsWritten += inserted;
+      collectorMap.set(day, bucket);
+      grouped.set(a.collectorId, collectorMap);
+    }
+    for (const [collectorId, dayMap] of grouped) {
+      for (const [day, bucket] of dayMap) {
+        const estimateUsd = Number(
+          Math.max(
+            bucket.rowsWritten * 0.0000005,
+            bucket.runs * 0.0001,
+          ).toFixed(6),
+        );
+        proxyPoints.push({
+          collectorId,
+          day,
+          runs: bucket.runs,
+          rowsWritten: bucket.rowsWritten,
+          // Proxy maths doesn't expose bytes — surface 0 rather than a
+          // fabricated number so audits can tell the basis apart.
+          bytesRaw: 0,
+          estimateUsd,
+        });
+      }
+    }
+
+    res.json({
+      source: "proxy" as const,
+      lookbackDays,
+      days,
+      entries: buildEntries(proxyPoints),
+    });
   },
 );
 

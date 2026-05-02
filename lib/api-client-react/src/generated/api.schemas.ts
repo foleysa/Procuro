@@ -3210,6 +3210,24 @@ only when `source=billing`; null otherwise.
   notes?: string | null;
 }
 
+export interface CollectorCostTimeseriesPoint {
+  /** ISO date `YYYY-MM-DD` (UTC), anchored on the run start time. */
+  day: string;
+  runs: number;
+  rowsWritten: number;
+  estimateUsd: number;
+}
+
+export interface CollectorCostTimeseriesEntry {
+  collectorId: string;
+  name: string;
+  /** One entry per day in the canonical `days[]` axis (zero-filled so missing days render as a flat baseline rather than dropping out). */
+  points: CollectorCostTimeseriesPoint[];
+  totalEstimateUsd: number;
+  totalRuns: number;
+  totalRowsWritten: number;
+}
+
 export type ClientDataSourceDisclosureTier =
   (typeof ClientDataSourceDisclosureTier)[keyof typeof ClientDataSourceDisclosureTier];
 
@@ -4622,6 +4640,30 @@ export type GetCollectorCost200 = {
   source: GetCollectorCost200Source;
   lookbackHours: number;
   entries: CollectorCostEntry[];
+};
+
+export type GetCollectorCostTimeseriesParams = {
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  lookbackDays?: number;
+};
+
+export type GetCollectorCostTimeseries200Source =
+  (typeof GetCollectorCostTimeseries200Source)[keyof typeof GetCollectorCostTimeseries200Source];
+
+export const GetCollectorCostTimeseries200Source = {
+  bigquery: "bigquery",
+  proxy: "proxy",
+} as const;
+
+export type GetCollectorCostTimeseries200 = {
+  source: GetCollectorCostTimeseries200Source;
+  lookbackDays: number;
+  /** Canonical day axis (UTC, oldest → newest). Sparklines should iterate over this axis so collectors with zero runs render a flat baseline rather than collapsing. */
+  days: string[];
+  entries: CollectorCostTimeseriesEntry[];
 };
 
 export type ListCollectorRunsAndErrorsParams = {
