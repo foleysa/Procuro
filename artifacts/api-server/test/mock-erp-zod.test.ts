@@ -1,112 +1,138 @@
 /**
  * Field-level Zod validation for `POST /api/ingest/mock-erp` (#99).
  *
- * Why this exists
- * ---------------
+ * Background
+ * ----------
  * Before #99 the route's only check was `Array.isArray(body.feed)`. A
  * caller that posted a typo'd field name (`external_id` instead of
  * `externalId`), an empty `externalId`, a non-ISO `updatedAt`, or a
  * non-object `payload` got back 200 OK and a confusing downstream
  * upsert collision because the adapter silently coerced the bad row
- * into a `null`-keyed write. This test pins the new contract:
+ * into a `null`-keyed write.
  *
- *   1. Well-formed bodies still succeed (200 OK; no regression).
- *   2. Each malformed body case returns 400 with a structured
- *      `issues` array whose `path` points at the offending field.
+ * The route now does `mockErpIngestBodySchema.parse(req.body)` and
+ * lets the thrown `ZodError` bubble up to `globalErrorHandler`, which
+ * maps it to the standard `400 { error: "Invalid request", details:
+ * [...] }` shape — the same wire contract the collectors routes (#92)
+ * and the opportunity action endpoints (#98) ship.
  *
- * The test fires real HTTP requests against the in-process Express
- * `app` (same pattern as `csv-ingest-error-sanitization.test.ts`) so a
- * future change that strips the validator from the handler — e.g.
- * replacing `safeParse` with a `as MockErpBody` cast — is caught
- * end-to-end, not just at the schema boundary.
+ * Why share the schema with production
+ * ------------------------------------
+ * The production route wraps the parse call in `tenantMiddleware`,
+ * which performs a DB lookup before the handler ever runs. To keep
+ * these tests hermetic (no DB, no fixtures), we import the very same
+ * exported `mockErpIngestBodySchema` constant from the route module
+ * and mount it on a tiny Express app behind the real
+ * `globalErrorHandler`. That guarantees:
  *
- * The validator itself is checked indirectly: each malformed case
- * targets one specific Zod rule (enum membership, min length, ISO
- * timestamp, type=object). Adding a new rule to `MockErpRecordSchema`
- * should come with a new sub-test here.
+ *   - Schema regressions (e.g. dropping a field, widening an enum)
+ *     are caught because production and the test parse the same
+ *     `ZodSchema` instance.
+ *   - Wire-shape regressions in the global handler are caught because
+ *     we mount the production handler middleware unchanged.
+ *
+ * Mirrors `test/opportunities-action-validation.test.ts`. Adding a
+ * new rule to the schema should come with a new sub-test here.
  */
-import test, { before, after } from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import express, {
+  type Express,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 
-// Match the auth/dev wiring used by the other route-level tests; the
-// auth middleware reads NODE_ENV at module import time.
-process.env["NODE_ENV"] = process.env["NODE_ENV"] ?? "development";
-process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
+if (!process.env["DATABASE_URL"]) {
+  process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
+}
 
-import { db, orgsTable, pool } from "@workspace/db";
-import app from "../src/app";
+const { mockErpIngestBodySchema } = await import("../src/routes/ingest");
+const { globalErrorHandler } = await import("../src/lib/global-error-handler");
 
-let server: http.Server;
-let baseUrl: string;
-let orgId: string;
+function buildApp(): Express {
+  const app = express();
+  app.use(express.json());
+  // The 500 branch of the real handler calls `req.log.error(...)`. The
+  // 400 branch (which is what these tests exercise) deliberately does
+  // not log, but pino-http would normally attach `req.log` in
+  // production — wire up a no-op so the contract matches.
+  app.use((req, _res, next) => {
+    (req as unknown as { log: { error: () => void } }).log = {
+      error: () => undefined,
+    };
+    next();
+  });
+  // Stand in for the production route: `Schema.parse(req.body)`
+  // exactly the way the real handler does, then succeed. Any thrown
+  // `ZodError` is caught by Express 5's async rejection auto-forward
+  // and routed to `globalErrorHandler`.
+  app.post(
+    "/api/ingest/mock-erp",
+    (req: Request, res: Response, next: NextFunction) => {
+      try {
+        mockErpIngestBodySchema.parse(req.body ?? {});
+        res.json({ ok: true });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+  app.use(globalErrorHandler);
+  return app;
+}
 
-before(async () => {
-  if (!process.env["DATABASE_URL"]) {
-    throw new Error("DATABASE_URL is required to run this integration test.");
-  }
-  const [row] = await db.select({ id: orgsTable.id }).from(orgsTable).limit(1);
-  if (!row) {
-    throw new Error(
-      "No org rows found. Seed the database before running this test.",
+interface CapturedResponse {
+  status: number;
+  body: string;
+}
+
+async function withServer<T>(
+  app: Express,
+  fn: (baseUrl: string) => Promise<T>,
+): Promise<T> {
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const addr = server.address();
+    if (addr === null || typeof addr === "string") {
+      throw new Error("expected an AddressInfo for the test server");
+    }
+    return await fn(`http://127.0.0.1:${addr.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
     );
   }
-  orgId = row.id;
-
-  server = http.createServer(app);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const addr = server.address();
-  if (!addr || typeof addr === "string") {
-    throw new Error("Failed to bind test server");
-  }
-  baseUrl = `http://127.0.0.1:${addr.port}`;
-});
-
-after(async () => {
-  if (server) await new Promise<void>((res) => server.close(() => res()));
-  await pool.end().catch(() => {});
-});
-
-interface ZodIssue {
-  path: ReadonlyArray<string | number>;
-  message: string;
-  code?: string;
 }
 
-interface ErrorResponse {
+async function postMockErp(
+  app: Express,
+  body: unknown,
+): Promise<CapturedResponse> {
+  return withServer(app, async (base) => {
+    const r = await fetch(`${base}/api/ingest/mock-erp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, body: await r.text() };
+  });
+}
+
+interface ValidationErrorBody {
   error: string;
-  issues: ZodIssue[];
-}
-
-async function postMockErp(body: unknown): Promise<{
-  status: number;
-  json: unknown;
-}> {
-  const res = await fetch(`${baseUrl}/api/ingest/mock-erp`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-org-id": orgId,
-    },
-    body: JSON.stringify(body),
-  });
-  // The 4xx body is always JSON for this route. The 200 body is the
-  // adapter's `SyncResult`, also JSON. Either way, parsing is safe.
-  const json = await res.json();
-  return { status: res.status, json };
+  details: Array<{ path: Array<string | number>; message: string; code?: string }>;
 }
 
 function assertHasIssueAtPath(
-  body: unknown,
+  json: ValidationErrorBody,
   expectedPath: ReadonlyArray<string | number>,
   label: string,
 ): void {
-  const e = body as ErrorResponse;
-  assert.ok(Array.isArray(e.issues), `[${label}] issues array present`);
-  const found = e.issues.find(
+  assert.ok(Array.isArray(json.details), `[${label}] details array present`);
+  const found = json.details.find(
     (it) =>
       it.path.length === expectedPath.length &&
       it.path.every((p, i) => p === expectedPath[i]),
@@ -114,147 +140,174 @@ function assertHasIssueAtPath(
   assert.ok(
     found,
     `[${label}] expected issue at path [${expectedPath.join(", ")}]; ` +
-      `got: ${JSON.stringify(e.issues)}`,
+      `got: ${JSON.stringify(json.details)}`,
   );
 }
 
-test("POST /api/ingest/mock-erp Zod validation", async (t) => {
-  await t.test("accepts a well-formed empty feed (no regression)", async () => {
-    const res = await postMockErp({ feed: [] });
-    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+test("POST /ingest/mock-erp with malformed body returns 400 with field-level details", async () => {
+  // Missing `feed` entirely AND a wrong-type `cursor` (object instead
+  // of string) — both should surface as separate issues so we can
+  // assert the field paths reach the caller, not just one
+  // concatenated error string the old hand-rolled validator produced.
+  const res = await postMockErp(buildApp(), {
+    cursor: { not: "a string" },
   });
-
-  await t.test(
-    "accepts a well-formed single supplier record (no regression)",
-    async () => {
-      const res = await postMockErp({
-        feed: [
-          {
-            type: "supplier",
-            externalId: `mock-zod-test-${Date.now()}`,
-            updatedAt: new Date().toISOString(),
-            payload: { name: "Smoke-test Supplier" },
-          },
-        ],
-      });
-      assert.equal(res.status, 200, `expected 200, got ${res.status}`);
-    },
+  assert.equal(res.status, 400, "malformed POST body must yield 400");
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assert.ok(
+    Array.isArray(json.details),
+    "details must be the issues array, not a string",
   );
-
-  await t.test("rejects body where `feed` is missing", async () => {
-    const res = await postMockErp({});
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["feed"], "missing-feed");
-  });
-
-  await t.test("rejects body where `feed` is not an array", async () => {
-    const res = await postMockErp({ feed: "not-an-array" });
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["feed"], "feed-not-array");
-  });
-
-  await t.test(
-    "rejects record with type outside the {supplier|purchase_order|invoice} enum",
-    async () => {
-      const res = await postMockErp({
-        feed: [
-          {
-            type: "contract", // not in the enum
-            externalId: "x",
-            updatedAt: new Date().toISOString(),
-            payload: {},
-          },
-        ],
-      });
-      assert.equal(res.status, 400);
-      assertHasIssueAtPath(res.json, ["feed", 0, "type"], "bad-enum");
-    },
+  const paths = json.details.map((d) => d.path.join("."));
+  assert.ok(
+    paths.includes("feed"),
+    `expected an issue for "feed", got ${paths.join(", ")}`,
   );
-
-  await t.test("rejects record with empty externalId", async () => {
-    const res = await postMockErp({
-      feed: [
-        {
-          type: "supplier",
-          externalId: "",
-          updatedAt: new Date().toISOString(),
-          payload: {},
-        },
-      ],
-    });
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["feed", 0, "externalId"], "empty-externalId");
-  });
-
-  await t.test("rejects record with non-ISO updatedAt", async () => {
-    const res = await postMockErp({
-      feed: [
-        {
-          type: "supplier",
-          externalId: "x",
-          updatedAt: "yesterday afternoon",
-          payload: {},
-        },
-      ],
-    });
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["feed", 0, "updatedAt"], "bad-timestamp");
-  });
-
-  await t.test("rejects record with payload that is not an object", async () => {
-    const res = await postMockErp({
-      feed: [
-        {
-          type: "supplier",
-          externalId: "x",
-          updatedAt: new Date().toISOString(),
-          payload: "not-an-object",
-        },
-      ],
-    });
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["feed", 0, "payload"], "bad-payload-type");
-  });
-
-  await t.test(
-    "pinpoints the bad index when only one record in a batch is malformed",
-    async () => {
-      // Two valid records sandwiching one with an invalid `type`. The
-      // returned issues array should reference index 1 specifically — the
-      // operator UX win over the old "Body must include `feed` array".
-      const res = await postMockErp({
-        feed: [
-          {
-            type: "supplier",
-            externalId: "ok-1",
-            updatedAt: new Date().toISOString(),
-            payload: {},
-          },
-          {
-            type: "totally-not-valid",
-            externalId: "bad",
-            updatedAt: new Date().toISOString(),
-            payload: {},
-          },
-          {
-            type: "invoice",
-            externalId: "ok-2",
-            updatedAt: new Date().toISOString(),
-            payload: {},
-          },
-        ],
-      });
-      assert.equal(res.status, 400);
-      assertHasIssueAtPath(res.json, ["feed", 1, "type"], "middle-record-bad");
-    },
+  assert.ok(
+    paths.includes("cursor"),
+    `expected an issue for "cursor", got ${paths.join(", ")}`,
   );
+});
 
-  await t.test("rejects body with non-ISO cursor", async () => {
-    const res = await postMockErp({
-      feed: [],
-      cursor: "next-tuesday",
-    });
-    assert.equal(res.status, 400);
-    assertHasIssueAtPath(res.json, ["cursor"], "bad-cursor");
+test("POST /ingest/mock-erp rejects body where `feed` is not an array", async () => {
+  const res = await postMockErp(buildApp(), { feed: "not-an-array" });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed"], "feed-not-array");
+});
+
+test("POST /ingest/mock-erp rejects record with type outside the {supplier|purchase_order|invoice} enum", async () => {
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "contract", // not in the enum
+        externalId: "x",
+        updatedAt: new Date().toISOString(),
+        payload: {},
+      },
+    ],
   });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed", 0, "type"], "bad-enum");
+});
+
+test("POST /ingest/mock-erp rejects record with empty externalId", async () => {
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "supplier",
+        externalId: "",
+        updatedAt: new Date().toISOString(),
+        payload: {},
+      },
+    ],
+  });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed", 0, "externalId"], "empty-externalId");
+});
+
+test("POST /ingest/mock-erp rejects record with non-ISO updatedAt", async () => {
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "supplier",
+        externalId: "x",
+        updatedAt: "yesterday afternoon",
+        payload: {},
+      },
+    ],
+  });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed", 0, "updatedAt"], "bad-timestamp");
+});
+
+test("POST /ingest/mock-erp rejects record with payload that is not an object", async () => {
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "supplier",
+        externalId: "x",
+        updatedAt: new Date().toISOString(),
+        payload: "not-an-object",
+      },
+    ],
+  });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed", 0, "payload"], "bad-payload-type");
+});
+
+test("POST /ingest/mock-erp pinpoints the bad index when only one record in a batch is malformed", async () => {
+  // Two valid records sandwiching one with an invalid `type`. The
+  // returned details array should reference index 1 specifically — the
+  // operator UX win over the old "Body must include `feed` array".
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "supplier",
+        externalId: "ok-1",
+        updatedAt: new Date().toISOString(),
+        payload: {},
+      },
+      {
+        type: "totally-not-valid",
+        externalId: "bad",
+        updatedAt: new Date().toISOString(),
+        payload: {},
+      },
+      {
+        type: "invoice",
+        externalId: "ok-2",
+        updatedAt: new Date().toISOString(),
+        payload: {},
+      },
+    ],
+  });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["feed", 1, "type"], "middle-record-bad");
+});
+
+test("POST /ingest/mock-erp rejects body with non-ISO cursor", async () => {
+  const res = await postMockErp(buildApp(), {
+    feed: [],
+    cursor: "next-tuesday",
+  });
+  assert.equal(res.status, 400);
+  const json = JSON.parse(res.body) as ValidationErrorBody;
+  assert.equal(json.error, "Invalid request");
+  assertHasIssueAtPath(json, ["cursor"], "bad-cursor");
+});
+
+test("POST /ingest/mock-erp accepts a well-formed body (sanity check on success path)", async () => {
+  // Confirm we did not over-tighten the schema. A well-formed feed
+  // (with a valid type, ISO timestamp, and object payload) and an
+  // optional ISO cursor both reach the success branch.
+  const res = await postMockErp(buildApp(), {
+    feed: [
+      {
+        type: "supplier",
+        externalId: "mock-zod-test-ok",
+        updatedAt: new Date().toISOString(),
+        payload: { name: "Smoke-test Supplier" },
+      },
+    ],
+    cursor: new Date().toISOString(),
+  });
+  assert.equal(res.status, 200, res.body);
+});
+
+test("POST /ingest/mock-erp accepts an empty feed (no regression)", async () => {
+  const res = await postMockErp(buildApp(), { feed: [] });
+  assert.equal(res.status, 200, res.body);
 });

@@ -112,6 +112,11 @@ router.post("/ingest/csv", tenantMiddleware, requirePermission("ingest:write"), 
  * those drift, the validator will keep accepting payloads the adapter
  * cannot consume. The dedicated `mock-erp-zod.test.ts` suite pins the
  * shape so the next reader is forced to update both sides together.
+ *
+ * Exported so the validation test can mount the exact same
+ * `ZodSchema` instance the production route uses behind the real
+ * `globalErrorHandler` — see `test/mock-erp-zod.test.ts` and the
+ * sibling pattern in `routes/opportunities.ts` (#92, #98).
  */
 const MockErpRecordSchema = z.object({
   type: z.enum(["supplier", "purchase_order", "invoice"]),
@@ -126,7 +131,7 @@ const MockErpRecordSchema = z.object({
   deleted: z.boolean().optional(),
 });
 
-const MockErpBodySchema = z.object({
+export const mockErpIngestBodySchema = z.object({
   feed: z.array(MockErpRecordSchema),
   // Optional incremental cursor. ISO-8601 if present.
   cursor: z
@@ -142,19 +147,12 @@ router.post("/ingest/mock-erp", tenantMiddleware, requirePermission("ingest:writ
   const orgId = requireOrgId(req);
   // Field-level validation up front. A bad shape is a permanent input
   // error for this request — there is no point queueing a job that
-  // cannot succeed, so we reject 400 with the Zod issues list and the
-  // operator can fix the request before retrying.
-  const parsed = MockErpBodySchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid mock-ERP request body.",
-      // The Zod issues array is already structured for UI rendering:
-      // `{ path: ["feed", 3, "externalId"], message: "...", code: "..." }`.
-      issues: parsed.error.issues,
-    });
-    return;
-  }
-  const body = parsed.data;
+  // cannot succeed, so the thrown `ZodError` is mapped by the global
+  // error handler to the standard `400 { error, details }` shape
+  // (`lib/global-error-handler.ts`), matching the wire shape the
+  // collectors routes (#92) and the opportunity action endpoints
+  // (#98) already use.
+  const body = mockErpIngestBodySchema.parse(req.body ?? {});
 
   if (!isAsync(req)) {
     // Count total DB operations: each feed record plus any nested PO lines.
