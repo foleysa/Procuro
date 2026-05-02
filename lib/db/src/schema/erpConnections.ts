@@ -3,6 +3,7 @@ import {
   text,
   timestamp,
   jsonb,
+  integer,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -87,6 +88,30 @@ export const erpConnectionsTable = pgTable(
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     /** Most recent error string surfaced by the worker, if any. */
     lastError: text("last_error"),
+    /**
+     * How often the recurring scheduler should enqueue a
+     * `sync_erp_connection` job for this connection, in minutes.
+     * Default = 120 (every 2 hours). Operators can dial this up or
+     * down per-connection from the Integrations page; pausing the
+     * connection (status='paused') halts scheduling regardless of the
+     * cadence value. Range is enforced at the route layer.
+     */
+    syncIntervalMinutes: integer("sync_interval_minutes")
+      .notNull()
+      .default(120),
+    /**
+     * Earliest wall-clock time at which the recurring scheduler should
+     * enqueue the next `sync_erp_connection` job. NULL means "never
+     * scheduled yet" — set on insert to `now() + syncIntervalMinutes`
+     * so the first scheduled sync runs one full interval after
+     * provisioning (operators can press "Sync now" for an immediate
+     * one-off catch-up). Bumped to `now() + syncIntervalMinutes` each
+     * time the scheduler enqueues a job, when the interval changes,
+     * and when the connection resumes from `paused`.
+     */
+    nextScheduledSyncAt: timestamp("next_scheduled_sync_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -100,6 +125,13 @@ export const erpConnectionsTable = pgTable(
     // re-using a connection from the UI; keep it unique so the form
     // can rely on label for diff/upsert.
     uniqueIndex("erp_connections_org_label_uidx").on(t.orgId, t.label),
+    // Supports the recurring sync scheduler's "find connections due
+    // for a sync" sweep: filter on status + next_scheduled_sync_at <=
+    // now() across every tenant in one indexed scan.
+    index("erp_connections_next_sync_idx").on(
+      t.status,
+      t.nextScheduledSyncAt,
+    ),
   ],
 );
 

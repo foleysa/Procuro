@@ -9169,6 +9169,7 @@ components:
       - settings
       - watermarks
       - credentialFields
+      - syncIntervalMinutes
       - createdAt
       - updatedAt
       properties:
@@ -9211,6 +9212,25 @@ components:
         lastError:
           type: string
           nullable: true
+        syncIntervalMinutes:
+          type: integer
+          minimum: 5
+          maximum: 10080
+          description: 'How often the recurring sync scheduler enqueues a job for
+            this connection, in minutes. Defaults to 120 (every 2 hours). Pausing
+            the connection halts scheduling regardless of the cadence.
+
+            '
+        nextScheduledSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Earliest wall-clock time at which the recurring scheduler
+            will enqueue the next sync. NULL when the connection has never been
+            scheduled. Bumped each time the scheduler enqueues, the cadence
+            changes, or the connection resumes from paused.
+
+            '
         createdAt:
           type: string
           format: date-time
@@ -9268,6 +9288,14 @@ components:
             scopes).
 
             '
+        syncIntervalMinutes:
+          type: integer
+          minimum: 5
+          maximum: 10080
+          description: 'Recurring-sync cadence in minutes. Defaults to 120 (every
+            2 hours) when omitted.
+
+            '
     UpdateErpConnectionRequest:
       type: object
       properties:
@@ -9287,6 +9315,14 @@ components:
         settings:
           type: object
           additionalProperties: true
+        syncIntervalMinutes:
+          type: integer
+          minimum: 5
+          maximum: 10080
+          description: 'Update the recurring-sync cadence in minutes. Setting this
+            also resets `nextScheduledSyncAt` to `now() + interval`.
+
+            '
     TestErpConnectionRequest:
       type: object
       required:

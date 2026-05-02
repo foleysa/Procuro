@@ -3298,6 +3298,16 @@ values are never returned.
   credentialFields: string[];
   lastSyncedAt?: string | null;
   lastError?: string | null;
+  /**
+   * How often the recurring sync scheduler enqueues a job for this connection, in minutes. Defaults to 120 (every 2 hours). Pausing the connection halts scheduling regardless of the cadence.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes: number;
+  /** Earliest wall-clock time at which the recurring scheduler will enqueue the next sync. NULL when the connection has never been scheduled. Bumped each time the scheduler enqueues, the cadence changes, or the connection resumes from paused.
+   */
+  nextScheduledSyncAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3350,6 +3360,13 @@ default 200), optional `scope` (defaults to all read
 scopes).
  */
   settings?: CreateErpConnectionRequestSettings;
+  /**
+   * Recurring-sync cadence in minutes. Defaults to 120 (every 2 hours) when omitted.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes?: number;
 }
 
 export type UpdateErpConnectionRequestStatus =
@@ -3374,6 +3391,13 @@ export interface UpdateErpConnectionRequest {
   status?: UpdateErpConnectionRequestStatus;
   credentials?: UpdateErpConnectionRequestCredentials;
   settings?: UpdateErpConnectionRequestSettings;
+  /**
+   * Update the recurring-sync cadence in minutes. Setting this also resets `nextScheduledSyncAt` to `now() + interval`.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes?: number;
 }
 
 export type TestErpConnectionRequestAdapterKey =

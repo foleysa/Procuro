@@ -196,6 +196,20 @@ describe("integrations routes", () => {
       created.connection.credentialFields.sort(),
       ["clientId", "clientSecret"],
     );
+    const createdView = created.connection as unknown as {
+      syncIntervalMinutes: number;
+      nextScheduledSyncAt: string | null;
+    };
+    assert.equal(
+      createdView.syncIntervalMinutes,
+      120,
+      "new connections default to 120 min cadence",
+    );
+    assert.ok(
+      createdView.nextScheduledSyncAt &&
+        new Date(createdView.nextScheduledSyncAt).getTime() > Date.now(),
+      "new connections must have a future nextScheduledSyncAt",
+    );
     const connectionId = created.connection.id;
 
     // 4. Confirm the secret never round-trips back over the wire.
@@ -210,7 +224,48 @@ describe("integrations routes", () => {
       "secret must not appear in the response body",
     );
 
-    // 5. Patch — pause the connection.
+    // 5a. Patch — change the recurring sync cadence. The route should
+    //     also reset nextScheduledSyncAt to "now + new interval" so a
+    //     shorter cadence doesn't immediately fire on the next tick.
+    const cadencePatch = await fetch(
+      url(`/api/integrations/connections/${connectionId}`),
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ syncIntervalMinutes: 30 }),
+      },
+    );
+    assert.equal(cadencePatch.status, 200);
+    const cadenceJson = (await cadencePatch.json()) as {
+      connection: {
+        syncIntervalMinutes: number;
+        nextScheduledSyncAt: string | null;
+      };
+    };
+    assert.equal(cadenceJson.connection.syncIntervalMinutes, 30);
+    assert.ok(cadenceJson.connection.nextScheduledSyncAt);
+    const nextMs = new Date(
+      cadenceJson.connection.nextScheduledSyncAt!,
+    ).getTime();
+    const expectedMin = Date.now() + 25 * 60_000;
+    const expectedMax = Date.now() + 35 * 60_000;
+    assert.ok(
+      nextMs >= expectedMin && nextMs <= expectedMax,
+      `nextScheduledSyncAt should land ~30 min in the future, got ${cadenceJson.connection.nextScheduledSyncAt}`,
+    );
+
+    // 5b. Patch — reject out-of-range cadence values (4 min < min=5).
+    const badCadence = await fetch(
+      url(`/api/integrations/connections/${connectionId}`),
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ syncIntervalMinutes: 4 }),
+      },
+    );
+    assert.equal(badCadence.status, 400);
+
+    // 5c. Patch — pause the connection.
     const patch = await fetch(
       url(`/api/integrations/connections/${connectionId}`),
       {

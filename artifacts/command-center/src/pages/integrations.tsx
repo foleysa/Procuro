@@ -18,6 +18,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { TruncatedError } from "@/components/truncated-error";
 import {
@@ -39,6 +46,31 @@ function fmtTime(value: string | null | undefined): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString();
+}
+
+/**
+ * Cadence presets surfaced in the per-connection dropdown. Values are
+ * minutes and must stay inside the route's [5, 10080] guard rail. The
+ * defaults span "tight" (15 min) through "weekly catch-up" (24 h) —
+ * common operator choices for ERP→data-platform sync feeds — and
+ * default to 2 hours to match the schema-level default.
+ */
+const SYNC_INTERVAL_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 15, label: "Every 15 min" },
+  { value: 30, label: "Every 30 min" },
+  { value: 60, label: "Every 1 hour" },
+  { value: 120, label: "Every 2 hours" },
+  { value: 360, label: "Every 6 hours" },
+  { value: 720, label: "Every 12 hours" },
+  { value: 1440, label: "Every 24 hours" },
+];
+
+function describeInterval(minutes: number): string {
+  const match = SYNC_INTERVAL_OPTIONS.find((o) => o.value === minutes);
+  if (match) return match.label;
+  if (minutes < 60) return `Every ${minutes} min`;
+  if (minutes % 60 === 0) return `Every ${minutes / 60} hours`;
+  return `Every ${minutes} min`;
 }
 
 function statusVariant(
@@ -180,6 +212,29 @@ export default function Integrations() {
     } catch (e) {
       toast({
         title: "Could not start sync",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function onChangeInterval(
+    c: ErpConnection,
+    minutes: number,
+  ): Promise<void> {
+    try {
+      await updateMut.mutateAsync({
+        id: c.id,
+        data: { syncIntervalMinutes: minutes },
+      });
+      toast({
+        title: "Sync cadence updated",
+        description: `${c.label} will sync ${describeInterval(minutes).toLowerCase()}.`,
+      });
+      await invalidateConnections();
+    } catch (e) {
+      toast({
+        title: "Could not update cadence",
         description: (e as Error).message,
         variant: "destructive",
       });
@@ -483,9 +538,51 @@ export default function Integrations() {
                       </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Last sync: {fmtTime(c.lastSyncedAt)} · Created{" "}
-                      {fmtTime(c.createdAt)}
+                      Last sync: {fmtTime(c.lastSyncedAt)} · Next scheduled:{" "}
+                      {c.status === "paused" ? (
+                        <span className="italic">paused</span>
+                      ) : (
+                        fmtTime(c.nextScheduledSyncAt)
+                      )}{" "}
+                      · Created {fmtTime(c.createdAt)}
                     </p>
+                    <div
+                      className="flex items-center gap-2 text-xs text-muted-foreground"
+                      data-testid={`cadence-row-${c.id}`}
+                    >
+                      <span>Sync cadence:</span>
+                      <Select
+                        value={String(c.syncIntervalMinutes)}
+                        onValueChange={(v) =>
+                          void onChangeInterval(c, Number(v))
+                        }
+                        disabled={updateMut.isPending}
+                      >
+                        <SelectTrigger
+                          className="h-7 w-[180px] text-xs"
+                          data-testid={`select-cadence-${c.id}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SYNC_INTERVAL_OPTIONS.map((opt) => (
+                            <SelectItem
+                              key={opt.value}
+                              value={String(opt.value)}
+                            >
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                          {SYNC_INTERVAL_OPTIONS.find(
+                            (o) => o.value === c.syncIntervalMinutes,
+                          ) ? null : (
+                            <SelectItem value={String(c.syncIntervalMinutes)}>
+                              {describeInterval(c.syncIntervalMinutes)}
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Credential fields:{" "}
                       <code className="bg-muted px-1 rounded text-[11px]">

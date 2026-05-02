@@ -1,5 +1,6 @@
 import {
   db,
+  erpConnectionsTable,
   jobsTable,
   jobKindSettingsTable,
   orgsTable,
@@ -1718,4 +1719,258 @@ export function stopExpireStaleOpportunitiesScheduler(): void {
   if (expireStaleOppsHandle) clearInterval(expireStaleOppsHandle);
   expireStaleOppsHandle = null;
   expireStaleOppsStarted = false;
+}
+
+// ─── Per-connection recurring ERP-sync scheduler (task #142) ─────────────
+//
+// Every operator-installed ERP connection (Coupa today, more adapters
+// later) carries a per-row `sync_interval_minutes` cadence and a
+// `next_scheduled_sync_at` watermark. This scheduler is the only part
+// of the system that turns those two fields into queued work:
+//
+//   - Tick every `ERP_SYNC_TICK_INTERVAL_MS` (default 60s).
+//   - SELECT every active connection whose `next_scheduled_sync_at <=
+//     NOW()` (paused / errored connections never auto-fire — operators
+//     must intervene).
+//   - For each due connection enqueue ONE `sync_erp_connection` job
+//     under the per-org advisory lock (`stringHash32(orgId)` sub-key,
+//     same namespace as `enqueueJob`) so a parallel manual "Sync now"
+//     press cannot race us into double-enqueueing the same connection.
+//   - Skip the insert when the org is at the `MAX_PENDING_JOBS_PER_ORG`
+//     quota OR another `sync_erp_connection` for the same connection
+//     is already pending/running (e.g. operator just clicked Sync now).
+//   - In every code path — enqueued, skipped because in-flight,
+//     skipped because over-quota — bump
+//     `next_scheduled_sync_at = now() + sync_interval_minutes` so the
+//     scheduler does not hot-loop on the same row every tick.
+//
+// Manual "Sync now" via `POST /integrations/connections/:id/sync`
+// keeps working unchanged: the route still calls `enqueueJob`
+// directly, and the in-flight dedupe in this scheduler observes any
+// resulting pending row and treats it as the scheduled run for this
+// interval.
+
+const DEFAULT_ERP_SYNC_TICK_INTERVAL_MS = 60_000; // 60s
+
+export interface ErpSyncSchedulerTickResult {
+  /** Number of connections inspected this tick (status='active' AND due). */
+  scanned: number;
+  /** Number of `sync_erp_connection` jobs newly enqueued this tick. */
+  enqueued: number;
+  /** Connections skipped because a sync was already in-flight or quota was full. */
+  skipped: number;
+  /** Connections that errored during the per-row enqueue (logged, not thrown). */
+  errored: number;
+}
+
+/**
+ * Single sweep of the recurring ERP-sync scheduler.
+ *
+ * Exported for tests so they can drive a deterministic tick instead of
+ * waiting for the `setInterval` callback. Returns per-tick counters
+ * suitable for assertions and for the operator-visible log line.
+ */
+export async function enqueueDueErpSyncs(): Promise<ErpSyncSchedulerTickResult> {
+  const dueRows = await db
+    .select({
+      id: erpConnectionsTable.id,
+      orgId: erpConnectionsTable.orgId,
+      syncIntervalMinutes: erpConnectionsTable.syncIntervalMinutes,
+      nextScheduledSyncAt: erpConnectionsTable.nextScheduledSyncAt,
+      status: erpConnectionsTable.status,
+    })
+    .from(erpConnectionsTable)
+    .where(
+      and(
+        eq(erpConnectionsTable.status, "active"),
+        sql`${erpConnectionsTable.nextScheduledSyncAt} IS NOT NULL`,
+        sql`${erpConnectionsTable.nextScheduledSyncAt} <= NOW()`,
+      ),
+    );
+
+  const result: ErpSyncSchedulerTickResult = {
+    scanned: dueRows.length,
+    enqueued: 0,
+    skipped: 0,
+    errored: 0,
+  };
+
+  for (const row of dueRows) {
+    try {
+      const outcome = await enqueueDueErpSyncForConnection(row);
+      if (outcome === "enqueued") result.enqueued += 1;
+      else result.skipped += 1;
+    } catch (err) {
+      result.errored += 1;
+      logger.error(
+        {
+          err: (err as Error).message,
+          connectionId: row.id,
+          orgId: row.orgId,
+        },
+        "Failed to schedule recurring ERP sync for connection",
+      );
+    }
+  }
+
+  if (result.enqueued > 0 || result.errored > 0) {
+    logger.info(
+      result as unknown as Record<string, unknown>,
+      "ERP sync scheduler tick",
+    );
+  }
+  return result;
+}
+
+type EnqueueOutcome = "enqueued" | "skipped";
+
+/**
+ * Per-connection enqueue + watermark bump under a per-org advisory
+ * lock. Re-reads the connection inside the transaction so a concurrent
+ * PATCH that pauses the connection or shifts the cadence cannot race
+ * with the scheduler.
+ */
+async function enqueueDueErpSyncForConnection(row: {
+  id: string;
+  orgId: string;
+  syncIntervalMinutes: number;
+  nextScheduledSyncAt: Date | null;
+}): Promise<EnqueueOutcome> {
+  const lockKey = stringHash32(row.orgId);
+  const maxAttempts = await resolveMaxAttempts(
+    "sync_erp_connection",
+    row.orgId,
+  );
+
+  let outcome: EnqueueOutcome = "skipped";
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${lockKey})`,
+    );
+
+    // Re-read inside the lock so a concurrent PATCH (pause, cadence
+    // change, manual Sync now bumping next_scheduled_sync_at) is
+    // observed before we commit.
+    const fresh = await tx.execute(sql`
+      SELECT id, org_id, status, sync_interval_minutes, next_scheduled_sync_at
+      FROM erp_connections
+      WHERE id = ${row.id}
+      LIMIT 1
+    `);
+    const f = fresh.rows?.[0] as
+      | {
+          id: string;
+          org_id: string;
+          status: string;
+          sync_interval_minutes: number;
+          next_scheduled_sync_at: string | Date | null;
+        }
+      | undefined;
+    if (!f || f.status !== "active") return;
+
+    const nextDue =
+      f.next_scheduled_sync_at instanceof Date
+        ? f.next_scheduled_sync_at
+        : f.next_scheduled_sync_at
+          ? new Date(f.next_scheduled_sync_at)
+          : null;
+    if (!nextDue || nextDue.getTime() > Date.now()) return;
+
+    // Bump the watermark FIRST so we never hot-loop, regardless of
+    // whether the actual enqueue below succeeds.
+    const intervalMs = f.sync_interval_minutes * 60_000;
+    const newNextAt = new Date(Date.now() + intervalMs);
+    await tx.execute(sql`
+      UPDATE erp_connections
+      SET next_scheduled_sync_at = ${newNextAt.toISOString()},
+          updated_at = NOW()
+      WHERE id = ${row.id}
+    `);
+
+    // Don't enqueue if a sync_erp_connection job for this connection
+    // is already pending or running — operator may have just clicked
+    // "Sync now", or the previous scheduled run hasn't drained yet.
+    const inFlight = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'sync_erp_connection'
+        AND org_id = ${row.orgId}
+        AND status IN ('pending', 'running')
+        AND payload->>'connectionId' = ${row.id}
+      LIMIT 1
+    `);
+    if ((inFlight.rows?.length ?? 0) > 0) return;
+
+    // Per-org pending+running quota — same MAX_PENDING_JOBS_PER_ORG
+    // rule that `enqueueJob` enforces. We must check it here too
+    // because we are bypassing `enqueueJob` to keep the watermark
+    // bump and the insert in a single transaction.
+    const countRes = await tx.execute(sql`
+      SELECT COUNT(*)::int AS n
+      FROM jobs
+      WHERE org_id = ${row.orgId}
+        AND status IN ('pending', 'running')
+    `);
+    const pendingCount = (countRes.rows?.[0] as { n?: number } | undefined)?.n ?? 0;
+    if (pendingCount >= MAX_PENDING_JOBS_PER_ORG) return;
+
+    const jobId = newId("job");
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status, max_attempts)
+      VALUES (
+        ${jobId},
+        'sync_erp_connection',
+        ${row.orgId},
+        ${JSON.stringify({ connectionId: row.id })}::jsonb,
+        'pending',
+        ${maxAttempts}
+      )
+    `);
+    outcome = "enqueued";
+  });
+
+  return outcome;
+}
+
+let erpSyncSchedulerStarted = false;
+let erpSyncSchedulerHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the recurring ERP-sync scheduler. Sweeps `erp_connections`
+ * every `ERP_SYNC_TICK_INTERVAL_MS` (default 60s, env-overridable)
+ * and enqueues `sync_erp_connection` jobs for connections whose
+ * `next_scheduled_sync_at` has elapsed. Idempotent — calling twice
+ * has no effect.
+ */
+export function startErpSyncScheduler(intervalMs?: number): void {
+  if (erpSyncSchedulerStarted) return;
+  erpSyncSchedulerStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "ERP_SYNC_TICK_INTERVAL_MS",
+      DEFAULT_ERP_SYNC_TICK_INTERVAL_MS,
+    );
+
+  void enqueueDueErpSyncs().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Initial ERP sync scheduler tick failed",
+    );
+  });
+
+  erpSyncSchedulerHandle = setInterval(() => {
+    enqueueDueErpSyncs().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Scheduled ERP sync scheduler tick failed",
+      );
+    });
+  }, ms);
+}
+
+export function stopErpSyncScheduler(): void {
+  if (erpSyncSchedulerHandle) clearInterval(erpSyncSchedulerHandle);
+  erpSyncSchedulerHandle = null;
+  erpSyncSchedulerStarted = false;
 }

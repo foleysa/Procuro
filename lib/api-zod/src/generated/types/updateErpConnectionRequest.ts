@@ -24,4 +24,11 @@ export interface UpdateErpConnectionRequest {
   status?: UpdateErpConnectionRequestStatus;
   credentials?: UpdateErpConnectionRequestCredentials;
   settings?: UpdateErpConnectionRequestSettings;
+  /**
+   * Update the recurring-sync cadence in minutes. Setting this also resets `nextScheduledSyncAt` to `now() + interval`.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes?: number;
 }

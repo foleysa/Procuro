@@ -29,6 +29,7 @@ import {
   startAnalysisCycleScheduler,
   startExpireStaleOpportunitiesScheduler,
   startRoutingHealthScheduler,
+  startErpSyncScheduler,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
@@ -204,9 +205,10 @@ app.listen(port, async (err) => {
   startOperationalSynthScheduler();
   startExpireStaleOpportunitiesScheduler();
   startRoutingHealthScheduler();
+  startErpSyncScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers + expire-stale-opportunities started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers + expire-stale-opportunities + erp-sync scheduler started",
   );
 
   void seedCollectorRegistry().then(

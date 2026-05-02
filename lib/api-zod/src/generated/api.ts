@@ -3829,6 +3829,9 @@ export const ListErpConnectionsHeader = zod.object({
     ),
 });
 
+export const listErpConnectionsResponseConnectionsItemSyncIntervalMinutesMin = 5;
+export const listErpConnectionsResponseConnectionsItemSyncIntervalMinutesMax = 10080;
+
 export const ListErpConnectionsResponse = zod.object({
   connections: zod.array(
     zod.object({
@@ -3846,6 +3849,19 @@ export const ListErpConnectionsResponse = zod.object({
         ),
       lastSyncedAt: zod.coerce.date().nullish(),
       lastError: zod.string().nullish(),
+      syncIntervalMinutes: zod
+        .number()
+        .min(listErpConnectionsResponseConnectionsItemSyncIntervalMinutesMin)
+        .max(listErpConnectionsResponseConnectionsItemSyncIntervalMinutesMax)
+        .describe(
+          "How often the recurring sync scheduler enqueues a job for this connection, in minutes. Defaults to 120 (every 2 hours). Pausing the connection halts scheduling regardless of the cadence.\n",
+        ),
+      nextScheduledSyncAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Earliest wall-clock time at which the recurring scheduler will enqueue the next sync. NULL when the connection has never been scheduled. Bumped each time the scheduler enqueues, the cadence changes, or the connection resumes from paused.\n",
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -3871,6 +3887,9 @@ export const CreateErpConnectionHeader = zod.object({
 
 export const createErpConnectionBodyLabelMax = 120;
 
+export const createErpConnectionBodySyncIntervalMinutesMin = 5;
+export const createErpConnectionBodySyncIntervalMinutesMax = 10080;
+
 export const CreateErpConnectionBody = zod.object({
   label: zod.string().min(1).max(createErpConnectionBodyLabelMax),
   adapterKey: zod.enum(["coupa"]),
@@ -3884,6 +3903,14 @@ export const CreateErpConnectionBody = zod.object({
     .optional()
     .describe(
       "Adapter-specific settings. For Coupa: `instanceUrl`\n(required, https URL), optional `pageSize` (1-1000,\ndefault 200), optional `scope` (defaults to all read\nscopes).\n",
+    ),
+  syncIntervalMinutes: zod
+    .number()
+    .min(createErpConnectionBodySyncIntervalMinutesMin)
+    .max(createErpConnectionBodySyncIntervalMinutesMax)
+    .optional()
+    .describe(
+      "Recurring-sync cadence in minutes. Defaults to 120 (every 2 hours) when omitted.\n",
     ),
 });
 
@@ -3903,6 +3930,9 @@ export const GetErpConnectionHeader = zod.object({
     ),
 });
 
+export const getErpConnectionResponseConnectionSyncIntervalMinutesMin = 5;
+export const getErpConnectionResponseConnectionSyncIntervalMinutesMax = 10080;
+
 export const GetErpConnectionResponse = zod.object({
   connection: zod.object({
     id: zod.string(),
@@ -3919,6 +3949,19 @@ export const GetErpConnectionResponse = zod.object({
       ),
     lastSyncedAt: zod.coerce.date().nullish(),
     lastError: zod.string().nullish(),
+    syncIntervalMinutes: zod
+      .number()
+      .min(getErpConnectionResponseConnectionSyncIntervalMinutesMin)
+      .max(getErpConnectionResponseConnectionSyncIntervalMinutesMax)
+      .describe(
+        "How often the recurring sync scheduler enqueues a job for this connection, in minutes. Defaults to 120 (every 2 hours). Pausing the connection halts scheduling regardless of the cadence.\n",
+      ),
+    nextScheduledSyncAt: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        "Earliest wall-clock time at which the recurring scheduler will enqueue the next sync. NULL when the connection has never been scheduled. Bumped each time the scheduler enqueues, the cadence changes, or the connection resumes from paused.\n",
+      ),
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),
@@ -3942,12 +3985,26 @@ export const UpdateErpConnectionHeader = zod.object({
 
 export const updateErpConnectionBodyLabelMax = 120;
 
+export const updateErpConnectionBodySyncIntervalMinutesMin = 5;
+export const updateErpConnectionBodySyncIntervalMinutesMax = 10080;
+
 export const UpdateErpConnectionBody = zod.object({
   label: zod.string().min(1).max(updateErpConnectionBodyLabelMax).optional(),
   status: zod.enum(["active", "paused", "error"]).optional(),
   credentials: zod.record(zod.string(), zod.unknown()).optional(),
   settings: zod.record(zod.string(), zod.unknown()).optional(),
+  syncIntervalMinutes: zod
+    .number()
+    .min(updateErpConnectionBodySyncIntervalMinutesMin)
+    .max(updateErpConnectionBodySyncIntervalMinutesMax)
+    .optional()
+    .describe(
+      "Update the recurring-sync cadence in minutes. Setting this also resets `nextScheduledSyncAt` to `now() + interval`.\n",
+    ),
 });
+
+export const updateErpConnectionResponseConnectionSyncIntervalMinutesMin = 5;
+export const updateErpConnectionResponseConnectionSyncIntervalMinutesMax = 10080;
 
 export const UpdateErpConnectionResponse = zod.object({
   connection: zod.object({
@@ -3965,6 +4022,19 @@ export const UpdateErpConnectionResponse = zod.object({
       ),
     lastSyncedAt: zod.coerce.date().nullish(),
     lastError: zod.string().nullish(),
+    syncIntervalMinutes: zod
+      .number()
+      .min(updateErpConnectionResponseConnectionSyncIntervalMinutesMin)
+      .max(updateErpConnectionResponseConnectionSyncIntervalMinutesMax)
+      .describe(
+        "How often the recurring sync scheduler enqueues a job for this connection, in minutes. Defaults to 120 (every 2 hours). Pausing the connection halts scheduling regardless of the cadence.\n",
+      ),
+    nextScheduledSyncAt: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        "Earliest wall-clock time at which the recurring scheduler will enqueue the next sync. NULL when the connection has never been scheduled. Bumped each time the scheduler enqueues, the cadence changes, or the connection resumes from paused.\n",
+      ),
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),

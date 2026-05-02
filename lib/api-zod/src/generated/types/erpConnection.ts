@@ -30,6 +30,16 @@ values are never returned.
   credentialFields: string[];
   lastSyncedAt?: Date | null;
   lastError?: string | null;
+  /**
+   * How often the recurring sync scheduler enqueues a job for this connection, in minutes. Defaults to 120 (every 2 hours). Pausing the connection halts scheduling regardless of the cadence.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes: number;
+  /** Earliest wall-clock time at which the recurring scheduler will enqueue the next sync. NULL when the connection has never been scheduled. Bumped each time the scheduler enqueues, the cadence changes, or the connection resumes from paused.
+   */
+  nextScheduledSyncAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

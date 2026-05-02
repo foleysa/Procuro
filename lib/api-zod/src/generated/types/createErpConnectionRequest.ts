@@ -32,4 +32,11 @@ default 200), optional `scope` (defaults to all read
 scopes).
  */
   settings?: CreateErpConnectionRequestSettings;
+  /**
+   * Recurring-sync cadence in minutes. Defaults to 120 (every 2 hours) when omitted.
+
+   * @minimum 5
+   * @maximum 10080
+   */
+  syncIntervalMinutes?: number;
 }

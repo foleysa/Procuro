@@ -26,11 +26,26 @@ const router: IRouter = Router();
 const adapterKeySchema = z.enum(erpAdapterKeyValues);
 const statusSchema = z.enum(erpConnectionStatusValues);
 
+/**
+ * Recurring-sync cadence. Lower bound 5 min keeps the worker from
+ * stampeding upstream APIs faster than the typical OAuth rate-limit
+ * window. Upper bound 7 days (10 080 min) is "barely scheduled" — past
+ * that, operators should pause the connection instead.
+ */
+const SYNC_INTERVAL_MIN = 5;
+const SYNC_INTERVAL_MAX = 7 * 24 * 60;
+const syncIntervalSchema = z
+  .number()
+  .int()
+  .min(SYNC_INTERVAL_MIN)
+  .max(SYNC_INTERVAL_MAX);
+
 const CreateConnectionSchema = z.object({
   label: z.string().min(1).max(120),
   adapterKey: adapterKeySchema,
   credentials: z.record(z.string(), z.unknown()),
   settings: z.record(z.string(), z.unknown()).default({}),
+  syncIntervalMinutes: syncIntervalSchema.optional(),
 });
 
 const UpdateConnectionSchema = z.object({
@@ -38,6 +53,7 @@ const UpdateConnectionSchema = z.object({
   status: statusSchema.optional(),
   credentials: z.record(z.string(), z.unknown()).optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
+  syncIntervalMinutes: syncIntervalSchema.optional(),
 });
 
 const TestConnectionSchema = z.object({
@@ -57,6 +73,8 @@ interface ConnectionView {
   credentialFields: string[];
   lastSyncedAt: string | null;
   lastError: string | null;
+  syncIntervalMinutes: number;
+  nextScheduledSyncAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -75,9 +93,26 @@ function toView(
     credentialFields: summarizeCredentialFields(row.credentialsCipher).fields,
     lastSyncedAt: row.lastSyncedAt ? row.lastSyncedAt.toISOString() : null,
     lastError: row.lastError,
+    syncIntervalMinutes: row.syncIntervalMinutes,
+    nextScheduledSyncAt: row.nextScheduledSyncAt
+      ? row.nextScheduledSyncAt.toISOString()
+      : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Default cadence for newly-created ERP connections, in minutes. Mirrors
+ * the schema-level default (`erp_connections.sync_interval_minutes`)
+ * so the route can compute a non-null `next_scheduled_sync_at` on
+ * insert without having to round-trip through the DB to read the
+ * default back out.
+ */
+const DEFAULT_SYNC_INTERVAL_MINUTES = 120;
+
+function nextSyncAtFromNow(intervalMinutes: number): Date {
+  return new Date(Date.now() + intervalMinutes * 60_000);
 }
 
 // ---------- Adapter catalog (no DB) -----------------------------------
@@ -155,7 +190,13 @@ router.post(
         .json({ error: "Invalid body", details: parsed.error.format() });
       return;
     }
-    const { label, adapterKey, credentials, settings } = parsed.data;
+    const {
+      label,
+      adapterKey,
+      credentials,
+      settings,
+      syncIntervalMinutes,
+    } = parsed.data;
 
     const connector = getErpConnector(adapterKey);
     if (!connector) {
@@ -187,6 +228,7 @@ router.post(
       credentials as Record<string, unknown>,
     );
     const id = newId("erpc");
+    const interval = syncIntervalMinutes ?? DEFAULT_SYNC_INTERVAL_MINUTES;
     try {
       const [row] = await db
         .insert(erpConnectionsTable)
@@ -199,6 +241,12 @@ router.post(
           credentialsCipher: cipher,
           settings: settingsValid.data as Record<string, unknown>,
           watermarks: {},
+          syncIntervalMinutes: interval,
+          // First scheduled run lands one full interval after
+          // creation so the recurring scheduler doesn't double-fire
+          // on top of the operator's likely manual "Sync now" press
+          // immediately after setup.
+          nextScheduledSyncAt: nextSyncAtFromNow(interval),
         })
         .returning();
       res.status(201).json({ connection: toView(row!) });
@@ -257,7 +305,34 @@ router.patch(
       updatedAt: new Date(),
     };
     if (parsed.data.label !== undefined) updates.label = parsed.data.label;
-    if (parsed.data.status !== undefined) updates.status = parsed.data.status;
+    if (parsed.data.status !== undefined) {
+      updates.status = parsed.data.status;
+      // Resuming a previously-paused connection should fire the next
+      // recurring sync one cadence-window from now (not immediately,
+      // because the operator can press "Sync now" if they want a
+      // catch-up; not at the original schedule, because that may be
+      // far in the past while paused). Pausing leaves
+      // next_scheduled_sync_at untouched — the scheduler simply skips
+      // any non-active row.
+      if (
+        parsed.data.status === "active" &&
+        existing.status === "paused"
+      ) {
+        updates.nextScheduledSyncAt = nextSyncAtFromNow(
+          parsed.data.syncIntervalMinutes ?? existing.syncIntervalMinutes,
+        );
+      }
+    }
+    if (parsed.data.syncIntervalMinutes !== undefined) {
+      updates.syncIntervalMinutes = parsed.data.syncIntervalMinutes;
+      // Always reset the watermark to "now + new interval" when the
+      // cadence changes so a shorter interval doesn't immediately fire
+      // (the old long interval may still be in the future, OR a longer
+      // interval shouldn't keep an old "due now" watermark).
+      updates.nextScheduledSyncAt = nextSyncAtFromNow(
+        parsed.data.syncIntervalMinutes,
+      );
+    }
     if (parsed.data.settings !== undefined) {
       const settingsValid = connector.settingsSchema.safeParse(
         parsed.data.settings,
