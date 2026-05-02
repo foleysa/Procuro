@@ -7286,6 +7286,45 @@ export const CreateDefensePackBody = zod.object({
 });
 
 /**
+ * Rolls up the Learn-loop feedback rows so the Results & Billing page can show Defense Pack ROI. Uses the latest outcome per pack (so a buyer who corrects an earlier note is not double-counted). `avoidedUsd` sums `annual_baseline_usd` of contracts referenced by packs whose latest outcome was `supplier_held_price`.
+
+ * @summary Aggregated Defense Pack outcomes for the active tenant
+ */
+export const GetDefensePackSummaryHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetDefensePackSummaryResponse = zod
+  .object({
+    packsGenerated: zod
+      .number()
+      .describe("Total Defense Packs generated for this tenant."),
+    packsUsed: zod
+      .number()
+      .describe(
+        'Distinct packs whose latest outcome reports `used = \"yes\"`.',
+      ),
+    supplierHeldPriceCount: zod
+      .number()
+      .describe(
+        "Distinct packs whose latest outcome category is `supplier_held_price`.",
+      ),
+    avoidedUsd: zod
+      .number()
+      .describe(
+        "Sum of `contracts.annual_baseline_usd` for packs whose latest outcome was `supplier_held_price` and whose target identified a contract.\n",
+      ),
+  })
+  .describe(
+    "Aggregated Defense Pack outcomes for the Results & Billing tile. Counts use the latest outcome per pack so an amended note does not double-count.\n",
+  );
+
+/**
  * Returns the pack with the full `sections` array and the frozen
 `evidenceSnapshot` so the Evidence Room view replays the
 cited signals exactly as they were at generation time, even

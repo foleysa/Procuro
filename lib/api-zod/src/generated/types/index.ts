@@ -190,6 +190,7 @@ export * from "./defensePackStaleness";
 export * from "./defensePackStaleSignalDrift";
 export * from "./defensePackStatus";
 export * from "./defensePackSummary";
+export * from "./defensePackSummaryStats";
 export * from "./defensePackTarget";
 export * from "./disclosurePolicy";
 export * from "./erpAdapterDescriptor";

@@ -3424,6 +3424,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /defense-packs/summary:
+    get:
+      operationId: getDefensePackSummary
+      tags:
+      - defense-packs
+      summary: Aggregated Defense Pack outcomes for the active tenant
+      description: 'Rolls up the Learn-loop feedback rows so the Results &
+        Billing page can show Defense Pack ROI. Uses the latest
+        outcome per pack (so a buyer who corrects an earlier note is
+        not double-counted). `avoidedUsd` sums `annual_baseline_usd`
+        of contracts referenced by packs whose latest outcome was
+        `supplier_held_price`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Defense Pack summary stats.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefensePackSummaryStats'
   /defense-packs/{id}:
     get:
       operationId: getDefensePack
@@ -11148,6 +11171,34 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/DefensePackEvidenceSnapshotItem'
+    DefensePackSummaryStats:
+      type: object
+      required:
+      - packsGenerated
+      - packsUsed
+      - supplierHeldPriceCount
+      - avoidedUsd
+      description: 'Aggregated Defense Pack outcomes for the Results &
+        Billing tile. Counts use the latest outcome per pack so an
+        amended note does not double-count.
+
+        '
+      properties:
+        packsGenerated:
+          type: integer
+          description: Total Defense Packs generated for this tenant.
+        packsUsed:
+          type: integer
+          description: Distinct packs whose latest outcome reports `used = "yes"`.
+        supplierHeldPriceCount:
+          type: integer
+          description: Distinct packs whose latest outcome category is `supplier_held_price`.
+        avoidedUsd:
+          type: number
+          description: 'Sum of `contracts.annual_baseline_usd` for packs whose latest
+            outcome was `supplier_held_price` and whose target identified a contract.
+
+            '
     DefensePackListResponse:
       type: object
       required:

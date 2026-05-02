@@ -15,6 +15,7 @@
 import { Router, type IRouter } from "express";
 import {
   db,
+  contractsTable,
   defensePacksTable,
   defensePackOutcomesTable,
   defensePackPositionValues,
@@ -293,6 +294,69 @@ router.post("/defense-packs", tenantMiddleware, async (req, res) => {
   );
 
   res.status(201).json(toDetail(persisted));
+});
+
+// ---------------------------------------------------------------------
+// GET /defense-packs/summary
+// ---------------------------------------------------------------------
+// Aggregates Defense Pack outcomes so the Results & Billing page can
+// show ROI of the Defense Pack feature. Uses the LATEST outcome per
+// pack so a buyer who corrects an earlier note is not double-counted.
+// `avoidedUsd` sums `contracts.annual_baseline_usd` for packs whose
+// latest outcome was `supplier_held_price` AND whose target identifies
+// a contract — that contract's annual baseline is the run-rate the
+// supplier was attempting to escalate, hence "avoided" once held flat.
+router.get("/defense-packs/summary", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+
+  const [{ count: packsGenerated }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(defensePacksTable)
+    .where(eq(defensePacksTable.orgId, orgId));
+
+  const result = await db.execute(sql`
+    WITH latest_outcomes AS (
+      SELECT DISTINCT ON (pack_id)
+        pack_id,
+        used,
+        outcome_category
+      FROM defense_pack_outcomes
+      WHERE org_id = ${orgId}
+      ORDER BY pack_id, created_at DESC
+    )
+    SELECT
+      COUNT(*) FILTER (WHERE lo.used = 'yes')::int AS packs_used,
+      COUNT(*) FILTER (
+        WHERE lo.outcome_category = 'supplier_held_price'
+      )::int AS supplier_held_price_count,
+      COALESCE(SUM(
+        CASE
+          WHEN lo.outcome_category = 'supplier_held_price'
+            THEN c.annual_baseline_usd::numeric
+          ELSE 0
+        END
+      ), 0)::numeric AS avoided_usd
+    FROM latest_outcomes lo
+    JOIN ${defensePacksTable} dp
+      ON dp.id = lo.pack_id AND dp.org_id = ${orgId}
+    LEFT JOIN ${contractsTable} c
+      ON c.org_id = ${orgId}
+     AND c.id = (dp.target ->> 'contractId')
+  `);
+  const row = result.rows[0] as
+    | {
+        packs_used: number | null;
+        supplier_held_price_count: number | null;
+        avoided_usd: string | number | null;
+      }
+    | undefined;
+
+  res.json({
+    packsGenerated: Number(packsGenerated ?? 0),
+    packsUsed: Number(row?.packs_used ?? 0),
+    supplierHeldPriceCount: Number(row?.supplier_held_price_count ?? 0),
+    avoidedUsd: Number(row?.avoided_usd ?? 0),
+  });
 });
 
 // ---------------------------------------------------------------------

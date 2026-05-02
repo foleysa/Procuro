@@ -3993,6 +3993,22 @@ export type DefensePack = DefensePackSummary & {
   evidenceSnapshot: DefensePackEvidenceSnapshotItem[];
 };
 
+/**
+ * Aggregated Defense Pack outcomes for the Results & Billing tile. Counts use the latest outcome per pack so an amended note does not double-count.
+
+ */
+export interface DefensePackSummaryStats {
+  /** Total Defense Packs generated for this tenant. */
+  packsGenerated: number;
+  /** Distinct packs whose latest outcome reports `used = "yes"`. */
+  packsUsed: number;
+  /** Distinct packs whose latest outcome category is `supplier_held_price`. */
+  supplierHeldPriceCount: number;
+  /** Sum of `contracts.annual_baseline_usd` for packs whose latest outcome was `supplier_held_price` and whose target identified a contract.
+   */
+  avoidedUsd: number;
+}
+
 export interface DefensePackListResponse {
   items: DefensePackSummary[];
 }

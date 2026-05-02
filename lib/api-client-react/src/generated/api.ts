@@ -90,6 +90,7 @@ import type {
   DefensePack,
   DefensePackListResponse,
   DefensePackOutcome,
+  DefensePackSummaryStats,
   ErpAdapterListResponse,
   ErpConnectionListResponse,
   ErpConnectionResponse,
@@ -9695,6 +9696,83 @@ export const useCreateDefensePack = <
 > => {
   return useMutation(getCreateDefensePackMutationOptions(options));
 };
+
+/**
+ * Rolls up the Learn-loop feedback rows so the Results & Billing page can show Defense Pack ROI. Uses the latest outcome per pack (so a buyer who corrects an earlier note is not double-counted). `avoidedUsd` sums `annual_baseline_usd` of contracts referenced by packs whose latest outcome was `supplier_held_price`.
+
+ * @summary Aggregated Defense Pack outcomes for the active tenant
+ */
+export const getGetDefensePackSummaryUrl = () => {
+  return `/api/defense-packs/summary`;
+};
+
+export const getDefensePackSummary = async (
+  options?: RequestInit,
+): Promise<DefensePackSummaryStats> => {
+  return customFetch<DefensePackSummaryStats>(getGetDefensePackSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDefensePackSummaryQueryKey = () => {
+  return [`/api/defense-packs/summary`] as const;
+};
+
+export const getGetDefensePackSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDefensePackSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDefensePackSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDefensePackSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDefensePackSummary>>
+  > = ({ signal }) => getDefensePackSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDefensePackSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDefensePackSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDefensePackSummary>>
+>;
+export type GetDefensePackSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregated Defense Pack outcomes for the active tenant
+ */
+
+export function useGetDefensePackSummary<
+  TData = Awaited<ReturnType<typeof getDefensePackSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDefensePackSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDefensePackSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the pack with the full `sections` array and the frozen

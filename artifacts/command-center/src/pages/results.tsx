@@ -1,10 +1,14 @@
-import { useGetBillingSummary } from "@workspace/api-client-react";
+import {
+  useGetBillingSummary,
+  useGetDefensePackSummary,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUsd, formatPercent, leverLabel } from "@/lib/format";
-import { Loader2, TrendingUp, DollarSign } from "lucide-react";
+import { Loader2, TrendingUp, DollarSign, ShieldCheck } from "lucide-react";
 
 export default function Results() {
   const { data, isLoading, error } = useGetBillingSummary();
+  const dpQ = useGetDefensePackSummary();
 
   if (isLoading) {
     return (
@@ -71,6 +75,56 @@ export default function Results() {
         </CardContent>
       </Card>
 
+      <Card data-testid="card-defense-pack-roi">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5" /> Defense Pack outcomes
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {dpQ.isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Defense Pack outcomes…
+            </div>
+          ) : dpQ.error || !dpQ.data ? (
+            <p className="text-sm text-destructive">
+              Failed to load Defense Pack outcomes.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Kpi
+                  label="Packs generated"
+                  value={String(dpQ.data.packsGenerated)}
+                  testId="kpi-dp-generated"
+                />
+                <Kpi
+                  label="Used in negotiation"
+                  value={String(dpQ.data.packsUsed)}
+                  testId="kpi-dp-used"
+                />
+                <Kpi
+                  label="Supplier held price"
+                  value={String(dpQ.data.supplierHeldPriceCount)}
+                  testId="kpi-dp-held"
+                />
+                <Kpi
+                  label="$ avoided"
+                  value={formatUsd(dpQ.data.avoidedUsd, { compact: true })}
+                  accent
+                  testId="kpi-dp-avoided"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">
+                Counts use the latest feedback per pack. "$ avoided" sums the
+                annual baseline of contracts referenced by packs whose
+                supplier ultimately held price.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader><CardTitle>Realized savings by lever</CardTitle></CardHeader>
         <CardContent>
@@ -109,9 +163,20 @@ export default function Results() {
   );
 }
 
-function Kpi({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Kpi({
+  label,
+  value,
+  accent,
+  testId,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  testId?: string;
+}) {
   return (
     <div
+      data-testid={testId}
       className={`rounded-lg p-4 border ${accent ? "bg-primary/5 border-primary/40" : "bg-card"}`}
     >
       <div className="text-xs uppercase text-muted-foreground tracking-wide">{label}</div>
