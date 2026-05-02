@@ -1,0 +1,30 @@
+Confirmed: no paying tenants, pre-revenue, dev only inside Replit. Proceed with #248.
+Approach:
+
+Don't use db push. It's been failing on the alerts.source rename ambiguity — that's the root cause. Use drizzle-kit generate instead, which will prompt on rename ambiguities and produce a versioned migration file we can commit.
+Run pnpm drizzle-kit generate from lib/db. If it prompts you with something like "is alerts.source a rename of an existing column, or a new column?" — surface the prompt to me. Don't guess. I'll answer based on the #117 alerts redesign intent.
+The intended end state for alerts (from replit.md):
+
+Drop or rename: body, ref_type, ref_id, metadata, resolved_at
+Add: state, source, payload, acknowledgedAt, snoozedUntil
+Plus whatever #219/#220 added: signal_key, last_seen_at, snoozed_until
+Note snoozed_until and snoozedUntil may be the same column under different naming conventions — flag if you see both, don't dedupe silently.
+
+
+For data preservation: Since there are no paying tenants and dev data is disposable, you don't need to backfill body → payload or resolved_at → acknowledgedAt. Drop the old columns clean. Confirm with me before dropping if any old column has data you think might matter.
+Generate, then inspect. Before applying the migration, show me the generated SQL file. I want to see the diff before it runs. This is the human-in-the-loop checkpoint.
+Apply to dev. Use the project's standard apply path (likely pnpm drizzle-kit migrate or equivalent — check package.json scripts).
+Verify dev matches schema source-of-truth. Run a query like SELECT column_name FROM information_schema.columns WHERE table_name = 'alerts' and confirm it matches lib/db/src/schema/alerts.ts.
+Run typecheck and the API server. If #240, #231, and #241 are downstream of the schema drift, they should clear or at least change shape once dev is reconciled. Report what's still failing.
+Revert the #209 workaround. The Today aggregator's alerts sub-query was rewritten to use only drift-safe columns. Once dev has the new shape, restore the original query (filter on state not resolvedAt IS NULL, group by state not just severity). This is part of #248's definition of done.
+Then re-run Replit Publish. Diff dev (now correct) against prod (still drifted). Apply. Verify prod matches dev. #226 closes.
+Then immediately pivot to #249 (funnel schema drift). Same pattern: generate, inspect, apply, publish. Don't wait for me to ask.
+
+Do not pick up any feature work (the active 10 list, anything from "Waiting in line") until #248, #226, #249, #240, #231, #241, #238 are all closed. Report progress after each one. If anything other than schema drift is causing #240/#231/#241/#238, escalate to me with the actual error before guessing at a fix.
+Stop conditions — surface to me, do not proceed:
+
+drizzle-kit generate produces output that doesn't reconcile to the #117 redesign intent
+Migration would drop a column that has data in dev you can't identify the source of
+Typecheck still fails after schema is reconciled
+API server still won't start after schema is reconciled
+Anything in the prod Publish diff looks unexpected (e.g. tables you don't recognize)
