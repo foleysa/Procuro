@@ -6,7 +6,7 @@
  * pull every workbench dataset.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListCollectors,
@@ -858,6 +858,38 @@ function HealthTab({ tier }: { tier: TierMode }) {
 
 // -------- Tab: Lineage --------------------------------------------------
 
+// Visual tones for each node "kind" in the lineage diagram. Posture
+// classes get warm/cool fills so collectors are quickly grouped by
+// risk class, and the three downstream kinds (table / mart / consumer)
+// each get a distinct hue so the four-stage flow reads at a glance.
+const LINEAGE_TONE: Record<
+  string,
+  { fill: string; stroke: string; text: string }
+> = {
+  public_api: { fill: "#dcfce7", stroke: "#15803d", text: "#14532d" },
+  tos_restricted: { fill: "#fef9c3", stroke: "#a16207", text: "#713f12" },
+  gray_hat: { fill: "#fee2e2", stroke: "#b91c1c", text: "#7f1d1d" },
+  table: { fill: "#e0e7ff", stroke: "#4338ca", text: "#1e1b4b" },
+  mart: { fill: "#cffafe", stroke: "#0e7490", text: "#083344" },
+  consumer: { fill: "#f5d0fe", stroke: "#a21caf", text: "#3b0764" },
+};
+
+const LINEAGE_COLUMNS = [
+  { x: 40, label: "Collectors" },
+  { x: 320, label: "BQ Tables" },
+  { x: 600, label: "Marts" },
+  { x: 880, label: "Consumers" },
+];
+const LINEAGE_NODE_W = 220;
+const LINEAGE_NODE_H = 56;
+const LINEAGE_ROW_GAP = 14;
+const LINEAGE_PAD_TOP = 56;
+const LINEAGE_PAD_BOTTOM = 24;
+
+function truncateLineageLabel(s: string, max = 28): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 function LineageTab({ tier }: { tier: TierMode }) {
   const { data, isLoading } = useGetCollectorLineage();
 
@@ -869,9 +901,9 @@ function LineageTab({ tier }: { tier: TierMode }) {
     [data, tier],
   );
 
-  // Down-filter edges to only those whose source is in the filtered
-  // collector set (or downstream of one). Simple two-step BFS so the
-  // diagram stays consistent with the tier filter.
+  // Down-filter edges to only those reachable from the tier-filtered
+  // collector set. Simple three-step BFS so the diagram stays
+  // consistent with the tier filter.
   const reachable = useMemo(() => {
     const ids = new Set(filteredCollectors.map((c) => c.id));
     const tables = new Set<string>();
@@ -899,127 +931,187 @@ function LineageTab({ tier }: { tier: TierMode }) {
       }
     }
     return {
-      tables,
-      marts,
-      consumers,
+      tables: Array.from(tables).sort(),
+      marts: Array.from(marts).sort(),
+      consumers: Array.from(consumers).sort(),
       collectorEdges,
       tableEdges,
       martEdges,
     };
   }, [data, filteredCollectors]);
 
-  // Build a deterministic Mermaid `flowchart LR` source from the
-  // filtered graph. We sanitise IDs (Mermaid is picky about dots and
-  // dashes) and stash the human-readable label inside the node.
-  const mermaidSource = useMemo(() => {
-    const sanitize = (s: string) =>
-      s.replace(/[^a-zA-Z0-9_]/g, "_").replace(/^_+|_+$/g, "");
-    const lines: string[] = ["flowchart LR"];
-    // Class definitions for posture-class tone in the diagram.
-    lines.push(
-      "classDef public_api fill:#dcfce7,stroke:#15803d,color:#14532d;",
-    );
-    lines.push(
-      "classDef tos_restricted fill:#fef9c3,stroke:#a16207,color:#713f12;",
-    );
-    lines.push(
-      "classDef gray_hat fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d;",
-    );
-    lines.push(
-      "classDef table fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b;",
-    );
-    lines.push(
-      "classDef mart fill:#cffafe,stroke:#0e7490,color:#083344;",
-    );
-    lines.push(
-      "classDef consumer fill:#f5d0fe,stroke:#a21caf,color:#3b0764;",
-    );
-
-    const seen = new Set<string>();
-    for (const c of filteredCollectors) {
-      const id = `c_${sanitize(c.id)}`;
-      if (!seen.has(id)) {
-        const label = `${c.name.replace(/"/g, "'")} [${c.disclosureTier}]`;
-        lines.push(`${id}["${label}"]:::${c.postureClass}`);
-        seen.add(id);
-      }
+  // Lay out nodes in four vertical columns. We give every node a
+  // stable id namespaced by kind so the same string (e.g. a mart name
+  // shadowing a table name) can't collide in the highlight graph.
+  const layout = useMemo(() => {
+    type Node = {
+      id: string;
+      nodeId: string;
+      label: string;
+      sub?: string;
+      kind: "collector" | "table" | "mart" | "consumer";
+      tone: keyof typeof LINEAGE_TONE;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      cx: number;
+      cy: number;
+    };
+    const cols: Node[][] = [[], [], [], []];
+    filteredCollectors.forEach((c, i) => {
+      const x = LINEAGE_COLUMNS[0].x;
+      const y = LINEAGE_PAD_TOP + i * (LINEAGE_NODE_H + LINEAGE_ROW_GAP);
+      cols[0].push({
+        id: c.id,
+        nodeId: `c:${c.id}`,
+        label: c.name,
+        sub: c.disclosureTier,
+        kind: "collector",
+        tone: c.postureClass,
+        x,
+        y,
+        w: LINEAGE_NODE_W,
+        h: LINEAGE_NODE_H,
+        cx: x + LINEAGE_NODE_W / 2,
+        cy: y + LINEAGE_NODE_H / 2,
+      });
+    });
+    const downstream: Array<{
+      kind: "table" | "mart" | "consumer";
+      ids: string[];
+      colIdx: number;
+      prefix: string;
+      tone: keyof typeof LINEAGE_TONE;
+    }> = [
+      {
+        kind: "table",
+        ids: reachable.tables,
+        colIdx: 1,
+        prefix: "t",
+        tone: "table",
+      },
+      {
+        kind: "mart",
+        ids: reachable.marts,
+        colIdx: 2,
+        prefix: "m",
+        tone: "mart",
+      },
+      {
+        kind: "consumer",
+        ids: reachable.consumers,
+        colIdx: 3,
+        prefix: "o",
+        tone: "consumer",
+      },
+    ];
+    for (const group of downstream) {
+      group.ids.forEach((id, i) => {
+        const x = LINEAGE_COLUMNS[group.colIdx].x;
+        const y = LINEAGE_PAD_TOP + i * (LINEAGE_NODE_H + LINEAGE_ROW_GAP);
+        cols[group.colIdx].push({
+          id,
+          nodeId: `${group.prefix}:${id}`,
+          label: id,
+          kind: group.kind,
+          tone: group.tone,
+          x,
+          y,
+          w: LINEAGE_NODE_W,
+          h: LINEAGE_NODE_H,
+          cx: x + LINEAGE_NODE_W / 2,
+          cy: y + LINEAGE_NODE_H / 2,
+        });
+      });
     }
-    for (const t of reachable.tables) {
-      const id = `t_${sanitize(t)}`;
-      if (!seen.has(id)) {
-        lines.push(`${id}[("${t.replace(/"/g, "'")}")]:::table`);
-        seen.add(id);
-      }
-    }
-    for (const m of reachable.marts) {
-      const id = `m_${sanitize(m)}`;
-      if (!seen.has(id)) {
-        lines.push(`${id}[/"${m.replace(/"/g, "'")}"/]:::mart`);
-        seen.add(id);
-      }
-    }
-    for (const c of reachable.consumers) {
-      const id = `o_${sanitize(c)}`;
-      if (!seen.has(id)) {
-        lines.push(`${id}(["${c.replace(/"/g, "'")}"]):::consumer`);
-        seen.add(id);
-      }
-    }
-    for (const e of reachable.collectorEdges) {
-      lines.push(`c_${sanitize(e.from)} --> t_${sanitize(e.to)}`);
-    }
-    for (const e of reachable.tableEdges) {
-      lines.push(`t_${sanitize(e.from)} --> m_${sanitize(e.to)}`);
-    }
-    for (const e of reachable.martEdges) {
-      lines.push(`m_${sanitize(e.from)} --> o_${sanitize(e.to)}`);
-    }
-    return lines.join("\n");
+    const allNodes = cols.flat();
+    const positions = new Map(allNodes.map((n) => [n.nodeId, n]));
+    const lastCol = LINEAGE_COLUMNS[LINEAGE_COLUMNS.length - 1];
+    const svgWidth = lastCol.x + LINEAGE_NODE_W + 40;
+    const maxRows = Math.max(1, ...cols.map((c) => c.length));
+    const svgHeight =
+      LINEAGE_PAD_TOP +
+      maxRows * (LINEAGE_NODE_H + LINEAGE_ROW_GAP) +
+      LINEAGE_PAD_BOTTOM;
+    return { cols, allNodes, positions, svgWidth, svgHeight };
   }, [filteredCollectors, reachable]);
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [renderError, setRenderError] = useState<string | null>(null);
+  // Build forward / reverse adjacency on the kind-prefixed node ids so
+  // we can BFS in either direction when a node is hovered or selected.
+  const { forward, reverse, allEdges } = useMemo(() => {
+    const fwd = new Map<string, string[]>();
+    const rev = new Map<string, string[]>();
+    const edges: Array<{ from: string; to: string; key: string }> = [];
+    const add = (from: string, to: string) => {
+      if (!fwd.has(from)) fwd.set(from, []);
+      fwd.get(from)!.push(to);
+      if (!rev.has(to)) rev.set(to, []);
+      rev.get(to)!.push(from);
+      edges.push({ from, to, key: `${from}->${to}` });
+    };
+    for (const e of reachable.collectorEdges) add(`c:${e.from}`, `t:${e.to}`);
+    for (const e of reachable.tableEdges) add(`t:${e.from}`, `m:${e.to}`);
+    for (const e of reachable.martEdges) add(`m:${e.from}`, `o:${e.to}`);
+    return { forward: fwd, reverse: rev, allEdges: edges };
+  }, [reachable]);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    if (filteredCollectors.length === 0) {
-      containerRef.current.innerHTML = "";
-      setRenderError(null);
-      return;
-    }
-    let cancelled = false;
-    setRenderError(null);
-    (async () => {
-      try {
-        const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: "neutral",
-          flowchart: { htmlLabels: true, useMaxWidth: true },
-          securityLevel: "strict",
-        });
-        const id = `lineage-mermaid-${Math.random().toString(36).slice(2, 8)}`;
-        const { svg } = await mermaid.render(id, mermaidSource);
-        if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = svg;
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setRenderError(
-            err instanceof Error ? err.message : "Failed to render diagram",
-          );
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Hover wins over click so operators can quickly probe other nodes
+  // without losing their pinned selection.
+  const activeId = hoverId ?? selectedId;
+
+  // Compute the union of upstream + downstream subgraphs from the
+  // active node. Returns null sets when nothing is active so the
+  // renderer can short-circuit the dimming logic.
+  const highlight = useMemo<{
+    nodes: Set<string> | null;
+    edges: Set<string> | null;
+  }>(() => {
+    if (!activeId) return { nodes: null, edges: null };
+    const nodes = new Set<string>([activeId]);
+    const edges = new Set<string>();
+    const walk = (start: string, adj: Map<string, string[]>, fwd: boolean) => {
+      const stack = [start];
+      while (stack.length > 0) {
+        const n = stack.pop()!;
+        for (const neigh of adj.get(n) ?? []) {
+          const key = fwd ? `${n}->${neigh}` : `${neigh}->${n}`;
+          edges.add(key);
+          if (!nodes.has(neigh)) {
+            nodes.add(neigh);
+            stack.push(neigh);
+          }
         }
       }
-    })();
-    return () => {
-      cancelled = true;
     };
-  }, [mermaidSource, filteredCollectors.length]);
+    walk(activeId, forward, true);
+    walk(activeId, reverse, false);
+    return { nodes, edges };
+  }, [activeId, forward, reverse]);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Lineage</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>Lineage</CardTitle>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span>
+              Hover or click a node to trace its upstream &amp; downstream flow.
+            </span>
+            {selectedId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedId(null)}
+                data-testid="lineage-clear-selection"
+              >
+                Clear selection
+              </Button>
+            )}
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading && (
@@ -1032,36 +1124,167 @@ function LineageTab({ tier }: { tier: TierMode }) {
             No collectors match the current tier filter.
           </p>
         )}
-        {renderError && (
-          <p
-            className="text-sm text-destructive"
-            data-testid="lineage-mermaid-error"
+        {filteredCollectors.length > 0 && (
+          <div
+            className="w-full overflow-auto rounded-md border bg-card"
+            data-testid="lineage-graph"
           >
-            Diagram render failed: {renderError}
-          </p>
-        )}
-        <div
-          ref={containerRef}
-          data-testid="lineage-mermaid"
-          className="mermaid w-full overflow-auto text-sm"
-        />
-        {/* Hidden, machine-readable nodes — preserved so existing
-            tests that key off `lineage-collector-<id>` /
-            `lineage-tier-<id>` keep passing without being visually
-            duplicated next to the diagram. */}
-        <div className="sr-only">
-          {filteredCollectors.map((c) => (
-            <span
-              key={c.id}
-              data-testid={`lineage-collector-${c.id}`}
-              data-tier={c.disclosureTier}
+            <svg
+              width={layout.svgWidth}
+              height={layout.svgHeight}
+              viewBox={`0 0 ${layout.svgWidth} ${layout.svgHeight}`}
+              role="img"
+              aria-label="Collector lineage diagram"
+              className="block"
             >
-              <span data-testid={`lineage-tier-${c.id}`}>
-                {c.disclosureTier}
-              </span>
-            </span>
-          ))}
-        </div>
+              <defs>
+                <marker
+                  id="lineage-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8" />
+                </marker>
+                <marker
+                  id="lineage-arrow-active"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8" />
+                </marker>
+              </defs>
+
+              {LINEAGE_COLUMNS.map((col) => (
+                <text
+                  key={col.label}
+                  x={col.x + LINEAGE_NODE_W / 2}
+                  y={28}
+                  textAnchor="middle"
+                  className="fill-muted-foreground"
+                  style={{ fontSize: 12, fontWeight: 600 }}
+                >
+                  {col.label}
+                </text>
+              ))}
+
+              {/* Edges drawn first so nodes sit on top and remain
+                  clickable across the bezier curves. */}
+              {allEdges.map(({ from, to, key }) => {
+                const a = layout.positions.get(from);
+                const b = layout.positions.get(to);
+                if (!a || !b) return null;
+                const x1 = a.x + a.w;
+                const y1 = a.cy;
+                const x2 = b.x;
+                const y2 = b.cy;
+                const dx = Math.max(40, (x2 - x1) / 2);
+                const path = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+                const isActive = highlight.edges?.has(key) ?? false;
+                const isDimmed =
+                  highlight.edges !== null && !isActive;
+                return (
+                  <path
+                    key={key}
+                    d={path}
+                    fill="none"
+                    stroke={isActive ? "#1d4ed8" : "#94a3b8"}
+                    strokeWidth={isActive ? 2 : 1.25}
+                    strokeOpacity={isDimmed ? 0.12 : isActive ? 0.95 : 0.6}
+                    markerEnd={
+                      isActive
+                        ? "url(#lineage-arrow-active)"
+                        : "url(#lineage-arrow)"
+                    }
+                    data-testid={`lineage-edge-${key}`}
+                    data-active={isActive ? "true" : "false"}
+                  />
+                );
+              })}
+
+              {layout.allNodes.map((n) => {
+                const tone = LINEAGE_TONE[n.tone] ?? LINEAGE_TONE.table;
+                const isActive = highlight.nodes?.has(n.nodeId) ?? false;
+                const isDimmed =
+                  highlight.nodes !== null && !isActive;
+                const isSelected = selectedId === n.nodeId;
+                const testid =
+                  n.kind === "collector"
+                    ? `lineage-collector-${n.id}`
+                    : `lineage-${n.kind}-${n.id}`;
+                return (
+                  <g
+                    key={n.nodeId}
+                    transform={`translate(${n.x},${n.y})`}
+                    onMouseEnter={() => setHoverId(n.nodeId)}
+                    onMouseLeave={() => setHoverId(null)}
+                    onClick={() =>
+                      setSelectedId((cur) =>
+                        cur === n.nodeId ? null : n.nodeId,
+                      )
+                    }
+                    style={{
+                      cursor: "pointer",
+                      opacity: isDimmed ? 0.28 : 1,
+                      transition: "opacity 120ms",
+                    }}
+                    data-testid={testid}
+                    data-tier={n.kind === "collector" ? n.sub : undefined}
+                    data-active={isActive ? "true" : "false"}
+                    data-selected={isSelected ? "true" : "false"}
+                  >
+                    <title>{n.label}</title>
+                    <rect
+                      width={n.w}
+                      height={n.h}
+                      rx={10}
+                      ry={10}
+                      fill={tone.fill}
+                      stroke={isSelected ? "#1d4ed8" : tone.stroke}
+                      strokeWidth={isSelected ? 2.5 : 1.5}
+                    />
+                    <text
+                      x={12}
+                      y={n.sub ? 22 : n.h / 2 + 4}
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        fill: tone.text,
+                      }}
+                    >
+                      {truncateLineageLabel(n.label)}
+                    </text>
+                    {n.sub && (
+                      <text
+                        x={12}
+                        y={40}
+                        data-testid={
+                          n.kind === "collector"
+                            ? `lineage-tier-${n.id}`
+                            : undefined
+                        }
+                        style={{
+                          fontSize: 10,
+                          fill: tone.text,
+                          opacity: 0.85,
+                        }}
+                      >
+                        {n.sub}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
