@@ -109,6 +109,24 @@ to surface a contract as a renewal alert. Default 90.
   contractRenewalAlertDays?: number;
 }
 
+/**
+ * One entry in the `org_settings_audit_log` feed. Mirrors the
+per-key shape of `SupplierAuditEntry` / `ContractAuditEntry` so
+the FE can render a unified "who changed what" history.
+
+ */
+export interface OrgSettingsAuditEntry {
+  id: string;
+  /** Settings key that changed, e.g. `disclosurePolicy` or
+`contractRenewalAlertDays`.
+ */
+  key: string;
+  actorEmail: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  createdAt: string;
+}
+
 export type LeverId = (typeof LeverId)[keyof typeof LeverId];
 
 export const LeverId = {
@@ -4407,6 +4425,15 @@ accepted standalone.
 
  */
 export type OrgIdHeaderParameter = string;
+
+export type ListMeSettingsAuditParams = {
+  /**
+   * Maximum number of entries to return. Defaults to 10.
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
 
 export type GetSpendOverviewParams = {
   /**

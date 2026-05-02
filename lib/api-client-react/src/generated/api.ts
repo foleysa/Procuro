@@ -117,6 +117,7 @@ import type {
   ListIntelligenceSignalsParams,
   ListJobsParams,
   ListMarketSignalsParams,
+  ListMeSettingsAuditParams,
   ListOpportunitiesParams,
   ListRateCardsParams,
   ListRecentlyFailedJobsParams,
@@ -133,6 +134,7 @@ import type {
   OpportunityDetail,
   OpportunityListResponse,
   Org,
+  OrgSettingsAuditEntry,
   OverrideSupplierBillingCurrency400,
   PatchAlertChannelRequest,
   PatchAlertRuleRequest,
@@ -402,6 +404,10 @@ column. Currently exposes the disclosure policy; other keys in
 `settings` are preserved untouched. Returns the same shape as
 `GET /me` so clients can refresh their cached `MeResponse`.
 
+Every changed key is appended to `org_settings_audit_log` with
+the actor email and the previous/new value, so ops can answer
+"who flipped the disclosure policy?" without crawling DB backups.
+
  * @summary Update tenant-wide preferences
  */
 export const getPatchMeSettingsUrl = () => {
@@ -486,6 +492,110 @@ export const usePatchMeSettings = <
 > => {
   return useMutation(getPatchMeSettingsMutationOptions(options));
 };
+
+/**
+ * Returns the most recent changes to `orgs.settings` in reverse-chronological order. Powers the "Last changed by …" history block on the Settings page so members can see who flipped a tenant-wide preference and when, without crawling the admin-audit-log feed.
+ * @summary Recent changes to tenant-wide preferences
+ */
+export const getListMeSettingsAuditUrl = (
+  params?: ListMeSettingsAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/me/settings/audit?${stringifiedParams}`
+    : `/api/me/settings/audit`;
+};
+
+export const listMeSettingsAudit = async (
+  params?: ListMeSettingsAuditParams,
+  options?: RequestInit,
+): Promise<OrgSettingsAuditEntry[]> => {
+  return customFetch<OrgSettingsAuditEntry[]>(
+    getListMeSettingsAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListMeSettingsAuditQueryKey = (
+  params?: ListMeSettingsAuditParams,
+) => {
+  return [`/api/me/settings/audit`, ...(params ? [params] : [])] as const;
+};
+
+export const getListMeSettingsAuditQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMeSettingsAudit>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListMeSettingsAuditParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMeSettingsAudit>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListMeSettingsAuditQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listMeSettingsAudit>>
+  > = ({ signal }) =>
+    listMeSettingsAudit(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMeSettingsAudit>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListMeSettingsAuditQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMeSettingsAudit>>
+>;
+export type ListMeSettingsAuditQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recent changes to tenant-wide preferences
+ */
+
+export function useListMeSettingsAudit<
+  TData = Awaited<ReturnType<typeof listMeSettingsAudit>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListMeSettingsAuditParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMeSettingsAudit>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListMeSettingsAuditQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the live data the in-app Trust Center page renders so a

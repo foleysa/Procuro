@@ -126,6 +126,13 @@ paths:
 
         `GET /me` so clients can refresh their cached `MeResponse`.
 
+
+        Every changed key is appended to `org_settings_audit_log` with
+
+        the actor email and the previous/new value, so ops can answer
+
+        "who flipped the disclosure policy?" without crawling DB backups.
+
         '
       parameters:
       - $ref: '#/components/parameters/OrgIdHeader'
@@ -142,6 +149,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MeResponse'
+  /me/settings/audit:
+    get:
+      operationId: listMeSettingsAudit
+      tags:
+      - orgs
+      summary: Recent changes to tenant-wide preferences
+      description: 'Returns the most recent changes to `orgs.settings` in
+        reverse-chronological order. Powers the "Last changed by …"
+        history block on the Settings page so members can see who
+        flipped a tenant-wide preference and when, without crawling
+        the admin-audit-log feed.
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        description: Maximum number of entries to return. Defaults to 10.
+      responses:
+        '200':
+          description: Recent settings changes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrgSettingsAuditEntry'
   /trust/summary:
     get:
       operationId: getTrustSummary
@@ -3967,6 +4005,37 @@ components:
             to surface a contract as a renewal alert. Default 90.
 
             '
+    OrgSettingsAuditEntry:
+      type: object
+      description: 'One entry in the `org_settings_audit_log` feed. Mirrors the
+
+        per-key shape of `SupplierAuditEntry` / `ContractAuditEntry` so
+
+        the FE can render a unified "who changed what" history.
+
+        '
+      required:
+      - id
+      - key
+      - actorEmail
+      - createdAt
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+          description: 'Settings key that changed, e.g. `disclosurePolicy` or
+
+            `contractRenewalAlertDays`.
+
+            '
+        actorEmail:
+          type: string
+        oldValue: {}
+        newValue: {}
+        createdAt:
+          type: string
+          format: date-time
     LeverId:
       type: string
       enum:

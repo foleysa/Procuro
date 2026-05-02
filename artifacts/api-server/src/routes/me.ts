@@ -1,12 +1,18 @@
 import { Router, type IRouter } from "express";
-import { db, orgsTable, type UserRow } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import {
+  db,
+  orgsTable,
+  orgSettingsAuditLogTable,
+  type UserRow,
+} from "@workspace/db";
+import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { readRenewalAlertDays } from "../lib/contract-settings";
 import { getOrCreateUserByEmail } from "../lib/users";
+import { newId } from "../lib/ids";
 
 const router: IRouter = Router();
 
@@ -55,6 +61,18 @@ router.get("/me", tenantMiddleware, async (req, res) => {
 });
 
 /**
+ * Settings keys we audit on `PATCH /me/settings`. Listed explicitly so
+ * the audit-log writer stays in lockstep with the validated request
+ * body — a future schema addition (e.g. a third tenant-wide knob) must
+ * extend this list to start being recorded.
+ */
+const AUDITED_SETTINGS_KEYS = [
+  "disclosurePolicy",
+  "contractRenewalAlertDays",
+] as const;
+type AuditedSettingsKey = (typeof AUDITED_SETTINGS_KEYS)[number];
+
+/**
  * Update tenant-wide preferences stored in `orgs.settings` JSONB.
  *
  * The handler performs a *merge* on top of the existing settings object
@@ -63,6 +81,13 @@ router.get("/me", tenantMiddleware, async (req, res) => {
  * the generated `PatchMeSettingsBody` Zod schema; the global error
  * handler turns any `ZodError` into the standard
  * `400 { error, details }` response without per-route wiring.
+ *
+ * Every key whose stored value actually changes is appended to
+ * `org_settings_audit_log` with the actor email and the previous + new
+ * value, mirroring the per-field pattern used by `supplier_audit_log` /
+ * `contract_audit_log`. The disclosure policy in particular flips a
+ * tenant-wide compliance switch (T3/T4 signals visible to every
+ * member), so the audit trail is non-optional.
  */
 router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write"), async (req, res) => {
   const orgId = requireOrgId(req);
@@ -77,23 +102,65 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     return;
   }
 
-  const nextSettings: Record<string, unknown> = {
-    ...(current.settings ?? {}),
-  };
+  const currentSettings = (current.settings ?? {}) as Record<string, unknown>;
+  const nextSettings: Record<string, unknown> = { ...currentSettings };
+  // Capture the (key, old, new) tuples *before* writing, derived from
+  // the validated body so unknown keys can't sneak in. We use the
+  // resolved-with-default value for `disclosurePolicy` on the "old"
+  // side because callers see the resolved value via `GET /me`; storing
+  // the raw `undefined` would be confusing in the history UI.
+  const changes: Array<{
+    key: AuditedSettingsKey;
+    oldValue: unknown;
+    newValue: unknown;
+  }> = [];
+
   if (body.disclosurePolicy !== undefined) {
-    nextSettings["disclosurePolicy"] = body.disclosurePolicy;
+    const oldValue = readDisclosurePolicy(currentSettings);
+    const newValue = body.disclosurePolicy;
+    nextSettings["disclosurePolicy"] = newValue;
+    if (oldValue !== newValue) {
+      changes.push({ key: "disclosurePolicy", oldValue, newValue });
+    }
   }
   if (body.contractRenewalAlertDays !== undefined) {
     // Schema already constrains this to a 1..365 integer; the worker
     // and `readRenewalAlertDays` re-clamp defensively anyway.
-    nextSettings["contractRenewalAlertDays"] = body.contractRenewalAlertDays;
+    const oldValue = readRenewalAlertDays(currentSettings);
+    const newValue = body.contractRenewalAlertDays;
+    nextSettings["contractRenewalAlertDays"] = newValue;
+    if (oldValue !== newValue) {
+      changes.push({ key: "contractRenewalAlertDays", oldValue, newValue });
+    }
   }
 
-  const [updated] = await db
-    .update(orgsTable)
-    .set({ settings: nextSettings })
-    .where(eq(orgsTable.id, orgId))
-    .returning();
+  const actor = req.actorEmail ?? "system@procuro.ai";
+
+  // Single transaction so the settings UPDATE and its audit rows land
+  // atomically — never want a half-applied change with no audit row,
+  // or an audit row claiming a change that the UPDATE rolled back.
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(orgsTable)
+      .set({ settings: nextSettings })
+      .where(eq(orgsTable.id, orgId))
+      .returning();
+    if (!row) return null;
+    if (changes.length > 0) {
+      await tx.insert(orgSettingsAuditLogTable).values(
+        changes.map((c) => ({
+          id: newId("oset_aud"),
+          orgId,
+          actorEmail: actor,
+          key: c.key,
+          oldValue: c.oldValue as never,
+          newValue: c.newValue as never,
+        })),
+      );
+    }
+    return row;
+  });
+
   if (!updated) {
     // Row vanished between SELECT and UPDATE — extremely unlikely with
     // a single-org PK update, but surface a stable error rather than
@@ -102,11 +169,52 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     return;
   }
 
-  const user = await getOrCreateUserByEmail(
-    orgId,
-    req.actorEmail ?? "system@procuro.ai",
-  );
+  if (changes.length > 0) {
+    req.log.info(
+      {
+        orgId,
+        actor,
+        keys: changes.map((c) => c.key),
+      },
+      "me.settings.patch",
+    );
+  }
+
+  const user = await getOrCreateUserByEmail(orgId, actor);
   res.json(serializeMe(updated, req.actorEmail, user));
+});
+
+/**
+ * Recent changes to `orgs.settings` for the active tenant. Returned in
+ * reverse-chronological order so the Settings page can render a
+ * compact "Last changed by …" history without a follow-up sort. Read
+ * permission is implicit in tenant membership — every member of the
+ * org is allowed to see who flipped a tenant-wide preference (the
+ * mutation itself remains gated on `settings:write`).
+ */
+router.get("/me/settings/audit", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const rawLimit = Number.parseInt(String(req.query["limit"] ?? "10"), 10);
+  const limit = Math.min(
+    Math.max(Number.isFinite(rawLimit) ? rawLimit : 10, 1),
+    100,
+  );
+  const rows = await db
+    .select()
+    .from(orgSettingsAuditLogTable)
+    .where(and(eq(orgSettingsAuditLogTable.orgId, orgId)))
+    .orderBy(desc(orgSettingsAuditLogTable.createdAt))
+    .limit(limit);
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      actorEmail: r.actorEmail,
+      oldValue: r.oldValue,
+      newValue: r.newValue,
+      createdAt: r.createdAt,
+    })),
+  );
 });
 
 export default router;

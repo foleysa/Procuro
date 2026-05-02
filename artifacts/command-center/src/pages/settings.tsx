@@ -4,6 +4,7 @@ import {
   getGetMeQueryKey,
   useGetMe,
   usePatchMeSettings,
+  useListMeSettingsAudit,
   useListAlertChannels,
   useCreateAlertChannel,
   usePatchAlertChannel,
@@ -16,12 +17,14 @@ import {
   useListWatchlists,
   getListAlertChannelsQueryKey,
   getListAlertSubscriptionsQueryKey,
+  getListMeSettingsAuditQueryKey,
   getListWatchlistsQueryKey,
   type DisclosurePolicy,
   type AlertChannel,
   type AlertChannelKind,
   type AlertSeverity,
   type AlertSubscription,
+  type OrgSettingsAuditEntry,
 } from "@workspace/api-client-react";
 
 import {
@@ -69,6 +72,7 @@ import {
   Mail,
   Webhook,
   MessageSquare,
+  History,
 } from "lucide-react";
 
 const POLICY_OPTIONS: ReadonlyArray<{
@@ -127,6 +131,7 @@ export default function Settings() {
 
         <TabsContent value="disclosure" className="space-y-4">
           <DisclosurePolicySection />
+          <SettingsHistorySection />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
@@ -163,6 +168,10 @@ function DisclosurePolicySection() {
         });
         qc.setQueryData(getGetMeQueryKey(), resp);
         qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        // Audit list lives at a different key — invalidate it so the
+        // history block under this card refreshes immediately rather
+        // than waiting for the next tab switch.
+        qc.invalidateQueries({ queryKey: getListMeSettingsAuditQueryKey() });
       },
       onError: (e: Error) =>
         toast({
@@ -251,6 +260,134 @@ function DisclosurePolicySection() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ============================ Settings history ============================
+
+/**
+ * Renders the most recent N entries in `org_settings_audit_log` for
+ * the active tenant — "Last changed by alice@…, 2h ago" for each
+ * settings key. The full data is one round-trip behind the policy
+ * card so the user sees their just-saved change reflected without a
+ * page refresh; the audit list is invalidated by the PATCH success
+ * handler above.
+ */
+function SettingsHistorySection() {
+  const params = { limit: 10 } as const;
+  const auditQ = useListMeSettingsAudit(params, {
+    query: { queryKey: getListMeSettingsAuditQueryKey(params) },
+  });
+  const entries: OrgSettingsAuditEntry[] = auditQ.data ?? [];
+
+  return (
+    <Card data-testid="card-settings-history">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <History className="w-5 h-5" />
+          Recent changes
+        </CardTitle>
+        <CardDescription>
+          Most recent changes to tenant-wide preferences. Compliance-grade:
+          every save records the actor, the key, and the previous value.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {auditQ.isLoading ? (
+          <div className="flex items-center text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Loading history…
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No settings changes recorded yet. The first save will appear here.
+          </div>
+        ) : (
+          <ul className="divide-y" data-testid="list-settings-history">
+            {entries.map((e) => (
+              <SettingsHistoryRow key={e.id} entry={e} />
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const SETTINGS_KEY_LABELS: Record<string, string> = {
+  disclosurePolicy: "Disclosure policy",
+  contractRenewalAlertDays: "Renewal alert window",
+};
+
+function labelForKey(key: string): string {
+  return SETTINGS_KEY_LABELS[key] ?? key;
+}
+
+/**
+ * Format an audit value for display. The audit log uses a JSONB
+ * `unknown` payload so we don't have a static type to lean on — render
+ * primitives verbatim, stringify objects compactly, and render the
+ * literal "—" for absent values so an empty cell never collapses.
+ */
+function formatAuditValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+/**
+ * Render a relative timestamp that always degrades gracefully — the
+ * audit list ships ISO strings and we keep the formatter inline rather
+ * than pulling in `date-fns` just for this card.
+ */
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const diffMs = Date.now() - then;
+  if (diffMs < 60_000) return "just now";
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function SettingsHistoryRow({ entry }: { entry: OrgSettingsAuditEntry }) {
+  const oldText = formatAuditValue(entry.oldValue);
+  const newText = formatAuditValue(entry.newValue);
+  return (
+    <li
+      className="py-3 flex items-start gap-3"
+      data-testid={`row-settings-history-${entry.id}`}
+    >
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
+          <span data-testid={`text-history-key-${entry.id}`}>
+            {labelForKey(entry.key)}
+          </span>
+          <Badge variant="outline" className="text-[10px]">
+            {oldText} → {newText}
+          </Badge>
+        </div>
+        <div
+          className="text-xs text-muted-foreground"
+          data-testid={`text-history-actor-${entry.id}`}
+        >
+          Changed by{" "}
+          <span className="font-medium text-foreground">
+            {entry.actorEmail}
+          </span>{" "}
+          · {formatRelativeTime(entry.createdAt)}
+        </div>
+      </div>
+    </li>
   );
 }
 

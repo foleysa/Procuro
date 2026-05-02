@@ -101,6 +101,10 @@ column. Currently exposes the disclosure policy; other keys in
 `settings` are preserved untouched. Returns the same shape as
 `GET /me` so clients can refresh their cached `MeResponse`.
 
+Every changed key is appended to `org_settings_audit_log` with
+the actor email and the previous/new value, so ops can answer
+"who flipped the disclosure policy?" without crawling DB backups.
+
  * @summary Update tenant-wide preferences
  */
 export const PatchMeSettingsHeader = zod.object({
@@ -169,6 +173,51 @@ export const PatchMeSettingsResponse = zod.object({
       "The acting user inside the resolved tenant. The server upserts a\nusers row keyed by `(orgId, email)` on every `\/me` request so that\ndownstream tables with a hard FK to `users.id` (alert\nsubscriptions, watchlists) always have a valid target. The `id`\nis opaque; clients should treat it as a string handle.\n",
     ),
 });
+
+/**
+ * Returns the most recent changes to `orgs.settings` in reverse-chronological order. Powers the "Last changed by …" history block on the Settings page so members can see who flipped a tenant-wide preference and when, without crawling the admin-audit-log feed.
+ * @summary Recent changes to tenant-wide preferences
+ */
+export const listMeSettingsAuditQueryLimitDefault = 10;
+export const listMeSettingsAuditQueryLimitMax = 100;
+
+export const ListMeSettingsAuditQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listMeSettingsAuditQueryLimitMax)
+    .default(listMeSettingsAuditQueryLimitDefault)
+    .describe("Maximum number of entries to return. Defaults to 10."),
+});
+
+export const ListMeSettingsAuditHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListMeSettingsAuditResponseItem = zod
+  .object({
+    id: zod.string(),
+    key: zod
+      .string()
+      .describe(
+        "Settings key that changed, e.g. `disclosurePolicy` or\n`contractRenewalAlertDays`.\n",
+      ),
+    actorEmail: zod.string(),
+    oldValue: zod.unknown().optional(),
+    newValue: zod.unknown().optional(),
+    createdAt: zod.coerce.date(),
+  })
+  .describe(
+    'One entry in the `org_settings_audit_log` feed. Mirrors the\nper-key shape of `SupplierAuditEntry` \/ `ContractAuditEntry` so\nthe FE can render a unified \"who changed what\" history.\n',
+  );
+export const ListMeSettingsAuditResponse = zod.array(
+  ListMeSettingsAuditResponseItem,
+);
 
 /**
  * Returns the live data the in-app Trust Center page renders so a

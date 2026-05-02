@@ -64,3 +64,42 @@ export const orgApiTokensTable = pgTable(
 
 export type OrgApiToken = typeof orgApiTokensTable.$inferSelect;
 export type InsertOrgApiToken = typeof orgApiTokensTable.$inferInsert;
+
+/**
+ * Append-only audit log for tenant-wide preference changes made via
+ * `PATCH /me/settings`. Mirrors the `collector_audit_log` /
+ * `supplier_audit_log` pattern: one row per changed key with the
+ * old and new values, the actor email, and the change timestamp.
+ *
+ * The disclosure policy is the canonical example — flipping it to
+ * `analyst` immediately exposes T3/T4 signals to every member of the
+ * tenant, so ops needs to be able to answer "who changed this and
+ * when?" without crawling DB backups. Other keys (e.g.
+ * `contractRenewalAlertDays`) ride the same table.
+ */
+export const orgSettingsAuditLogTable = pgTable(
+  "org_settings_audit_log",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => orgsTable.id, { onDelete: "cascade" }),
+    actorEmail: text("actor_email").notNull(),
+    /** Settings key that changed, e.g. `disclosurePolicy`. */
+    key: text("key").notNull(),
+    oldValue: jsonb("old_value"),
+    newValue: jsonb("new_value"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("org_settings_audit_log_org_idx").on(t.orgId),
+    index("org_settings_audit_log_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export type OrgSettingsAuditLogRow =
+  typeof orgSettingsAuditLogTable.$inferSelect;
+export type InsertOrgSettingsAuditLogRow =
+  typeof orgSettingsAuditLogTable.$inferInsert;
