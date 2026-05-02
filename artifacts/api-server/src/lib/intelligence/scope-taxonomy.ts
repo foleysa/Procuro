@@ -318,10 +318,21 @@ export function fredSeriesForScopeCode(
  *
  * Adding a new material → category alias
  * --------------------------------------
- *   1. Add an entry below for the canonical material code.
- *   2. Pin it in `test/scope-taxonomy.test.ts` so a typo fails CI.
- *   3. (Optional) extend the FRED catalog if a more specific PPI series
- *      exists for the alias.
+ *   1. Pick the canonical material whose FRED PPI most closely tracks
+ *      the input cost the buyer actually pays. When in doubt, prefer
+ *      the broader index over the narrower one (e.g. specialty resins
+ *      → PLASTIC_RESINS rather than INDUSTRIAL_CHEMICALS) so the lever
+ *      fires; a more specific series can be added to FRED_SERIES_CATALOG
+ *      later and the alias migrates automatically.
+ *   2. Add the upper-case category code under that material's alias
+ *      list below. Aliases must be **unique across materials** — the
+ *      reverse lookup returns the first match, so the same code under
+ *      two materials would silently shadow one. The taxonomy test pins
+ *      this invariant.
+ *   3. Pin the new alias in `test/intelligence-scope-taxonomy.test.ts`
+ *      so a typo or accidental removal fails CI.
+ *   4. (Optional) extend `FRED_SERIES_CATALOG` if a more specific PPI
+ *      series exists for the alias's input grade.
  *
  * Coverage notes
  * --------------
@@ -332,7 +343,15 @@ export function fredSeriesForScopeCode(
  *     the aliases automatically migrate.
  *   - "FUEL" and "DIESEL" intentionally map to FUELS_AND_POWER rather
  *     than CRUDE_PETROLEUM — the buyer is paying refined-fuel rack
- *     prices, not Brent.
+ *     prices, not Brent. The same applies to bunker / marine fuel,
+ *     LPG, propane, and heating oil — all refined products that track
+ *     the FUELS_AND_POWER aggregate more closely than crude.
+ *   - Resin grade abbreviations (PET, HDPE, LDPE, PP, PC, …) are
+ *     deliberately listed alongside their long names because tenant
+ *     ERP feeds use both forms interchangeably.
+ *   - Stainless and carbon steels are folded into IRON_STEEL rather
+ *     than NONFERROUS_METALS even though stainless contains chromium /
+ *     nickel — the dominant input cost is still iron-ore + scrap.
  */
 export const MATERIAL_TO_CATEGORY_CODES: Readonly<
   Record<CanonicalMaterialCode, readonly string[]>
@@ -342,9 +361,14 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "STEEL",
     "STEEL_PLATE",
     "STEEL_COIL",
+    "STEEL_SHEET",
     "HOT_ROLLED_STEEL",
     "COLD_ROLLED_STEEL",
     "GALVANIZED_STEEL",
+    "STAINLESS_STEEL",
+    "CARBON_STEEL",
+    "ALLOY_STEEL",
+    "TIN_PLATE",
     "REBAR",
     "STRUCTURAL_STEEL",
   ],
@@ -364,9 +388,12 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "ALUMINUM_SHEET",
     "ALUMINUM_EXTRUSION",
     "BRASS",
+    "BRONZE",
     "ZINC",
     "NICKEL",
     "TIN",
+    "LEAD",
+    "TITANIUM",
   ],
   INDUSTRIAL_CHEMICALS: [
     "INDUSTRIAL_CHEMICALS",
@@ -374,6 +401,9 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "ADHESIVES",
     "SOLVENTS",
     "COATINGS",
+    "LUBRICANTS",
+    "CAUSTIC_SODA",
+    "AMMONIA",
   ],
   PLASTIC_RESINS: [
     "PLASTIC_RESINS",
@@ -381,10 +411,17 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "PLASTIC_RESIN",
     "POLYETHYLENE",
     "POLYPROPYLENE",
+    "PP",
+    "HDPE",
+    "LDPE",
+    "LLDPE",
     "PVC",
     "ABS",
     "POLYSTYRENE",
+    "PET",
     "PET_RESIN",
+    "POLYCARBONATE",
+    "PC_RESIN",
     "NYLON",
   ],
   LUMBER: [
@@ -395,12 +432,22 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "DIMENSIONAL_LUMBER",
     "HARDWOOD",
     "SOFTWOOD",
+    "MDF",
+    "PARTICLE_BOARD",
+    "ENGINEERED_WOOD",
+    "VENEER",
   ],
   PULP_PAPER: [
     "PULP_PAPER",
     "PAPER",
+    "PULP",
     "CORRUGATED",
     "CARDBOARD",
+    "PAPERBOARD",
+    "BOXBOARD",
+    "KRAFT_PAPER",
+    "LINERBOARD",
+    "NEWSPRINT",
     "PACKAGING_PAPER",
     "PRINTING_PAPER",
   ],
@@ -416,6 +463,11 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "DIESEL",
     "GASOLINE",
     "JET_FUEL",
+    "BUNKER_FUEL",
+    "MARINE_FUEL",
+    "HEATING_OIL",
+    "PROPANE",
+    "LPG",
     "ELECTRICITY",
     "POWER",
   ],

@@ -148,6 +148,104 @@ describe("MATERIAL_TO_CATEGORY_CODES (#62 mapping)", () => {
     }
   });
 
+  it("pins the extended material alias coverage (Task #141)", () => {
+    // Additional clusters of common tenant aliases that the lever
+    // should fire on without per-tenant configuration. Each alias
+    // below was added in Task #141 — every newly introduced code is
+    // pinned so a typo, removal, or rename fails CI before the lever
+    // silently stops matching tenant contracts.
+    const pins: Record<string, string[]> = {
+      // Specific resin grades — extremely common in packaging /
+      // injection-molding tenants. Long names + abbreviations both
+      // appear in real ERP feeds, so pin both forms.
+      PLASTIC_RESINS: [
+        "PET",
+        "HDPE",
+        "LDPE",
+        "LLDPE",
+        "PP",
+        "POLYCARBONATE",
+        "PC_RESIN",
+      ],
+      // Paperboard / pulp grades the original mapping missed.
+      PULP_PAPER: [
+        "PULP",
+        "PAPERBOARD",
+        "BOXBOARD",
+        "KRAFT_PAPER",
+        "LINERBOARD",
+        "NEWSPRINT",
+      ],
+      // Freight-material crossovers — refined fuels that bunker / fleet
+      // contracts commonly track and that move with FUELS_AND_POWER.
+      FUELS_AND_POWER: [
+        "BUNKER_FUEL",
+        "MARINE_FUEL",
+        "HEATING_OIL",
+        "PROPANE",
+        "LPG",
+      ],
+      // Common steel grade aliases — folded into IRON_STEEL because the
+      // dominant input cost is still iron-ore + scrap.
+      IRON_STEEL: [
+        "STEEL_SHEET",
+        "STAINLESS_STEEL",
+        "CARBON_STEEL",
+        "ALLOY_STEEL",
+        "TIN_PLATE",
+      ],
+      // Engineered-wood aliases that consume the same softwood /
+      // hardwood inputs the LUMBER PPI tracks.
+      LUMBER: ["MDF", "PARTICLE_BOARD", "ENGINEERED_WOOD", "VENEER"],
+      // Specialty nonferrous metals that roll up to WPU102.
+      NONFERROUS_METALS: ["BRONZE", "LEAD", "TITANIUM"],
+      // Industrial chemicals — heavy-tonnage commodity inputs.
+      INDUSTRIAL_CHEMICALS: ["LUBRICANTS", "CAUSTIC_SODA", "AMMONIA"],
+    };
+    for (const [material, expectedAliases] of Object.entries(pins)) {
+      const aliases = MATERIAL_TO_CATEGORY_CODES[
+        material as keyof typeof MATERIAL_TO_CATEGORY_CODES
+      ];
+      for (const a of expectedAliases) {
+        assert.ok(
+          aliases.includes(a),
+          `${material} aliases should include ${a} (#141 spec)`,
+        );
+      }
+    }
+  });
+
+  it("aliases are unique across canonical materials", () => {
+    // The reverse lookup `materialCodeForCategoryCode` returns the first
+    // material whose alias list contains the code. If the same alias
+    // appeared under two materials, one would silently shadow the other
+    // depending on object iteration order. The docblock pins this
+    // invariant — guard it here so accidental duplicates fail CI.
+    const seen = new Map<string, string>();
+    for (const [material, aliases] of Object.entries(MATERIAL_TO_CATEGORY_CODES)) {
+      for (const alias of aliases) {
+        const key = alias.toUpperCase();
+        const prior = seen.get(key);
+        assert.ok(
+          prior === undefined,
+          `alias ${alias} appears under both ${prior} and ${material}`,
+        );
+        seen.set(key, material);
+      }
+    }
+  });
+
+  it("aliases within a single material are unique (no accidental dupes)", () => {
+    for (const [material, aliases] of Object.entries(MATERIAL_TO_CATEGORY_CODES)) {
+      const upper = aliases.map((a) => a.toUpperCase());
+      assert.equal(
+        new Set(upper).size,
+        upper.length,
+        `${material} contains duplicate aliases: ${upper.join(", ")}`,
+      );
+    }
+  });
+
   it("materialCodeForCategoryCode is case-insensitive and tolerant of whitespace", () => {
     assert.equal(materialCodeForCategoryCode("steel"), "IRON_STEEL");
     assert.equal(materialCodeForCategoryCode("  copper  "), "NONFERROUS_METALS");
@@ -156,5 +254,20 @@ describe("MATERIAL_TO_CATEGORY_CODES (#62 mapping)", () => {
     assert.equal(materialCodeForCategoryCode("UNKNOWN_CODE"), null);
     assert.equal(materialCodeForCategoryCode(""), null);
     assert.equal(materialCodeForCategoryCode(null), null);
+  });
+
+  it("materialCodeForCategoryCode resolves the new Task #141 aliases", () => {
+    // Sanity-check the round-trip for the most-cited new aliases — if
+    // someone removes one of these from the map, this test fails before
+    // a tenant's contracts silently stop matching the lever.
+    assert.equal(materialCodeForCategoryCode("HDPE"), "PLASTIC_RESINS");
+    assert.equal(materialCodeForCategoryCode("pet"), "PLASTIC_RESINS");
+    assert.equal(materialCodeForCategoryCode("PAPERBOARD"), "PULP_PAPER");
+    assert.equal(materialCodeForCategoryCode("kraft_paper"), "PULP_PAPER");
+    assert.equal(materialCodeForCategoryCode("BUNKER_FUEL"), "FUELS_AND_POWER");
+    assert.equal(materialCodeForCategoryCode("LPG"), "FUELS_AND_POWER");
+    assert.equal(materialCodeForCategoryCode("STAINLESS_STEEL"), "IRON_STEEL");
+    assert.equal(materialCodeForCategoryCode("MDF"), "LUMBER");
+    assert.equal(materialCodeForCategoryCode("titanium"), "NONFERROUS_METALS");
   });
 });
