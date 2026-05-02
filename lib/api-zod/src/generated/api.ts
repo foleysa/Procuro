@@ -2225,7 +2225,30 @@ export const ListCollectorsResponseItem = zod.object({
   defaultRateLimitRpm: zod.number().nullish(),
   defaultScheduleCron: zod.string().nullish(),
   lastRunAt: zod.coerce.date().nullish(),
-  lastSignalCount: zod.number().nullish(),
+  lastSignalCount: zod
+    .number()
+    .nullish()
+    .describe(
+      'Legacy alias for `lastInsertedCount`. Kept so older clients still rendering \"rows landed last run\" don\'t silently break; new code should read `lastInsertedCount` and `lastDuplicateCount` for the explicit new-vs-duplicate split.\n',
+    ),
+  lastInsertedCount: zod
+    .number()
+    .nullish()
+    .describe(
+      "Number of genuinely new market-signal rows the most recent successful run wrote, as recorded by the runtime in `collector_audit_log.metadata.inserted`. Null when the collector has never had a `fetch_succeeded` audit row yet.\n",
+    ),
+  lastDuplicateCount: zod
+    .number()
+    .nullish()
+    .describe(
+      "Number of rows the most recent successful run skipped because they were already present, as recorded by the runtime in `collector_audit_log.metadata.duplicates`. Pair with `lastInsertedCount` to surface stalled feeds (always 0 new, non-zero duplicates).\n",
+    ),
+  staleEmptyRuns: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when the last 3 successful runs all inserted zero new rows — a strong signal that the upstream feed is stalled even though the collector itself is running cleanly. Computed server-side from `collector_audit_log` so the UI can render a single warning chip without re-deriving the window per render.\n",
+    ),
   postureClass: zod
     .enum(["public_api", "tos_restricted", "gray_hat"])
     .optional()

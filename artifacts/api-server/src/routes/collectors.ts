@@ -109,18 +109,122 @@ async function loadTenantOptIns(
   return new Map(rows.map((r) => [r.collectorId, r.optedIn === 1]));
 }
 
+/**
+ * How many of the most-recent successful runs we look back at to decide
+ * whether a collector is "stalled" — i.e. running cleanly but only
+ * re-seeing yesterday's observations. If the last N successes all have
+ * `inserted === 0`, we surface a `staleEmptyRuns: true` flag so the
+ * Registry page can render a warning chip. 3 is the smallest window
+ * that still distinguishes a single duplicate run (very common on
+ * weekend feeds) from a genuinely stalled upstream.
+ */
+const STALE_RUN_WINDOW = 3;
+
+/**
+ * Pull the most-recent `fetch_succeeded` audit row per collector and
+ * extract the runtime-recorded `inserted` / `duplicates` counts so the
+ * Registry page can show operators whether the last run actually
+ * landed any new data. We also compute a `staleEmptyRuns` flag from
+ * the last `STALE_RUN_WINDOW` successes; when every one of them
+ * inserted zero new rows the upstream is almost certainly stalled.
+ *
+ * One DB round-trip with a `row_number()` window keeps this cheap
+ * regardless of how many runs each collector has accumulated.
+ */
+async function loadLastRunMetricsByCollector(): Promise<
+  Map<
+    string,
+    {
+      lastRunAt: Date;
+      lastInsertedCount: number;
+      lastDuplicateCount: number;
+      staleEmptyRuns: boolean;
+    }
+  >
+> {
+  const result = await db.execute(sql`
+    SELECT collector_id, created_at, metadata, rn
+    FROM (
+      SELECT
+        collector_id,
+        created_at,
+        metadata,
+        ROW_NUMBER() OVER (PARTITION BY collector_id ORDER BY created_at DESC) AS rn
+      FROM collector_audit_log
+      WHERE event = 'fetch_succeeded'
+    ) ranked
+    WHERE rn <= ${STALE_RUN_WINDOW}
+  `);
+  const rows = result.rows as Array<{
+    collector_id: string;
+    created_at: Date | string;
+    metadata: unknown;
+    rn: number;
+  }>;
+  const grouped = new Map<
+    string,
+    Array<{ createdAt: Date; inserted: number; duplicates: number }>
+  >();
+  for (const r of rows) {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>;
+    const inserted = Number(meta["inserted"] ?? 0);
+    const duplicates = Number(meta["duplicates"] ?? 0);
+    // pg returns timestamptz columns as Date objects, but SQL helpers
+    // can return ISO strings depending on the driver — normalize so the
+    // sort comparator below always has a Date.
+    const createdAt =
+      r.created_at instanceof Date ? r.created_at : new Date(r.created_at);
+    const list = grouped.get(r.collector_id) ?? [];
+    list.push({
+      createdAt,
+      inserted: Number.isFinite(inserted) ? inserted : 0,
+      duplicates: Number.isFinite(duplicates) ? duplicates : 0,
+    });
+    grouped.set(r.collector_id, list);
+  }
+  const out = new Map<
+    string,
+    {
+      lastRunAt: Date;
+      lastInsertedCount: number;
+      lastDuplicateCount: number;
+      staleEmptyRuns: boolean;
+    }
+  >();
+  for (const [collectorId, runs] of grouped) {
+    // Window query already returns DESC, but sort defensively.
+    runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const latest = runs[0]!;
+    // Only flag stale when we have a full window of successes to look
+    // at — a single duplicate run is normal (weekend FX, untouched
+    // filings), so demanding STALE_RUN_WINDOW data points keeps the
+    // chip from over-firing on freshly-approved collectors.
+    const staleEmptyRuns =
+      runs.length >= STALE_RUN_WINDOW && runs.every((r) => r.inserted === 0);
+    out.set(collectorId, {
+      lastRunAt: latest.createdAt,
+      lastInsertedCount: latest.inserted,
+      lastDuplicateCount: latest.duplicates,
+      staleEmptyRuns,
+    });
+  }
+  return out;
+}
+
 router.get("/collectors", tenantMiddleware, async (req, res) => {
   const dbRows = await db
     .select()
     .from(collectorsTable)
     .orderBy(asc(collectorsTable.name));
   const tenantOptIns = await loadTenantOptIns(req.orgId);
+  const lastRunMetrics = await loadLastRunMetricsByCollector();
   const resolveOptIn = (id: string, defaultOptIn: boolean | null): boolean | null =>
     tenantOptIns.has(id) ? (tenantOptIns.get(id) ?? defaultOptIn) : defaultOptIn;
   const items = dbRows.map((r) => {
     const reg = getCollector(r.id);
     const meta = getWorkbenchMeta(r.id);
     const tenantOptInDefault = reg?.tenantOptInDefault ?? null;
+    const metrics = lastRunMetrics.get(r.id);
     return {
       id: r.id,
       name: r.name,
@@ -139,8 +243,15 @@ router.get("/collectors", tenantMiddleware, async (req, res) => {
       defaultRateLimitRpm: reg?.defaultRateLimitRpm ?? r.rateLimitRpm ?? null,
       defaultScheduleCron: reg?.defaultScheduleCron ?? r.scheduleCron ?? null,
       owner: r.owner,
-      lastRunAt: null,
-      lastSignalCount: null,
+      lastRunAt: metrics?.lastRunAt ?? null,
+      // `lastSignalCount` was the original "rows landed last run" field —
+      // we keep it populated (mirroring `lastInsertedCount`) so any
+      // older client still rendering it doesn't silently break, and
+      // additionally surface the explicit new/duplicate split below.
+      lastSignalCount: metrics?.lastInsertedCount ?? null,
+      lastInsertedCount: metrics?.lastInsertedCount ?? null,
+      lastDuplicateCount: metrics?.lastDuplicateCount ?? null,
+      staleEmptyRuns: metrics?.staleEmptyRuns ?? false,
       postureClass: reg ? resolvePostureClass(reg) : "tos_restricted",
       disclosureTier: reg?.disclosureTier ?? "T1",
       jurisdiction: reg?.jurisdiction ?? "GLOBAL",
@@ -156,6 +267,7 @@ router.get("/collectors", tenantMiddleware, async (req, res) => {
     const reg = getCollector(id)!;
     const meta = getWorkbenchMeta(id);
     const tenantOptInDefault = reg.tenantOptInDefault ?? null;
+    const metrics = lastRunMetrics.get(id);
     items.push({
       id,
       name: reg.name,
@@ -169,8 +281,11 @@ router.get("/collectors", tenantMiddleware, async (req, res) => {
       defaultRateLimitRpm: reg.defaultRateLimitRpm,
       defaultScheduleCron: reg.defaultScheduleCron,
       owner: "platform",
-      lastRunAt: null,
-      lastSignalCount: null,
+      lastRunAt: metrics?.lastRunAt ?? null,
+      lastSignalCount: metrics?.lastInsertedCount ?? null,
+      lastInsertedCount: metrics?.lastInsertedCount ?? null,
+      lastDuplicateCount: metrics?.lastDuplicateCount ?? null,
+      staleEmptyRuns: metrics?.staleEmptyRuns ?? false,
       postureClass: resolvePostureClass(reg),
       disclosureTier: reg.disclosureTier ?? "T1",
       jurisdiction: reg.jurisdiction ?? "GLOBAL",

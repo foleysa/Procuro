@@ -147,6 +147,9 @@ type CollectorRow = {
   defaultScheduleCron?: string | null;
   lastRunAt?: string | Date | null;
   lastSignalCount?: number | null;
+  lastInsertedCount?: number | null;
+  lastDuplicateCount?: number | null;
+  staleEmptyRuns?: boolean;
 };
 
 function tierMatches(
@@ -422,6 +425,23 @@ function RegistryTab({ tier }: { tier: TierMode }) {
                     <Badge variant="outline" className="font-normal">
                       {POSTURE_LABEL[c.posture] ?? c.posture}
                     </Badge>
+                    {c.staleEmptyRuns && (
+                      // The stalled-feed chip fires when the runtime
+                      // has recorded 3+ consecutive successful runs
+                      // that all inserted zero new rows. The
+                      // collector itself is healthy, but the upstream
+                      // hasn't published anything new — operators see
+                      // this and know to dig into the source rather
+                      // than the collector code.
+                      <Badge
+                        data-testid={`badge-stale-${c.id}`}
+                        className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                        title="Last 3 runs returned only duplicates — upstream feed may be stalled."
+                      >
+                        <AlertTriangle className="w-3 h-3 mr-1" />
+                        No new data
+                      </Badge>
+                    )}
                   </div>
                   {c.description && (
                     <p className="text-sm text-muted-foreground mt-1">
@@ -449,9 +469,34 @@ function RegistryTab({ tier }: { tier: TierMode }) {
                       <div>Schedule: {c.defaultScheduleCron}</div>
                     )}
                     <div>
-                      Last run: {formatDateTime(c.lastRunAt)} · last signal
-                      count: {c.lastSignalCount ?? 0}
+                      Last run: {formatDateTime(c.lastRunAt)}
                     </div>
+                    {/* Explicit new-vs-duplicate split. The runtime
+                        records both halves on every `fetch_succeeded`
+                        audit row; surfacing both lets operators
+                        distinguish a stalled feed (0 new, many
+                        duplicates) from a backfill (many new) at a
+                        glance. We only render this row once we have
+                        a real `lastRunAt` to anchor the counts to —
+                        otherwise "0 new / 0 duplicates" looks like
+                        a real signal when it's actually "never ran". */}
+                    {c.lastRunAt && (
+                      <div data-testid={`run-counts-${c.id}`}>
+                        <span
+                          className={
+                            (c.lastInsertedCount ?? 0) > 0
+                              ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {c.lastInsertedCount ?? 0} new signals
+                        </span>
+                        {" · "}
+                        <span>
+                          {c.lastDuplicateCount ?? 0} duplicates skipped
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 items-stretch">
