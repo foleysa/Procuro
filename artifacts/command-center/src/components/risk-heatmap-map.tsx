@@ -32,6 +32,7 @@ export type CountryRisk = {
 
 export function aggregateCellsByCountry(
   cells: IntelligenceRiskHeatmapCell[],
+  dimension?: string,
 ): Map<string, CountryRisk> {
   const out = new Map<string, CountryRisk>();
   const bandRank: Record<CountryRisk["band"], number> = {
@@ -40,7 +41,9 @@ export function aggregateCellsByCountry(
     elevated: 2,
     high: 3,
   };
+  const filter = dimension && dimension !== "any" ? dimension : null;
   for (const c of cells) {
+    if (filter && c.dimension !== filter) continue;
     const key = c.country.toUpperCase();
     const prev = out.get(key);
     const next: CountryRisk = prev
@@ -79,6 +82,7 @@ type Props = {
   onCountryClick: (countryIso2: string) => void;
   onSiteClick?: (siteId: string) => void;
   onMapUnavailable: (reason: string) => void;
+  selectedDimension?: string;
 };
 
 type SiteHover = {
@@ -99,6 +103,7 @@ export function RiskHeatmapMap({
   onCountryClick,
   onSiteClick,
   onMapUnavailable,
+  selectedDimension,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // We keep the map in a ref so React re-renders (driven by `cells`
@@ -512,7 +517,7 @@ export function RiskHeatmapMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
-    const byCountry = aggregateCellsByCountry(cells);
+    const byCountry = aggregateCellsByCountry(cells, selectedDimension);
 
     // Reset all known states first so countries that drop out of the
     // window stop being colored.
@@ -535,7 +540,7 @@ export function RiskHeatmapMap({
           : { band: null, score: null, signalCount: null },
       );
     }
-  }, [cells, loaded]);
+  }, [cells, loaded, selectedDimension]);
 
   // ---- Push site points into the sites GeoJSON source ----
   useEffect(() => {
@@ -586,7 +591,7 @@ export function RiskHeatmapMap({
           Loading world map…
         </div>
       )}
-      <MapLegend />
+      <MapLegend selectedDimension={selectedDimension} />
       {hover && (
         <div
           className="pointer-events-none absolute z-10 rounded border bg-popover px-2 py-1 text-xs shadow-md"
@@ -651,20 +656,27 @@ function formatSpend(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
-function MapLegend() {
+function MapLegend({ selectedDimension }: { selectedDimension?: string }) {
   const items: Array<{ band: CountryRisk["band"]; label: string }> = [
     { band: "low", label: "Low" },
     { band: "moderate", label: "Moderate" },
     { band: "elevated", label: "Elevated" },
     { band: "high", label: "High" },
   ];
+  const activeLabel =
+    !selectedDimension || selectedDimension === "any"
+      ? "any dimension (worst-band wins)"
+      : selectedDimension;
   return (
     <div
       className="absolute bottom-2 left-2 z-10 rounded border bg-popover/90 px-2 py-1.5 text-[11px] shadow-sm"
       data-testid="risk-heatmap-map-legend"
     >
-      <div className="text-muted-foreground uppercase tracking-wide mb-1">
-        Risk band
+      <div
+        className="text-muted-foreground uppercase tracking-wide mb-1"
+        data-testid="risk-heatmap-map-legend-label"
+      >
+        Risk band · <span className="normal-case">{activeLabel}</span>
       </div>
       <div className="flex items-center gap-2">
         {items.map((it) => (

@@ -1068,6 +1068,19 @@ function HeatmapPane({
   // surface a hint to the user instead of a blank pane.
   const [view, setView] = useState<"map" | "grid">("map");
   const [mapError, setMapError] = useState<string | null>(null);
+  const [mapDimension, setMapDimension] = useState<string>("any");
+  const availableDimensions = data?.dimensions ?? [];
+  // If the active dimension drops out of the latest payload (e.g. data
+  // shifted), fall back to "any" so we never end up with a blank map.
+  useEffect(() => {
+    if (
+      mapDimension !== "any" &&
+      availableDimensions.length > 0 &&
+      !availableDimensions.includes(mapDimension)
+    ) {
+      setMapDimension("any");
+    }
+  }, [availableDimensions, mapDimension]);
   const handleMapUnavailable = useCallback((reason: string) => {
     setMapError(reason);
     setView("grid");
@@ -1130,17 +1143,47 @@ function HeatmapPane({
         )}
         {!isLoading && data && data.countries.length > 0 && view === "map" && (
           <div className="space-y-2">
+            <div
+              className="flex flex-wrap items-center gap-2 text-xs"
+              data-testid="heatmap-map-dimension-toggle"
+            >
+              <span className="text-muted-foreground uppercase tracking-wide">
+                Show:
+              </span>
+              {(["any", ...availableDimensions] as const).map((d) => {
+                const active = mapDimension === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setMapDimension(d)}
+                    className={cn(
+                      "rounded border px-2 py-0.5 transition-colors",
+                      active
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-card hover:bg-accent",
+                    )}
+                    data-testid={`heatmap-map-dimension-${d}`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
             <RiskHeatmapMap
               cells={cells}
               sites={sites}
               onCountryClick={onOpenSignalsForCountry}
               onSiteClick={(siteId) => onOpenEntity(`site:${siteId}`)}
               onMapUnavailable={handleMapUnavailable}
+              selectedDimension={mapDimension}
             />
             <p className="text-xs text-muted-foreground">
               Click a country to open the Signal Browser pre-filtered to it.
-              Each country is shaded by its highest-band dimension over the
-              last 90 days. Switch to Grid for the per-dimension breakdown.
+              {mapDimension === "any"
+                ? " Each country is shaded by its highest-band dimension over the last 90 days."
+                : ` Each country is shaded by its ${mapDimension} score only — countries with no ${mapDimension} signal stay unshaded.`}
+              {" "}Switch to Grid for the full per-dimension breakdown.
             </p>
           </div>
         )}

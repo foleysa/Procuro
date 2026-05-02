@@ -81,4 +81,48 @@ describe("aggregateCellsByCountry", () => {
   it("returns an empty map when no cells are provided", () => {
     expect(aggregateCellsByCountry([]).size).toBe(0);
   });
+
+  it("filters to a single dimension when one is selected", () => {
+    // The map's dimension toggle re-aggregates with a specific dim so
+    // each country is colored by *that* dimension's signal only.
+    const out = aggregateCellsByCountry(
+      [
+        cell("DE", "fx", "low", 8, 2),
+        cell("DE", "supply", "elevated", 55, 4),
+        cell("CN", "supply", "high", 80, 6),
+        cell("CN", "fx", "moderate", 30, 1),
+      ],
+      "supply",
+    );
+    expect(out.size).toBe(2);
+    expect(out.get("DE")?.band).toBe("elevated");
+    expect(out.get("DE")?.score).toBe(55);
+    expect(out.get("CN")?.band).toBe("high");
+    expect(out.get("CN")?.score).toBe(80);
+  });
+
+  it("drops countries with no signal in the selected dimension", () => {
+    // Per task: "countries with no signal in that dimension stay
+    // unshaded" — i.e. they must not appear in the aggregation map
+    // so the choropleth leaves them transparent.
+    const out = aggregateCellsByCountry(
+      [
+        cell("US", "geopolitical", "high", 90, 4),
+        cell("DE", "fx", "moderate", 30, 2),
+      ],
+      "supply",
+    );
+    expect(out.size).toBe(0);
+  });
+
+  it("treats 'any' as no filter and preserves worst-band-wins", () => {
+    const out = aggregateCellsByCountry(
+      [
+        cell("RU", "supply", "moderate", 30, 1),
+        cell("RU", "geopolitical", "high", 88, 6),
+      ],
+      "any",
+    );
+    expect(out.get("RU")?.band).toBe("high");
+  });
 });
