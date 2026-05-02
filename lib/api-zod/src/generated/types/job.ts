@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { JobPayload } from "./jobPayload";
 import type { JobResult } from "./jobResult";
 import type { JobStatus } from "./jobStatus";
 
@@ -46,4 +47,11 @@ after a transient failure; `null` means the job is ready to
 run immediately (the common case).
  */
   scheduledFor?: Date | null;
+  /** Defensively-redacted copy of the original job payload.
+Returned ONLY by the job-detail endpoint (`GET /jobs/{id}`),
+never by the listing endpoint, so admins can inspect *why*
+a job failed without leaking credential-shaped fields. List
+responses omit this field to keep payloads bounded.
+ */
+  payload?: JobPayload;
 }

@@ -2217,6 +2217,16 @@ export const JobStatus = {
 
 export type JobResult = { [key: string]: unknown } | null;
 
+/**
+ * Defensively-redacted copy of the original job payload.
+Returned ONLY by the job-detail endpoint (`GET /jobs/{id}`),
+never by the listing endpoint, so admins can inspect *why*
+a job failed without leaking credential-shaped fields. List
+responses omit this field to keep payloads bounded.
+
+ */
+export type JobPayload = { [key: string]: unknown };
+
 export interface Job {
   id: string;
   orgId?: string | null;
@@ -2249,6 +2259,27 @@ after a transient failure; `null` means the job is ready to
 run immediately (the common case).
  */
   scheduledFor?: string | null;
+  /** Defensively-redacted copy of the original job payload.
+Returned ONLY by the job-detail endpoint (`GET /jobs/{id}`),
+never by the listing endpoint, so admins can inspect *why*
+a job failed without leaking credential-shaped fields. List
+responses omit this field to keep payloads bounded.
+ */
+  payload?: JobPayload;
+}
+
+export interface RecentlyFailedJobs {
+  /**
+   * Lookback window the response was computed against.
+   * @minimum 1
+   */
+  withinHours: number;
+  /**
+   * Number of failed jobs in the lookback window.
+   * @minimum 0
+   */
+  count: number;
+  jobs: Job[];
 }
 
 export type JobKindSettingKind =
@@ -4608,6 +4639,20 @@ export const ListJobsStatus = {
   failed: "failed",
   cancelled: "cancelled",
 } as const;
+
+export type ListRecentlyFailedJobsParams = {
+  /**
+   * Lookback window in hours. Defaults to 24, capped at 168 (7 days).
+   * @minimum 1
+   * @maximum 168
+   */
+  withinHours?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
 
 export type IngestCsvBatchParams = {
   async?: boolean;

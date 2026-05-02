@@ -34,6 +34,7 @@ import { useMyRole } from "@/lib/use-my-role";
 import type { AdminUserRole } from "@/lib/admin-client";
 import { Button } from "@/components/ui/button";
 import { MigrationBanner } from "./migration-banner";
+import { FailedJobsBanner } from "./failed-jobs-banner";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -234,6 +235,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </header>
         <MigrationBanner />
+        <FailedJobsBanner />
         <div className="flex-1 overflow-y-auto">{children}</div>
       </main>
     </div>

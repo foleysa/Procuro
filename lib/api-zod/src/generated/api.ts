@@ -3215,8 +3215,115 @@ export const ListJobsResponseItem = zod.object({
     .describe(
       "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
     ),
+  payload: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      "Defensively-redacted copy of the original job payload.\nReturned ONLY by the job-detail endpoint (`GET \/jobs\/{id}`),\nnever by the listing endpoint, so admins can inspect \*why\*\na job failed without leaking credential-shaped fields. List\nresponses omit this field to keep payloads bounded.\n",
+    ),
 });
 export const ListJobsResponse = zod.array(ListJobsResponseItem);
+
+/**
+ * Powers the persistent admin notification surface in the Command
+Center (#94). Returns the most recent permanently-failed jobs for
+the active tenant whose `completed_at` falls inside the lookback
+window so the banner can render the failing kind / id / error /
+age without the operator having to dig through System & Jobs.
+Defaults to a 24h window to match the other "what needs your
+attention this morning" surfaces; capped at 7 days to keep the
+query bounded. The response payloads use the lighter `Job` shape
+without the `payload` field — admins click through to
+`GET /jobs/{id}` to see the redacted payload on the job-detail
+view.
+
+ * @summary List jobs that failed permanently in a recent lookback window
+ */
+export const listRecentlyFailedJobsQueryWithinHoursDefault = 24;
+export const listRecentlyFailedJobsQueryWithinHoursMax = 168;
+
+export const listRecentlyFailedJobsQueryLimitDefault = 20;
+export const listRecentlyFailedJobsQueryLimitMax = 100;
+
+export const ListRecentlyFailedJobsQueryParams = zod.object({
+  withinHours: zod.coerce
+    .number()
+    .min(1)
+    .max(listRecentlyFailedJobsQueryWithinHoursMax)
+    .default(listRecentlyFailedJobsQueryWithinHoursDefault)
+    .describe(
+      "Lookback window in hours. Defaults to 24, capped at 168 (7 days).",
+    ),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listRecentlyFailedJobsQueryLimitMax)
+    .default(listRecentlyFailedJobsQueryLimitDefault),
+});
+
+export const ListRecentlyFailedJobsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const listRecentlyFailedJobsResponseCountMin = 0;
+
+export const ListRecentlyFailedJobsResponse = zod.object({
+  withinHours: zod
+    .number()
+    .min(1)
+    .describe("Lookback window the response was computed against."),
+  count: zod
+    .number()
+    .min(listRecentlyFailedJobsResponseCountMin)
+    .describe("Number of failed jobs in the lookback window."),
+  jobs: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string().nullish(),
+      kind: zod.string(),
+      status: zod
+        .enum(["pending", "running", "succeeded", "failed", "cancelled"])
+        .describe(
+          "`cancelled` is a distinct terminal state from `failed` and is\nonly used for operator-initiated cancellations (it never\nresults from infrastructure errors or exhausted retries).\n",
+        ),
+      attempts: zod.number(),
+      maxAttempts: zod
+        .number()
+        .describe(
+          "Total automatic-attempt budget (initial run + auto-retries).\nWhen `attempts` reaches this value the worker stops retrying\nand marks the job `failed`.\n",
+        ),
+      progress: zod.number().optional(),
+      result: zod.record(zod.string(), zod.unknown()).nullish(),
+      error: zod.string().nullish(),
+      cancelRequested: zod
+        .boolean()
+        .optional()
+        .describe(
+          'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `cancelled`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+        ),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      scheduledFor: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
+        ),
+      payload: zod
+        .record(zod.string(), zod.unknown())
+        .optional()
+        .describe(
+          "Defensively-redacted copy of the original job payload.\nReturned ONLY by the job-detail endpoint (`GET \/jobs\/{id}`),\nnever by the listing endpoint, so admins can inspect \*why\*\na job failed without leaking credential-shaped fields. List\nresponses omit this field to keep payloads bounded.\n",
+        ),
+    }),
+  ),
+});
 
 /**
  * Returns one row per configurable job kind. `maxAttempts` is the
@@ -3478,6 +3585,12 @@ export const GetJobResponse = zod.object({
     .nullish()
     .describe(
       "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
+    ),
+  payload: zod
+    .record(zod.string(), zod.unknown())
+    .optional()
+    .describe(
+      "Defensively-redacted copy of the original job payload.\nReturned ONLY by the job-detail endpoint (`GET \/jobs\/{id}`),\nnever by the listing endpoint, so admins can inspect \*why\*\na job failed without leaking credential-shaped fields. List\nresponses omit this field to keep payloads bounded.\n",
     ),
 });
 

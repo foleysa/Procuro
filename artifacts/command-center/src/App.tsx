@@ -39,6 +39,7 @@ import Playbook from "./pages/playbook";
 import Collectors from "./pages/collectors";
 import DataSources from "./pages/data-sources";
 import System from "./pages/system";
+import JobDetail from "./pages/job-detail";
 import Ingest from "./pages/ingest";
 import Integrations from "./pages/integrations";
 import Settings from "./pages/settings";
@@ -350,6 +351,7 @@ function AppRoutes() {
             <Route path="/collectors" component={Collectors} />
             <Route path="/data-sources" component={DataSources} />
             <Route path="/system" component={System} />
+            <Route path="/system/jobs/:id" component={JobDetail} />
             <Route path="/ingest" component={Ingest} />
             <Route path="/integrations" component={Integrations} />
             <Route path="/watched-companies" component={WatchedCompanies} />

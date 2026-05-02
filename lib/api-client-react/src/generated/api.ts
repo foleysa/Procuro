@@ -119,6 +119,7 @@ import type {
   ListMarketSignalsParams,
   ListOpportunitiesParams,
   ListRateCardsParams,
+  ListRecentlyFailedJobsParams,
   ListSowsParams,
   ListSuppliersParams,
   ListWatchedIssuersParams,
@@ -148,6 +149,7 @@ import type {
   RateCardListResponse,
   ReadinessResponse,
   RealizeOpportunityRequest,
+  RecentlyFailedJobs,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
   RunCycleResponse,
@@ -4501,6 +4503,118 @@ export function useListJobs<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListJobsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Powers the persistent admin notification surface in the Command
+Center (#94). Returns the most recent permanently-failed jobs for
+the active tenant whose `completed_at` falls inside the lookback
+window so the banner can render the failing kind / id / error /
+age without the operator having to dig through System & Jobs.
+Defaults to a 24h window to match the other "what needs your
+attention this morning" surfaces; capped at 7 days to keep the
+query bounded. The response payloads use the lighter `Job` shape
+without the `payload` field — admins click through to
+`GET /jobs/{id}` to see the redacted payload on the job-detail
+view.
+
+ * @summary List jobs that failed permanently in a recent lookback window
+ */
+export const getListRecentlyFailedJobsUrl = (
+  params?: ListRecentlyFailedJobsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/jobs/recently-failed?${stringifiedParams}`
+    : `/api/jobs/recently-failed`;
+};
+
+export const listRecentlyFailedJobs = async (
+  params?: ListRecentlyFailedJobsParams,
+  options?: RequestInit,
+): Promise<RecentlyFailedJobs> => {
+  return customFetch<RecentlyFailedJobs>(getListRecentlyFailedJobsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRecentlyFailedJobsQueryKey = (
+  params?: ListRecentlyFailedJobsParams,
+) => {
+  return [`/api/jobs/recently-failed`, ...(params ? [params] : [])] as const;
+};
+
+export const getListRecentlyFailedJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRecentlyFailedJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRecentlyFailedJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRecentlyFailedJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListRecentlyFailedJobsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listRecentlyFailedJobs>>
+  > = ({ signal }) =>
+    listRecentlyFailedJobs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRecentlyFailedJobs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRecentlyFailedJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRecentlyFailedJobs>>
+>;
+export type ListRecentlyFailedJobsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List jobs that failed permanently in a recent lookback window
+ */
+
+export function useListRecentlyFailedJobs<
+  TData = Awaited<ReturnType<typeof listRecentlyFailedJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRecentlyFailedJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRecentlyFailedJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRecentlyFailedJobsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -6,7 +6,7 @@ import {
   type JobKind,
   type JobStatus,
 } from "@workspace/db";
-import { and, desc, eq, isNull, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
@@ -15,6 +15,7 @@ import {
   MAX_ATTEMPTS_BY_KIND,
   MAX_ATTEMPTS_LIMIT,
 } from "../lib/jobs/queue";
+import { redactJobPayload } from "../lib/jobs/redact-payload";
 
 const router: IRouter = Router();
 
@@ -64,6 +65,22 @@ function mapJob(r: typeof jobsTable.$inferSelect) {
     startedAt: r.startedAt,
     completedAt: r.completedAt,
     scheduledFor: r.scheduledFor,
+  };
+}
+
+/**
+ * Like `mapJob`, but also includes a defensively-redacted copy of the
+ * job payload. Used by the job-detail endpoint and the failed-jobs
+ * notification surface so admins can see *why* a job died (which CSV
+ * row, which ERP query) without leaking credential-shaped fields.
+ *
+ * Listing endpoints intentionally use the lighter `mapJob` to keep
+ * response sizes bounded.
+ */
+function mapJobWithPayload(r: typeof jobsTable.$inferSelect) {
+  return {
+    ...mapJob(r),
+    payload: redactJobPayload(r.payload),
   };
 }
 
@@ -248,6 +265,64 @@ router.delete("/jobs/settings/:kind", tenantMiddleware, requirePermission("setti
   });
 });
 
+// ---------------------------------------------------------------------------
+// Recently-failed jobs (#94 — admin notification surface)
+//
+// Powers the persistent "job failed permanently" banner in the Command
+// Center. Returns the most recent permanently-failed jobs for the
+// active tenant in the lookback window so the banner can render the
+// failing kind / id / error / age without the operator having to dig
+// through System & Jobs first.
+//
+// Window defaults to 24h to match the other "what needs your attention
+// this morning" surfaces (Today page, dashboard); callers can tighten
+// it via `?withinHours=`. Capped at 7 days to keep the query bounded.
+//
+// IMPORTANT: declared BEFORE `/jobs/:id` so Express does not match
+// `/jobs/recently-failed` against the `:id` param.
+// ---------------------------------------------------------------------------
+router.get("/jobs/recently-failed", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+
+  const withinHoursRaw = parseInt(
+    String(req.query["withinHours"] ?? "24"),
+    10,
+  );
+  const withinHours = Math.min(
+    Math.max(Number.isFinite(withinHoursRaw) ? withinHoursRaw : 24, 1),
+    24 * 7,
+  );
+  const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000);
+
+  const limitRaw = parseInt(String(req.query["limit"] ?? "20"), 10);
+  const limit = Math.min(
+    Math.max(Number.isFinite(limitRaw) ? limitRaw : 20, 1),
+    100,
+  );
+
+  const rows = await db
+    .select()
+    .from(jobsTable)
+    .where(
+      and(
+        or(
+          eq(jobsTable.orgId, orgId),
+          isNull(jobsTable.orgId),
+        ) as SQL,
+        eq(jobsTable.status, "failed"),
+        gte(jobsTable.completedAt, cutoff),
+      ),
+    )
+    .orderBy(desc(jobsTable.completedAt))
+    .limit(limit);
+
+  res.json({
+    withinHours,
+    count: rows.length,
+    jobs: rows.map(mapJob),
+  });
+});
+
 router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const [row] = await db
@@ -263,7 +338,11 @@ router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
     res.status(404).json({ error: "Job not found" });
     return;
   }
-  res.json(mapJob(row));
+  // Detail view ships the redacted payload so the job-detail page can
+  // show admins the actual input that triggered the failure without
+  // leaking credential-shaped fields. The listing endpoint above
+  // intentionally omits payloads to keep responses bounded.
+  res.json(mapJobWithPayload(row));
 });
 
 router.post("/jobs/:id/retry", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {

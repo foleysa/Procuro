@@ -1592,6 +1592,59 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Job'
+  /jobs/recently-failed:
+    get:
+      operationId: listRecentlyFailedJobs
+      tags:
+      - jobs
+      summary: List jobs that failed permanently in a recent lookback window
+      description: 'Powers the persistent admin notification surface in the Command
+
+        Center (#94). Returns the most recent permanently-failed jobs for
+
+        the active tenant whose `completed_at` falls inside the lookback
+
+        window so the banner can render the failing kind / id / error /
+
+        age without the operator having to dig through System & Jobs.
+
+        Defaults to a 24h window to match the other "what needs your
+
+        attention this morning" surfaces; capped at 7 days to keep the
+
+        query bounded. The response payloads use the lighter `Job` shape
+
+        without the `payload` field — admins click through to
+
+        `GET /jobs/{id}` to see the redacted payload on the job-detail
+
+        view.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: withinHours
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 168
+          default: 24
+        description: Lookback window in hours. Defaults to 24, capped at 168 (7 days).
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: Recently-failed jobs in the lookback window
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecentlyFailedJobs'
   /jobs/settings:
     get:
       operationId: listJobKindSettings
@@ -7543,6 +7596,39 @@ components:
             run immediately (the common case).
 
             '
+        payload:
+          type: object
+          additionalProperties: true
+          description: 'Defensively-redacted copy of the original job payload.
+
+            Returned ONLY by the job-detail endpoint (`GET /jobs/{id}`),
+
+            never by the listing endpoint, so admins can inspect *why*
+
+            a job failed without leaking credential-shaped fields. List
+
+            responses omit this field to keep payloads bounded.
+
+            '
+    RecentlyFailedJobs:
+      type: object
+      required:
+      - withinHours
+      - count
+      - jobs
+      properties:
+        withinHours:
+          type: integer
+          minimum: 1
+          description: Lookback window the response was computed against.
+        count:
+          type: integer
+          minimum: 0
+          description: Number of failed jobs in the lookback window.
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
     JobKindSetting:
       type: object
       required:
