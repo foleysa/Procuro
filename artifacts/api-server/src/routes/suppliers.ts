@@ -776,7 +776,22 @@ router.patch("/suppliers/:id", tenantMiddleware, async (req, res) => {
   }
 
   if (changes.length > 0) {
-    const actor = req.actorEmail ?? "system@procuro.ai";
+    // Audit actor is whatever `tenantMiddleware` resolved from the
+    // request — Clerk session email (preferred), Clerk user id when the
+    // session token doesn't carry an email claim, or the API-key /
+    // legacy-token identity for system-to-system callers. We don't fall
+    // back to a static "system@procuro.ai" here: the middleware
+    // guarantees `req.actorEmail` is set on every authenticated path,
+    // and a missing value means the route was reached without auth
+    // (which should be impossible) — surface that as a 401 rather than
+    // silently mis-attributing the change to "system" in the Activity
+    // tab. Keeps audit integrity regardless of how the FE sends the
+    // request (cookie-based Clerk session, bearer api-key, etc.).
+    const actor = req.actorEmail ?? req.clerkUserId;
+    if (!actor) {
+      res.status(401).json({ error: "Authenticated actor required" });
+      return;
+    }
     await db.transaction(async (tx) => {
       await tx
         .update(suppliersTable)
