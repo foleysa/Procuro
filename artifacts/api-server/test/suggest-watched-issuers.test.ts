@@ -601,6 +601,14 @@ let orgB: string;
 const createdOrgIds: string[] = [];
 const createdSupplierIds: string[] = [];
 
+// Isolation strategy (#252 audit): reuses two pre-seeded orgs but all
+// fixtures (suppliers + watched_issuers) are namespaced with RUN_ID
+// and every HTTP assertion is scoped via `?supplierId=sup_${RUN_ID}-…`
+// or membership checks on the seeded supplier set. No assertion keys
+// off org-wide aggregate counts, so concurrent tests inserting other
+// suppliers or watched-issuer rows cannot contaminate this suite.
+// Teardown sweeps watched_issuers via `notes LIKE '%${RUN_ID}%'` and
+// seeded suppliers/orgs by ID array.
 before(async () => {
   if (!process.env["DATABASE_URL"]) {
     throw new Error("DATABASE_URL is required to run this integration test.");

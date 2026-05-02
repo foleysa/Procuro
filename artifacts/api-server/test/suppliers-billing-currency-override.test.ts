@@ -78,6 +78,11 @@ async function postOverride(
 }
 
 describe("POST /suppliers/:id/billing-currency (#55)", () => {
+  // Isolation strategy (#252 audit): two fresh orgs are minted per
+  // file run with `newId("org")` and torn down in `after()` (cascade
+  // FKs sweep child supplier rows). All assertions key off the
+  // captured supplier IDs, never on org-wide aggregate counts, so
+  // sibling test files cannot contaminate this suite.
   before(async () => {
     orgA = newId("org");
     orgB = newId("org");

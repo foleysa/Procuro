@@ -70,6 +70,12 @@ async function getList(
 }
 
 describe("GET /suppliers — billing-currency confidence (#139)", () => {
+  // Isolation strategy (#252 audit): two fresh orgs are minted per
+  // file run via `newId("org")` and torn down in `after()` (cascade
+  // FKs sweep child supplier rows). Every list assertion is filtered
+  // by `?search=${RUN}` and matched against the captured supplier
+  // IDs, so org-wide aggregates from sibling tests cannot contaminate
+  // this suite even when run in parallel.
   before(async () => {
     orgA = newId("org");
     orgB = newId("org");

@@ -62,6 +62,14 @@ function nid(prefix: string): string {
 let orgA: string;
 let orgB: string;
 
+// Isolation strategy (#252 audit): two fresh orgs are minted per file
+// run via `nid("org")` (RUN-suffixed UUID) and torn down in `after()`
+// alongside opportunities, cycles, categories, and queue rows. All
+// synonym/queue fixtures are tagged with RUN-prefixed strings so
+// teardown sweeps cleanly. The `summarizeQueue` test only asserts
+// `>= 0` (no aggregate-count brittleness), and every other assertion
+// keys off RUN-scoped tenant strings or canonical codes the test
+// just inserted, so sibling test files cannot contaminate this suite.
 before(async () => {
   // Materialized view + triggers must exist before we read from it.
   await bootstrapCategoryLeverMappings();

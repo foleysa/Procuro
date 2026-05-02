@@ -67,6 +67,13 @@ async function makeSnapshot(args: {
 }
 
 describe("Today substrate readers (#204)", () => {
+  // Isolation strategy (#252 audit): two fresh orgs are minted per
+  // file run; the count-sensitive conversion-rate tests further mint
+  // their own per-test isolated orgs (`isolatedOrg`, `cmpOrg`, `zOrg`)
+  // so the "two most recent snapshots" lookup is deterministic. Org
+  // teardown cascades to cycles/snapshots/annotations via FK. No
+  // assertion keys off org-wide aggregates of orgs the test does not
+  // own, so sibling test files cannot contaminate this suite.
   before(async () => {
     orgId = newId("org");
     otherOrgId = newId("org");
