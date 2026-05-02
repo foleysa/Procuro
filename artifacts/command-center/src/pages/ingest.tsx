@@ -1459,6 +1459,20 @@ export default function Ingest() {
   );
   const [result, setResult] = useState<SuccessResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  /**
+   * Captured at the moment `apiError` is set. Drives the small header
+   * that gets prepended to the *clipboard* payload of the destructive
+   * alert below — file name(s), entity type(s), and a UTC timestamp —
+   * so a pasted error in chat / a bug report is self-contained.
+   *
+   * The on-screen rendering of the error is unchanged; this is purely
+   * a clipboard hint surfaced via {@link TruncatedError}'s copyContext.
+   */
+  const [errorContext, setErrorContext] = useState<{
+    fileName?: string;
+    entity?: string;
+    timestamp: Date;
+  } | null>(null);
   const [streamProgress, setStreamProgress] = useState<
     Partial<Record<EntityKey, UploadProgress>>
   >({});
@@ -1495,6 +1509,7 @@ export default function Ingest() {
   const onPickFile = async (entity: EntityDef, file: File | null) => {
     setResult(null);
     setApiError(null);
+    setErrorContext(null);
     setStreamProgress({});
     setServerProgress({});
     setCancelled({});
@@ -1516,6 +1531,7 @@ export default function Ingest() {
     setParsed(next);
     setResult(null);
     setApiError(null);
+    setErrorContext(null);
     setStreamProgress((prev) => {
       const n = { ...prev };
       delete n[key];
@@ -1593,6 +1609,7 @@ export default function Ingest() {
   const onRun = async () => {
     setResult(null);
     setApiError(null);
+    setErrorContext(null);
     setStreamProgress({});
     setServerProgress({});
     setCancelled({});
@@ -1714,6 +1731,24 @@ export default function Ingest() {
                 setCancelled((prev) => ({ ...prev, [s.key]: true }));
                 return;
               }
+              // Tag the error with which streaming entity / file blew up
+              // so the outer catch can attach that to `errorContext` and
+              // the copied error has a self-contained header. Guarded:
+              // a frozen / non-extensible thrown object would otherwise
+              // raise a TypeError here and mask the real failure — in
+              // that case we just drop the tag and let the outer catch
+              // fall back to listing every involved dataset.
+              if (err && typeof err === "object") {
+                try {
+                  Object.assign(err as Record<string, unknown>, {
+                    __ingestEntity: s.key,
+                    __ingestFileName: s.file.name,
+                  });
+                } catch {
+                  /* error object is sealed — fall back to the broader
+                     "all involved datasets" context in the outer catch. */
+                }
+              }
               throw err;
             })
             .finally(() => {
@@ -1762,6 +1797,40 @@ export default function Ingest() {
     } catch (e) {
       const msg = String((e as Error).message ?? e);
       setApiError(msg);
+      // Build the clipboard-only header context. If a streaming task
+      // tagged the error, we know exactly which entity/file blew up.
+      // Otherwise (e.g. the JSON batch failed, or a non-Error value
+      // was thrown) fall back to listing every dataset that was part
+      // of this run so the pasted error still names the upload.
+      const tagged = e as
+        | { __ingestEntity?: EntityKey; __ingestFileName?: string }
+        | null
+        | undefined;
+      let ctxFileName: string | undefined;
+      let ctxEntity: string | undefined;
+      if (tagged && (tagged.__ingestEntity || tagged.__ingestFileName)) {
+        ctxFileName = tagged.__ingestFileName;
+        ctxEntity = tagged.__ingestEntity;
+      } else {
+        const involved = ENTITIES.filter(
+          (en) =>
+            parsed[en.key] &&
+            (parsed[en.key]?.streaming ||
+              (parsed[en.key]?.rows?.length ?? 0) > 0),
+        );
+        if (involved.length > 0) {
+          ctxFileName = involved
+            .map((en) => parsed[en.key]?.fileName)
+            .filter((n): n is string => Boolean(n))
+            .join(", ") || undefined;
+          ctxEntity = involved.map((en) => en.key).join(", ");
+        }
+      }
+      setErrorContext({
+        fileName: ctxFileName,
+        entity: ctxEntity,
+        timestamp: new Date(),
+      });
       // Toasts auto-dismiss and have no expand affordance, so keep them
       // short. Full details (incl. raw SQL) are available in the
       // destructive alert at the top of the page via "Show details".
@@ -1823,7 +1892,10 @@ export default function Ingest() {
           <XCircle className="w-4 h-4" />
           <AlertTitle>Import failed</AlertTitle>
           <AlertDescription>
-            <TruncatedError message={apiError} />
+            <TruncatedError
+              message={apiError}
+              copyContext={errorContext ?? undefined}
+            />
           </AlertDescription>
         </Alert>
       )}

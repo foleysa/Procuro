@@ -3,10 +3,61 @@ import { Button } from "@/components/ui/button";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+/**
+ * Optional context the calling page can attach so that the *clipboard*
+ * payload — and only the clipboard payload — gets a small header
+ * identifying which upload the error belongs to. The on-screen
+ * rendering is unchanged regardless of whether this is supplied.
+ *
+ * Each field is independently optional. When `copyContext` is omitted
+ * entirely, or when none of its fields are populated, the clipboard
+ * gets the raw `message` with no header (so the component still works
+ * unchanged in callers that don't have this info).
+ */
+export interface CopyContext {
+  /** Source file name, e.g. `q3-suppliers.csv`. */
+  fileName?: string;
+  /** Entity / dataset key, e.g. `suppliers`. */
+  entity?: string;
+  /**
+   * When the error occurred. Pass a `Date` to have it formatted as
+   * `YYYY-MM-DD HH:MM UTC`, or a pre-formatted string to use verbatim.
+   */
+  timestamp?: Date | string;
+}
+
 interface TruncatedErrorProps {
   message: string;
   /** Show the full message inline if it is at most this long (no truncation). */
   inlineThreshold?: number;
+  /**
+   * Optional metadata about the failed action. When provided, a small
+   * header is prepended to the clipboard payload so support engineers
+   * receiving the pasted error don't have to ask "which upload was
+   * this?". See {@link CopyContext}.
+   */
+  copyContext?: CopyContext;
+}
+
+function formatCopyTimestamp(t: Date | string): string {
+  if (typeof t === "string") return t;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())} ` +
+    `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())} UTC`
+  );
+}
+
+export function buildCopyPayload(message: string, ctx?: CopyContext): string {
+  if (!ctx) return message;
+  const headerLines: string[] = [];
+  if (ctx.fileName) headerLines.push(`# File: ${ctx.fileName}`);
+  if (ctx.entity) headerLines.push(`# Entity: ${ctx.entity}`);
+  if (ctx.timestamp) {
+    headerLines.push(`# When: ${formatCopyTimestamp(ctx.timestamp)}`);
+  }
+  if (headerLines.length === 0) return message;
+  return `# Failed upload\n${headerLines.join("\n")}\n\n${message}`;
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -47,6 +98,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 export function TruncatedError({
   message,
   inlineThreshold = 240,
+  copyContext,
 }: TruncatedErrorProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -66,7 +118,8 @@ export function TruncatedError({
   const isShort = !hasMoreLines && totalLen <= inlineThreshold;
 
   const handleCopy = async () => {
-    const ok = await copyTextToClipboard(text);
+    const payload = buildCopyPayload(text, copyContext);
+    const ok = await copyTextToClipboard(payload);
     if (ok) {
       setCopied(true);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);

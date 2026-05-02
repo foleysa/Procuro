@@ -116,6 +116,91 @@ describe("TruncatedError copy button", () => {
     );
   });
 
+  test("prepends a file/entity/timestamp header when copyContext is provided", async () => {
+    const user = userEvent.setup();
+    installClipboardMock();
+    // Pick an explicit moment (UTC) so the formatted "When:" line is
+    // deterministic regardless of the test machine's timezone.
+    const when = new Date(Date.UTC(2026, 3, 30, 17, 42));
+    render(
+      <>
+        <TruncatedError
+          message={LONG_ERROR}
+          copyContext={{
+            fileName: "q3-suppliers.csv",
+            entity: "suppliers",
+            timestamp: when,
+          }}
+        />
+        <Toaster />
+      </>,
+    );
+
+    await user.click(screen.getByTestId("button-copy-error"));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const expected =
+      "# Failed upload\n" +
+      "# File: q3-suppliers.csv\n" +
+      "# Entity: suppliers\n" +
+      "# When: 2026-04-30 17:42 UTC\n" +
+      "\n" +
+      LONG_ERROR;
+    expect(writeText).toHaveBeenCalledWith(expected);
+
+    // The on-screen rendering must NOT have changed — only the
+    // clipboard payload gets the header. The visible summary is the
+    // first line of the original error.
+    expect(screen.getByTestId("text-error-summary")).toHaveTextContent(
+      LONG_ERROR.split("\n")[0]!,
+    );
+    expect(
+      screen.queryByText(/# Failed upload/),
+    ).not.toBeInTheDocument();
+  });
+
+  test("omits the header when copyContext has no usable fields", async () => {
+    const user = userEvent.setup();
+    installClipboardMock();
+    render(
+      <>
+        {/* All three fields are undefined — the component must not
+            invent a header out of thin air. */}
+        <TruncatedError message={LONG_ERROR} copyContext={{}} />
+        <Toaster />
+      </>,
+    );
+
+    await user.click(screen.getByTestId("button-copy-error"));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(LONG_ERROR);
+  });
+
+  test("includes only the populated copyContext fields", async () => {
+    const user = userEvent.setup();
+    installClipboardMock();
+    // Only file name is known (e.g. a generic uploader that doesn't
+    // know which entity the file maps to). The header must skip the
+    // missing fields rather than emit empty `# Entity:` / `# When:`
+    // lines.
+    render(
+      <>
+        <TruncatedError
+          message={LONG_ERROR}
+          copyContext={{ fileName: "bulk.csv" }}
+        />
+        <Toaster />
+      </>,
+    );
+
+    await user.click(screen.getByTestId("button-copy-error"));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const expected = "# Failed upload\n# File: bulk.csv\n\n" + LONG_ERROR;
+    expect(writeText).toHaveBeenCalledWith(expected);
+  });
+
   test("shows a failure toast and does not flip to 'Copied' when clipboard is blocked", async () => {
     writeText.mockRejectedValueOnce(new Error("permission denied"));
     // Also block the legacy execCommand fallback so we exercise the
