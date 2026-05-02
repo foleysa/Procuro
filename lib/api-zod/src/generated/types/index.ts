@@ -426,6 +426,7 @@ export * from "./streamCsvResultEntity";
 export * from "./streamCsvResultEvent";
 export * from "./streamCsvResultEventEntity";
 export * from "./streamCsvResultEventType";
+export * from "./streamIntelligenceEventsParams";
 export * from "./submitDefensePackFeedbackRequest";
 export * from "./supplier";
 export * from "./supplierAuditEntry";

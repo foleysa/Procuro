@@ -5114,6 +5114,21 @@ export const ListIntelligenceEventsResponse = zod.object({
 });
 
 /**
+ * Long-lived text/event-stream connection that emits one SSE frame
+per freshly-inserted war-room signal. Clients subscribe with
+EventSource and prepend arrivals to their local list, falling
+back to the polled GET endpoint if the stream disconnects.
+Active tenant id MUST be passed as the orgId query parameter
+(EventSource cannot set custom request headers).
+
+ * @summary Server-Sent Events push of newly-persisted war-room events
+ */
+export const StreamIntelligenceEventsQueryParams = zod.object({
+  orgId: zod.coerce.string(),
+  severityMin: zod.coerce.number().optional(),
+});
+
+/**
  * Categories and suppliers ranked by recent spend with little or
 no signal coverage in the last `lookbackDays`. Helps analysts
 find "blind spots" — high-value scopes the collectors aren't

@@ -2596,6 +2596,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntelligenceEventStreamResponse'
+  /intelligence/events/stream:
+    get:
+      operationId: streamIntelligenceEvents
+      tags:
+      - intelligence
+      summary: Server-Sent Events push of newly-persisted war-room events
+      description: |
+        Long-lived text/event-stream connection that emits one SSE frame
+        per freshly-inserted war-room signal. Clients subscribe with
+        EventSource and prepend arrivals to their local list, falling
+        back to the polled GET endpoint if the stream disconnects.
+        Active tenant id MUST be passed as the orgId query parameter
+        (EventSource cannot set custom request headers).
+      parameters:
+      - in: query
+        name: orgId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: severityMin
+        schema:
+          type: number
+      responses:
+        '200':
+          description: SSE stream of war-room events.
   /intelligence/coverage-gaps:
     get:
       operationId: getIntelligenceCoverageGaps

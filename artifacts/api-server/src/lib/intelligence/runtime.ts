@@ -19,6 +19,7 @@ import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
 import { fanOutCollectorAlerts } from "../alerts/collector-fanout";
+import { publishMarketSignalIds } from "./event-bus";
 import {
   collectorContract,
   type CollectorRunMode,
@@ -192,9 +193,21 @@ export async function insertSignalsWithDedupe(
    * case.
    */
   persistedIds: Map<string, string>;
+  /**
+   * `market_signals.id` values that were *freshly* inserted on this
+   * call (i.e. did not collide with the natural-key index). Used by the
+   * in-process push bus to feed the War Room SSE stream without
+   * republishing duplicates from idempotent collector re-runs.
+   */
+  newlyInsertedIds: string[];
 }> {
   if (rows.length === 0) {
-    return { inserted: 0, duplicates: 0, persistedIds: new Map() };
+    return {
+      inserted: 0,
+      duplicates: 0,
+      persistedIds: new Map(),
+      newlyInsertedIds: [],
+    };
   }
 
   const valuesClause = sql.join(
@@ -336,6 +349,7 @@ export async function insertSignalsWithDedupe(
     inserted,
     duplicates: rows.length - inserted,
     persistedIds,
+    newlyInsertedIds: result.rows.map((r) => r.id),
   };
 }
 
@@ -699,8 +713,15 @@ export async function runCollector(
           ? { ...(d.metadata ?? {}), entityUid: d.entityUid }
           : (d.metadata ?? {}),
     }));
-    const { inserted, duplicates, persistedIds } =
+    const { inserted, duplicates, persistedIds, newlyInsertedIds } =
       await insertSignalsWithDedupe(rows);
+
+    // Push freshly persisted signal ids onto the in-process bus so the
+    // War Room SSE endpoint can fan them out to connected operators
+    // without waiting for the next 15s poll cycle. Duplicates from
+    // idempotent re-runs are NOT republished — `newlyInsertedIds` is
+    // exactly the set returned by Postgres' `RETURNING id`.
+    publishMarketSignalIds(newlyInsertedIds);
 
     // Post-insert hook: collectors that maintain external cache state
     // (ETag / Last-Modified watermarks persisted as `cache_watermark`
@@ -1104,6 +1125,12 @@ export async function insertSignalsIdempotent(
     const r = await insertSignalsWithDedupe(chunk);
     inserted += r.inserted;
     crossRunDuplicates += r.duplicates;
+    // Mirror the live collector path: publish freshly inserted ids so
+    // the War Room SSE stream picks them up. Backfills tend to land
+    // historical rows that won't trigger NEW-badges (the SSE consumer
+    // dedupes against rows already in its window) but the push is
+    // cheap and keeps the pipelines symmetric.
+    publishMarketSignalIds(r.newlyInsertedIds);
   }
   return { inserted, skipped: inBatchSkipped + crossRunDuplicates };
 }

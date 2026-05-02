@@ -1386,22 +1386,112 @@ function EventStreamPane({
   if (cycleId) eventsParams.cycleId = cycleId;
 
   // Pause toggle: when paused we freeze the *visible* list (so an
-  // analyst can study a specific event without it scrolling away) but
-  // we deliberately keep polling in the background. That way we can
-  // show a "X new events queued — resume" affordance the moment fresh
-  // data lands, instead of leaving the operator blind to the firehose
-  // they've temporarily silenced.
+  // analyst can study a specific event without it scrolling away).
+  // The pause toggle additionally tears down the SSE stream so we
+  // stop receiving pushes the operator has explicitly silenced; the
+  // 15s polling fallback continues in the background so the "X new
+  // events queued — resume" affordance still surfaces fresh data.
   const [paused, setPaused] = useState(false);
+
+  // ---- Live push (SSE) ------------------------------------------------
+  // When the browser supports EventSource AND the stream is connected
+  // we suppress the React Query polling cycle entirely — the war room
+  // is fed exclusively by pushes. The moment SSE disconnects (or the
+  // browser doesn't ship EventSource at all) `streamConnected` flips
+  // false and the 15s fallback polling kicks back in automatically.
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [liveItems, setLiveItems] = useState<IntelligenceEvent[]>([]);
 
   const { data, isLoading, dataUpdatedAt, isFetching } =
     useListIntelligenceEvents(eventsParams, {
       query: {
         queryKey: getListIntelligenceEventsQueryKey(eventsParams),
-        refetchInterval: WAR_ROOM_POLL_MS,
-        refetchOnWindowFocus: true,
+        // While the SSE stream is healthy we don't poll — pushes are
+        // authoritative. Polling resumes if the stream drops or while
+        // the operator has pressed Pause (so we still see the queued
+        // count without having to keep the SSE connection open).
+        refetchInterval:
+          streamConnected && !paused ? false : WAR_ROOM_POLL_MS,
+        refetchOnWindowFocus: !streamConnected,
       },
     });
-  const items = data?.items ?? [];
+  const baseItems = useMemo(() => data?.items ?? [], [data]);
+  // Merge live SSE arrivals on top of the polled base. Live items
+  // win on duplicate id (they're the freshest copy); we cap the live
+  // buffer at 200 to mirror the GET endpoint's hard limit.
+  const items = useMemo<IntelligenceEvent[]>(() => {
+    if (liveItems.length === 0) return baseItems;
+    const liveIds = new Set(liveItems.map((e) => e.id));
+    return [...liveItems, ...baseItems.filter((e) => !liveIds.has(e.id))];
+  }, [liveItems, baseItems]);
+
+  // Drop live arrivals that the polled payload now also covers (the
+  // base payload is sliced to `limit`, so anything still inside it
+  // doesn't need to live in the per-session buffer too).
+  useEffect(() => {
+    if (liveItems.length === 0 || baseItems.length === 0) return;
+    const baseIds = new Set(baseItems.map((e) => e.id));
+    const stillFresh = liveItems.filter((e) => !baseIds.has(e.id));
+    if (stillFresh.length !== liveItems.length) {
+      setLiveItems(stillFresh);
+    }
+  }, [baseItems, liveItems]);
+
+  // Open the SSE connection. Re-runs when `paused` flips (close on
+  // pause, reopen on resume) or when the cycle filter context changes
+  // (cross-link from another tab) so the new window is reflected in
+  // the GET fallback even though SSE itself is global.
+  useEffect(() => {
+    if (paused) return;
+    if (typeof window === "undefined" || typeof EventSource === "undefined") {
+      return;
+    }
+    const orgId = window.localStorage.getItem("activeOrgId") ?? "";
+    if (!orgId) return;
+    const url = `/api/intelligence/events/stream?orgId=${encodeURIComponent(
+      orgId,
+    )}`;
+    let cancelled = false;
+    const es = new EventSource(url);
+
+    const handleOpen = () => {
+      if (cancelled) return;
+      setStreamConnected(true);
+    };
+    const handleSignal = (ev: MessageEvent) => {
+      if (cancelled) return;
+      try {
+        const item = JSON.parse(ev.data) as IntelligenceEvent;
+        setLiveItems((prev) => {
+          if (prev.some((e) => e.id === item.id)) return prev;
+          return [item, ...prev].slice(0, 200);
+        });
+      } catch {
+        // Malformed frame — drop silently; the polling fallback will
+        // surface the row on its next tick.
+      }
+    };
+    const handleError = () => {
+      // Browsers auto-retry EventSource by default. We close the
+      // connection explicitly and let polling take over so an operator
+      // never sits in front of a permanently dark feed without knowing.
+      setStreamConnected(false);
+      es.close();
+    };
+
+    es.addEventListener("open", handleOpen);
+    es.addEventListener("signal", handleSignal as EventListener);
+    es.addEventListener("error", handleError);
+
+    return () => {
+      cancelled = true;
+      es.removeEventListener("open", handleOpen);
+      es.removeEventListener("signal", handleSignal as EventListener);
+      es.removeEventListener("error", handleError);
+      es.close();
+      setStreamConnected(false);
+    };
+  }, [paused, cycleId]);
 
   // #161 cross-link: fetch the most recent alerts (any state) once so
   // each event row can show "triggered N alert(s)" without an N+1
@@ -1641,16 +1731,20 @@ function EventStreamPane({
             className="flex items-center justify-between gap-3 flex-wrap text-xs text-muted-foreground mb-3"
             data-testid="war-room-status-line"
           >
-            <span>
+            <span data-testid="war-room-feed-mode">
               {paused
                 ? lastUpdatedLabel
                   ? `View frozen · backend last polled ${lastUpdatedLabel}`
                   : "View frozen"
-                : lastUpdatedLabel
-                  ? `Last refresh ${lastUpdatedLabel} · auto-refresh every ${
-                      WAR_ROOM_POLL_MS / 1000
-                    }s`
-                  : `Auto-refresh every ${WAR_ROOM_POLL_MS / 1000}s`}
+                : streamConnected
+                  ? lastUpdatedLabel
+                    ? `Live push connected · last poll ${lastUpdatedLabel}`
+                    : "Live push connected"
+                  : lastUpdatedLabel
+                    ? `Last refresh ${lastUpdatedLabel} · live push offline, falling back to ${
+                        WAR_ROOM_POLL_MS / 1000
+                      }s polling`
+                    : `Live push offline · polling every ${WAR_ROOM_POLL_MS / 1000}s`}
             </span>
             {paused && queuedWhilePaused > 0 && (
               <Button

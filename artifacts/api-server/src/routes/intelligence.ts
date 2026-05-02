@@ -56,6 +56,7 @@ import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { getCollector } from "../lib/intelligence/runtime";
 import type { IntelligenceCollector } from "../lib/intelligence/collector";
+import { subscribeMarketSignalIds } from "../lib/intelligence/event-bus";
 
 const router: IRouter = Router();
 
@@ -951,80 +952,47 @@ interface ImpactPathStep {
   exposureUsd: number | null;
 }
 
-router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
-  const orgId = requireOrgId(req);
-  const policy = await loadPolicy(orgId);
-  let hours = Math.min(
-    Math.max(parseInt(String(req.query["hours"] ?? "72"), 10) || 72, 1),
-    720,
-  );
-  const limit = Math.min(
-    Math.max(parseInt(String(req.query["limit"] ?? "200"), 10) || 200, 1),
-    500,
-  );
-  const severityMinRaw = Number(req.query["severityMin"] ?? "0.7");
-  const severityMin = Number.isFinite(severityMinRaw)
-    ? Math.min(Math.max(severityMinRaw, 0), 1)
-    : 0.7;
-  const cycleId = readStringQuery(req.query["cycleId"]);
+interface EventDto {
+  id: string;
+  signalType: string;
+  observedAt: string;
+  title: string | null;
+  country: string | null;
+  lat: number | null;
+  lng: number | null;
+  severity: number | null;
+  actor: string | null;
+  eventCode: string | null;
+  tier: DisclosureTier;
+  source: SignalCitation;
+  impactPath: ImpactPathStep[] | null;
+}
 
-  // Optional cycleId preload: when the OODA cycle card cross-links into
-  // the war room we widen `hours` to span that cycle's window so the
-  // user lands on the events that drove the cycle's outcomes instead
-  // of the default 72h tail. Strict tenant check — a cycleId from a
-  // different tenant is silently ignored (no info leak via 404).
-  let cycleWindow: { startedAt: Date; completedAt: Date | null } | null = null;
-  if (cycleId) {
-    const [c] = await db
-      .select({
-        startedAt: analysisCyclesTable.startedAt,
-        completedAt: analysisCyclesTable.completedAt,
-      })
-      .from(analysisCyclesTable)
-      .where(
-        and(
-          eq(analysisCyclesTable.id, cycleId),
-          eq(analysisCyclesTable.orgId, orgId),
-        ),
-      )
-      .limit(1);
-    if (c) {
-      cycleWindow = { startedAt: c.startedAt, completedAt: c.completedAt };
-      const endMs = (c.completedAt ?? new Date()).getTime();
-      const spanHrs = Math.ceil(
-        (endMs - c.startedAt.getTime()) / (3600 * 1000),
-      );
-      hours = Math.min(Math.max(spanHrs, 1), 720);
-    }
-  }
-
-  const since = cycleWindow
-    ? cycleWindow.startedAt
-    : new Date(Date.now() - hours * 3600 * 1000);
-  const until = cycleWindow?.completedAt ?? null;
-
-  const baseConds: SQL[] = [
-    tenantScopeCondition(orgId),
-    inArray(marketSignalsTable.signalType, [...EVENT_SIGNAL_TYPES]),
-    gte(marketSignalsTable.observedAt, since),
-  ];
-  if (until) {
-    baseConds.push(sql`${marketSignalsTable.observedAt} <= ${until}`);
-  }
-
-  const rows = await db
-    .select()
-    .from(marketSignalsTable)
-    .where(and(...baseConds))
-    .orderBy(desc(marketSignalsTable.observedAt))
-    .limit(limit * 4);
-
+/**
+ * Shared event-row materializer used by both the polled `GET
+ * /intelligence/events` endpoint and the live `GET
+ * /intelligence/events/stream` SSE push. Applies the tenant disclosure
+ * policy + (optional) `corporate_filing` severity floor and decorates
+ * every row with its impact-propagation chain.
+ *
+ * Pulled out as a function so the SSE consumer doesn't fork a parallel
+ * (and inevitably divergent) materialization path — every byte the war
+ * room sees flows through here, regardless of transport.
+ */
+async function materialiseEventRows(
+  orgId: string,
+  rows: readonly MarketSignalRow[],
+  policy: TenantPolicy,
+  opts: { severityMin: number },
+): Promise<{
+  items: EventDto[];
+  droppedByPolicy: number;
+  droppedBySeverity: number;
+}> {
   const collectorIds = Array.from(new Set(rows.map((r) => r.collectorId)));
   const collectors = collectMap(collectorIds);
   const visibleTiers = new Set<DisclosureTier>(visibleTiersForPolicy(policy));
 
-  // Resolve supplier name → id + country once for impactPath construction
-  // and (when present) the contract + category attached to the supplier.
   const supplierNames = Array.from(
     new Set(
       rows.map((r) => r.scopeSupplierName).filter((n): n is string => !!n),
@@ -1056,9 +1024,6 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
     }
   }
 
-  // Pre-compute per-supplier 90d spend + the most recent contract +
-  // category (if any) so impactPath can render the full chain without
-  // an N+1 fan-out.
   const supplierIds = Array.from(supplierMeta.values()).map((s) => s.id);
   const spendBySupplier = new Map<string, number>();
   const contractBySupplier = new Map<
@@ -1072,13 +1037,6 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
     }
   >();
   if (supplierIds.length > 0) {
-    // See heatmap route comment for the rationale: pass IDs as a
-    // single comma-joined string param and split server-side with
-    // `string_to_array(...)`. Both `sql.join(...)` and the bare
-    // `${array}::text[]` form recurse element-wise through drizzle's
-    // mergeQueries and overflow the call stack on large tenants.
-    // `po_lines` carries the spend amount but supplier_id lives on
-    // the parent `purchase_orders` header — join through po_id.
     const supplierIdCsv = supplierIds.join(",");
     const spendRows = await db.execute(sql`
       SELECT po.supplier_id AS supplier_id,
@@ -1117,7 +1075,6 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
         ),
       )
       .orderBy(desc(contractsTable.startDate));
-    // Keep only the most-recent contract per supplier.
     for (const r of contractRows) {
       if (!contractBySupplier.has(r.supplierId)) {
         contractBySupplier.set(r.supplierId, {
@@ -1133,21 +1090,7 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
 
   let droppedByPolicy = 0;
   let droppedBySeverity = 0;
-  const items: Array<{
-    id: string;
-    signalType: string;
-    observedAt: string;
-    title: string | null;
-    country: string | null;
-    lat: number | null;
-    lng: number | null;
-    severity: number | null;
-    actor: string | null;
-    eventCode: string | null;
-    tier: DisclosureTier;
-    source: SignalCitation;
-    impactPath: ImpactPathStep[] | null;
-  }> = [];
+  const items: EventDto[] = [];
 
   for (const row of rows) {
     const collector = collectors.get(row.collectorId);
@@ -1157,13 +1100,10 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
       continue;
     }
     const severity = row.confidence !== null ? Number(row.confidence) : null;
-    // severityMin only filters `corporate_filing` so the war room does
-    // not drown in routine SEC / Companies House submissions; other
-    // event types are intrinsically signal-bearing and surface as-is.
     if (
       row.signalType === "corporate_filing" &&
       severity !== null &&
-      severity < severityMin
+      severity < opts.severityMin
     ) {
       droppedBySeverity += 1;
       continue;
@@ -1185,9 +1125,6 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
       readString(meta["eventCode"]) ?? readString(meta["cameoCode"]) ?? null;
     const country = row.scopeLaneKey?.toUpperCase() ?? null;
 
-    // Build the impact path: event → site → supplier → contract →
-    // category → spend. Steps for which we have no data are dropped
-    // so the UI never renders dead breadcrumbs.
     const path: ImpactPathStep[] = [
       {
         step: "event",
@@ -1201,7 +1138,6 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
       ? supplierMeta.get(row.scopeSupplierName)
       : undefined;
     if (supplierInfo) {
-      // Site = supplier-as-site proxy in v1.
       path.push({
         step: "site",
         kind: "site",
@@ -1270,8 +1206,85 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
       source: buildCitation(row, collector),
       impactPath: path.length > 1 ? path : null,
     });
-    if (items.length >= limit) break;
   }
+
+  return { items, droppedByPolicy, droppedBySeverity };
+}
+
+router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const policy = await loadPolicy(orgId);
+  let hours = Math.min(
+    Math.max(parseInt(String(req.query["hours"] ?? "72"), 10) || 72, 1),
+    720,
+  );
+  const limit = Math.min(
+    Math.max(parseInt(String(req.query["limit"] ?? "200"), 10) || 200, 1),
+    500,
+  );
+  const severityMinRaw = Number(req.query["severityMin"] ?? "0.7");
+  const severityMin = Number.isFinite(severityMinRaw)
+    ? Math.min(Math.max(severityMinRaw, 0), 1)
+    : 0.7;
+  const cycleId = readStringQuery(req.query["cycleId"]);
+
+  // Optional cycleId preload: when the OODA cycle card cross-links into
+  // the war room we widen `hours` to span that cycle's window so the
+  // user lands on the events that drove the cycle's outcomes instead
+  // of the default 72h tail. Strict tenant check — a cycleId from a
+  // different tenant is silently ignored (no info leak via 404).
+  let cycleWindow: { startedAt: Date; completedAt: Date | null } | null = null;
+  if (cycleId) {
+    const [c] = await db
+      .select({
+        startedAt: analysisCyclesTable.startedAt,
+        completedAt: analysisCyclesTable.completedAt,
+      })
+      .from(analysisCyclesTable)
+      .where(
+        and(
+          eq(analysisCyclesTable.id, cycleId),
+          eq(analysisCyclesTable.orgId, orgId),
+        ),
+      )
+      .limit(1);
+    if (c) {
+      cycleWindow = { startedAt: c.startedAt, completedAt: c.completedAt };
+      const endMs = (c.completedAt ?? new Date()).getTime();
+      const spanHrs = Math.ceil(
+        (endMs - c.startedAt.getTime()) / (3600 * 1000),
+      );
+      hours = Math.min(Math.max(spanHrs, 1), 720);
+    }
+  }
+
+  const since = cycleWindow
+    ? cycleWindow.startedAt
+    : new Date(Date.now() - hours * 3600 * 1000);
+  const until = cycleWindow?.completedAt ?? null;
+
+  const baseConds: SQL[] = [
+    tenantScopeCondition(orgId),
+    inArray(marketSignalsTable.signalType, [...EVENT_SIGNAL_TYPES]),
+    gte(marketSignalsTable.observedAt, since),
+  ];
+  if (until) {
+    baseConds.push(sql`${marketSignalsTable.observedAt} <= ${until}`);
+  }
+
+  const rows = await db
+    .select()
+    .from(marketSignalsTable)
+    .where(and(...baseConds))
+    .orderBy(desc(marketSignalsTable.observedAt))
+    .limit(limit * 4);
+
+  const materialised = await materialiseEventRows(orgId, rows, policy, {
+    severityMin,
+  });
+  const items = materialised.items.slice(0, limit);
+  const droppedByPolicy = materialised.droppedByPolicy;
+  const droppedBySeverity = materialised.droppedBySeverity;
 
   req.log.info(
     {
@@ -1293,6 +1306,96 @@ router.get("/intelligence/events", tenantMiddleware, async (req, res) => {
     droppedByPolicy,
   });
 });
+
+// ---------------------------------------------------------------------
+// GET /intelligence/events/stream  — Server-Sent Events live push
+// ---------------------------------------------------------------------
+//
+// Browsers cannot attach custom headers to an `EventSource`, so we let
+// the client pass `?orgId=` and shim it onto the `x-org-id` header
+// before `tenantMiddleware` runs. Auth itself still flows through the
+// session/bearer paths the middleware enforces — the query param only
+// chooses *which* of the user's tenants this stream should scope to.
+router.get(
+  "/intelligence/events/stream",
+  (req, _res, next) => {
+    if (
+      !req.header("x-org-id") &&
+      typeof req.query["orgId"] === "string" &&
+      req.query["orgId"].length > 0
+    ) {
+      req.headers["x-org-id"] = req.query["orgId"];
+    }
+    next();
+  },
+  tenantMiddleware,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const policy = await loadPolicy(orgId);
+    const severityMinRaw = Number(req.query["severityMin"] ?? "0.7");
+    const severityMin = Number.isFinite(severityMinRaw)
+      ? Math.min(Math.max(severityMinRaw, 0), 1)
+      : 0.7;
+
+    // SSE response framing. `X-Accel-Buffering: no` keeps reverse
+    // proxies (Nginx, the Replit shared proxy) from holding bytes back
+    // until a 4 KiB chunk fills.
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    res.write(`: connected ${new Date().toISOString()}\n\n`);
+
+    // Heartbeat every 25s so any intermediary that drops idle TCP
+    // connections at 30s keeps this one alive. SSE comments
+    // (`: anything\n\n`) are ignored by the EventSource parser.
+    const heartbeat = setInterval(() => {
+      res.write(": ping\n\n");
+    }, 25_000);
+
+    const unsubscribe = subscribeMarketSignalIds(async ({ ids }) => {
+      try {
+        // Re-fetch under the tenant scope so we never leak rows the
+        // requester wouldn't normally see via the GET endpoint, and so
+        // non-event signal types from the same publish batch are
+        // filtered out at the database level.
+        const rows = await db
+          .select()
+          .from(marketSignalsTable)
+          .where(
+            and(
+              tenantScopeCondition(orgId),
+              inArray(marketSignalsTable.signalType, [...EVENT_SIGNAL_TYPES]),
+              inArray(marketSignalsTable.id, ids),
+            ),
+          );
+        if (rows.length === 0) return;
+        const { items } = await materialiseEventRows(orgId, rows, policy, {
+          severityMin,
+        });
+        for (const it of items) {
+          res.write(`event: signal\ndata: ${JSON.stringify(it)}\n\n`);
+        }
+      } catch (err) {
+        req.log.warn(
+          { err: (err as Error).message, orgId },
+          "intelligence.events.stream.publish_failed",
+        );
+      }
+    });
+
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    req.on("close", cleanup);
+    res.on("close", cleanup);
+
+    req.log.info({ orgId, policy }, "intelligence.events.stream.opened");
+  },
+);
 
 /**
  * Country centroid lookup used to place "site" map points.

@@ -5471,6 +5471,11 @@ cycle.start → cycle.end if completed).
   cycleId?: string;
 };
 
+export type StreamIntelligenceEventsParams = {
+  orgId: string;
+  severityMin?: number;
+};
+
 export type GetIntelligenceCoverageGapsParams = {
   /**
    * @minimum 1

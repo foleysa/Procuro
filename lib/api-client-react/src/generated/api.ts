@@ -188,6 +188,7 @@ import type {
   SowListResponse,
   SpendByBand,
   SpendOverview,
+  StreamIntelligenceEventsParams,
   SubmitDefensePackFeedbackRequest,
   SupplierDetail,
   SupplierIntelligenceResponse,
@@ -7311,6 +7312,116 @@ export function useListIntelligenceEvents<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListIntelligenceEventsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Long-lived text/event-stream connection that emits one SSE frame
+per freshly-inserted war-room signal. Clients subscribe with
+EventSource and prepend arrivals to their local list, falling
+back to the polled GET endpoint if the stream disconnects.
+Active tenant id MUST be passed as the orgId query parameter
+(EventSource cannot set custom request headers).
+
+ * @summary Server-Sent Events push of newly-persisted war-room events
+ */
+export const getStreamIntelligenceEventsUrl = (
+  params: StreamIntelligenceEventsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/intelligence/events/stream?${stringifiedParams}`
+    : `/api/intelligence/events/stream`;
+};
+
+export const streamIntelligenceEvents = async (
+  params: StreamIntelligenceEventsParams,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getStreamIntelligenceEventsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getStreamIntelligenceEventsQueryKey = (
+  params?: StreamIntelligenceEventsParams,
+) => {
+  return [
+    `/api/intelligence/events/stream`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getStreamIntelligenceEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamIntelligenceEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamIntelligenceEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamIntelligenceEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getStreamIntelligenceEventsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof streamIntelligenceEvents>>
+  > = ({ signal }) =>
+    streamIntelligenceEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamIntelligenceEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type StreamIntelligenceEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamIntelligenceEvents>>
+>;
+export type StreamIntelligenceEventsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Server-Sent Events push of newly-persisted war-room events
+ */
+
+export function useStreamIntelligenceEvents<
+  TData = Awaited<ReturnType<typeof streamIntelligenceEvents>>,
+  TError = ErrorType<unknown>,
+>(
+  params: StreamIntelligenceEventsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof streamIntelligenceEvents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getStreamIntelligenceEventsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
