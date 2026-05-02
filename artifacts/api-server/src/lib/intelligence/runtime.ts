@@ -752,7 +752,11 @@ function signalDedupeKey(args: {
  *      inference — already-persisted rows are silently skipped at the
  *      database, so repeat backfills are atomic and race-free.
  */
-async function insertSignalsIdempotent(
+// Exported for the FX-backfill batched-insert guardrail test
+// (`fx-backfill-insert-batching.test.ts`). Production callers should
+// keep going through `runEcbFxRatesBackfill` / `runFredEconomicIndexBackfill`
+// — they layer the kill-switch / approval gates and audit log on top.
+export async function insertSignalsIdempotent(
   collectorRow: CollectorRow,
   drafts: MarketSignalDraft[],
 ): Promise<{ inserted: number; skipped: number }> {
