@@ -127,16 +127,14 @@ const createdOrgIds: string[] = [];
 // tests within a file serially), so prior-test inserts are intentional
 // preconditions, not contamination.
 //
-// Cross-FILE risk: the seed-fallback tests below issue a GLOBAL
-// `DELETE FROM watched_issuers WHERE source = ...` because the
-// `getActive*` readers compute fallback by scanning ALL tenants —
-// scoping the delete to this RUN_ID would let foreign rows defeat
-// the precondition. The aggregate assertions have been softened to
-// "all seed entries present" (rather than exact length match) so a
-// concurrent test file inserting an extra row only adds noise, not
-// failure. If you add another test file that mutates watched_issuers,
-// either gate that file behind the same RUN_ID convention here or
-// run the suites serially.
+// Cross-FILE safety: the seed-fallback tests need a "no tenant rows
+// exist" precondition (the `getActive*` readers scan ALL tenants), so
+// they would normally have to issue a GLOBAL delete that wipes
+// foreign tenants' rows. To avoid contaminating sibling test files,
+// they are wrapped in `withEmptiedSource` which snapshots the table,
+// runs the test against an empty slice, then restores the snapshot.
+// Aggregate assertions are also membership-only, so concurrent inserts
+// during the assertion window add noise but never break the contract.
 before(async () => {
   if (!process.env["DATABASE_URL"]) {
     throw new Error("DATABASE_URL is required to run this integration test.");
@@ -323,36 +321,63 @@ test("getActiveSecIssuers prefers explicit override > tenant rows > seed", async
   );
 });
 
-test("getActiveCompaniesHouseNumbers falls back to the seed when no tenant rows exist", async () => {
-  // Strip every tenant row first.
+/**
+ * Snapshot every row for a given source, run the test body against an
+ * empty table, then restore the snapshot. This lets the seed-fallback
+ * tests assert on a "no tenant rows exist" precondition WITHOUT
+ * destroying state owned by other tenants / concurrent test files
+ * (#252 contamination guard — both inbound AND outbound).
+ *
+ * Restoration uses `onConflictDoNothing`, so if a sibling test
+ * re-inserts the same `(orgId, source, identifier)` while we're
+ * holding the snapshot, the original row simply stays in place.
+ */
+async function withEmptiedSource<T>(
+  source: "sec_edgar" | "companies_house",
+  fn: () => Promise<T>,
+): Promise<T> {
+  const snapshot = await db
+    .select()
+    .from(watchedIssuersTable)
+    .where(eq(watchedIssuersTable.source, source));
   await db.delete(watchedIssuersTable).where(
-    eq(watchedIssuersTable.source, "companies_house"),
+    eq(watchedIssuersTable.source, source),
   );
-
-  const fallback = await getActiveCompaniesHouseNumbers();
-  // The seed should now be the active list. Membership-only assert so
-  // a concurrent file racing in an extra row only adds noise, not
-  // failure (#252 contamination guard).
-  for (const n of COMPANIES_HOUSE_DEFAULT_NUMBERS) {
-    assert.ok(
-      fallback.includes(n),
-      `seed entry ${n} must appear in the fallback list`,
-    );
+  try {
+    return await fn();
+  } finally {
+    if (snapshot.length > 0) {
+      await db
+        .insert(watchedIssuersTable)
+        .values(snapshot)
+        .onConflictDoNothing();
+    }
   }
+}
+
+test("getActiveCompaniesHouseNumbers falls back to the seed when no tenant rows exist", async () => {
+  await withEmptiedSource("companies_house", async () => {
+    const fallback = await getActiveCompaniesHouseNumbers();
+    // Membership-only assert (#252 contamination guard) so a concurrent
+    // file racing in an extra row only adds noise, not failure.
+    for (const n of COMPANIES_HOUSE_DEFAULT_NUMBERS) {
+      assert.ok(
+        fallback.includes(n),
+        `seed entry ${n} must appear in the fallback list`,
+      );
+    }
+  });
 });
 
 test("getActiveSecIssuers falls back to the seed when no tenant rows exist", async () => {
-  await db.delete(watchedIssuersTable).where(
-    eq(watchedIssuersTable.source, "sec_edgar"),
-  );
-  const fallback = await getActiveSecIssuers();
-  // Membership-only assert (#252 contamination guard): a concurrent
-  // test file racing in an extra sec_edgar row would inflate the
-  // length but must not break the seed-fallback contract.
-  const ciks = new Set(fallback.map((i) => i.cik));
-  for (const seed of SEC_EDGAR_DEFAULT_ISSUERS) {
-    assert.ok(ciks.has(seed.cik), `seed entry ${seed.cik} should appear`);
-  }
+  await withEmptiedSource("sec_edgar", async () => {
+    const fallback = await getActiveSecIssuers();
+    // Membership-only assert (#252 contamination guard).
+    const ciks = new Set(fallback.map((i) => i.cik));
+    for (const seed of SEC_EDGAR_DEFAULT_ISSUERS) {
+      assert.ok(ciks.has(seed.cik), `seed entry ${seed.cik} should appear`);
+    }
+  });
 });
 
 test("POST /watched-issuers rejects malformed identifiers per source", async () => {
