@@ -147,11 +147,26 @@ CREATE TABLE IF NOT EXISTS \`${cfg.projectId}.${cfg.bqDataset}.collector_runs\` 
   parse_errors INT64 NOT NULL,
   schema_drift_count INT64 NOT NULL,
   raw_payload_pointer STRING,
+  raw_landing_failed BOOL,
   status STRING NOT NULL,
   error STRING
 )
 PARTITION BY DATE(started_at)
 CLUSTER BY collector_id, status
+`;
+
+/**
+ * Backfill ALTER for warehouses created before `raw_landing_failed`
+ * was introduced. `CREATE TABLE IF NOT EXISTS` only seeds the schema
+ * for *new* tables — without this ALTER an existing table would
+ * silently drop the field on insert (we use `ignoreUnknownValues`),
+ * defeating the operator-visibility goal of task #133.
+ */
+export const COLLECTOR_RUNS_RAW_LANDING_ALTER = (
+  cfg: IntelligenceConfig,
+): string => `
+ALTER TABLE \`${cfg.projectId}.${cfg.bqDataset}.collector_runs\`
+ADD COLUMN IF NOT EXISTS raw_landing_failed BOOL
 `;
 
 export const ENTITIES_DDL = (cfg: IntelligenceConfig): string => `
@@ -199,10 +214,14 @@ export async function ensureWarehouseSchema(): Promise<boolean> {
   }
 
   // CREATE TABLE IF NOT EXISTS is itself idempotent — running these on
-  // every boot is fine and keeps the schema canonical.
+  // every boot is fine and keeps the schema canonical. The trailing
+  // ALTER backfills `raw_landing_failed` on warehouses provisioned
+  // before that column existed; `ADD COLUMN IF NOT EXISTS` is a no-op
+  // when the column is already present.
   for (const ddl of [
     MARKET_SIGNALS_DDL(cfg),
     COLLECTOR_RUNS_DDL(cfg),
+    COLLECTOR_RUNS_RAW_LANDING_ALTER(cfg),
     ENTITIES_DDL(cfg),
   ]) {
     await bq.query({
@@ -411,6 +430,13 @@ export interface CollectorRunRecord {
   parseErrors: number;
   schemaDriftCount: number;
   rawPayloadPointer: string | null;
+  /**
+   * True when the run attempted to land at least one raw payload to
+   * GCS and at least one upload failed. Surfaces the silent-replay
+   * outage in the workbench Source Health tab and is the durable BQ
+   * signal behind the `raw_landing_failed` audit event (task #133).
+   */
+  rawLandingFailed: boolean;
   status: "succeeded" | "failed" | "skipped";
   error: string | null;
 }
@@ -930,6 +956,7 @@ export async function recordCollectorRun(
         parse_errors: run.parseErrors,
         schema_drift_count: run.schemaDriftCount,
         raw_payload_pointer: run.rawPayloadPointer,
+        raw_landing_failed: run.rawLandingFailed,
         status: run.status,
         error: run.error,
       },

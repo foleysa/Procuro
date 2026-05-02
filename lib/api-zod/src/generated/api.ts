@@ -2940,6 +2940,18 @@ export const ListCollectorSourceHealthResponse = zod.object({
         .describe(
           "True when the collector is still running (recent\nsuccess_at) but has not produced any new rows for ≥ 48h.\nThe Source Health tab surfaces this as a yellow chip so\noperators can investigate silent upstream stalls before\nthey become outages.\n",
         ),
+      rawLandingFailures: zod
+        .number()
+        .optional()
+        .describe(
+          "Count of `raw_landing_failed` audit events in the\nlookback window — one per failed GCS upload of a raw\npayload. The runtime catches these failures so Postgres\nand BigQuery still receive the parsed rows, but every BQ\nrow from a failed-landing run carries a null\n`raw_payload_pointer`, severing the only link back to the\nupstream bytes for replay tooling and parser-fix back-tests.\nThe Source Health tab badges any non-zero value in red so\noperators notice a sustained landing outage.\n",
+        ),
+      lastRawLandingFailedAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Timestamp of the most recent `raw_landing_failed`\naudit event. Null when no GCS landing has failed in the\nlookback window.\n",
+        ),
       recentDrifts: zod
         .array(
           zod.object({

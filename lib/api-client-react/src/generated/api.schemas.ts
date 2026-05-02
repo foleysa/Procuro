@@ -3097,6 +3097,22 @@ operators can investigate silent upstream stalls before
 they become outages.
  */
   staleEmptyRuns?: boolean;
+  /** Count of `raw_landing_failed` audit events in the
+lookback window — one per failed GCS upload of a raw
+payload. The runtime catches these failures so Postgres
+and BigQuery still receive the parsed rows, but every BQ
+row from a failed-landing run carries a null
+`raw_payload_pointer`, severing the only link back to the
+upstream bytes for replay tooling and parser-fix back-tests.
+The Source Health tab badges any non-zero value in red so
+operators notice a sustained landing outage.
+ */
+  rawLandingFailures?: number;
+  /** Timestamp of the most recent `raw_landing_failed`
+audit event. Null when no GCS landing has failed in the
+lookback window.
+ */
+  lastRawLandingFailedAt?: string | null;
   recentDrifts?: CollectorSourceHealthEntryRecentDriftsItem[];
   /** 0-100 (100 = clean, 0 = all runs failing). */
   healthScore?: number;

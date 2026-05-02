@@ -59,6 +59,7 @@ import {
   startOperationalSynthScheduler,
 } from "./lib/alerts/schedulers";
 import { bootstrapCategoryLeverMappings } from "./lib/intelligence/routing";
+import { ensureWarehouseSchema } from "@workspace/intelligence";
 
 const rawPort = process.env["PORT"];
 
@@ -203,6 +204,29 @@ app.listen(port, async (err) => {
   // Surface SCIM_BEARER_TOKEN misconfig (multi-tenant + shared token).
   // See SCIM.md §2 and routes/scim.ts maybeWarnSharedScimTokenMisuse.
   await maybeWarnSharedScimTokenMisuse();
+
+  // Idempotent BigQuery dataset + table bootstrap (CREATE TABLE IF NOT
+  // EXISTS + ALTER TABLE ADD COLUMN IF NOT EXISTS). Best-effort: if
+  // GCP isn't configured `ensureWarehouseSchema` returns false and is
+  // a no-op; if the actual schema apply fails we log and continue
+  // because the Postgres path is the system of record. This is the
+  // hook that backfills new columns (e.g. `raw_landing_failed`,
+  // task #133) onto pre-existing warehouses on next boot — without it
+  // BigQuery's `ignoreUnknownValues: true` would silently drop them.
+  try {
+    const applied = await ensureWarehouseSchema();
+    logger.info(
+      { applied },
+      applied
+        ? "BigQuery warehouse schema ensured"
+        : "BigQuery warehouse schema bootstrap skipped (intelligence not configured)",
+    );
+  } catch (e) {
+    logger.warn(
+      { err: e },
+      "BigQuery warehouse schema bootstrap failed; new columns may be silently dropped on insert",
+    );
+  }
 
   startWorker(1500);
   startJobPruner();

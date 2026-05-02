@@ -1127,6 +1127,20 @@ router.get(
         const lastFailureAt = audit.find((a) => failureEvents.includes(a.event))
           ?.createdAt ?? null;
         const lastSchemaDriftAt = drifts[0]?.createdAt ?? null;
+        // Raw-landing failures (task #133): a `raw_landing_failed`
+        // audit row is written per failed GCS upload. Without this
+        // dedicated count the only operator-visible signal of a
+        // sustained replay-pointer outage was a worker warn log.
+        // We keep it separate from the generic `failures` tally
+        // because a fetch can succeed end-to-end (Postgres + BQ
+        // landed rows) while the GCS landing fails — different
+        // remediation, different on-call urgency.
+        const rawLandingFailureRows = audit.filter(
+          (a) => a.event === "raw_landing_failed",
+        );
+        const rawLandingFailures = rawLandingFailureRows.length;
+        const lastRawLandingFailedAt =
+          rawLandingFailureRows[0]?.createdAt ?? null;
         // Most recent successful run that landed at least one row.
         // We walk the audit in DESC-by-createdAt order (already
         // ordered by the query above) so the first match wins.
@@ -1168,6 +1182,8 @@ router.get(
           lastSchemaDriftAt,
           lastNonEmptyRunAt,
           staleEmptyRuns,
+          rawLandingFailures,
+          lastRawLandingFailedAt,
           recentDrifts: drifts.slice(0, 5).map((d) => ({
             signalType: (d.sample as Record<string, unknown>)["signalType"]
               ? String((d.sample as Record<string, unknown>)["signalType"])

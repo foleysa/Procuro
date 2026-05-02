@@ -821,6 +821,28 @@ function HealthTab({ tier }: { tier: TierMode }) {
                         Empty source
                       </Badge>
                     )}
+                    {/*
+                      Raw-landing failure chip (task #133). Loud, red,
+                      and counted: every BQ row from a failed-landing
+                      run loses its `raw_payload_pointer`, so a
+                      sustained outage means days of orphaned signals
+                      with no replay path. Operators need to see this
+                      *before* the next incident, not after.
+                    */}
+                    {e.rawLandingFailures !== undefined &&
+                      e.rawLandingFailures > 0 && (
+                        <Badge
+                          data-testid={`health-raw-landing-failed-${e.collectorId}`}
+                          className="bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-300 font-normal"
+                          title={
+                            e.lastRawLandingFailedAt
+                              ? `Last raw-payload landing failure ${formatDateTime(e.lastRawLandingFailedAt)}. BQ rows from these runs carry no replay pointer.`
+                              : "Raw-payload landing failures detected; replay pointer missing on affected BQ rows."
+                          }
+                        >
+                          Raw landing failed ({e.rawLandingFailures})
+                        </Badge>
+                      )}
                   </div>
                 </td>
                 <td className="py-2 text-right tabular-nums">
@@ -2024,7 +2046,11 @@ function RunsTab({ tier }: { tier: TierMode }) {
               const isFail =
                 r.error ||
                 r.event === "fetch_failed" ||
-                r.event === "backfill_failed";
+                r.event === "backfill_failed" ||
+                // task #133: raw-payload landings to GCS that fail are
+                // recorded as their own audit event so a silent replay
+                // outage stops looking like a clean run in this list.
+                r.event === "raw_landing_failed";
               return (
                 <tr
                   key={r.id}

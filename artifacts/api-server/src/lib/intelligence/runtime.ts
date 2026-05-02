@@ -415,9 +415,21 @@ export async function runCollector(
     // Land raw payloads to GCS first. We do not fail the run on GCS
     // errors because Postgres remains the system of record — but we
     // log + audit so persistent landing failures are visible.
+    //
+    // Raw-landing accounting: we count every attempt and every
+    // landing failure so the runtime can both (a) write a dedicated
+    // `raw_landing_failed` audit row that surfaces in the workbench
+    // Runs & Errors tab, and (b) embed `rawLandingFailed` in the
+    // `fetch_succeeded` audit metadata + the BigQuery `collector_runs`
+    // record. Without this, the only signal of a sustained landing
+    // outage is a warn-level worker log — see task #133.
     const landedRawPointers: string[] = [];
+    let rawLandingAttempts = 0;
+    let rawLandingFailures = 0;
+    const rawLandingErrors: string[] = [];
     if (rawPayloads.length > 0 && isIntelligenceEnabled()) {
       for (const raw of rawPayloads) {
+        rawLandingAttempts++;
         try {
           // Guess a reasonable extension from the content type (json,
           // xml, csv, ...). Defaults to "bin" when nothing matches —
@@ -438,13 +450,56 @@ export async function runCollector(
           });
           if (r) landedRawPointers.push(r.pointer);
         } catch (e) {
+          rawLandingFailures++;
+          const message = (e as Error).message;
+          rawLandingErrors.push(message);
           logger.warn(
-            { collectorId, runId, err: (e as Error).message },
+            { collectorId, runId, err: message },
             "GCS raw landing failed; continuing with Postgres+BQ writes",
           );
+          // Dedicated audit event so the Runs & Errors tab in the
+          // collector workbench surfaces this just like a fetch_failed.
+          // Done per attempt because in multi-payload runs each upload
+          // failure is independently meaningful for incident forensics.
+          //
+          // Wrapped in best-effort try/catch: a Postgres blip or lock
+          // timeout writing the audit row must NOT escalate a non-fatal
+          // GCS landing failure into a full `fetch_failed` run. The
+          // outer run-level catch would otherwise swallow it and mark
+          // the entire run as failed, dropping the parsed signals on
+          // the floor.
+          try {
+            await audit(
+              collectorId,
+              "raw_landing_failed",
+              {
+                runId,
+                ...(raw.name ? { logicalName: raw.name } : {}),
+                ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+                contentType: raw.contentType,
+              },
+              message,
+            );
+          } catch (auditErr) {
+            logger.warn(
+              {
+                collectorId,
+                runId,
+                err: (auditErr as Error).message,
+                landingErr: message,
+              },
+              "raw_landing_failed audit write failed; counters and BQ flag will still surface the outage",
+            );
+          }
         }
       }
     }
+    // True when at least one raw payload was attempted but failed to
+    // land. The downstream BQ rows from this run will carry a
+    // `raw_payload_pointer` only for the *successful* uploads — when
+    // every attempt fails, every BQ row gets `null`, severing the only
+    // link from a market_signals row back to the upstream bytes.
+    const rawLandingFailed = rawLandingFailures > 0;
 
     // Validate every draft against the collector's signalSchema. Drops
     // bad drafts and records a schema-drift event per failing draft.
@@ -581,6 +636,7 @@ export async function runCollector(
           parseErrors: 0,
           schemaDriftCount: droppedForDrift,
           rawPayloadPointer: primaryRawPointer,
+          rawLandingFailed,
           status: "succeeded",
           error: null,
         });
@@ -628,6 +684,14 @@ export async function runCollector(
       droppedForDrift,
       bqMerged,
       rawLanded: landedRawPointers.length,
+      // Surface raw-landing health on the *success* row too. The
+      // workbench Registry tab reads the latest `fetch_succeeded`
+      // metadata to render per-collector chips; embedding the flag
+      // here lets it badge runs that succeeded for Postgres+BQ but
+      // lost their replay pointer because the GCS upload failed.
+      rawLandingAttempts,
+      rawLandingFailures,
+      rawLandingFailed,
     });
     logger.info(
       {
@@ -639,6 +703,9 @@ export async function runCollector(
         droppedForDrift,
         bqMerged,
         rawLanded: landedRawPointers.length,
+        rawLandingAttempts,
+        rawLandingFailures,
+        rawLandingFailed,
       },
       "Collector run completed",
     );
@@ -662,6 +729,7 @@ export async function runCollector(
           parseErrors: 0,
           schemaDriftCount: 0,
           rawPayloadPointer: null,
+          rawLandingFailed: false,
           status: "failed",
           error: e.message,
         });
