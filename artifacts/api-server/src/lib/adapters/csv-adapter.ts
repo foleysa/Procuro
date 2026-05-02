@@ -22,10 +22,10 @@ import type { Logger } from "pino";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
-import { StructuralIngestError } from "../structural-ingest-error";
 import { resolveBillingCurrency } from "../suppliers/billing-currency-resolver";
 import { backfillSupplierBillingCurrency } from "../suppliers/backfill-billing-currency";
 import type {
+  IngestWarning,
   IsCancelledFn,
   SourceAdapter,
   SyncResult,
@@ -264,6 +264,20 @@ export interface StreamCsvResult {
   entity: CsvEntity;
   rowsParsed: number;
   rowsInserted: number;
+  /**
+   * Rows the adapter intentionally dropped (e.g. an unknown entity
+   * name reaching `flushBatch` despite the route's upfront validation).
+   * Mirrors `SyncResult.recordsSkipped` for the streaming path so the
+   * job-result viewer / NDJSON consumers see the same shape regardless
+   * of whether the upload went through the JSON `IngestPayload` path
+   * or the streaming-CSV path. Optional — omitted when zero.
+   */
+  rowsSkipped?: number;
+  /**
+   * Per-batch warnings, mirroring `SyncResult.warnings` for symmetry
+   * with the JSON ingest path. Optional — omitted when empty.
+   */
+  warnings?: IngestWarning[];
   durationMs: number;
 }
 
@@ -1534,18 +1548,28 @@ async function flushBatch(
       return out.length;
     }
     default: {
+      // Task #93: an unknown entity name should not fail the whole job.
+      // The route's STREAM_CSV_ENTITIES allowlist normally catches this
+      // upstream, so reaching this branch implies either a bypass of
+      // that check or a `CsvEntity` member added to the type without a
+      // matching `case`. Either way, dropping the batch and logging is
+      // strictly safer than throwing a `StructuralIngestError` that
+      // permanently fails the job: the operator's other entity uploads
+      // (or batches) still land. The `_exhaustive: never` assignment
+      // is kept so adding a new `CsvEntity` member without handling it
+      // here remains a compile-time error in strict builds — runtime
+      // behaviour is the defensive skip described above.
       const _exhaustive: never = entity;
-      // Permanent input error: an unknown entity name will never become
-      // valid by retrying. Throw `StructuralIngestError` so any caller
-      // running this through the job queue fails immediately on
-      // attempt #1 (via the worker's `wrapStructuralError`) instead of
-      // burning the full retry budget on a typo. Routes that surface
-      // the message to the client also see this as a structural error
-      // (no SQL, no PII; the offending entity name is the value).
-      throw new StructuralIngestError(
-        `streamCsvEntity: unknown entity '${_exhaustive}'`,
-        { field: "entity", value: String(_exhaustive) },
+      logger.warn(
+        {
+          event: "csv_flush_batch_unknown_entity",
+          orgId,
+          entity: String(_exhaustive),
+          rowsSkipped: rows.length,
+        },
+        "flushBatch: unknown entity — skipping batch",
       );
+      return 0;
     }
   }
 }

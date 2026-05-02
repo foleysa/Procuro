@@ -17,11 +17,63 @@ export interface SyncProgress {
   cursor?: string;
 }
 
+/**
+ * Per-row warning surfaced in a `SyncResult`. Used by ingest adapters to
+ * report rows that were skipped (rather than failing the whole batch) so
+ * the operator can see exactly which records were dropped from a
+ * partially-successful import — e.g. a CSV/JSON payload that mixes
+ * known entity types with one we don't recognise.
+ *
+ * Task #93: instead of throwing `UnrecoverableJobError` on the first
+ * unknown record kind and forcing the operator to clean the file before
+ * any rows land, we accumulate warnings and let the rest of the file
+ * ingest. The warnings are returned in `SyncResult.warnings` and are
+ * rendered verbatim in the job-result JSON viewer on the System page.
+ */
+export interface IngestWarning {
+  /**
+   * Stable machine-readable category. Today only
+   * `"unknown_record_type"` is emitted, but downstream callers may add
+   * `"missing_required_field"`, `"orphan_reference"`, etc. Kept open
+   * (string union widening) so adding a new code is non-breaking.
+   */
+  code: "unknown_record_type" | (string & {});
+  /**
+   * Path-style locator for the offending field, e.g.
+   * `"frobnicators[0]"` or `"suppliers[3].externalId"`. Optional —
+   * not every warning has a clean field path (e.g. a non-array unknown
+   * top-level key).
+   */
+  field?: string;
+  /**
+   * Optional `externalId` captured from the row when one was present.
+   * Lets the operator grep the source file directly. Truncated to
+   * 200 chars by emitters to keep the result row payload bounded.
+   */
+  externalId?: string;
+  /** Human-readable explanation. Kept short and free of secrets. */
+  reason: string;
+}
+
 export interface SyncResult {
   recordsProcessed: number;
   recordsCreated: number;
   recordsUpdated: number;
   recordsDeleted: number;
+  /**
+   * Number of payload rows that were intentionally skipped (e.g. an
+   * unknown record type the adapter doesn't know how to handle). A
+   * skipped row produces a corresponding entry in `warnings` and does
+   * NOT count toward `recordsProcessed` / `recordsCreated`. Optional
+   * for back-compat with adapters that have nothing to skip.
+   */
+  recordsSkipped?: number;
+  /**
+   * Per-row warnings accumulated during the sync. Empty / omitted
+   * when nothing was skipped. The handler returns this verbatim in
+   * the job result so the operator can inspect each dropped row.
+   */
+  warnings?: IngestWarning[];
   cursor: SourceCursor;
   durationMs: number;
 }

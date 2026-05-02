@@ -31,10 +31,108 @@ import {
   isCanonicalCodeRouted,
 } from "../intelligence/routing";
 import type {
+  IngestWarning,
   IsCancelledFn,
   SyncProgress,
   SyncResult,
 } from "./source-adapter";
+
+/**
+ * Top-level keys recognised in `IngestPayload`. The writer iterates by
+ * known name to upsert each entity, so any extra key the caller hands
+ * us would normally be silently ignored at runtime (TypeScript erases
+ * the type at compile time and bare `payload.frobnicators` is just
+ * `undefined`). Task #93: instead of dropping those rows on the floor,
+ * we compare the caller's keys against this allowlist and surface each
+ * unknown record kind as a per-row `IngestWarning` in the result so a
+ * partially-malformed CSV/JSON payload yields a partial-success outcome
+ * (the known-entity rows still land in the DB) instead of failing the
+ * whole job and forcing the operator to clean the file.
+ */
+const KNOWN_INGEST_PAYLOAD_KEYS: ReadonlySet<string> = new Set<
+  keyof IngestPayload
+>([
+  "suppliers",
+  "categories",
+  "items",
+  "contracts",
+  "statementsOfWork",
+  "rateCards",
+  "timeEntries",
+  "purchaseOrders",
+  "invoices",
+  "payments",
+  "shipments",
+] as const);
+
+/** Cap per-warning string sizes so a million-row unknown key can't bloat the result row. */
+const MAX_WARNING_FIELD_LEN = 200;
+/** Cap how many warnings we accumulate per top-level key. Beyond this we collapse to a single overflow warning. */
+const MAX_WARNINGS_PER_KEY = 100;
+
+function truncate(s: unknown, max = MAX_WARNING_FIELD_LEN): string | undefined {
+  if (typeof s !== "string") return undefined;
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1)}…`;
+}
+
+/**
+ * Walk a caller-supplied `IngestPayload`-shaped object and produce
+ * per-row warnings for any top-level key that isn't a known entity.
+ * Returns the warnings plus the total number of skipped rows so the
+ * caller can fold both into the `SyncResult`.
+ *
+ * Heuristics:
+ *   - Unknown key whose value is an array → one warning per entry, up
+ *     to `MAX_WARNINGS_PER_KEY`, plus an overflow warning summarising
+ *     any rows past the cap. Each entry counts as one skipped row.
+ *   - Unknown key whose value is anything else (object / string /
+ *     number) → one warning, one skipped row.
+ */
+function collectUnknownPayloadWarnings(
+  payload: unknown,
+): { warnings: IngestWarning[]; recordsSkipped: number } {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { warnings: [], recordsSkipped: 0 };
+  }
+  const warnings: IngestWarning[] = [];
+  let recordsSkipped = 0;
+  for (const [key, value] of Object.entries(payload)) {
+    if (KNOWN_INGEST_PAYLOAD_KEYS.has(key)) continue;
+    if (Array.isArray(value)) {
+      const overflow = Math.max(0, value.length - MAX_WARNINGS_PER_KEY);
+      const visible = overflow > 0 ? value.slice(0, MAX_WARNINGS_PER_KEY) : value;
+      visible.forEach((row, i) => {
+        const externalId =
+          row !== null && typeof row === "object"
+            ? truncate((row as Record<string, unknown>)["externalId"])
+            : undefined;
+        warnings.push({
+          code: "unknown_record_type",
+          field: `${key}[${i}]`,
+          ...(externalId !== undefined ? { externalId } : {}),
+          reason: `Unknown record type "${key}" — row skipped`,
+        });
+      });
+      if (overflow > 0) {
+        warnings.push({
+          code: "unknown_record_type",
+          field: key,
+          reason: `Unknown record type "${key}" — ${overflow} additional row(s) skipped (warning list capped at ${MAX_WARNINGS_PER_KEY})`,
+        });
+      }
+      recordsSkipped += value.length;
+    } else if (value !== undefined) {
+      warnings.push({
+        code: "unknown_record_type",
+        field: key,
+        reason: `Unknown record type "${key}" — value skipped`,
+      });
+      recordsSkipped += 1;
+    }
+  }
+  return { warnings, recordsSkipped };
+}
 
 /**
  * Auto-detect a supplier's billing currency on ingest when the upstream
@@ -400,6 +498,15 @@ export async function writeIngestPayload(
   const start = Date.now();
   let created = 0;
   let processed = 0;
+
+  // Task #93: surface unknown top-level keys as per-row warnings
+  // BEFORE doing any work. We compute this up front so the warnings
+  // land in the result even if the known-entity inserts fail later
+  // (a downstream throw still propagates; the warnings only show up on
+  // success, which matches the partial-success contract — failure
+  // means the operator already has an error to act on).
+  const { warnings: unknownWarnings, recordsSkipped: unknownSkipped } =
+    collectUnknownPayloadWarnings(payload);
 
   const checkpoint = async (): Promise<void> => {
     if (isCancelled && (await isCancelled())) {
@@ -1196,6 +1303,12 @@ export async function writeIngestPayload(
     recordsCreated: created,
     recordsUpdated: 0,
     recordsDeleted: 0,
+    // Only include skipped/warnings keys when there is something to
+    // report — keeps the result row identical for the happy path so
+    // existing `JSON.stringify(selectedJob.result)` snapshots stay
+    // small and unchanged.
+    ...(unknownSkipped > 0 ? { recordsSkipped: unknownSkipped } : {}),
+    ...(unknownWarnings.length > 0 ? { warnings: unknownWarnings } : {}),
     cursor: new Date().toISOString(),
     durationMs: Date.now() - start,
   };

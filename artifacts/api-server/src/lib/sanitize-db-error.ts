@@ -188,7 +188,9 @@ function isAllowlistedErrorMessage(msg: string): boolean {
     msg.startsWith("multipart/form-data request did not include") ||
     msg.startsWith("Invalid or missing 'entity'") ||
     msg.startsWith("Synchronous ingest is limited") ||
-    msg.startsWith("streamCsvEntity: unknown entity") ||
+    // Task #93: `streamCsvEntity: unknown entity '...'` is no longer
+    // thrown — the adapter logs and skips the batch instead, so this
+    // allowlist entry was retired with the throw.
     msg.startsWith("Body must include")
   );
 }
