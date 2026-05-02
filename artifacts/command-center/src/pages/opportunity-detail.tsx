@@ -39,6 +39,8 @@ import {
   DollarSign,
   Loader2,
   FileText,
+  ArrowUpRight,
+  ArrowDownRight,
 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
@@ -156,6 +158,7 @@ export default function OpportunityDetail() {
       </Card>
 
       <CpiPushbackBlock opp={opp} policy={policy} />
+      <FxExposureBlock opp={opp} policy={policy} />
 
       <Card>
         <CardHeader><CardTitle>Recommended action</CardTitle></CardHeader>
@@ -460,6 +463,180 @@ export function CpiPushbackBlock({
         </div>
         {cpiSources.length > 0 && (
           <InsightCitations sources={cpiSources} policy={policy} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Shape of the `inputs` JSON persisted by the supplier_fx_exposure
+ * lever (`artifacts/api-server/src/lib/levers/fx-exposure.ts`).
+ *
+ * The API contract types `inputs` as an opaque JSON map, so we
+ * narrow it here at the read boundary with a runtime type-guard.
+ * Only the keys the panel actually renders are required; extra
+ * keys persisted by the analyzer are ignored.
+ */
+interface PersistedFxExposure {
+  supplierName: string;
+  baseCurrency: string;
+  billingCurrency: string;
+  fxPair: string;
+  movePct: number;
+  costChangePct: number;
+  absCostChangePct: number;
+  adverse: boolean;
+  lookbackDays: number;
+  spend12moUsd: number;
+  contractNumbers: string[];
+  supplierId?: string;
+}
+
+function isPersistedFxExposure(v: unknown): v is PersistedFxExposure {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.supplierName === "string" &&
+    typeof o.baseCurrency === "string" &&
+    typeof o.billingCurrency === "string" &&
+    typeof o.fxPair === "string" &&
+    typeof o.movePct === "number" &&
+    typeof o.costChangePct === "number" &&
+    typeof o.absCostChangePct === "number" &&
+    typeof o.adverse === "boolean" &&
+    typeof o.lookbackDays === "number" &&
+    typeof o.spend12moUsd === "number" &&
+    Array.isArray(o.contractNumbers)
+  );
+}
+
+export function FxExposureBlock({
+  opp,
+  policy,
+}: {
+  opp: OpportunityDetail;
+  policy: TenantPolicy;
+}) {
+  // Gate by inputs shape, not leverId — the input contract is the
+  // source of truth and falls back gracefully when absent.
+  const raw = opp.inputs;
+  if (!isPersistedFxExposure(raw)) return null;
+
+  const Arrow = raw.adverse ? ArrowUpRight : ArrowDownRight;
+  const tone = raw.adverse ? "text-amber-700" : "text-emerald-700";
+  const directionLabel = raw.adverse ? "Adverse move" : "Favorable move";
+
+  const fmtPct = (n: number) =>
+    `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+
+  const contracts = raw.contractNumbers.filter(
+    (c): c is string => typeof c === "string" && c.length > 0,
+  );
+
+  // Reuse opp.sources for citations — the FX lever already pushed the
+  // collector source onto the opportunity at write time.
+  const fxSources = opp.sources ?? [];
+
+  return (
+    <Card data-testid="card-fx-exposure">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Arrow className={`w-5 h-5 ${tone}`} />
+          FX exposure —{" "}
+          <span data-testid="text-fx-pair">{raw.fxPair}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Kpi
+            label={`${raw.fxPair} move`}
+            value={fmtPct(raw.movePct)}
+          />
+          <Kpi
+            label={`${raw.billingCurrency} cost in ${raw.baseCurrency}`}
+            value={fmtPct(raw.costChangePct)}
+          />
+          <Kpi
+            label="Lookback"
+            value={`${raw.lookbackDays}d`}
+          />
+          <Kpi
+            label="12-mo spend"
+            value={formatUsd(raw.spend12moUsd, { compact: true })}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          <div>
+            <div className="text-xs uppercase text-muted-foreground tracking-wide">
+              Supplier
+            </div>
+            <div className="mt-1 font-medium">
+              {raw.supplierId ? (
+                <Link
+                  href={`/suppliers/${raw.supplierId}`}
+                  className="text-primary hover:underline"
+                  data-testid="link-fx-supplier"
+                >
+                  {raw.supplierName}
+                </Link>
+              ) : (
+                <span data-testid="text-fx-supplier">{raw.supplierName}</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase text-muted-foreground tracking-wide">
+              Currency
+            </div>
+            <div className="mt-1 font-medium" data-testid="text-fx-currencies">
+              Bills in {raw.billingCurrency} · reports in {raw.baseCurrency}
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`text-sm font-medium ${tone}`}
+          data-testid="text-fx-direction"
+          data-adverse={raw.adverse ? "true" : "false"}
+        >
+          {directionLabel} — each {raw.billingCurrency} unit now costs{" "}
+          {raw.absCostChangePct.toFixed(2)}%{" "}
+          {raw.adverse ? "more" : "less"} in {raw.baseCurrency}.
+        </div>
+
+        <div>
+          <div className="text-xs uppercase text-muted-foreground tracking-wide mb-1">
+            Active foreign-currency contracts
+          </div>
+          {contracts.length === 0 ? (
+            <div
+              className="text-sm text-muted-foreground italic"
+              data-testid="text-fx-contracts-empty"
+            >
+              No active foreign-currency contracts on file.
+            </div>
+          ) : (
+            <ul
+              className="text-sm flex flex-wrap gap-2"
+              data-testid="list-fx-contracts"
+            >
+              {contracts.map((num) => (
+                <li
+                  key={num}
+                  className="inline-flex items-center gap-1 rounded border bg-muted/40 px-2 py-0.5 font-mono text-xs"
+                >
+                  <FileText className="w-3 h-3" />
+                  {num}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {fxSources.length > 0 && (
+          <InsightCitations sources={fxSources} policy={policy} />
         )}
       </CardContent>
     </Card>
