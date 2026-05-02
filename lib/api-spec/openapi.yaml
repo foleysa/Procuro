@@ -3010,6 +3010,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /watched-issuers/suggestions:
+    get:
+      operationId: listWatchedIssuerSuggestions
+      tags:
+      - watched-issuers
+      summary: Suggest watched-issuer matches for the tenant's suppliers
+      description: 'Joins each tenant supplier against SEC EDGAR (cached
+        `company_tickers.json`), GLEIF name search, and (when configured)
+        Companies House search to surface ranked candidate matches the
+        admin can confirm one-click into the watch list. Computes live,
+        never writes — confirm via `POST /watched-issuers` with the
+        `supplierUid` link.
+
+        Suppliers already linked to a watched_issuer are skipped, and
+        candidate `(source, identifier)` pairs already on the tenant''s
+        watch list are filtered out so the UI never shows a Confirm
+        button that would 409.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: supplierId
+        required: false
+        description: 'Narrow to one or more specific suppliers (repeatable).
+          When omitted, the endpoint considers all of the tenant''s
+          suppliers up to `limit`.
+
+          '
+        schema:
+          type: array
+          items:
+            type: string
+        style: form
+        explode: true
+      - in: query
+        name: limit
+        required: false
+        description: 'Maximum number of suppliers to evaluate. Defaults to 50,
+          capped at 200 so a single call stays inside the engine''s
+          per-call upstream budget.
+
+          '
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      responses:
+        '200':
+          description: Ranked watched-issuer suggestions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchedIssuerSuggestionListResponse'
   /watched-issuers/{id}:
     delete:
       operationId: removeWatchedIssuer
@@ -10586,6 +10641,113 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BulkAddWatchedIssuerResultItem'
+    WatchedIssuerSuggestionVia:
+      type: string
+      enum:
+      - sec
+      - gleif
+      - companies_house
+      description: 'Reference source that produced this suggestion. `sec` /
+        `companies_house` are direct identifier matches; `gleif` is an
+        LEI cross-reference resolved into a SEC CIK.
+
+        '
+    WatchedIssuerSuggestionConfidenceTier:
+      type: string
+      enum:
+      - exact
+      - strong
+      - review
+      description: 'Bucketed confidence the UI uses to drive the per-row badge.
+        `exact` is `>= 0.95` (post legal-suffix-strip name match), `strong`
+        is `>= 0.75` (multi-token overlap), `review` is everything else
+        the engine returned (single weak token overlap).
+
+        '
+    WatchedIssuerSuggestion:
+      type: object
+      required:
+      - key
+      - supplierUid
+      - supplierName
+      - source
+      - identifier
+      - name
+      - confidence
+      - confidenceTier
+      - matchReason
+      - via
+      properties:
+        key:
+          type: string
+          description: 'Stable client key — `<supplierId>:<source>:<identifier>`.
+            Safe to use as the React row key and in confirmation
+            `data-testid` selectors.
+
+            '
+        supplierUid:
+          type: string
+          description: ID of the tenant supplier this suggestion is for.
+        supplierName:
+          type: string
+          description: Display name of the tenant supplier (denormalised so the
+            UI does not need a separate lookup).
+        source:
+          $ref: '#/components/schemas/WatchedIssuerSource'
+        identifier:
+          type: string
+          description: 'Source-native identifier the Confirm button should POST
+            (10-digit zero-padded CIK or 8-char Companies House number).
+
+            '
+        name:
+          type: string
+          description: Issuer name as it appears in the reference source.
+        lei:
+          type: string
+          nullable: true
+          description: Optional LEI when the suggestion came from (or was
+            cross-referenced through) GLEIF.
+        ticker:
+          type: string
+          nullable: true
+          description: Optional ticker when the suggestion is a SEC ticker-index
+            row.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Raw 0..1 score from the suggestion engine.
+        confidenceTier:
+          $ref: '#/components/schemas/WatchedIssuerSuggestionConfidenceTier'
+        matchReason:
+          type: string
+          description: 'Short human-readable reason ("exact name match in SEC
+            ticker index"). Renderable as-is in a tooltip.
+
+            '
+        via:
+          $ref: '#/components/schemas/WatchedIssuerSuggestionVia'
+    WatchedIssuerSuggestionListResponse:
+      type: object
+      required:
+      - items
+      - suppliersConsidered
+      - suppliersSkippedAlreadyWatched
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchedIssuerSuggestion'
+        suppliersConsidered:
+          type: integer
+          description: How many suppliers the engine actually evaluated this
+            call (after the `limit` cap).
+        suppliersSkippedAlreadyWatched:
+          type: integer
+          description: Suppliers excluded because they are already linked to a
+            watched_issuer row for this tenant.
     DefensePackTarget:
       type: object
       required:

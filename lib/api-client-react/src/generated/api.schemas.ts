@@ -3757,6 +3757,71 @@ export interface BulkAddWatchedIssuersResponse {
 }
 
 /**
+ * Reference source that produced this suggestion. `sec` / `companies_house` are direct identifier matches; `gleif` is an LEI cross-reference resolved into a SEC CIK.
+
+ */
+export type WatchedIssuerSuggestionVia =
+  (typeof WatchedIssuerSuggestionVia)[keyof typeof WatchedIssuerSuggestionVia];
+
+export const WatchedIssuerSuggestionVia = {
+  sec: "sec",
+  gleif: "gleif",
+  companies_house: "companies_house",
+} as const;
+
+/**
+ * Bucketed confidence the UI uses to drive the per-row badge. `exact` is `>= 0.95` (post legal-suffix-strip name match), `strong` is `>= 0.75` (multi-token overlap), `review` is everything else the engine returned (single weak token overlap).
+
+ */
+export type WatchedIssuerSuggestionConfidenceTier =
+  (typeof WatchedIssuerSuggestionConfidenceTier)[keyof typeof WatchedIssuerSuggestionConfidenceTier];
+
+export const WatchedIssuerSuggestionConfidenceTier = {
+  exact: "exact",
+  strong: "strong",
+  review: "review",
+} as const;
+
+export interface WatchedIssuerSuggestion {
+  /** Stable client key — `<supplierId>:<source>:<identifier>`. Safe to use as the React row key and in confirmation `data-testid` selectors.
+   */
+  key: string;
+  /** ID of the tenant supplier this suggestion is for. */
+  supplierUid: string;
+  /** Display name of the tenant supplier (denormalised so the UI does not need a separate lookup). */
+  supplierName: string;
+  source: WatchedIssuerSource;
+  /** Source-native identifier the Confirm button should POST (10-digit zero-padded CIK or 8-char Companies House number).
+   */
+  identifier: string;
+  /** Issuer name as it appears in the reference source. */
+  name: string;
+  /** Optional LEI when the suggestion came from (or was cross-referenced through) GLEIF. */
+  lei?: string | null;
+  /** Optional ticker when the suggestion is a SEC ticker-index row. */
+  ticker?: string | null;
+  /**
+   * Raw 0..1 score from the suggestion engine.
+   * @minimum 0
+   * @maximum 1
+   */
+  confidence: number;
+  confidenceTier: WatchedIssuerSuggestionConfidenceTier;
+  /** Short human-readable reason ("exact name match in SEC ticker index"). Renderable as-is in a tooltip.
+   */
+  matchReason: string;
+  via: WatchedIssuerSuggestionVia;
+}
+
+export interface WatchedIssuerSuggestionListResponse {
+  items: WatchedIssuerSuggestion[];
+  /** How many suppliers the engine actually evaluated this call (after the `limit` cap). */
+  suppliersConsidered: number;
+  /** Suppliers excluded because they are already linked to a watched_issuer row for this tenant. */
+  suppliersSkippedAlreadyWatched: number;
+}
+
+/**
  * What the Defense Pack is defending or attacking. At least one
 of `contractId+lineItem`, `categoryCode`, or `materialCode`
 must be provided so the evidence pool can be scoped beyond
@@ -5454,6 +5519,21 @@ export type GetServicesSpendParams = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
+};
+
+export type ListWatchedIssuerSuggestionsParams = {
+  /**
+ * Narrow to one or more specific suppliers (repeatable). When omitted, the endpoint considers all of the tenant's suppliers up to `limit`.
+
+ */
+  supplierId?: string[];
+  /**
+ * Maximum number of suppliers to evaluate. Defaults to 50, capped at 200 so a single call stays inside the engine's per-call upstream budget.
+
+ * @minimum 1
+ * @maximum 200
+ */
+  limit?: number;
 };
 
 export type UpdateSystemCleanupSchedule400 = {

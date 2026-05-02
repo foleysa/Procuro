@@ -6464,6 +6464,119 @@ export const BulkAddWatchedIssuersResponse = zod.object({
 });
 
 /**
+ * Joins each tenant supplier against SEC EDGAR (cached `company_tickers.json`), GLEIF name search, and (when configured) Companies House search to surface ranked candidate matches the admin can confirm one-click into the watch list. Computes live, never writes — confirm via `POST /watched-issuers` with the `supplierUid` link.
+Suppliers already linked to a watched_issuer are skipped, and candidate `(source, identifier)` pairs already on the tenant's watch list are filtered out so the UI never shows a Confirm button that would 409.
+
+ * @summary Suggest watched-issuer matches for the tenant's suppliers
+ */
+export const listWatchedIssuerSuggestionsQueryLimitDefault = 50;
+export const listWatchedIssuerSuggestionsQueryLimitMax = 200;
+
+export const ListWatchedIssuerSuggestionsQueryParams = zod.object({
+  supplierId: zod
+    .array(zod.coerce.string())
+    .optional()
+    .describe(
+      "Narrow to one or more specific suppliers (repeatable). When omitted, the endpoint considers all of the tenant's suppliers up to `limit`.\n",
+    ),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listWatchedIssuerSuggestionsQueryLimitMax)
+    .default(listWatchedIssuerSuggestionsQueryLimitDefault)
+    .describe(
+      "Maximum number of suppliers to evaluate. Defaults to 50, capped at 200 so a single call stays inside the engine's per-call upstream budget.\n",
+    ),
+});
+
+export const ListWatchedIssuerSuggestionsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const listWatchedIssuerSuggestionsResponseItemsItemConfidenceMin = 0;
+export const listWatchedIssuerSuggestionsResponseItemsItemConfidenceMax = 1;
+
+export const ListWatchedIssuerSuggestionsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      key: zod
+        .string()
+        .describe(
+          "Stable client key — `<supplierId>:<source>:<identifier>`. Safe to use as the React row key and in confirmation `data-testid` selectors.\n",
+        ),
+      supplierUid: zod
+        .string()
+        .describe("ID of the tenant supplier this suggestion is for."),
+      supplierName: zod
+        .string()
+        .describe(
+          "Display name of the tenant supplier (denormalised so the UI does not need a separate lookup).",
+        ),
+      source: zod
+        .enum(["sec_edgar", "companies_house"])
+        .describe(
+          "Upstream feed for this watched-issuer row.\n- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)\n- `companies_house`  — UK Companies House (identifier = company number)\n",
+        ),
+      identifier: zod
+        .string()
+        .describe(
+          "Source-native identifier the Confirm button should POST (10-digit zero-padded CIK or 8-char Companies House number).\n",
+        ),
+      name: zod
+        .string()
+        .describe("Issuer name as it appears in the reference source."),
+      lei: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional LEI when the suggestion came from (or was cross-referenced through) GLEIF.",
+        ),
+      ticker: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional ticker when the suggestion is a SEC ticker-index row.",
+        ),
+      confidence: zod
+        .number()
+        .min(listWatchedIssuerSuggestionsResponseItemsItemConfidenceMin)
+        .max(listWatchedIssuerSuggestionsResponseItemsItemConfidenceMax)
+        .describe("Raw 0..1 score from the suggestion engine."),
+      confidenceTier: zod
+        .enum(["exact", "strong", "review"])
+        .describe(
+          "Bucketed confidence the UI uses to drive the per-row badge. `exact` is `>= 0.95` (post legal-suffix-strip name match), `strong` is `>= 0.75` (multi-token overlap), `review` is everything else the engine returned (single weak token overlap).\n",
+        ),
+      matchReason: zod
+        .string()
+        .describe(
+          'Short human-readable reason (\"exact name match in SEC ticker index\"). Renderable as-is in a tooltip.\n',
+        ),
+      via: zod
+        .enum(["sec", "gleif", "companies_house"])
+        .describe(
+          "Reference source that produced this suggestion. `sec` \/ `companies_house` are direct identifier matches; `gleif` is an LEI cross-reference resolved into a SEC CIK.\n",
+        ),
+    }),
+  ),
+  suppliersConsidered: zod
+    .number()
+    .describe(
+      "How many suppliers the engine actually evaluated this call (after the `limit` cap).",
+    ),
+  suppliersSkippedAlreadyWatched: zod
+    .number()
+    .describe(
+      "Suppliers excluded because they are already linked to a watched_issuer row for this tenant.",
+    ),
+});
+
+/**
  * @summary Remove a watched issuer from the tenant's list
  */
 export const RemoveWatchedIssuerParams = zod.object({

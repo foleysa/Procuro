@@ -146,6 +146,7 @@ import type {
   ListRecentlyFailedJobsParams,
   ListSowsParams,
   ListSuppliersParams,
+  ListWatchedIssuerSuggestionsParams,
   ListWatchedIssuersParams,
   MarketSignal,
   MeResponse,
@@ -207,6 +208,7 @@ import type {
   UpdateSystemCleanupSchedule400,
   WatchedIssuer,
   WatchedIssuerListResponse,
+  WatchedIssuerSuggestionListResponse,
   Watchlist,
   WatchlistDetail,
   WatchlistList,
@@ -8379,6 +8381,127 @@ export const useBulkAddWatchedIssuers = <
 > => {
   return useMutation(getBulkAddWatchedIssuersMutationOptions(options));
 };
+
+/**
+ * Joins each tenant supplier against SEC EDGAR (cached `company_tickers.json`), GLEIF name search, and (when configured) Companies House search to surface ranked candidate matches the admin can confirm one-click into the watch list. Computes live, never writes — confirm via `POST /watched-issuers` with the `supplierUid` link.
+Suppliers already linked to a watched_issuer are skipped, and candidate `(source, identifier)` pairs already on the tenant's watch list are filtered out so the UI never shows a Confirm button that would 409.
+
+ * @summary Suggest watched-issuer matches for the tenant's suppliers
+ */
+export const getListWatchedIssuerSuggestionsUrl = (
+  params?: ListWatchedIssuerSuggestionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = ["supplierId"];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? "null" : v.toString());
+      });
+      return;
+    }
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/watched-issuers/suggestions?${stringifiedParams}`
+    : `/api/watched-issuers/suggestions`;
+};
+
+export const listWatchedIssuerSuggestions = async (
+  params?: ListWatchedIssuerSuggestionsParams,
+  options?: RequestInit,
+): Promise<WatchedIssuerSuggestionListResponse> => {
+  return customFetch<WatchedIssuerSuggestionListResponse>(
+    getListWatchedIssuerSuggestionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListWatchedIssuerSuggestionsQueryKey = (
+  params?: ListWatchedIssuerSuggestionsParams,
+) => {
+  return [
+    `/api/watched-issuers/suggestions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListWatchedIssuerSuggestionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListWatchedIssuerSuggestionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListWatchedIssuerSuggestionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>
+  > = ({ signal }) =>
+    listWatchedIssuerSuggestions(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWatchedIssuerSuggestionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>
+>;
+export type ListWatchedIssuerSuggestionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Suggest watched-issuer matches for the tenant's suppliers
+ */
+
+export function useListWatchedIssuerSuggestions<
+  TData = Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListWatchedIssuerSuggestionsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listWatchedIssuerSuggestions>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWatchedIssuerSuggestionsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Remove a watched issuer from the tenant's list

@@ -40,9 +40,27 @@ import { normaliseCompaniesHouseNumber } from "../lib/intelligence/collectors/co
 import {
   suggestForTenant,
   defaultReferenceLookups,
+  CONFIDENCE_EXACT,
+  CONFIDENCE_STRONG,
   type ReferenceLookups,
   type SuggesterSupplierInput,
+  type WatchedIssuerSuggestion,
 } from "../lib/intelligence/suggest-watched-issuers";
+
+/**
+ * Map the raw 0..1 confidence the engine emits onto the bucketed tier
+ * the UI uses to drive its per-row badge ("Exact" / "Strong" / "Needs
+ * review"). Pinned to the same `CONFIDENCE_*` constants the engine
+ * uses internally so the badge cutoffs cannot drift from the scoring
+ * cutoffs.
+ */
+function confidenceTier(
+  c: number,
+): "exact" | "strong" | "review" {
+  if (c >= CONFIDENCE_EXACT) return "exact";
+  if (c >= CONFIDENCE_STRONG) return "strong";
+  return "review";
+}
 
 const router: IRouter = Router();
 
@@ -594,8 +612,25 @@ router.get("/watched-issuers/suggestions", tenantMiddleware, async (req, res) =>
       : {}),
   });
 
+  // Map engine-shape rows into the OpenAPI response shape, adding the
+  // `confidenceTier` bucket the UI uses for its per-row badge.
+  const items = result.suggestions.map((s: WatchedIssuerSuggestion) => ({
+    key: s.key,
+    supplierUid: s.supplierUid,
+    supplierName: s.supplierName,
+    source: s.source,
+    identifier: s.identifier,
+    name: s.name,
+    lei: s.lei ?? null,
+    ticker: s.ticker ?? null,
+    confidence: s.confidence,
+    confidenceTier: confidenceTier(s.confidence),
+    matchReason: s.matchReason,
+    via: s.via,
+  }));
+
   res.json({
-    items: result.suggestions,
+    items,
     suppliersConsidered: result.suppliersConsidered,
     suppliersSkippedAlreadyWatched: result.suppliersSkippedAlreadyWatched,
   });
