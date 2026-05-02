@@ -210,7 +210,12 @@ export function errorLogContext(err: unknown): Record<string, unknown> {
       errMessage: err.message,
       stack: err.stack,
     };
-    const pg = asPgLike(err);
+    // Mirror `sanitizeDbErrorMessage` and walk one `cause` level so a
+    // Drizzle-wrapped `pg.DatabaseError` still contributes its SQLSTATE
+    // / table / constraint to the structured log entry. Without this,
+    // `req.log.error({ err, ...errorLogContext(err) }, ...)` would lose
+    // the very fields on-call uses to grep production incidents.
+    const pg = unwrapPgLikeError(err) ?? asPgLike(err);
     if (pg) {
       const code = readString(pg.code);
       const table = readString(pg.table);

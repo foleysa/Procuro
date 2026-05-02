@@ -293,3 +293,38 @@ test("errorLogContext captures full message and structured pg fields", () => {
   assert.equal(ctx["pgConstraint"], "suppliers_external_id_uq");
   assert.ok(typeof ctx["stack"] === "string");
 });
+
+test("errorLogContext unwraps a Drizzle-style wrapper to surface pg fields", () => {
+  // Mirrors the wrapped-error case for `sanitizeDbErrorMessage`: when
+  // Drizzle rethrows its `DrizzleQueryError`, the SQLSTATE / table /
+  // constraint live on `cause`. Without unwrapping, the structured log
+  // entry loses every `pg*` field on-call would grep on, even though the
+  // user-facing API response is now informative thanks to task #87.
+  const inner = makePgError({
+    message:
+      'duplicate key value violates unique constraint "suppliers_org_external_id_uq"',
+    code: "23505",
+    table: "suppliers",
+    column: "external_id",
+    constraint: "suppliers_org_external_id_uq",
+  });
+  Object.assign(inner, { schema: "public", routine: "_bt_check_unique" });
+  const wrapper = new Error(
+    'Failed query: insert into "suppliers" ... params: [...]',
+  );
+  Object.assign(wrapper, { cause: inner });
+
+  const ctx = errorLogContext(wrapper);
+
+  // The outer wrapper's own message/stack still win — those describe the
+  // Drizzle layer and are what shows up in the rendered log line.
+  assert.equal(ctx["errMessage"], wrapper.message);
+  assert.ok(typeof ctx["stack"] === "string");
+  // But the pg-level fields are pulled from `cause`.
+  assert.equal(ctx["pgCode"], "23505");
+  assert.equal(ctx["pgTable"], "suppliers");
+  assert.equal(ctx["pgColumn"], "external_id");
+  assert.equal(ctx["pgConstraint"], "suppliers_org_external_id_uq");
+  assert.equal(ctx["pgSchema"], "public");
+  assert.equal(ctx["pgRoutine"], "_bt_check_unique");
+});
