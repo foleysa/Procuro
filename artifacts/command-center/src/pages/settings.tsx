@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useMyRole } from "@/lib/use-my-role";
 import {
   getGetMeQueryKey,
   useGetMe,
@@ -151,6 +152,7 @@ function DisclosurePolicySection() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data, isLoading } = useGetMe();
+  const { isOrgAdmin, isLoading: roleLoading } = useMyRole();
 
   const currentPolicy: DisclosurePolicy | undefined = data?.org.disclosurePolicy;
   const [selected, setSelected] = useState<DisclosurePolicy | undefined>(
@@ -186,6 +188,7 @@ function DisclosurePolicySection() {
 
   const dirty = selected !== undefined && selected !== currentPolicy;
   const saving = patchM.isPending;
+  const canEdit = isOrgAdmin;
 
   return (
     <Card>
@@ -211,6 +214,7 @@ function DisclosurePolicySection() {
             value={selected}
             onValueChange={(v) => setSelected(v as DisclosurePolicy)}
             data-testid="radio-disclosure-policy"
+            disabled={!canEdit}
             className="gap-3"
           >
             {POLICY_OPTIONS.map((opt) => (
@@ -237,28 +241,41 @@ function DisclosurePolicySection() {
         )}
 
         <div className="flex items-center gap-3">
-          <Button
-            data-testid="button-save-policy"
-            disabled={!dirty || saving}
-            onClick={() => {
-              if (!selected) return;
-              patchM.mutate({ data: { disclosurePolicy: selected } });
-            }}
-          >
-            {saving ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Saving…
-              </>
-            ) : (
-              "Save policy"
-            )}
-          </Button>
-          {dirty && !saving ? (
-            <span className="text-xs text-muted-foreground">
-              Unsaved change
+          {canEdit ? (
+            <>
+              <Button
+                data-testid="button-save-policy"
+                disabled={!dirty || saving}
+                onClick={() => {
+                  if (!selected) return;
+                  patchM.mutate({ data: { disclosurePolicy: selected } });
+                }}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save policy"
+                )}
+              </Button>
+              {dirty && !saving ? (
+                <span className="text-xs text-muted-foreground">
+                  Unsaved change
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span
+              data-testid="text-policy-readonly"
+              className="text-xs text-muted-foreground"
+            >
+              {roleLoading
+                ? "Checking permissions…"
+                : "Only org admins can change tenant-wide settings."}
             </span>
-          ) : null}
+          )}
         </div>
       </CardContent>
     </Card>

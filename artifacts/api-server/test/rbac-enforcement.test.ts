@@ -222,6 +222,83 @@ test("org_admin API key can invite and revoke a user role", async () => {
   }
 });
 
+test("analyst API key cannot change tenant-wide settings (403)", async () => {
+  // The Settings page lets the active tenant change the source-disclosure
+  // policy. Pin that PATCH /me/settings is gated on `settings:write` so a
+  // regular member with an analyst-scoped key (or session) cannot flip the
+  // policy and inadvertently expose lower-trust signals to the team.
+  const orgId = await pickOrgId();
+  const token = await issueKey(orgId, "analyst");
+  const handle = await startServer();
+  try {
+    const r = await call(
+      handle.port,
+      "PATCH",
+      "/api/me/settings",
+      token,
+      { disclosurePolicy: "analyst" },
+    );
+    assert.equal(
+      r.status,
+      403,
+      `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    const obj = r.body as { error: string; required?: string[] };
+    assert.equal(obj.error, "Forbidden");
+    assert.ok(obj.required?.includes("settings:write"));
+  } finally {
+    await db
+      .delete(apiKeysTable)
+      .where(eq(apiKeysTable.label, "rbac-test-analyst"));
+    await handle.close();
+  }
+});
+
+test("org_admin API key CAN change tenant-wide settings (200)", async () => {
+  // Positive control for the gate above: the same route accepts an
+  // org_admin caller, which proves the analyst 403 is a permission
+  // decision and not e.g. a routing/validation regression that would
+  // coincidentally reject every body.
+  //
+  // We deliberately PATCH with an empty body so the route reaches the
+  // handler past `requirePermission("settings:write")` without forcing
+  // a real settings mutation. A no-op PATCH is sufficient for the gate
+  // contract and avoids coupling this test to the side effects of an
+  // actual policy change (e.g. the `org_settings_audit_log` insert),
+  // which a separate write-side test already covers.
+  const orgId = await pickOrgId();
+  const token = await issueKey(orgId, "org_admin");
+  const handle = await startServer();
+  try {
+    const r = await call(
+      handle.port,
+      "PATCH",
+      "/api/me/settings",
+      token,
+      {},
+    );
+    assert.equal(
+      r.status,
+      200,
+      `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`,
+    );
+    // Sanity-check: the response is the standard `MeResponse` shape with
+    // a populated org. If a future refactor moves the gate above the
+    // serializer this assertion will catch the regression.
+    const obj = r.body as { org?: { id?: string } };
+    assert.equal(
+      obj.org?.id,
+      orgId,
+      "expected /me response to echo the active tenant",
+    );
+  } finally {
+    await db
+      .delete(apiKeysTable)
+      .where(eq(apiKeysTable.label, "rbac-test-org_admin"));
+    await handle.close();
+  }
+});
+
 test("missing bearer + no dev header => 401", async () => {
   const handle = await startServer();
   try {
