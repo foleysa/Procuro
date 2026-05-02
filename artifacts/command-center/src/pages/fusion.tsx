@@ -556,6 +556,29 @@ function EntityPane({
       : "",
   );
 
+  // Deep-link consumption: when sibling pages navigate into the
+  // Fusion Center via `/fusion?tab=entity&entity=<kind>:<id>`, the
+  // parent seeds `activeEntityRef` from the URL inside a useEffect —
+  // which runs AFTER our state initializers have already locked in
+  // their (then-null) defaults. Sync them whenever `activeRef`
+  // changes so a deep-link from supplier-detail (or any future
+  // page) actually pre-fills the entity selector.
+  useEffect(() => {
+    const parsed = parseRef(activeRef);
+    if (!parsed) return;
+    setKind(parsed.kind);
+    if (parsed.kind === "supplier" || parsed.kind === "site") {
+      setSupplierId(parsed.id);
+      setCode("");
+    } else {
+      setCode(parsed.id);
+      setSupplierId("");
+    }
+    // `parseRef` is a stable closure over `VALID_KINDS` (constant),
+    // so depending only on `activeRef` is correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRef]);
+
   const { data: suppliersData } = useListSuppliers({ limit: 200 });
   const suppliers = suppliersData?.items ?? [];
 
