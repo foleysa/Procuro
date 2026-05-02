@@ -315,6 +315,215 @@ export class CsvIngestAbortedError extends Error {
   }
 }
 
+/**
+ * Where a single duplicate-key row lives inside the upload. Both numbers
+ * are 1-based and assume the header is line 1, so the first data row is
+ * `row=1, line=2`. `line` honours quoted multi-line cells (the value
+ * comes straight from `csv-parse`'s per-record `info.lines`) so an
+ * operator opening the file in their editor lands on the offending row.
+ */
+export interface CsvDuplicateRowLocation {
+  /** 1-based index of the data row, header excluded. */
+  row: number;
+  /** 1-based source CSV line number (header is line 1). */
+  line: number;
+}
+
+/**
+ * Thrown by `flushBatch` when two or more rows in the same batch share
+ * the conflict-target key of an `INSERT ... ON CONFLICT DO UPDATE`
+ * upsert. Postgres rejects that statement with SQLSTATE 21000
+ * ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
+ * but the sanitizer scrubs the offending value from the surfaced
+ * message because Postgres' `detail` text can contain any tenant's
+ * data — leaving the operator with `Database error 21000 on table
+ * "suppliers", constraint "suppliers_org_external_id_uq"` and no
+ * way to find the bad rows in their CSV.
+ *
+ * Catching the duplicate ourselves before we ever hand the batch to
+ * Drizzle lets us tell the uploader *which lines* collided and on
+ * what key, without leaking the value to anyone else (the response
+ * body only flows back to the org that uploaded the file).
+ *
+ * The class is branded `unrecoverable: true` so the job worker's
+ * `wrapStructuralError` path treats it as a permanent input error and
+ * fails the job on attempt #1 instead of burning the retry budget on a
+ * problem the user has to fix in their CSV before re-uploading.
+ */
+export class CsvBatchDuplicateError extends Error {
+  readonly unrecoverable = true as const;
+  readonly entity: CsvEntity;
+  /**
+   * Human-readable name of the column(s) that drive the conflict
+   * target — `"externalId"` for the per-source-system natural-key
+   * tables, `"code"` for `categories`, `"rateCardExternalId+role+seniority"`
+   * for `rate_card_lines`. Always a developer-facing identifier; never
+   * contains caller-supplied data.
+   */
+  readonly conflictKey: string;
+  /**
+   * The actual value the duplicate rows shared (e.g. the externalId
+   * `SUP-001`). Echoed back in the error message because the only
+   * recipient is the org that uploaded the file.
+   */
+  readonly conflictValue: string;
+  readonly duplicates: CsvDuplicateRowLocation[];
+
+  constructor(args: {
+    entity: CsvEntity;
+    conflictKey: string;
+    conflictValue: string;
+    duplicates: CsvDuplicateRowLocation[];
+  }) {
+    const lines = args.duplicates.map((d) => d.line);
+    const lineList = formatLineList(lines);
+    super(
+      `${args.duplicates.length} rows share ${args.conflictKey} '${args.conflictValue}' (${lines.length === 1 ? "line" : "lines"} ${lineList}). ` +
+        `Each ${args.conflictKey} can appear only once per upload — ` +
+        `remove or merge the duplicate rows and try again.`,
+    );
+    this.name = "CsvBatchDuplicateError";
+    this.entity = args.entity;
+    this.conflictKey = args.conflictKey;
+    this.conflictValue = args.conflictValue;
+    this.duplicates = args.duplicates;
+  }
+}
+
+function formatLineList(lines: number[]): string {
+  if (lines.length <= 2) return lines.join(" and ");
+  return `${lines.slice(0, -1).join(", ")}, and ${lines[lines.length - 1]}`;
+}
+
+/**
+ * Per-entity description of the natural-key columns that map to the
+ * `INSERT ... ON CONFLICT DO UPDATE` conflict target on the bulk upserts
+ * in `flushBatch`. `compute` returns `null` when the row doesn't carry
+ * the required column(s) — those rows can't collide with anything yet
+ * (they'll be filtered out further down by the entity-specific mappers
+ * before the DB insert), so we skip them in the duplicate pre-check.
+ *
+ * `label` is what the operator-facing error message uses, so keep it
+ * stable / contract-y rather than tying it to internal column names.
+ */
+interface ConflictKeySpec {
+  label: string;
+  compute(row: Record<string, string>): string | null;
+}
+
+const CONFLICT_KEY_SPECS: Record<CsvEntity, ConflictKeySpec> = {
+  suppliers: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  categories: {
+    // categories upserts on (orgId, code) — `sourceExternalId` isn't part
+    // of the conflict target, so this is the only column that matters.
+    label: "code",
+    compute: (r) => r["code"] || null,
+  },
+  items: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  invoices: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  purchase_orders: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  po_lines: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  payments: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  shipments: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  statements_of_work: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  rate_cards: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+  rate_card_lines: {
+    // rate_card_lines upserts on (rateCardId, role, seniority); the
+    // rateCardId is resolved from `rateCardExternalId` so two rows that
+    // share the (external id, role, seniority) tuple end up on the same
+    // resolved rate-card id and trigger SQLSTATE 21000.
+    label: "rateCardExternalId+role+seniority",
+    compute: (r) => {
+      const rc = r["rateCardExternalId"];
+      const role = r["role"];
+      if (!rc || !role) return null;
+      // `seniority` is nullable; coalesce to a sentinel so two rows
+      // with NULL seniority still collide on the composite key.
+      return `${rc}|${role}|${r["seniority"] ?? ""}`;
+    },
+  },
+  time_entries: {
+    label: "externalId",
+    compute: (r) => r["externalId"] || null,
+  },
+};
+
+/**
+ * One row in the streaming buffer. Carries the parsed CSV record plus
+ * the metadata `flushBatch` needs to point the operator at the right
+ * line in their file when an in-batch duplicate is detected.
+ */
+interface BufferedRow {
+  row: Record<string, string>;
+  rowIndex: number;
+  line: number;
+}
+
+/**
+ * Group the buffered batch by its entity-specific conflict-target key.
+ * If any group has more than one row, throw `CsvBatchDuplicateError`
+ * with the offending value and the list of `(row, line)` locations.
+ *
+ * Runs in O(n) over a single batch (≤ `BATCH_SIZE` = 1000 rows by
+ * default) and only allocates a small `Map<string, ...>` keyed on the
+ * conflict-target string, so the cost is negligible compared to the
+ * downstream `INSERT ... ON CONFLICT DO UPDATE` round-trip.
+ */
+function detectBatchDuplicates(
+  entity: CsvEntity,
+  buffered: BufferedRow[],
+): void {
+  const spec = CONFLICT_KEY_SPECS[entity];
+  const groups = new Map<string, BufferedRow[]>();
+  for (const item of buffered) {
+    const key = spec.compute(item.row);
+    if (key === null) continue;
+    let list = groups.get(key);
+    if (!list) {
+      list = [];
+      groups.set(key, list);
+    }
+    list.push(item);
+  }
+  for (const [value, items] of groups) {
+    if (items.length > 1) {
+      throw new CsvBatchDuplicateError({
+        entity,
+        conflictKey: spec.label,
+        conflictValue: value,
+        duplicates: items.map((i) => ({ row: i.rowIndex, line: i.line })),
+      });
+    }
+  }
+}
+
 interface StreamCsvArgs {
   orgId: string;
   entity: CsvEntity;
@@ -388,7 +597,7 @@ export async function streamCsvEntity(
   let rowsInserted = 0;
   let bytesProcessed = 0;
   let batchIndex = 0;
-  let buffer: Record<string, string>[] = [];
+  let buffer: BufferedRow[] = [];
 
   const parser: Parser = args.input.pipe(
     parse({
@@ -396,6 +605,12 @@ export async function streamCsvEntity(
       skip_empty_lines: true,
       trim: true,
       relax_quotes: true,
+      // Wrap each yielded record in `{ record, info }` so we can attach
+      // the source CSV line number to every buffered row. `flushBatch`'s
+      // duplicate pre-check uses `info.lines` to tell the operator
+      // exactly which lines collided when an in-batch
+      // conflict-target-key duplicate is detected (Task #89).
+      info: true,
     }),
   );
 
@@ -492,7 +707,7 @@ export async function streamCsvEntity(
   };
 
   try {
-    for await (const row of parser) {
+    for await (const item of parser) {
       // Cancellation check between rows. The `parser.destroy(...)` above
       // will also surface the abort as a thrown error from the iterator on
       // the next tick, but checking inline keeps the abort fast even if
@@ -504,8 +719,17 @@ export async function streamCsvEntity(
           rowsInserted,
         );
       }
-      buffer.push(row as Record<string, string>);
+      // With `info: true` set above, csv-parse yields `{ record, info }`
+      // instead of the bare record. `info.lines` is the 1-based source
+      // line number of the record (honours quoted multi-line cells), and
+      // we maintain our own 1-based data-row index alongside it for the
+      // duplicate pre-check error payload.
+      const { record, info } = item as {
+        record: Record<string, string>;
+        info: { lines: number };
+      };
       rowsParsed++;
+      buffer.push({ row: record, rowIndex: rowsParsed, line: info.lines });
       if (buffer.length >= batchSize) {
         // Pause backpressure: pause underlying stream while we flush.
         args.input.pause();
@@ -590,9 +814,24 @@ export async function streamCsvEntity(
 async function flushBatch(
   orgId: string,
   entity: CsvEntity,
-  rows: Record<string, string>[],
+  buffered: BufferedRow[],
 ): Promise<number> {
-  if (rows.length === 0) return 0;
+  if (buffered.length === 0) return 0;
+  // Pre-check the conflict-target key for in-batch duplicates BEFORE
+  // sending the chunk to Postgres. Without this, two rows in the same
+  // batch that share the natural key would hit
+  // `INSERT ... ON CONFLICT DO UPDATE` and Postgres would reject the
+  // statement with SQLSTATE 21000 ("ON CONFLICT DO UPDATE command
+  // cannot affect row a second time"). The sanitizer then strips the
+  // offending value, so the operator sees `Database error 21000 on
+  // table "suppliers"...` and has no way to find the bad rows in the
+  // CSV. Detecting the duplicate ourselves lets us tell the uploader
+  // exactly which lines collided and on what key (Task #89).
+  detectBatchDuplicates(entity, buffered);
+  // The rest of this function is shape-preserving against the original
+  // `Record<string, string>[]` parameter, so unwrap the buffered metadata
+  // once and let the per-entity branches keep operating on plain rows.
+  const rows: Record<string, string>[] = buffered.map((b) => b.row);
   switch (entity) {
     case "suppliers": {
       const v = rows.map((r) => {

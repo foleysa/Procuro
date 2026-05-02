@@ -8,6 +8,7 @@ import {
   csvSourceAdapter,
   streamCsvEntity,
   CsvIngestAbortedError,
+  CsvBatchDuplicateError,
   type CsvPayload,
   type CsvEntity,
   type StreamCsvProgress,
@@ -573,6 +574,32 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
         entity,
         rowsParsed: err.rowsParsed,
         rowsInserted: err.rowsInserted,
+      });
+    } else if (err instanceof CsvBatchDuplicateError) {
+      // In-batch duplicate detected by `flushBatch` BEFORE we handed
+      // the chunk to Postgres, so we can tell the operator exactly
+      // which lines collided and on which key — instead of letting
+      // the request fall through to a sanitized "Database error 21000
+      // on table ..." message that strips the offending value (Task #89).
+      // The response only flows back to the org that uploaded the file,
+      // so it's safe to echo the conflict value (`err.conflictValue`)
+      // and the duplicate row/line locations: they came from this
+      // tenant's own upload.
+      req.log.warn(
+        {
+          entity,
+          orgId,
+          conflictKey: err.conflictKey,
+          duplicateLines: err.duplicates.map((d) => d.line),
+          duplicateRowCount: err.duplicates.length,
+        },
+        "Streaming CSV ingest rejected: in-batch duplicate conflict-target key",
+      );
+      writeEvent({
+        type: "error",
+        error: `CSV stream ingest failed: ${err.message}`,
+        conflictKey: err.conflictKey,
+        duplicates: err.duplicates,
       });
     } else {
       req.log.error(

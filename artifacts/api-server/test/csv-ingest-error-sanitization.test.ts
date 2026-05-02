@@ -406,15 +406,23 @@ test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert",
   assertSanitizedHeadline("/api/ingest/mock-erp", json.error ?? "");
 });
 
-test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert", async () => {
-  // The streaming adapter accumulates supplier rows into batches of
-  // BATCH_SIZE (1000) and flushes each batch with one
-  // `INSERT ... ON CONFLICT DO UPDATE` keyed on
-  // `(orgId, sourceSystem, sourceExternalId)`. Two CSV rows sharing the
-  // same `externalId` land in the same batch and trigger SQLSTATE 21000
-  // (cardinality violation) — same trigger as the JSON path, but
-  // exercised through the streaming code path's separate catch block,
-  // which writes a `{ type: "error" }` NDJSON line on a 200 response.
+test("POST /api/ingest/csv-stream pre-checks in-batch duplicates and reports the offending lines", async () => {
+  // Two CSV rows sharing the same `externalId` would land in the same
+  // batch and previously trip the streaming adapter's
+  // `INSERT ... ON CONFLICT DO UPDATE` with SQLSTATE 21000
+  // ("cardinality violation"). Task #89 added a pre-check inside
+  // `flushBatch` so the duplicate is detected from the in-memory
+  // buffer BEFORE Drizzle is called: the route then surfaces a
+  // structured error event carrying the conflict-target column, the
+  // offending value, and the row/line locations of every duplicate.
+  //
+  // This test pins both halves of that contract:
+  //   - The response no longer falls back to the sanitized
+  //     "Database error 21000" headline; the operator gets actionable
+  //     row/line numbers instead.
+  //   - The structured `duplicates` payload is present and points at
+  //     the right CSV lines (header is line 1, so the two duplicate
+  //     data rows live on lines 2 and 3).
   const dupExternalId = `${STREAM_PREFIX}sup-A`;
   const csvBody =
     "externalId,name,countryCode\n" +
@@ -437,14 +445,26 @@ test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert
   // are reported as `{ type: "error" }` NDJSON lines in the body. Pin
   // both — a regression that turns the streaming error into an HTTP
   // 5xx is still worth catching, but the body check is what proves the
-  // sanitizer is wired in.
+  // pre-check is wired in.
   assert.equal(
     res.status,
     200,
     `expected /api/ingest/csv-stream to return 200 (errors are reported in-band), got ${res.status}`,
   );
   const body = await res.text();
-  assertNoLeakage("/api/ingest/csv-stream", body);
+  // The pre-check echoes the offending key value (the externalId the
+  // user just uploaded) back to the same uploader, so we DON'T enforce
+  // the customer-value ban list here. We DO still enforce the SQL /
+  // Postgres-internals ban list — a regression that swaps the
+  // pre-check for the raw Drizzle error must still be caught.
+  const lower = body.toLowerCase();
+  for (const frag of BANNED_SQL_FRAGMENTS) {
+    assert.ok(
+      !lower.includes(frag),
+      `[/api/ingest/csv-stream] response body must not include SQL fragment "${frag}". ` +
+        `Got: ${body}`,
+    );
+  }
 
   // Parse NDJSON and find the terminal `error` event.
   const lines = body
@@ -453,7 +473,12 @@ test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert
     .filter((l) => l.length > 0);
   const events = lines.map((l, i) => {
     try {
-      return JSON.parse(l) as { type?: string; error?: string };
+      return JSON.parse(l) as {
+        type?: string;
+        error?: string;
+        conflictKey?: string;
+        duplicates?: Array<{ row?: number; line?: number }>;
+      };
     } catch (err) {
       throw new Error(
         `/api/ingest/csv-stream NDJSON line #${i + 1} did not parse: ` +
@@ -471,7 +496,7 @@ test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert
     typeof errorEvent.error === "string" && errorEvent.error.length > 0,
     `/api/ingest/csv-stream error event has no 'error' string: ${JSON.stringify(errorEvent)}`,
   );
-  // The streaming route prefixes the sanitized message with
+  // The streaming route prefixes the message with
   // "CSV stream ingest failed:" — keep the prefix in the assertion so
   // a regression that drops it (or replaces it with a raw error
   // message) is caught.
@@ -480,8 +505,57 @@ test("POST /api/ingest/csv-stream hides SQL when the database rejects the upsert
     `/api/ingest/csv-stream error event is missing the documented prefix. ` +
       `Got: ${errorEvent.error}`,
   );
-  assertSanitizedHeadline(
-    "/api/ingest/csv-stream",
-    errorEvent.error,
+
+  // The pre-check fired: the response must NOT fall back to the
+  // sanitized "Database error 21000" headline that operators saw
+  // before Task #89.
+  assert.ok(
+    !errorEvent.error.includes("Database error 21000"),
+    `/api/ingest/csv-stream regressed to the sanitized DB-error fallback ` +
+      `instead of running the in-batch duplicate pre-check. Got: ${errorEvent.error}`,
+  );
+
+  // The structured payload tells the UI which key collided and where.
+  assert.equal(
+    errorEvent.conflictKey,
+    "externalId",
+    `/api/ingest/csv-stream error event has wrong conflictKey: ${JSON.stringify(errorEvent)}`,
+  );
+  assert.ok(
+    Array.isArray(errorEvent.duplicates) && errorEvent.duplicates.length === 2,
+    `/api/ingest/csv-stream error event missing 2-entry duplicates array: ${JSON.stringify(errorEvent)}`,
+  );
+  // Header is line 1 so the two duplicate data rows are on lines 2 + 3,
+  // and they're the 1st + 2nd data rows in the file.
+  const dupLines = errorEvent.duplicates!.map((d) => d.line).sort();
+  const dupRows = errorEvent.duplicates!.map((d) => d.row).sort();
+  assert.deepEqual(
+    dupLines,
+    [2, 3],
+    `/api/ingest/csv-stream duplicate locations point at wrong CSV lines: ` +
+      `${JSON.stringify(errorEvent.duplicates)}`,
+  );
+  assert.deepEqual(
+    dupRows,
+    [1, 2],
+    `/api/ingest/csv-stream duplicate locations point at wrong data rows: ` +
+      `${JSON.stringify(errorEvent.duplicates)}`,
+  );
+
+  // Sanity-check the human-readable message: it should name the column,
+  // echo the offending value, and call out the colliding lines so the
+  // operator can find them in their editor without parsing the
+  // structured payload.
+  assert.ok(
+    errorEvent.error.includes("externalId"),
+    `expected error message to name the conflict-target column. Got: ${errorEvent.error}`,
+  );
+  assert.ok(
+    errorEvent.error.includes(dupExternalId),
+    `expected error message to echo the offending externalId value back to the uploader. Got: ${errorEvent.error}`,
+  );
+  assert.ok(
+    errorEvent.error.includes("lines 2 and 3"),
+    `expected error message to call out the colliding CSV lines. Got: ${errorEvent.error}`,
   );
 });
