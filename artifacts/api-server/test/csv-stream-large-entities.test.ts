@@ -1,7 +1,9 @@
 /**
  * Integration test for `POST /api/ingest/csv-stream` covering the higher-risk
  * non-`suppliers` entities — `invoices`, `po_lines`, `purchase_orders`,
- * `payments`, and `shipments` — with a >10 MB CSV each.
+ * `payments`, and `shipments` — with a multi-batch CSV each (>2 *
+ * `BATCH_SIZE` rows; see `TARGET_ROWS` for the rationale on file size vs.
+ * row count).
  *
  * Why this exists
  * ---------------
@@ -18,8 +20,8 @@
  *
  * What this verifies (per entity)
  * -------------------------------
- * 1. Generates a >10 MB single-entity CSV directly to disk (never buffered
- *    as a single string in JS).
+ * 1. Generates a multi-batch single-entity CSV directly to disk (never
+ *    buffered as a single string in JS).
  * 2. Boots the real Express app in-process and binds to an ephemeral port,
  *    then POSTs the file as `multipart/form-data` so the server hits the
  *    same code path the browser/cURL clients use.
@@ -86,17 +88,28 @@ import {
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
 const EXTERNAL_ID_PREFIX = `${TEST_RUN_ID}-`;
-// Per-entity CSV fixture size. The original 10 MB target made the suite
-// run for ~75 s and pushed the full `pnpm test` run over the 90 s CI
-// budget (#59). 3 MB still exercises every per-batch FK lookup path
-// (default flush is 1000 rows, generated CSVs land between 11k and 27k
-// rows at 3 MB so each entity flushes 11+ batches) while keeping the
-// total test wall-time under the budget. Override with the env var
-// `CSV_STREAM_FIXTURE_BYTES` for ad-hoc local stress runs.
-const TARGET_BYTES = (() => {
-  const raw = Number(process.env["CSV_STREAM_FIXTURE_BYTES"] ?? "");
-  if (Number.isFinite(raw) && raw >= 256 * 1024) return raw;
-  return 3 * 1024 * 1024;
+// Per-entity CSV fixture row count. The earlier byte-sized fixture (10 MB,
+// later 3 MB) made each variant insert 12k–28k rows just to satisfy a
+// file-size threshold that wasn't testing anything the streaming endpoint
+// actually exposes — the file-size guard caught no regression that the
+// `rowsParsed === rowsInserted` + DB-row-count assertions don't already
+// catch. What the test really needs to cover is the per-batch flush path
+// (`BATCH_SIZE = 1000`): every variant must trigger >1 flush so the
+// grouped FK lookup map carries multiple hits per batch.
+//
+// 2_500 rows == 3 batch flushes (1_000 + 1_000 + 500). With 50 seeded
+// parents per variant and round-robin assignment, each batch resolves
+// against ~50 distinct FK keys — exercising the same `IN (...)` lookup
+// shape the previous 11–28 batch fixture exercised, in ~1/7 the inserts.
+//
+// Override with `CSV_STREAM_FIXTURE_ROWS` for ad-hoc local stress runs
+// (e.g. `CSV_STREAM_FIXTURE_ROWS=20000` to reproduce a perf bug). The
+// floor is BATCH_SIZE * 2 + 1 so the multi-flush invariant is impossible
+// to silently break via env override.
+const TARGET_ROWS = (() => {
+  const raw = Number(process.env["CSV_STREAM_FIXTURE_ROWS"] ?? "");
+  if (Number.isFinite(raw) && raw >= 2001) return Math.floor(raw);
+  return 2_500;
 })();
 
 // Number of parent rows pre-seeded for child-CSV lookups. Small enough that
@@ -171,7 +184,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
   /**
    * One row per CSV-streaming entity covered by this test. Each variant:
    * - prepares the parent rows the per-batch lookups depend on (`prepare`),
-   * - writes a >10 MB single-entity CSV (`writeCsv`), and
+   * - writes a multi-batch single-entity CSV (`writeCsv`), and
    * - identifies the table + child external-id prefix used to verify and
    *   count the inserted rows (`childTable`, `childExtIdPrefix`).
    *
@@ -187,7 +200,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
       | "shipments";
     /** Set up parent records and return whatever the writer needs. */
     prepare: () => Promise<{ writeArgs: unknown }>;
-    /** Generate the >10 MB CSV row-by-row to disk; return row count. */
+    /** Generate the multi-batch CSV row-by-row to disk; return row count. */
     writeCsv: (filePath: string, args: unknown) => number;
     /** Drizzle table the inserted rows land in. */
     childTable:
@@ -220,7 +233,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
         return writeInvoicesCsvSync(filePath, {
           supplierExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
-          minBytes: TARGET_BYTES,
+          rowCount: TARGET_ROWS,
         });
       },
     },
@@ -270,7 +283,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
           poExternalIds,
           categoryCodes,
           extIdPrefix: EXTERNAL_ID_PREFIX,
-          minBytes: TARGET_BYTES,
+          rowCount: TARGET_ROWS,
         });
       },
     },
@@ -309,7 +322,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
         return writePurchaseOrdersCsvSync(filePath, {
           supplierExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
-          minBytes: TARGET_BYTES,
+          rowCount: TARGET_ROWS,
         });
       },
     },
@@ -353,7 +366,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
         return writePaymentsCsvSync(filePath, {
           invoiceExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
-          minBytes: TARGET_BYTES,
+          rowCount: TARGET_ROWS,
         });
       },
     },
@@ -419,7 +432,7 @@ test("streaming CSV ingest of large files lands every row for every supported en
           poExternalIds,
           supplierExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
-          minBytes: TARGET_BYTES,
+          rowCount: TARGET_ROWS,
         });
       },
     },
@@ -436,11 +449,18 @@ test("streaming CSV ingest of large files lands every row for every supported en
       const { writeArgs } = await variant.prepare();
       const expectedRows = variant.writeCsv(tmpFile, writeArgs);
 
-      const stat = fs.statSync(tmpFile);
+      // Each variant must trigger >1 BATCH_SIZE (1000) flush so the
+      // grouped FK lookup map carries multiple hits per batch — that's
+      // the per-batch handler regression this whole suite exists to
+      // catch. Asserting 2_001+ rows (rather than `>= TARGET_ROWS`)
+      // guards the invariant directly so a future rewrite of the row
+      // budget can't silently regress the coverage shape.
       assert.ok(
-        stat.size >= TARGET_BYTES,
-        `Generated ${variant.entity} CSV should be >= ${TARGET_BYTES} bytes, got ${stat.size}`,
+        expectedRows > 2_000,
+        `Generated ${variant.entity} CSV must produce >1 BATCH_SIZE flush ` +
+          `(>2000 rows); got ${expectedRows}.`,
       );
+      const stat = fs.statSync(tmpFile);
       console.log(
         `[${variant.entity}] generated CSV: ${(stat.size / 1024 / 1024).toFixed(2)} MB, ${expectedRows} rows`,
       );
