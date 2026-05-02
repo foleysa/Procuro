@@ -6524,6 +6524,77 @@ export const GetSystemCsvIngestMetricsResponse = zod.object({
 });
 
 /**
+ * Returns hourly throughput rollups (p50/p95 latency and rows/sec) for succeeded `ingest_csv` jobs over a rolling N-hour window. Powers the inline sparkline on the System page's CSV ingest throughput card so an operator can spot regressions (e.g. a slow database evening) without scraping logs. Empty hours render as zero-sample buckets so the chart keeps a stable X axis. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Hourly p50/p95 latency + rows/sec for `ingest_csv` jobs
+ */
+export const getSystemCsvThroughputHistoryQueryWindowHoursDefault = 24;
+export const getSystemCsvThroughputHistoryQueryWindowHoursMax = 168;
+
+export const GetSystemCsvThroughputHistoryQueryParams = zod.object({
+  windowHours: zod.coerce
+    .number()
+    .min(1)
+    .max(getSystemCsvThroughputHistoryQueryWindowHoursMax)
+    .default(getSystemCsvThroughputHistoryQueryWindowHoursDefault)
+    .describe("Trailing window in hours (1-168). Defaults to 24."),
+});
+
+export const GetSystemCsvThroughputHistoryResponse = zod.object({
+  windowHours: zod
+    .number()
+    .describe("Trailing window size, in hours, that `buckets` spans."),
+  buckets: zod
+    .array(
+      zod
+        .object({
+          hour: zod.coerce
+            .date()
+            .describe(
+              "ISO timestamp for the start of the UTC hour the bucket covers.",
+            ),
+          sampleCount: zod
+            .number()
+            .describe(
+              "Number of succeeded `ingest_csv` jobs that fell in the bucket.",
+            ),
+          totalRows: zod
+            .number()
+            .describe("Total rows processed across the bucket."),
+          p50LatencyMs: zod
+            .number()
+            .describe(
+              "Median per-job latency in milliseconds (0 when no samples).",
+            ),
+          p95LatencyMs: zod
+            .number()
+            .describe(
+              "95th-percentile per-job latency in milliseconds (0 when no samples).",
+            ),
+          p50RowsPerSecond: zod
+            .number()
+            .describe(
+              "Median rows\/sec across the bucket's jobs (0 when no samples).",
+            ),
+          p95RowsPerSecond: zod
+            .number()
+            .describe(
+              "95th-percentile rows\/sec across the bucket's jobs (0 when no samples).",
+            ),
+        })
+        .describe(
+          "Hour-aligned rollup of `ingest_csv` job samples. Empty hours render as zero-sample buckets so the chart keeps a stable X axis.\n",
+        ),
+    )
+    .describe(
+      "Hourly buckets, oldest → newest. Always `windowHours` long so empty hours still render as zero on the chart.\n",
+    ),
+  totalSampleCount: zod
+    .number()
+    .describe("Sum of `sampleCount` across all buckets in the window."),
+});
+
+/**
  * Returns the most recent Defense Packs created in the tenant,
 newest first. Pack `sections` and `evidenceSnapshot` are
 omitted from list rows for payload size — fetch

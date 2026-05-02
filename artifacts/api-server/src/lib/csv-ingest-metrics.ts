@@ -1,5 +1,5 @@
-import { db, csvIngestMetricsTable } from "@workspace/db";
-import { and, desc, gte, lte } from "drizzle-orm";
+import { db, csvIngestMetricsTable, jobsTable } from "@workspace/db";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { newId } from "./ids";
 import { logger } from "./logger";
 
@@ -224,6 +224,170 @@ export async function getCsvIngestMetricsSummary(args: {
   );
 
   return { recent, entities, windowDays };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CSV ingest job throughput history (#157)
+//
+// Powers the time-series sparkline on the System page's "CSV ingest
+// throughput" card. Aggregates `ingest_csv` job rows server-side into
+// fixed-size hourly buckets over a rolling N-hour window so an
+// operator can spot regressions (e.g. a slow database evening) at a
+// glance, alongside the existing aggregate p50/p95 percentile numbers
+// that are computed from the same job rows but without any time
+// dimension.
+//
+// We deliberately read from `jobsTable` rather than the
+// `csvIngestMetricsTable` used by `getCsvIngestMetricsSummary`
+// above: the throughput card on the System page is anchored to
+// `ingest_csv` jobs (the user-facing "CSV ingest" entry on the queue
+// table), so the chart's series matches the percentiles it sits next
+// to. The per-batch streaming-ingest table tracks a different (and
+// finer-grained) data source surfaced by the separate
+// "CSV ingest performance" panel further down the page.
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface CsvJobThroughputBucket {
+  /** ISO timestamp for the start of the UTC hour. */
+  hour: string;
+  /** Number of succeeded `ingest_csv` jobs that fell in the bucket. */
+  sampleCount: number;
+  /** Total rows processed across the bucket. */
+  totalRows: number;
+  /** Median per-job latency in milliseconds (0 when no samples). */
+  p50LatencyMs: number;
+  /** 95th-percentile per-job latency in milliseconds (0 when no samples). */
+  p95LatencyMs: number;
+  /** Median rows-per-second across the bucket's jobs (0 when no samples). */
+  p50RowsPerSecond: number;
+  /** 95th-percentile rows-per-second across the bucket's jobs. */
+  p95RowsPerSecond: number;
+}
+
+export interface CsvJobThroughputHistory {
+  /** Hour-aligned bucket window size, oldest → newest. */
+  windowHours: number;
+  /** Hourly buckets, oldest → newest. Always `windowHours` long. Empty hours
+   *  carry zero counters so the chart keeps a stable X axis. */
+  buckets: CsvJobThroughputBucket[];
+  /** Aggregate sample count across the window (sum of `sampleCount`). */
+  totalSampleCount: number;
+}
+
+/**
+ * Returns hourly p50/p95 latency + rows/sec rollups for `ingest_csv`
+ * jobs that completed inside the rolling `windowHours` window
+ * (default 24h, capped at 7 days).
+ *
+ * Buckets are anchored to UTC hour boundaries so a refresh at minute
+ * 30 doesn't shift the X-axis labels — the trailing bucket always
+ * represents "this hour so far" and the leading bucket is exactly
+ * `windowHours - 1` hours earlier.
+ *
+ * Empty hours render as zero-sample buckets rather than being
+ * dropped, so the chart maintains a fixed `windowHours`-wide grid no
+ * matter how busy the system is. The job worker writes
+ * `recordsProcessed` and `durationMs` into `result` on the success
+ * path (see `lib/jobs/handlers/ingest-csv.ts` and the SyncResult
+ * shape returned from `csvSourceAdapter.fullSync`); rows missing
+ * either field are skipped — the same defensive parse the System
+ * page already does client-side for the aggregate percentile card.
+ */
+export async function getCsvJobThroughputHistory(args: {
+  windowHours?: number;
+}): Promise<CsvJobThroughputHistory> {
+  const windowHours = Math.max(1, Math.min(7 * 24, args.windowHours ?? 24));
+  const now = new Date();
+  // Anchor buckets to UTC hour boundaries (minute 0). The trailing
+  // bucket starts at the current hour; the leading bucket starts
+  // `windowHours - 1` hours earlier. This keeps the grid stable
+  // across refreshes within the same hour.
+  const currentHourStart = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      now.getUTCHours(),
+    ),
+  );
+  const windowStart = new Date(
+    currentHourStart.getTime() - (windowHours - 1) * 60 * 60 * 1000,
+  );
+
+  const rows = await db
+    .select({
+      result: jobsTable.result,
+      completedAt: jobsTable.completedAt,
+    })
+    .from(jobsTable)
+    .where(
+      and(
+        eq(jobsTable.kind, "ingest_csv"),
+        eq(jobsTable.status, "succeeded"),
+        gte(jobsTable.completedAt, windowStart),
+      ),
+    );
+
+  interface BucketAccumulator {
+    latencies: number[];
+    rps: number[];
+    rows: number;
+  }
+
+  const accumulators = new Map<number, BucketAccumulator>();
+  for (let i = 0; i < windowHours; i++) {
+    const ts = windowStart.getTime() + i * 60 * 60 * 1000;
+    accumulators.set(ts, { latencies: [], rps: [], rows: 0 });
+  }
+
+  for (const r of rows) {
+    if (!r.completedAt) continue;
+    const completed = r.completedAt instanceof Date
+      ? r.completedAt
+      : new Date(r.completedAt);
+    const bucketTs = Date.UTC(
+      completed.getUTCFullYear(),
+      completed.getUTCMonth(),
+      completed.getUTCDate(),
+      completed.getUTCHours(),
+    );
+    const acc = accumulators.get(bucketTs);
+    if (!acc) continue;
+    const result = (r.result ?? {}) as Record<string, unknown>;
+    const recordsProcessed = result["recordsProcessed"];
+    const durationMs = result["durationMs"];
+    if (
+      typeof recordsProcessed !== "number" ||
+      typeof durationMs !== "number" ||
+      recordsProcessed <= 0 ||
+      durationMs <= 0
+    ) {
+      continue;
+    }
+    acc.latencies.push(durationMs);
+    acc.rps.push(computeRowsPerSecond(recordsProcessed, durationMs));
+    acc.rows += recordsProcessed;
+  }
+
+  let totalSampleCount = 0;
+  const buckets: CsvJobThroughputBucket[] = [];
+  for (let i = 0; i < windowHours; i++) {
+    const ts = windowStart.getTime() + i * 60 * 60 * 1000;
+    const acc = accumulators.get(ts)!;
+    const sampleCount = acc.latencies.length;
+    totalSampleCount += sampleCount;
+    buckets.push({
+      hour: new Date(ts).toISOString(),
+      sampleCount,
+      totalRows: acc.rows,
+      p50LatencyMs: percentile(acc.latencies, 0.5),
+      p95LatencyMs: percentile(acc.latencies, 0.95),
+      p50RowsPerSecond: percentile(acc.rps, 0.5),
+      p95RowsPerSecond: percentile(acc.rps, 0.95),
+    });
+  }
+
+  return { windowHours, buckets, totalSampleCount };
 }
 
 function computeRowsPerSecond(rows: number, durationMs: number): number {

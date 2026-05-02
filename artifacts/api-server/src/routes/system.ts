@@ -8,7 +8,10 @@ import {
   getFunnelSnapshotRetentionConfig,
   getJobRetentionConfig,
 } from "../lib/jobs/queue";
-import { getCsvIngestMetricsSummary } from "../lib/csv-ingest-metrics";
+import {
+  getCsvIngestMetricsSummary,
+  getCsvJobThroughputHistory,
+} from "../lib/csv-ingest-metrics";
 
 const router: IRouter = Router();
 
@@ -231,6 +234,34 @@ router.get(
       recentLimit,
     });
     res.json(summary);
+  },
+);
+
+/**
+ * CSV ingest throughput history (#157) — hourly p50/p95 latency +
+ * rows/sec rollups over a rolling N-hour window. Powers the inline
+ * sparkline on the System page's "CSV ingest throughput" card so an
+ * operator can see e.g. a slow database evening at a glance instead
+ * of scraping logs.
+ *
+ * Reads `ingest_csv` job rows directly so the chart's data source
+ * matches the existing aggregate p50/p95 numbers it sits next to;
+ * see `getCsvJobThroughputHistory` for the bucketing rationale.
+ *
+ * Cross-tenant by design (operators look at global throughput drift,
+ * not single-tenant numbers), so this sits behind the same
+ * platform-admin guard as the other system endpoints above.
+ */
+router.get(
+  "/system/csv-throughput",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const windowHoursRaw = Number(req.query["windowHours"] ?? 24);
+    const windowHours = Number.isFinite(windowHoursRaw)
+      ? Math.max(1, Math.min(7 * 24, Math.floor(windowHoursRaw)))
+      : 24;
+    const history = await getCsvJobThroughputHistory({ windowHours });
+    res.json(history);
   },
 );
 

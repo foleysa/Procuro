@@ -17,11 +17,14 @@ import {
   useRunSystemFunnelSnapshotCleanup,
   useGetSystemCsvIngestMetrics,
   getGetSystemCsvIngestMetricsQueryKey,
+  useGetSystemCsvThroughputHistory,
+  getGetSystemCsvThroughputHistoryQueryKey,
   ListJobsStatus,
   type Job,
   type JobKindSetting,
   type ListJobsParams,
   type CsvIngestEntityTrend,
+  type CsvJobThroughputBucket,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -556,6 +559,31 @@ export default function System() {
         }),
     },
   });
+
+  // CSV ingest throughput history (#157). Hourly p50/p95 latency +
+  // rows/sec rollups across the last 24h, aggregated server-side from
+  // the same `ingest_csv` job rows the aggregate percentiles below
+  // are computed from. Powers the inline sparkline next to the
+  // existing percentile numbers so an operator can spot a slow
+  // database evening at a glance.
+  const csvThroughputHistoryParams = useMemo(
+    () => ({ windowHours: 24 }),
+    [],
+  );
+  const csvThroughputHistoryQuery = useGetSystemCsvThroughputHistory(
+    csvThroughputHistoryParams,
+    {
+      query: {
+        queryKey: getGetSystemCsvThroughputHistoryQueryKey(
+          csvThroughputHistoryParams,
+        ),
+        // 60s refresh keeps the chart in step with the auto-refreshing
+        // jobs table above (which polls every 3s while jobs are
+        // pending/running) without hammering the DB on a quiet system.
+        refetchInterval: 60_000,
+      },
+    },
+  );
 
   // CSV throughput trends (#73 / #74). Computed client-side from the
   // last `ingest_csv` jobs already in the table so we do not need a
@@ -1158,6 +1186,17 @@ export default function System() {
                 </div>
               </div>
             )}
+            <CsvThroughputLatencyChart
+              buckets={csvThroughputHistoryQuery.data?.buckets ?? null}
+              windowHours={
+                csvThroughputHistoryQuery.data?.windowHours ?? 24
+              }
+              totalSampleCount={
+                csvThroughputHistoryQuery.data?.totalSampleCount ?? 0
+              }
+              isLoading={csvThroughputHistoryQuery.isLoading}
+              isError={csvThroughputHistoryQuery.isError}
+            />
           </CardContent>
         </Card>
       </div>
@@ -1764,6 +1803,177 @@ function CsvIngestSparkline({ trend }: { trend: CsvIngestEntityTrend }) {
       </span>
     </div>
   );
+}
+
+/**
+ * 24h p50/p95 latency chart for the System page's CSV ingest
+ * throughput card (#157). Hand-rolled inline SVG (no charting dep)
+ * to match the existing System page aesthetic — see
+ * `CsvIngestSparkline` for the same approach on the per-entity
+ * trends panel.
+ *
+ * Two stacked polylines: muted-foreground for p50, primary for p95.
+ * Empty hours from the server render as zero, so the line drops to
+ * baseline rather than skipping points; this keeps the X axis stable
+ * across refreshes regardless of how busy the system is. We size the
+ * chart in a fixed viewBox and let CSS scale it to the card width
+ * via `width="100%"` so it reflows on narrow screens.
+ *
+ * The Y-axis label only carries the maximum p95 value (rounded). The
+ * surrounding card already shows the aggregate p50/p95 numbers
+ * verbatim, so the chart's job is purely to visualise drift over
+ * time, not to repeat exact percentile readings.
+ */
+function CsvThroughputLatencyChart(props: {
+  buckets: CsvJobThroughputBucket[] | null;
+  windowHours: number;
+  totalSampleCount: number;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  const { buckets, windowHours, totalSampleCount, isLoading, isError } =
+    props;
+
+  if (isLoading) {
+    return (
+      <div
+        className="mt-4 flex items-center gap-2 text-xs text-muted-foreground"
+        data-testid="text-csv-throughput-chart-loading"
+      >
+        <Loader2 className="w-3 h-3 animate-spin" /> Loading throughput
+        history…
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div
+        className="mt-4 text-xs text-red-600"
+        data-testid="text-csv-throughput-chart-error"
+      >
+        Could not load throughput history. You may not have Platform Admin
+        access.
+      </div>
+    );
+  }
+
+  if (!buckets || buckets.length === 0) {
+    return null;
+  }
+
+  const width = 480;
+  const height = 80;
+  const padX = 4;
+  const padY = 6;
+  const denom = Math.max(1, buckets.length - 1);
+
+  // Scale both series to the same Y axis so p50 and p95 are visually
+  // comparable. Floor the max at 1 so an all-zero window still draws
+  // a flat baseline rather than dividing by zero.
+  const maxLatency = Math.max(
+    1,
+    ...buckets.map((b) => Math.max(b.p50LatencyMs, b.p95LatencyMs)),
+  );
+
+  const project = (values: number[]) =>
+    values
+      .map((v, i) => {
+        const x = padX + (i / denom) * (width - padX * 2);
+        const y =
+          height - padY - (v / maxLatency) * (height - padY * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+
+  const p50Points = project(buckets.map((b) => b.p50LatencyMs));
+  const p95Points = project(buckets.map((b) => b.p95LatencyMs));
+
+  const firstHour = buckets[0]?.hour;
+  const lastHour = buckets[buckets.length - 1]?.hour;
+  const allEmpty = totalSampleCount === 0;
+
+  return (
+    <div
+      className="mt-6 space-y-2"
+      data-testid="chart-csv-throughput-latency"
+    >
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div>
+          Latency over last {windowHours}h
+          <span className="ml-2 inline-flex items-center gap-3">
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-3 h-0.5 bg-muted-foreground/70" />
+              p50
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-3 h-0.5 bg-primary" />
+              p95
+            </span>
+          </span>
+        </div>
+        <span
+          className="tabular-nums"
+          data-testid="text-csv-throughput-chart-samples"
+        >
+          {totalSampleCount} sample{totalSampleCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      {allEmpty ? (
+        <div
+          className="text-xs text-muted-foreground rounded-md border border-dashed py-6 text-center"
+          data-testid="text-csv-throughput-chart-empty"
+        >
+          No completed CSV ingest jobs in the last {windowHours}h.
+        </div>
+      ) : (
+        <div className="rounded-md border bg-muted/20 p-2">
+          <svg
+            viewBox={`0 0 ${width} ${height}`}
+            preserveAspectRatio="none"
+            width="100%"
+            height={height}
+            role="img"
+            aria-label={`CSV ingest p50 and p95 latency over the last ${windowHours} hours`}
+          >
+            <polyline
+              data-testid="polyline-csv-throughput-p50"
+              fill="none"
+              stroke="hsl(var(--muted-foreground))"
+              strokeOpacity={0.7}
+              strokeWidth={1.5}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              points={p50Points}
+            />
+            <polyline
+              data-testid="polyline-csv-throughput-p95"
+              fill="none"
+              stroke="hsl(var(--primary))"
+              strokeWidth={1.75}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              points={p95Points}
+            />
+          </svg>
+          <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground tabular-nums">
+            <span>{formatHourLabel(firstHour)}</span>
+            <span>peak p95 {Math.round(maxLatency).toLocaleString()}ms</span>
+            <span>{formatHourLabel(lastHour)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatHourLabel(iso: string | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
 }
 
 /** Compact human-friendly duration for the recent-uploads table. */

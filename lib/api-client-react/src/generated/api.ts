@@ -104,6 +104,7 @@ import type {
   GetServicesSpendParams,
   GetSpendOverviewParams,
   GetSystemCsvIngestMetricsParams,
+  GetSystemCsvThroughputHistoryParams,
   HealthStatus,
   IngestCsvBatchParams,
   IngestCsvStreamBodyOne,
@@ -190,6 +191,7 @@ import type {
   SystemCleanupRunAccepted,
   SystemCleanupStatus,
   SystemCsvIngestMetrics,
+  SystemCsvThroughputHistory,
   SystemFunnelSnapshotCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
@@ -8809,6 +8811,114 @@ export function useGetSystemCsvIngestMetrics<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetSystemCsvIngestMetricsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns hourly throughput rollups (p50/p95 latency and rows/sec) for succeeded `ingest_csv` jobs over a rolling N-hour window. Powers the inline sparkline on the System page's CSV ingest throughput card so an operator can spot regressions (e.g. a slow database evening) without scraping logs. Empty hours render as zero-sample buckets so the chart keeps a stable X axis. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Hourly p50/p95 latency + rows/sec for `ingest_csv` jobs
+ */
+export const getGetSystemCsvThroughputHistoryUrl = (
+  params?: GetSystemCsvThroughputHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/system/csv-throughput?${stringifiedParams}`
+    : `/api/system/csv-throughput`;
+};
+
+export const getSystemCsvThroughputHistory = async (
+  params?: GetSystemCsvThroughputHistoryParams,
+  options?: RequestInit,
+): Promise<SystemCsvThroughputHistory> => {
+  return customFetch<SystemCsvThroughputHistory>(
+    getGetSystemCsvThroughputHistoryUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSystemCsvThroughputHistoryQueryKey = (
+  params?: GetSystemCsvThroughputHistoryParams,
+) => {
+  return [`/api/system/csv-throughput`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSystemCsvThroughputHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSystemCsvThroughputHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemCsvThroughputHistoryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>
+  > = ({ signal }) =>
+    getSystemCsvThroughputHistory(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemCsvThroughputHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>
+>;
+export type GetSystemCsvThroughputHistoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Hourly p50/p95 latency + rows/sec for `ingest_csv` jobs
+ */
+
+export function useGetSystemCsvThroughputHistory<
+  TData = Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSystemCsvThroughputHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSystemCsvThroughputHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSystemCsvThroughputHistoryQueryOptions(
     params,
     options,
   );

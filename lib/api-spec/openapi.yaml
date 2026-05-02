@@ -3115,6 +3115,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCsvIngestMetrics'
+  /system/csv-throughput:
+    get:
+      operationId: getSystemCsvThroughputHistory
+      tags:
+      - system
+      summary: Hourly p50/p95 latency + rows/sec for `ingest_csv` jobs
+      description: 'Returns hourly throughput rollups (p50/p95 latency and
+        rows/sec) for succeeded `ingest_csv` jobs over a rolling
+        N-hour window. Powers the inline sparkline on the System
+        page''s CSV ingest throughput card so an operator can spot
+        regressions (e.g. a slow database evening) without scraping
+        logs. Empty hours render as zero-sample buckets so the chart
+        keeps a stable X axis. Cross-tenant endpoint — gated by the
+        platform-admin token.
+
+        '
+      parameters:
+      - in: query
+        name: windowHours
+        required: false
+        description: Trailing window in hours (1-168). Defaults to 24.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 168
+          default: 24
+      responses:
+        '200':
+          description: Hourly CSV ingest throughput history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCsvThroughputHistory'
   /defense-packs:
     get:
       operationId: listDefensePacks
@@ -8682,6 +8715,67 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CsvIngestEntityDay'
+    CsvJobThroughputBucket:
+      type: object
+      description: 'Hour-aligned rollup of `ingest_csv` job samples. Empty hours
+        render as zero-sample buckets so the chart keeps a stable X
+        axis.
+
+        '
+      required:
+      - hour
+      - sampleCount
+      - totalRows
+      - p50LatencyMs
+      - p95LatencyMs
+      - p50RowsPerSecond
+      - p95RowsPerSecond
+      properties:
+        hour:
+          type: string
+          format: date-time
+          description: ISO timestamp for the start of the UTC hour the bucket covers.
+        sampleCount:
+          type: integer
+          description: Number of succeeded `ingest_csv` jobs that fell in the bucket.
+        totalRows:
+          type: integer
+          description: Total rows processed across the bucket.
+        p50LatencyMs:
+          type: integer
+          description: Median per-job latency in milliseconds (0 when no samples).
+        p95LatencyMs:
+          type: integer
+          description: 95th-percentile per-job latency in milliseconds (0 when no
+            samples).
+        p50RowsPerSecond:
+          type: integer
+          description: Median rows/sec across the bucket's jobs (0 when no samples).
+        p95RowsPerSecond:
+          type: integer
+          description: 95th-percentile rows/sec across the bucket's jobs (0 when
+            no samples).
+    SystemCsvThroughputHistory:
+      type: object
+      required:
+      - windowHours
+      - buckets
+      - totalSampleCount
+      properties:
+        windowHours:
+          type: integer
+          description: Trailing window size, in hours, that `buckets` spans.
+        buckets:
+          type: array
+          description: 'Hourly buckets, oldest → newest. Always `windowHours` long
+            so empty hours still render as zero on the chart.
+
+            '
+          items:
+            $ref: '#/components/schemas/CsvJobThroughputBucket'
+        totalSampleCount:
+          type: integer
+          description: Sum of `sampleCount` across all buckets in the window.
     SyncResultResponse:
       type: object
       required:

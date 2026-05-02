@@ -2549,6 +2549,37 @@ export interface SystemCsvIngestMetrics {
   entities: CsvIngestEntityTrend[];
 }
 
+/**
+ * Hour-aligned rollup of `ingest_csv` job samples. Empty hours render as zero-sample buckets so the chart keeps a stable X axis.
+
+ */
+export interface CsvJobThroughputBucket {
+  /** ISO timestamp for the start of the UTC hour the bucket covers. */
+  hour: string;
+  /** Number of succeeded `ingest_csv` jobs that fell in the bucket. */
+  sampleCount: number;
+  /** Total rows processed across the bucket. */
+  totalRows: number;
+  /** Median per-job latency in milliseconds (0 when no samples). */
+  p50LatencyMs: number;
+  /** 95th-percentile per-job latency in milliseconds (0 when no samples). */
+  p95LatencyMs: number;
+  /** Median rows/sec across the bucket's jobs (0 when no samples). */
+  p50RowsPerSecond: number;
+  /** 95th-percentile rows/sec across the bucket's jobs (0 when no samples). */
+  p95RowsPerSecond: number;
+}
+
+export interface SystemCsvThroughputHistory {
+  /** Trailing window size, in hours, that `buckets` spans. */
+  windowHours: number;
+  /** Hourly buckets, oldest → newest. Always `windowHours` long so empty hours still render as zero on the chart.
+   */
+  buckets: CsvJobThroughputBucket[];
+  /** Sum of `sampleCount` across all buckets in the window. */
+  totalSampleCount: number;
+}
+
 export interface SyncResultResponse {
   recordsProcessed: number;
   recordsCreated: number;
@@ -5318,6 +5349,15 @@ export type GetSystemCsvIngestMetricsParams = {
    * @maximum 200
    */
   recentLimit?: number;
+};
+
+export type GetSystemCsvThroughputHistoryParams = {
+  /**
+   * Trailing window in hours (1-168). Defaults to 24.
+   * @minimum 1
+   * @maximum 168
+   */
+  windowHours?: number;
 };
 
 export type ListDefensePacksParams = {
