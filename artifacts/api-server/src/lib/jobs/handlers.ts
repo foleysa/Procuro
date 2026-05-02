@@ -76,7 +76,7 @@ import { isStructuralIngestError } from "../structural-ingest-error";
  * - `22008` datetime_field_overflow / `22007` invalid_datetime_format:
  *   a date/timestamp couldn't be parsed.
  */
-const PERMANENT_PG_SQLSTATES = new Set([
+export const PERMANENT_PG_SQLSTATES = new Set([
   "23502",
   "22P02",
   "22001",
@@ -84,7 +84,7 @@ const PERMANENT_PG_SQLSTATES = new Set([
   "22008",
 ]);
 
-function isPermanentStructuralError(err: unknown): boolean {
+export function isPermanentStructuralError(err: unknown): boolean {
   if (err instanceof UnrecoverableJobError) return true;
   // `StructuralIngestError` and any other error tagged with the
   // `unrecoverable: true` brand are treated identically — both mean
@@ -104,7 +104,7 @@ function isPermanentStructuralError(err: unknown): boolean {
  * original message). Otherwise re-throw as-is so the worker can apply
  * its normal transient-retry policy.
  */
-function wrapStructuralError(err: unknown): never {
+export function wrapStructuralError(err: unknown): never {
   if (err instanceof UnrecoverableJobError) throw err;
   if (isPermanentStructuralError(err)) {
     const message = err instanceof Error ? err.message : String(err);
