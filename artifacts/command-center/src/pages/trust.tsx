@@ -21,11 +21,20 @@
  *  - Disclosure-tier explainer (T1–T4 with sample InsightCitations)
  */
 
+import { useState } from "react";
 import {
   useGetTrustSummary,
+  getGetTrustSummaryPdfUrl,
+  getTrustSummaryPdf,
   type TrustSummary,
 } from "@workspace/api-client-react";
-import { Shield, Loader2, Printer, RefreshCcw } from "lucide-react";
+import {
+  Shield,
+  Loader2,
+  Printer,
+  Download,
+  RefreshCcw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/format";
 import { usePolicy } from "@/lib/use-policy";
@@ -47,6 +56,27 @@ export default function TrustPage() {
     useGetTrustSummary();
   const policy = usePolicy();
   const isPrint = isPrintMode();
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    if (!data || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const blob = await getTrustSummaryPdf();
+      const datePart = data.generatedAt.slice(0, 10);
+      const slug = sanitizeSlug(data.tenant.orgId);
+      const filename = `procuro-trust-${slug}-${datePart}.pdf`;
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      // Surface to the user but don't crash the page.
+      console.error("Failed to download Trust Center PDF", err);
+      // Last-resort fallback: open the URL directly so the browser
+      // can stream the response itself.
+      window.open(getGetTrustSummaryPdfUrl(), "_blank", "noopener,noreferrer");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -78,6 +108,8 @@ export default function TrustPage() {
         onRefresh={() => void refetch()}
         isFetching={isFetching}
         isPrint={isPrint}
+        onDownloadPdf={() => void handleDownloadPdf()}
+        isDownloading={isDownloading}
       />
 
       <TenantSection summary={data} />
@@ -100,16 +132,46 @@ function isPrintMode(): boolean {
   return sp.get("print") === "1";
 }
 
+/**
+ * Mirrors the server-side filename sanitizer in `routes/trust.ts` so
+ * the downloaded file always lands with a safe, predictable name even
+ * when the org ID contains characters the OS would refuse.
+ */
+function sanitizeSlug(input: string): string {
+  const cleaned = input
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "tenant";
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Defer revocation so Safari has a chance to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function Header({
   summary,
   onRefresh,
   isFetching,
   isPrint,
+  onDownloadPdf,
+  isDownloading,
 }: {
   summary: TrustSummary;
   onRefresh: () => void;
   isFetching: boolean;
   isPrint: boolean;
+  onDownloadPdf: () => void;
+  isDownloading: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -152,6 +214,20 @@ function Header({
             data-testid="button-print-trust"
           >
             <Printer className="w-4 h-4 mr-2" /> Printable view
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={onDownloadPdf}
+            disabled={isDownloading}
+            data-testid="button-download-trust-pdf"
+          >
+            {isDownloading ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4 mr-2" />
+            )}
+            {isDownloading ? "Generating…" : "Download PDF"}
           </Button>
         </div>
       )}

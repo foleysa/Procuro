@@ -791,6 +791,89 @@ export function useGetTrustPublicSummary<
 }
 
 /**
+ * Server-side PDF render of the live Trust Center summary so a
+procurement reviewer can attach a properly-paginated artifact to
+a sourcing ticket without round-tripping through the browser's
+"Print to PDF" dialog. Built from the same payload the JSON
+endpoint returns, so the two surfaces can never disagree. Each
+page footer carries the snapshot timestamp and a page counter.
+Filename pattern: `procuro-trust-{org-slug}-{yyyy-mm-dd}.pdf`.
+
+ * @summary Download the Trust Center as a paginated PDF
+ */
+export const getGetTrustSummaryPdfUrl = () => {
+  return `/api/trust/summary.pdf`;
+};
+
+export const getTrustSummaryPdf = async (
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getGetTrustSummaryPdfUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTrustSummaryPdfQueryKey = () => {
+  return [`/api/trust/summary.pdf`] as const;
+};
+
+export const getGetTrustSummaryPdfQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTrustSummaryPdf>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummaryPdf>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTrustSummaryPdfQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getTrustSummaryPdf>>
+  > = ({ signal }) => getTrustSummaryPdf({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummaryPdf>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTrustSummaryPdfQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTrustSummaryPdf>>
+>;
+export type GetTrustSummaryPdfQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Download the Trust Center as a paginated PDF
+ */
+
+export function useGetTrustSummaryPdf<
+  TData = Awaited<ReturnType<typeof getTrustSummaryPdf>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustSummaryPdf>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTrustSummaryPdfQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * Trailing-12-month spend rollup. Optional `segment` query narrows every aggregation in the response (byClass, byCategory, bySupplier, byBusinessUnit, concentration, …) to either the `goods` or `services` slice — defined identically to the `services` band on `/spend/by-band` so the two cards always reconcile. The `goodsVsServices` block is always returned at the org-wide totals so the segmented control can render its share pills regardless of the active segment.
  * @summary Spend overview (last 12 months)
  */

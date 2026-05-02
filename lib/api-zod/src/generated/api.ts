@@ -556,6 +556,26 @@ export const GetTrustPublicSummaryResponse = zod.object({
 });
 
 /**
+ * Server-side PDF render of the live Trust Center summary so a
+procurement reviewer can attach a properly-paginated artifact to
+a sourcing ticket without round-tripping through the browser's
+"Print to PDF" dialog. Built from the same payload the JSON
+endpoint returns, so the two surfaces can never disagree. Each
+page footer carries the snapshot timestamp and a page counter.
+Filename pattern: `procuro-trust-{org-slug}-{yyyy-mm-dd}.pdf`.
+
+ * @summary Download the Trust Center as a paginated PDF
+ */
+export const GetTrustSummaryPdfHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
  * Trailing-12-month spend rollup. Optional `segment` query narrows every aggregation in the response (byClass, byCategory, bySupplier, byBusinessUnit, concentration, …) to either the `goods` or `services` slice — defined identically to the `services` band on `/spend/by-band` so the two cards always reconcile. The `goodsVsServices` block is always returned at the org-wide totals so the segmented control can render its share pills regardless of the active segment.
  * @summary Spend overview (last 12 months)
  */

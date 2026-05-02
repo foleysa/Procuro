@@ -244,6 +244,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrustSummary'
+  /trust/summary.pdf:
+    get:
+      operationId: getTrustSummaryPdf
+      tags:
+      - trust
+      summary: Download the Trust Center as a paginated PDF
+      description: 'Server-side PDF render of the live Trust Center summary so a
+
+        procurement reviewer can attach a properly-paginated artifact to
+
+        a sourcing ticket without round-tripping through the browser''s
+
+        "Print to PDF" dialog. Built from the same payload the JSON
+
+        endpoint returns, so the two surfaces can never disagree. Each
+
+        page footer carries the snapshot timestamp and a page counter.
+
+        Filename pattern: `procuro-trust-{org-slug}-{yyyy-mm-dd}.pdf`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
   /spend/overview:
     get:
       operationId: getSpendOverview
