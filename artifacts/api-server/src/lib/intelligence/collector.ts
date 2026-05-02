@@ -168,23 +168,39 @@ export interface IntelligenceCollector<
    * Collectors should thread it through every outbound `fetch()` so an
    * operator-initiated cancel can interrupt an in-flight HTTP request
    * without waiting for it to time out naturally.
+   *
+   * `mode` lets the runtime distinguish a normal recurring poll
+   * (`"latest"`, the default — emit only the most recent observation
+   * per logical series) from a one-off historical backfill
+   * (`"backfill"` — emit a wider window so trend-chart UIs have history
+   * to plot). Collectors that don't differentiate may ignore the flag;
+   * the runtime's natural-key dedupe makes both modes safe to re-run.
    */
   collect(args: {
     since: Date | null;
     signal?: AbortSignal;
+    mode?: CollectorRunMode;
   }): Promise<MarketSignalDraft[]>;
 
   /**
    * Optional: run a collection pass and surface the upstream payload
    * bytes alongside the parsed drafts so the runtime can land them in
    * GCS for replay. When implemented, the runtime prefers this method
-   * over `collect()`. Same `signal` semantics as `collect()`.
+   * over `collect()`. Same `signal` and `mode` semantics as `collect()`.
    */
   collectWithRaw?(args: {
     since: Date | null;
     signal?: AbortSignal;
+    mode?: CollectorRunMode;
   }): Promise<CollectWithRawResult>;
 }
+
+/**
+ * "latest" = the regular recurring collection — emit only the newest
+ * observation per logical series. "backfill" = one-off historical
+ * replay — emit a wider window so trend-chart UIs have history to plot.
+ */
+export type CollectorRunMode = "latest" | "backfill";
 
 /**
  * Lift the contract metadata off a collector. Callers (the disclosure

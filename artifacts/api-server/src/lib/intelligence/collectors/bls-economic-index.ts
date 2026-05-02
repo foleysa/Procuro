@@ -18,6 +18,7 @@ import {
   defaultStableSignalKey,
 } from "../contractHelpers";
 import type {
+  CollectorRunMode,
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
@@ -35,6 +36,31 @@ const SERIES_PAGE_BASE = "https://data.bls.gov/timeseries/";
  */
 export const BLS_API_SERIES_PER_REQUEST_AUTHENTICATED = 50;
 export const BLS_API_SERIES_PER_REQUEST_UNAUTHENTICATED = 25;
+
+/**
+ * Per-mode lookback windows (calendar years) requested from the BLS
+ * Public Data API.
+ *
+ * - `latest` (default for the daily cron): a 1-year window is enough to
+ *   capture the most recent observation for both monthly PPI/CPI and
+ *   quarterly ECI series, which can lag the publication date by a few
+ *   months. The collector then trims to *one* observation per series so
+ *   recurring runs don't re-write the entire window every day.
+ * - `backfill` (one-off, manual): a 3-year window so the trend-chart UI
+ *   has up to ~36 monthly observations of PPI/CPI history and up to
+ *   ~12 quarterly observations of ECI history per series — the range
+ *   the dashboards need to plot a meaningful trend rather than a single
+ *   point. The 3-year value is intentionally an upper bound; the per-
+ *   periodicity caps below trim each series to the requested range
+ *   regardless of how many extra observations BLS includes for partial
+ *   calendar years at the window edges.
+ */
+export const BLS_LATEST_LOOKBACK_YEARS = 1;
+export const BLS_BACKFILL_LOOKBACK_YEARS = 3;
+/** Backfill cap: ~36 months of monthly PPI/CPI observations per series. */
+export const BLS_BACKFILL_MAX_MONTHLY_OBS = 36;
+/** Backfill cap: ~12 quarters of quarterly ECI observations per series. */
+export const BLS_BACKFILL_MAX_QUARTERLY_OBS = 12;
 
 export interface BlsSeriesRef {
   seriesId: string;
@@ -659,7 +685,8 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
     return defaultStableSignalKey(BLS_ECONOMIC_INDEX_COLLECTOR_ID, draft);
   },
 
-  async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
+  async collect({ since: _since, signal, mode }): Promise<MarketSignalDraft[]> {
+    const effectiveMode: CollectorRunMode = mode ?? "latest";
     const apiKey = process.env["BLS_API_KEY"];
     if (!apiKey) {
       await recordWarning(
@@ -671,9 +698,16 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
 
     const now = new Date();
     const endYear = now.getUTCFullYear();
-    // 2 calendar years of history is enough to find the latest observation
-    // for both monthly PPI and quarterly ECI releases (which can lag by months).
-    const startYear = endYear - 2;
+    // Latest mode: 1-year window is enough to capture the most recent
+    // observation for monthly PPI/CPI and quarterly ECI series even when
+    // BLS releases lag by a few months. Backfill mode: 3-year window so
+    // the trend-chart UI has 24-36 monthly / 8-12 quarterly observations
+    // of history per series, trimmed to the per-periodicity caps below.
+    const lookbackYears =
+      effectiveMode === "backfill"
+        ? BLS_BACKFILL_LOOKBACK_YEARS
+        : BLS_LATEST_LOOKBACK_YEARS;
+    const startYear = endYear - lookbackYears;
 
     // De-duplicate seriesIds before request building. The registry can
     // legitimately contain multiple entries that share an upstream
@@ -735,6 +769,7 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
 
     return buildBlsDraftsFromResponse(stitched, BLS_SERIES, {
       tier,
+      observationCapForRef: (ref) => observationCapForMode(effectiveMode, ref),
       onMissing: async (seriesId, reason) => {
         await recordWarning(this.id, reason, { seriesId });
       },
@@ -743,11 +778,44 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
 };
 
 /**
- * Fan a BLS API response out into one MarketSignalDraft per (series ×
- * observation) in the curated `series` registry. Emitting the full window
- * (rather than just the latest observation) is what gives the
- * trend-chart UI history to plot — re-runs are safe because the runtime
- * dedupe collides on `(collectorId, signalType, scope_*, observedAt)`.
+ * Per-(mode × series) observation cap.
+ *
+ * - `latest` mode collapses every series down to its single most recent
+ *   observation, so the daily cron stops re-writing months of identical
+ *   history on every poll.
+ * - `backfill` mode trims monthly series to the last
+ *   `BLS_BACKFILL_MAX_MONTHLY_OBS` observations and quarterly series to
+ *   the last `BLS_BACKFILL_MAX_QUARTERLY_OBS` observations. The 3-year
+ *   API window may include extra observations at the tails (partial
+ *   calendar years) — the caps keep the per-series row counts inside
+ *   the range the trend-chart UI documents.
+ */
+export function observationCapForMode(
+  mode: CollectorRunMode,
+  ref: BlsSeriesRef,
+): number {
+  if (mode === "latest") return 1;
+  return ref.periodicity === "monthly"
+    ? BLS_BACKFILL_MAX_MONTHLY_OBS
+    : BLS_BACKFILL_MAX_QUARTERLY_OBS;
+}
+
+/**
+ * Fan a BLS API response out into MarketSignalDrafts per series in the
+ * curated `series` registry.
+ *
+ * `observationCapForRef` controls how many observations per series the
+ * fan-out emits. The BLS API returns each series' `data` newest-first,
+ * so the cap takes the most recent N observations:
+ *   - omit (or return undefined) → emit every parseable observation
+ *     (preserves the legacy "full window" behaviour the guardrail test
+ *     relies on)
+ *   - return 1 → latest-only emission (the daily cron's default)
+ *   - return >1 → backfill emission, trimmed per-periodicity by the
+ *     caller (see `observationCapForMode`)
+ *
+ * Re-runs are safe regardless of the cap because the runtime dedupe
+ * collides on `(collectorId, signalType, scope_*, observedAt)`.
  *
  * `onMissing` lets the caller record an audit warning per series that the
  * upstream payload didn't include — used by the live collector to flag
@@ -759,6 +827,7 @@ export async function buildBlsDraftsFromResponse(
   series: readonly BlsSeriesRef[],
   opts: {
     tier: "authenticated" | "unauthenticated";
+    observationCapForRef?: (ref: BlsSeriesRef) => number | undefined;
     onMissing?: (seriesId: string, reason: string) => Promise<void> | void;
   },
 ): Promise<MarketSignalDraft[]> {
@@ -779,12 +848,18 @@ export async function buildBlsDraftsFromResponse(
       }
       continue;
     }
+    const cap = opts.observationCapForRef
+      ? opts.observationCapForRef(ref)
+      : undefined;
     let parsedAny = false;
+    let emittedForRef = 0;
     for (const obs of result.data) {
+      if (cap !== undefined && emittedForRef >= cap) break;
       const draft = buildBlsDraftForObservation(ref, obs, { tier: opts.tier });
       if (draft) {
         drafts.push(draft);
         parsedAny = true;
+        emittedForRef += 1;
       }
     }
     if (!parsedAny && opts.onMissing) {

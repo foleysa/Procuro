@@ -21,6 +21,7 @@ import { CANCELLED_ERROR_MESSAGE, UnrecoverableJobError } from "../jobs/queue";
 import { fanOutCollectorAlerts } from "../alerts/collector-fanout";
 import {
   collectorContract,
+  type CollectorRunMode,
   type IntelligenceCollector,
   type MarketSignalDraft,
   type RawPayload,
@@ -253,6 +254,14 @@ export async function runCollector(
      * that an extra check there would just add noise.
      */
     isCancelled?: () => Promise<boolean>;
+    /**
+     * Forwarded to `collector.collect()`. Defaults to `"latest"` (the
+     * normal recurring poll); pass `"backfill"` to ask collectors that
+     * support history replay (e.g. BLS PPI/CPI/ECI) to emit a wider
+     * observation window in this single run. The natural-key dedupe
+     * keeps re-runs of either mode safe.
+     */
+    mode?: CollectorRunMode;
   } = {},
 ): Promise<{ signalsCollected: number; durationMs: number; skipped?: string }> {
   const start = Date.now();
@@ -364,6 +373,7 @@ export async function runCollector(
       const r = await collector.collectWithRaw({
         since: null,
         signal: abortController.signal,
+        mode: opts.mode ?? "latest",
       });
       drafts = r.drafts;
       rawPayloads = r.rawPayloads;
@@ -371,6 +381,7 @@ export async function runCollector(
       drafts = await collector.collect({
         since: null,
         signal: abortController.signal,
+        mode: opts.mode ?? "latest",
       });
       // Synthesize a JSON snapshot of the parsed drafts so every run —
       // not just the ones whose collector implements collectWithRaw —

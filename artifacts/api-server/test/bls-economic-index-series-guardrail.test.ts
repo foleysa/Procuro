@@ -6,11 +6,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  BLS_BACKFILL_MAX_MONTHLY_OBS,
+  BLS_BACKFILL_MAX_QUARTERLY_OBS,
   BLS_ECONOMIC_INDEX_COLLECTOR_ID,
   BLS_SERIES,
   blsScopeSku,
   buildBlsDraftForObservation,
   buildBlsDraftsFromResponse,
+  observationCapForMode,
   type BlsObservation,
   type BlsResponse,
   type BlsSeriesRef,
@@ -367,6 +370,75 @@ describe("buildBlsDraftsFromResponse fan-out", () => {
       (r) => !dropped.includes(r.seriesId),
     );
     assert.equal(drafts.length, survivingRefs.length * 2);
+  });
+
+  it("respects observationCapForRef = 1 (latest mode) per series", async () => {
+    // Latest mode collapses every series down to a single observation
+    // so the daily cron stops re-writing months of identical history on
+    // every poll. The fan-out must take the *first* (newest) observation
+    // BLS returned for each series — synthetic fixture lists Feb before
+    // Jan and Q01 before Q04 to mirror the API's newest-first ordering.
+    const drafts = await buildBlsDraftsFromResponse(
+      buildResponse(),
+      BLS_SERIES,
+      {
+        tier: "unauthenticated",
+        observationCapForRef: () => 1,
+      },
+    );
+    assert.equal(
+      drafts.length,
+      BLS_SERIES.length,
+      "latest mode must emit exactly one draft per registry entry",
+    );
+    for (const draft of drafts) {
+      const md = draft.metadata as Record<string, unknown>;
+      const period = String(md["period"] ?? "");
+      assert.ok(
+        period === "M02" || period === "Q01",
+        `latest-mode draft must keep the newest observation; got period=${period}`,
+      );
+    }
+  });
+
+  it("respects per-periodicity backfill caps via observationCapForRef", async () => {
+    // Backfill mode should let every observation BLS returned through,
+    // capped per series by periodicity. The synthetic fixture only
+    // provides 2 observations per series (well below the production
+    // 36-month / 12-quarter caps), so the cap function must NOT trim
+    // them — the assertion is that cap > 2 still emits all 2.
+    const drafts = await buildBlsDraftsFromResponse(
+      buildResponse(),
+      BLS_SERIES,
+      {
+        tier: "unauthenticated",
+        observationCapForRef: (ref) => observationCapForMode("backfill", ref),
+      },
+    );
+    assert.equal(
+      drafts.length,
+      BLS_SERIES.length * 2,
+      "backfill caps (36 monthly / 12 quarterly) must not trim a 2-obs fixture",
+    );
+  });
+
+  it("observationCapForMode pins the documented per-periodicity caps", () => {
+    // Pin the actual cap values so a regression in either constant is
+    // caught here, not in production after the trend chart over- or
+    // under-fills.
+    const monthly = BLS_SERIES.find((s) => s.periodicity === "monthly");
+    const quarterly = BLS_SERIES.find((s) => s.periodicity === "quarterly");
+    assert.ok(monthly && quarterly, "fixture: registry must include both periodicities");
+    assert.equal(observationCapForMode("latest", monthly!), 1);
+    assert.equal(observationCapForMode("latest", quarterly!), 1);
+    assert.equal(
+      observationCapForMode("backfill", monthly!),
+      BLS_BACKFILL_MAX_MONTHLY_OBS,
+    );
+    assert.equal(
+      observationCapForMode("backfill", quarterly!),
+      BLS_BACKFILL_MAX_QUARTERLY_OBS,
+    );
   });
 
   it("routes scope codes onto the correct column", async () => {

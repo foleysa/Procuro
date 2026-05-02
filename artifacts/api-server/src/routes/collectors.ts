@@ -471,11 +471,38 @@ mountBackfillRoute(
   (req) => CompaniesHouseBackfillSchema.parse(req.body) ?? {},
 );
 
+/**
+ * Resolve the run-mode for `POST /collectors/:id/run` from its raw
+ * query string. Exported so the route's contract — only `?backfill=true`
+ * (case-sensitive, exactly the literal string) opts into backfill mode,
+ * everything else falls back to `"latest"` — can be pinned by a focused
+ * unit test without spinning up a full HTTP server.
+ *
+ * Express's `req.query` value is `string | string[] | ParsedQs | undefined`;
+ * accepting `unknown` keeps the helper test-friendly and avoids leaking
+ * Express's qs typing through to callers.
+ */
+export function resolveRunCollectorMode(
+  rawBackfill: unknown,
+): "latest" | "backfill" {
+  return String(rawBackfill ?? "") === "true" ? "backfill" : "latest";
+}
+
 router.post("/collectors/:id/run", requirePlatformAdmin, async (req, res) => {
   const id = String(req.params.id);
-  const result = await runCollector(id);
+  // `?backfill=true` flips the collector into history-replay mode for
+  // this single run. Collectors that support it (e.g. BLS PPI/CPI/ECI)
+  // emit a wider observation window so the trend-chart UI has history
+  // to plot; collectors that don't differentiate ignore the flag. The
+  // natural-key dedupe makes the wider write idempotent across re-runs.
+  const mode = resolveRunCollectorMode(req.query["backfill"]);
+  const result = await runCollector(
+    id,
+    mode === "backfill" ? { mode: "backfill" } : {},
+  );
   res.json({
     collectorId: id,
+    mode,
     signalsWritten: result.signalsCollected,
     durationMs: result.durationMs,
     skipped: result.skipped !== undefined,
