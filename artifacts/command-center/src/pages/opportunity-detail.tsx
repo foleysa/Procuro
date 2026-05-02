@@ -41,6 +41,8 @@ import {
   FileText,
   ArrowUpRight,
   ArrowDownRight,
+  BarChart3,
+  ExternalLink,
 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
@@ -159,6 +161,7 @@ export default function OpportunityDetail() {
 
       <CpiPushbackBlock opp={opp} policy={policy} />
       <FxExposureBlock opp={opp} policy={policy} />
+      <MarketSignalBlock opp={opp} policy={policy} />
 
       <Card>
         <CardHeader><CardTitle>Recommended action</CardTitle></CardHeader>
@@ -637,6 +640,147 @@ export function FxExposureBlock({
 
         {fxSources.length > 0 && (
           <InsightCitations sources={fxSources} policy={policy} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Shape of `inputs.marketSignal` persisted by the spot_vs_contract
+ * lever (`artifacts/api-server/src/lib/levers/tier2.ts`).
+ *
+ * The opportunity's `inputs` is typed as an opaque JSON map by the
+ * OpenAPI contract, so we narrow it here at the read boundary with a
+ * runtime type-guard. Gating on the input shape — not on `leverId` —
+ * keeps this block reusable for any future lever that cites a public
+ * market index in the same way.
+ */
+interface PersistedMarketSignal {
+  id?: string;
+  collectorId?: string;
+  scopeCategoryCode: string;
+  value: number;
+  unit?: string;
+  observedAt: string;
+  sourceUrl?: string;
+  fredSeries?: Array<{ seriesId: string; label: string }>;
+}
+
+function isPersistedMarketSignal(v: unknown): v is PersistedMarketSignal {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.scopeCategoryCode === "string" &&
+    typeof o.value === "number" &&
+    Number.isFinite(o.value) &&
+    typeof o.observedAt === "string"
+  );
+}
+
+export function MarketSignalBlock({
+  opp,
+  policy,
+}: {
+  opp: OpportunityDetail;
+  policy: TenantPolicy;
+}) {
+  const raw = opp.inputs?.marketSignal;
+  if (!isPersistedMarketSignal(raw)) return null;
+
+  // Safe parse for `observedAt` — the field is typed as a string by
+  // the lever, but `inputs` is opaque JSON in transit, so a future
+  // producer could emit something `new Date()` can't parse. Falling
+  // back to the raw string keeps the panel from throwing.
+  const observedDate = (() => {
+    const d = new Date(raw.observedAt);
+    return Number.isNaN(d.getTime())
+      ? raw.observedAt
+      : d.toISOString().slice(0, 10);
+  })();
+
+  const fredSeries = (raw.fredSeries ?? []).filter(
+    (f): f is { seriesId: string; label: string } =>
+      !!f && typeof f.seriesId === "string" && typeof f.label === "string",
+  );
+  const primary = fredSeries[0];
+  const headerLabel = primary
+    ? `${primary.label} (${primary.seriesId})`
+    : raw.scopeCategoryCode;
+
+  // Filter the opp.sources to citations whose collectorId matches the
+  // signal — the spot_vs_contract lever pushes exactly that source on,
+  // and showing only the matching one keeps the panel focused.
+  const signalSources = (opp.sources ?? []).filter(
+    (s) => !raw.collectorId || s.collectorId === raw.collectorId,
+  );
+
+  return (
+    <Card data-testid="card-market-signal">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-primary" />
+          Public PPI benchmark —{" "}
+          <span data-testid="text-market-signal-scope">
+            {raw.scopeCategoryCode}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <Kpi
+            label="Index value"
+            value={raw.value.toFixed(2)}
+          />
+          <Kpi
+            label="Observed"
+            value={observedDate}
+          />
+          <Kpi
+            label="Unit"
+            value={raw.unit || "—"}
+          />
+        </div>
+
+        <div>
+          <div className="text-xs uppercase text-muted-foreground tracking-wide mb-1">
+            Series
+          </div>
+          <div className="text-sm font-medium" data-testid="text-market-signal-series">
+            {headerLabel}
+          </div>
+          {fredSeries.length > 1 && (
+            <ul
+              className="mt-2 text-xs text-muted-foreground flex flex-wrap gap-2"
+              data-testid="list-market-signal-series"
+            >
+              {fredSeries.slice(1).map((f) => (
+                <li
+                  key={f.seriesId}
+                  className="inline-flex items-center gap-1 rounded border bg-muted/40 px-2 py-0.5 font-mono"
+                >
+                  {f.label} ({f.seriesId})
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {raw.sourceUrl && (
+          <a
+            href={raw.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+            data-testid="link-market-signal-source"
+          >
+            <ExternalLink className="w-4 h-4" />
+            View on FRED
+          </a>
+        )}
+
+        {signalSources.length > 0 && (
+          <InsightCitations sources={signalSources} policy={policy} />
         )}
       </CardContent>
     </Card>
