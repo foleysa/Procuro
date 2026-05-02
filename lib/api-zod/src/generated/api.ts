@@ -3806,7 +3806,7 @@ export const ListErpAdaptersHeader = zod.object({
 export const ListErpAdaptersResponse = zod.object({
   adapters: zod.array(
     zod.object({
-      key: zod.enum(["coupa"]),
+      key: zod.enum(["coupa", "netsuite", "ariba"]),
       label: zod.string(),
       description: zod.string(),
       postureClass: zod.string(),
@@ -3838,7 +3838,7 @@ export const ListErpConnectionsResponse = zod.object({
       id: zod.string(),
       orgId: zod.string(),
       label: zod.string(),
-      adapterKey: zod.enum(["coupa"]),
+      adapterKey: zod.enum(["coupa", "netsuite", "ariba"]),
       status: zod.enum(["active", "paused", "error"]),
       settings: zod.record(zod.string(), zod.unknown()),
       watermarks: zod.record(zod.string(), zod.string()),
@@ -3892,7 +3892,7 @@ export const createErpConnectionBodySyncIntervalMinutesMax = 10080;
 
 export const CreateErpConnectionBody = zod.object({
   label: zod.string().min(1).max(createErpConnectionBodyLabelMax),
-  adapterKey: zod.enum(["coupa"]),
+  adapterKey: zod.enum(["coupa", "netsuite", "ariba"]),
   credentials: zod
     .record(zod.string(), zod.unknown())
     .describe(
@@ -3938,7 +3938,7 @@ export const GetErpConnectionResponse = zod.object({
     id: zod.string(),
     orgId: zod.string(),
     label: zod.string(),
-    adapterKey: zod.enum(["coupa"]),
+    adapterKey: zod.enum(["coupa", "netsuite", "ariba"]),
     status: zod.enum(["active", "paused", "error"]),
     settings: zod.record(zod.string(), zod.unknown()),
     watermarks: zod.record(zod.string(), zod.string()),
@@ -4011,7 +4011,7 @@ export const UpdateErpConnectionResponse = zod.object({
     id: zod.string(),
     orgId: zod.string(),
     label: zod.string(),
-    adapterKey: zod.enum(["coupa"]),
+    adapterKey: zod.enum(["coupa", "netsuite", "ariba"]),
     status: zod.enum(["active", "paused", "error"]),
     settings: zod.record(zod.string(), zod.unknown()),
     watermarks: zod.record(zod.string(), zod.string()),
@@ -4085,7 +4085,7 @@ export const TestErpConnectionHeader = zod.object({
 });
 
 export const TestErpConnectionBody = zod.object({
-  adapterKey: zod.enum(["coupa"]),
+  adapterKey: zod.enum(["coupa", "netsuite", "ariba"]),
   credentials: zod.record(zod.string(), zod.unknown()),
   settings: zod.record(zod.string(), zod.unknown()).optional(),
 });

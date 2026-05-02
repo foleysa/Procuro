@@ -9132,6 +9132,8 @@ components:
           type: string
           enum:
           - coupa
+          - netsuite
+          - ariba
         label:
           type: string
         description:
@@ -9183,6 +9185,8 @@ components:
           type: string
           enum:
           - coupa
+          - netsuite
+          - ariba
         status:
           type: string
           enum:
@@ -9268,6 +9272,8 @@ components:
           type: string
           enum:
           - coupa
+          - netsuite
+          - ariba
         credentials:
           type: object
           additionalProperties: true
@@ -9333,6 +9339,8 @@ components:
           type: string
           enum:
           - coupa
+          - netsuite
+          - ariba
         credentials:
           type: object
           additionalProperties: true

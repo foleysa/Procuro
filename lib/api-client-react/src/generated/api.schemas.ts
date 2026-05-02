@@ -3238,6 +3238,8 @@ export type ErpAdapterDescriptorKey =
 
 export const ErpAdapterDescriptorKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;
 
 export type ErpAdapterDescriptorDisclosureTier =
@@ -3269,6 +3271,8 @@ export type ErpConnectionAdapterKey =
 
 export const ErpConnectionAdapterKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;
 
 export type ErpConnectionStatus =
@@ -3325,6 +3329,8 @@ export type CreateErpConnectionRequestAdapterKey =
 
 export const CreateErpConnectionRequestAdapterKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;
 
 /**
@@ -3405,6 +3411,8 @@ export type TestErpConnectionRequestAdapterKey =
 
 export const TestErpConnectionRequestAdapterKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;
 
 export type TestErpConnectionRequestCredentials = { [key: string]: unknown };

@@ -17,4 +17,6 @@ export type ErpAdapterDescriptorKey =
 
 export const ErpAdapterDescriptorKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;

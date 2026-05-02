@@ -122,9 +122,6 @@ export default function Integrations() {
   >(null);
 
   const adapters = adaptersQuery.data?.adapters ?? [];
-  const coupaAdapter: ErpAdapterDescriptor | undefined = adapters.find(
-    (a) => a.key === "coupa",
-  );
   const connections = connectionsQuery.data?.connections ?? [];
 
   const invalidateConnections = () =>
@@ -352,24 +349,31 @@ export default function Integrations() {
         </Alert>
       ) : null}
 
-      {coupaAdapter ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4" /> {coupaAdapter.label}
-              <Badge variant="outline" className="ml-2">
-                {coupaAdapter.disclosureTier}
-              </Badge>
-              <Badge variant="outline">{coupaAdapter.jurisdiction}</Badge>
-              <Badge variant="outline">
-                Retention {coupaAdapter.retentionDays}d
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            {coupaAdapter.description}
-          </CardContent>
-        </Card>
+      {adapters.length > 0 ? (
+        <div
+          className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
+          data-testid="adapter-cards"
+        >
+          {adapters.map((adapter: ErpAdapterDescriptor) => (
+            <Card key={adapter.key} data-testid={`adapter-card-${adapter.key}`}>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+                  <ShieldCheck className="w-4 h-4" /> {adapter.label}
+                  <Badge variant="outline" className="ml-2">
+                    {adapter.disclosureTier}
+                  </Badge>
+                  <Badge variant="outline">{adapter.jurisdiction}</Badge>
+                  <Badge variant="outline">
+                    Retention {adapter.retentionDays}d
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                {adapter.description}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       ) : null}
 
       {showAdd ? (

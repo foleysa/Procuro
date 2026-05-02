@@ -17,4 +17,6 @@ export type TestErpConnectionRequestAdapterKey =
 
 export const TestErpConnectionRequestAdapterKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;

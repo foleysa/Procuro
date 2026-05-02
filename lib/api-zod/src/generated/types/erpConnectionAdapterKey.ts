@@ -17,4 +17,6 @@ export type ErpConnectionAdapterKey =
 
 export const ErpConnectionAdapterKey = {
   coupa: "coupa",
+  netsuite: "netsuite",
+  ariba: "ariba",
 } as const;

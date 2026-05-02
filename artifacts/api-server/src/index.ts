@@ -50,6 +50,8 @@ import {
 } from "./lib/jobs/handlers";
 import { registerErpConnector } from "./lib/connectors/erp-connector";
 import { coupaConnector } from "./lib/connectors/coupa/adapter";
+import { netsuiteConnector } from "./lib/connectors/netsuite/adapter";
+import { aribaConnector } from "./lib/connectors/ariba/adapter";
 import {
   startAlertsDeliveryScheduler,
   startAlertsEscalationScheduler,
@@ -171,6 +173,8 @@ registerJobHandler("routing_health_check", runRoutingHealthCheckHandler);
 // constrained at the schema level (`erpAdapterKeyValues`) so we can't
 // register a connector that no DB row could ever reference.
 registerErpConnector(coupaConnector);
+registerErpConnector(netsuiteConnector);
+registerErpConnector(aribaConnector);
 
 app.listen(port, async (err) => {
   if (err) {

@@ -38,7 +38,7 @@ export type ErpConnectionStatus = (typeof erpConnectionStatusValues)[number];
  * level so a typo in the API never produces a row that no adapter can
  * service.
  */
-export const erpAdapterKeyValues = ["coupa"] as const;
+export const erpAdapterKeyValues = ["coupa", "netsuite", "ariba"] as const;
 export type ErpAdapterKey = (typeof erpAdapterKeyValues)[number];
 
 /**
