@@ -1132,7 +1132,9 @@ function HeatmapPane({
           <div className="space-y-2">
             <RiskHeatmapMap
               cells={cells}
+              sites={sites}
               onCountryClick={onOpenSignalsForCountry}
+              onSiteClick={(siteId) => onOpenEntity(`site:${siteId}`)}
               onMapUnavailable={handleMapUnavailable}
             />
             <p className="text-xs text-muted-foreground">

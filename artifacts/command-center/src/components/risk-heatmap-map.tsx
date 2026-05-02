@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { IntelligenceRiskHeatmapCell } from "@workspace/api-client-react";
+import type {
+  IntelligenceRiskHeatmapCell,
+  IntelligenceRiskHeatmapResponseSitesItem,
+} from "@workspace/api-client-react";
 import { m49ToIso2 } from "@/lib/country-codes";
 
 /**
@@ -72,13 +75,29 @@ const BAND_FILL: Record<CountryRisk["band"], string> = {
 
 type Props = {
   cells: IntelligenceRiskHeatmapCell[];
+  sites?: IntelligenceRiskHeatmapResponseSitesItem[];
   onCountryClick: (countryIso2: string) => void;
+  onSiteClick?: (siteId: string) => void;
   onMapUnavailable: (reason: string) => void;
+};
+
+type SiteHover = {
+  siteId: string;
+  label: string;
+  country: string;
+  band: CountryRisk["band"];
+  score: number;
+  signalCount: number;
+  recentSpend: number | null;
+  x: number;
+  y: number;
 };
 
 export function RiskHeatmapMap({
   cells,
+  sites = [],
   onCountryClick,
+  onSiteClick,
   onMapUnavailable,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -95,6 +114,13 @@ export function RiskHeatmapMap({
     x: number;
     y: number;
   } | null>(null);
+  const [siteHover, setSiteHover] = useState<SiteHover | null>(null);
+  // Stash the latest callback in a ref so the (one-time) map init can
+  // call the freshest function without re-binding handlers per render.
+  const onSiteClickRef = useRef(onSiteClick);
+  useEffect(() => {
+    onSiteClickRef.current = onSiteClick;
+  }, [onSiteClick]);
 
   // ---- Initialize map exactly once ----
   useEffect(() => {
@@ -250,7 +276,17 @@ export function RiskHeatmapMap({
           // the tab to Signal Browser pre-filtered.
           map.on("click", "countries-fill", (e: {
             features?: Array<{ properties?: { iso2?: string } }>;
+            originalEvent?: MouseEvent;
           }) => {
+            // Bail if the sites-circle click handler already routed
+            // this click to Entity 360 — we don't want to also flip
+            // the tab to Signal Browser. We stash a marker on the
+            // shared DOM event so layer handlers can coordinate.
+            if (
+              (e.originalEvent as unknown as { _siteHandled?: boolean })
+                ?._siteHandled
+            )
+              return;
             const f = e.features?.[0];
             const iso2 = f?.properties?.iso2;
             if (iso2) onCountryClick(iso2);
@@ -293,6 +329,150 @@ export function RiskHeatmapMap({
                     topDimensions: [],
                   }
                 : null,
+              x: e.point.x,
+              y: e.point.y,
+            });
+          });
+
+          // ---- Sites: one circle per supplier-as-site ----
+          map.addSource("sites", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+            // Auto-generate numeric ids so setFeatureState (used for
+            // the hover stroke highlight) has a stable handle.
+            generateId: true,
+          });
+          map.addLayer({
+            id: "sites-circle",
+            type: "circle",
+            source: "sites",
+            paint: {
+              // Radius scales with recent 90d spend on a sqrt curve so a
+              // few outsized suppliers don't blow out the legend. The
+              // floor keeps zero-spend sites visible as 4px dots.
+              "circle-radius": [
+                "interpolate",
+                ["linear"],
+                ["sqrt", ["max", ["coalesce", ["get", "spend"], 0], 0]],
+                0,
+                4,
+                100,
+                6,
+                1000,
+                10,
+                10000,
+                16,
+                100000,
+                24,
+              ],
+              "circle-color": [
+                "match",
+                ["get", "band"],
+                "high",
+                BAND_FILL.high,
+                "elevated",
+                BAND_FILL.elevated,
+                "moderate",
+                BAND_FILL.moderate,
+                "low",
+                BAND_FILL.low,
+                "#64748b",
+              ],
+              "circle-opacity": 0.85,
+              "circle-stroke-color": "#0f172a",
+              "circle-stroke-width": [
+                "case",
+                ["boolean", ["feature-state", "hover"], false],
+                2,
+                0.6,
+              ],
+            },
+          });
+
+          // Site clicks must short-circuit country clicks so a click on
+          // a circle deterministically routes to Entity 360 instead of
+          // also firing the country-level Signal Browser drilldown.
+          // Maplibre fires layer handlers in registration order; we
+          // can't cancel from the country handler retroactively, so we
+          // stamp `e.originalEvent` and have the country handler bail.
+          map.on("click", "sites-circle", (e: {
+            features?: Array<{ properties?: { siteId?: string } }>;
+            originalEvent?: MouseEvent;
+          }) => {
+            const f = e.features?.[0];
+            const siteId = f?.properties?.siteId;
+            if (siteId && onSiteClickRef.current) {
+              if (e.originalEvent) {
+                (e.originalEvent as unknown as {
+                  _siteHandled?: boolean;
+                })._siteHandled = true;
+              }
+              onSiteClickRef.current(siteId);
+            }
+          });
+          // Hover stroke highlight: track the currently-hovered site
+          // feature id so the `feature-state.hover` styling actually
+          // activates instead of being dead code.
+          let hoveredSiteId: string | number | null = null;
+          map.on("mouseenter", "sites-circle", () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", "sites-circle", () => {
+            map.getCanvas().style.cursor = "";
+            if (hoveredSiteId !== null) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (map as any).setFeatureState(
+                { source: "sites", id: hoveredSiteId },
+                { hover: false },
+              );
+              hoveredSiteId = null;
+            }
+            setSiteHover(null);
+          });
+          map.on("mousemove", "sites-circle", (e: {
+            features?: Array<{
+              id?: number | string;
+              properties?: {
+                siteId?: string;
+                label?: string;
+                country?: string;
+                band?: CountryRisk["band"];
+                score?: number;
+                signalCount?: number;
+                spend?: number | null;
+              };
+            }>;
+            point: { x: number; y: number };
+          }) => {
+            const f = e.features?.[0];
+            const p = f?.properties;
+            if (!p?.siteId) return;
+            if (f?.id !== undefined && f.id !== hoveredSiteId) {
+              if (hoveredSiteId !== null) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (map as any).setFeatureState(
+                  { source: "sites", id: hoveredSiteId },
+                  { hover: false },
+                );
+              }
+              hoveredSiteId = f.id;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (map as any).setFeatureState(
+                { source: "sites", id: f.id },
+                { hover: true },
+              );
+            }
+            setSiteHover({
+              siteId: p.siteId,
+              label: p.label ?? p.siteId,
+              country: p.country ?? "",
+              band: p.band ?? "low",
+              score: Number(p.score ?? 0),
+              signalCount: Number(p.signalCount ?? 0),
+              recentSpend:
+                p.spend === null || p.spend === undefined
+                  ? null
+                  : Number(p.spend),
               x: e.point.x,
               y: e.point.y,
             });
@@ -357,6 +537,41 @@ export function RiskHeatmapMap({
     }
   }, [cells, loaded]);
 
+  // ---- Push site points into the sites GeoJSON source ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const src = (map as any).getSource("sites");
+    if (!src || typeof src.setData !== "function") return;
+
+    const features = sites
+      .filter(
+        (s) =>
+          typeof s.lat === "number" &&
+          typeof s.lng === "number" &&
+          Number.isFinite(s.lat) &&
+          Number.isFinite(s.lng),
+      )
+      .map((s) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [s.lng as number, s.lat as number],
+        },
+        properties: {
+          siteId: s.siteId,
+          label: s.label,
+          country: s.country,
+          band: s.band ?? "low",
+          score: s.riskScore,
+          signalCount: s.signalCount,
+          spend: s.recentSpend ?? null,
+        },
+      }));
+    src.setData({ type: "FeatureCollection", features });
+  }, [sites, loaded]);
+
   return (
     <div
       className="relative w-full h-[420px] rounded-md overflow-hidden border bg-muted/30"
@@ -397,8 +612,43 @@ export function RiskHeatmapMap({
           )}
         </div>
       )}
+      {siteHover && (
+        <div
+          className="pointer-events-none absolute z-10 rounded border bg-popover px-2 py-1 text-xs shadow-md max-w-[260px]"
+          style={{
+            left: Math.min(siteHover.x + 12, 9999),
+            top: Math.max(siteHover.y - 8, 0),
+          }}
+          data-testid="risk-heatmap-map-site-tooltip"
+        >
+          <div className="font-medium truncate">
+            {siteHover.label}{" "}
+            <span className="text-muted-foreground font-mono">
+              ({siteHover.country})
+            </span>
+          </div>
+          <div className="text-muted-foreground">
+            {siteHover.band} · score {Math.round(siteHover.score)} ·{" "}
+            {siteHover.signalCount} sig
+          </div>
+          <div className="text-muted-foreground">
+            90d spend:{" "}
+            {siteHover.recentSpend === null
+              ? "—"
+              : formatSpend(siteHover.recentSpend)}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function formatSpend(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
 }
 
 function MapLegend() {
