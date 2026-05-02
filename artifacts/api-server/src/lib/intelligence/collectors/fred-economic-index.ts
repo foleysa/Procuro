@@ -28,6 +28,15 @@ import {
   defaultStableSignalKey,
 } from "../contractHelpers";
 import { FRED_SERIES_CATALOG } from "../scope-taxonomy";
+import {
+  buildConditionalHeaders,
+  extractCacheHeaders,
+  readCacheWatermarks,
+  setPendingCacheCommit,
+  takePendingCacheCommit,
+  writeCacheWatermarks,
+  type CacheHeaders,
+} from "./cache-watermarks";
 
 /**
  * FRED series shape exposed to the runtime + tests. Derived from the
@@ -114,11 +123,27 @@ export function buildFredDraftForObservation(
   return draft;
 }
 
+/**
+ * Result shape of a single per-series fetch. Distinguishes the three
+ * outcomes the caller has to handle differently:
+ *   - `unchanged`  → upstream returned 304; preserve watermark, no draft.
+ *   - `fresh`      → upstream returned 200; capture cache headers and
+ *                    parse the (possibly empty / missing-value) row.
+ */
+export type FetchLatestResult =
+  | { kind: "unchanged" }
+  | {
+      kind: "fresh";
+      observation: FredObservation | null;
+      cacheHeaders: CacheHeaders;
+    };
+
 async function fetchLatestObservation(
   seriesId: string,
   apiKey: string,
+  watermark: CacheHeaders | undefined,
   signal?: AbortSignal,
-): Promise<FredObservation | null> {
+): Promise<FetchLatestResult> {
   const url = new URL(`${FRED_API_BASE}/series/observations`);
   url.searchParams.set("series_id", seriesId);
   url.searchParams.set("api_key", apiKey);
@@ -127,21 +152,30 @@ async function fetchLatestObservation(
   url.searchParams.set("limit", "1");
 
   const res = await fetch(url, {
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      ...buildConditionalHeaders(watermark),
+    },
     signal,
   });
+  // 304 Not Modified: the cached observation set is byte-identical to
+  // the prior poll. Skip the parse, preserve the watermark.
+  if (res.status === 304) return { kind: "unchanged" };
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
       `FRED ${seriesId} HTTP ${res.status}: ${body.slice(0, 200)}`,
     );
   }
+  const cacheHeaders = extractCacheHeaders(res);
   const json = (await res.json()) as FredObservationsResponse;
   const obs = json.observations?.[0];
-  if (!obs) return null;
+  if (!obs) return { kind: "fresh", observation: null, cacheHeaders };
   // FRED uses "." for missing values.
-  if (obs.value === "." || obs.value === "") return null;
-  return obs;
+  if (obs.value === "." || obs.value === "") {
+    return { kind: "fresh", observation: null, cacheHeaders };
+  }
+  return { kind: "fresh", observation: obs, cacheHeaders };
 }
 
 /**
@@ -306,13 +340,26 @@ export const fredEconomicIndexCollector: IntelligenceCollector<
       );
     }
 
+    // Per-series watermark map. Empty on first run / DB read failure;
+    // each series falls through to a full fetch in that case.
+    const watermarks = await readCacheWatermarks(
+      FRED_ECONOMIC_INDEX_COLLECTOR_ID,
+    );
+    const newWatermarks = new Map<string, CacheHeaders>(watermarks);
+
     const drafts: MarketSignalDraft[] = [];
     const failedSeries: Array<{ seriesId: string; error: string }> = [];
+    let unchangedSeries = 0;
 
     for (const series of FRED_SERIES) {
-      let obs: FredObservation | null;
+      let result: FetchLatestResult;
       try {
-        obs = await fetchLatestObservation(series.seriesId, apiKey, signal);
+        result = await fetchLatestObservation(
+          series.seriesId,
+          apiKey,
+          watermarks.get(series.seriesId),
+          signal,
+        );
       } catch (err) {
         // A single bad series id shouldn't kill the whole run, but we
         // track failures so we can surface them — and so we can throw
@@ -325,10 +372,26 @@ export const fredEconomicIndexCollector: IntelligenceCollector<
         );
         continue;
       }
-      if (!obs) continue;
+      // 304: preserve the existing watermark, skip draft emission.
+      if (result.kind === "unchanged") {
+        unchangedSeries += 1;
+        continue;
+      }
+      // 200: capture fresh headers (or drop the entry if upstream
+      // stopped sending cache headers, so we don't keep replaying a
+      // stale watermark the server is no longer honouring).
+      if (
+        result.cacheHeaders.etag !== null ||
+        result.cacheHeaders.lastModified !== null
+      ) {
+        newWatermarks.set(series.seriesId, result.cacheHeaders);
+      } else {
+        newWatermarks.delete(series.seriesId);
+      }
+      if (!result.observation) continue;
       const draft = buildFredDraftForObservation(
         series,
-        obs,
+        result.observation,
         "fred_latest_observation",
       );
       if (draft) drafts.push(draft);
@@ -337,12 +400,41 @@ export const fredEconomicIndexCollector: IntelligenceCollector<
     // If every series failed, the run is genuinely broken (bad key,
     // FRED outage, network) — surface it to the runtime so the audit
     // log records `fetch_failed` instead of `fetch_succeeded` with 0.
+    // An unchanged 304 is NOT a failure, so the all-failed condition
+    // remains `failedSeries.length === FRED_SERIES.length`.
+    //
+    // We throw BEFORE queuing the watermark so a fully-failed run
+    // never advances state — the next run must re-fetch from scratch.
     if (drafts.length === 0 && failedSeries.length === FRED_SERIES.length) {
       const sample = failedSeries.slice(0, 3).map((f) => f.error).join("; ");
       throw new Error(
         `FRED collector: all ${FRED_SERIES.length} series failed. Sample errors: ${sample}`,
       );
     }
+
+    // Queue the watermark write to fire AFTER the runtime's
+    // insertSignalsWithDedupe succeeds. Writing it here directly would
+    // open a window where collect() returns OK but the downstream
+    // insert fails — leaving the next run with an advanced per-series
+    // watermark and a 304 short-circuit on observations we never
+    // committed. See `cache-watermarks.ts` for the full rationale.
+    setPendingCacheCommit(FRED_ECONOMIC_INDEX_COLLECTOR_ID, () =>
+      writeCacheWatermarks(
+        FRED_ECONOMIC_INDEX_COLLECTOR_ID,
+        newWatermarks,
+        { unchangedSeries, totalSeries: FRED_SERIES.length },
+      ),
+    );
+
     return drafts;
+  },
+
+  /**
+   * Hand the runtime the pending watermark write so it fires only after
+   * `insertSignalsWithDedupe` commits the run's drafts. Mirrors the BLS
+   * collector and the ECB historical-archive pattern from Task #127.
+   */
+  takePendingPostInsertCommit(): (() => Promise<void>) | null {
+    return takePendingCacheCommit(FRED_ECONOMIC_INDEX_COLLECTOR_ID);
   },
 };

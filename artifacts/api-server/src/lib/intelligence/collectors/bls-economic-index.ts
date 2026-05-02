@@ -22,6 +22,15 @@ import type {
   IntelligenceCollector,
   MarketSignalDraft,
 } from "../collector";
+import {
+  buildConditionalHeaders,
+  extractCacheHeaders,
+  readCacheWatermarks,
+  setPendingCacheCommit,
+  takePendingCacheCommit,
+  writeCacheWatermarks,
+  type CacheHeaders,
+} from "./cache-watermarks";
 
 export const BLS_API_URL =
   "https://api.bls.gov/publicAPI/v2/timeseries/data/";
@@ -621,6 +630,30 @@ export function blsScopeSku(ref: BlsSeriesRef): string {
   return `bls_series:${ref.seriesId}`;
 }
 
+/**
+ * Cache-watermark key for one BLS POST chunk.
+ *
+ * The BLS POST body varies by chunk membership AND by the lookback
+ * window (which advances every January). All three components are
+ * folded into the key so a year-boundary roll-over (or a registry
+ * change that re-shuffles which series land in which chunk) invalidates
+ * the watermark automatically and the next run does a clean fetch
+ * instead of short-circuiting on a stale 304 against a brand-new
+ * request body.
+ *
+ * Sorted seriesIds keep the key stable when the registry rearranges
+ * within a chunk without changing membership.
+ */
+export function blsChunkCacheKey(
+  chunkSeriesIds: readonly string[],
+  startYear: number,
+  endYear: number,
+  tier: "authenticated" | "unauthenticated",
+): string {
+  const sorted = [...chunkSeriesIds].sort().join(",");
+  return `bls:${tier}:${startYear}-${endYear}:${sorted}`;
+}
+
 async function recordWarning(
   collectorId: string,
   message: string,
@@ -721,6 +754,18 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
       ? BLS_API_SERIES_PER_REQUEST_AUTHENTICATED
       : BLS_API_SERIES_PER_REQUEST_UNAUTHENTICATED;
 
+    // Read the prior-run watermark map up-front. The map keys each chunk
+    // request to the `{ etag, lastModified }` BLS returned the last
+    // time we POSTed that exact body. Empty map = first-run / DB read
+    // failure → falls through to a full fetch for every chunk.
+    const watermarks = await readCacheWatermarks(this.id);
+    const newWatermarks = new Map<string, CacheHeaders>(watermarks);
+    // Series IDs whose chunk short-circuited on a 304. We exclude those
+    // from the draft fan-out so `onMissing` doesn't fire spuriously for
+    // series whose data is unchanged (and already in the DB).
+    const unchangedSeriesIds = new Set<string>();
+    let unchangedChunks = 0;
+
     // Chunk + stitch so we stay within the per-request series cap.
     // Each chunk's `Results.series` array is concatenated into a single
     // synthetic response that `buildBlsDraftsFromResponse` walks once,
@@ -731,6 +776,10 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
     };
     for (let i = 0; i < uniqueSeriesIds.length; i += chunkSize) {
       const chunk = uniqueSeriesIds.slice(i, i + chunkSize);
+      const cacheKey = blsChunkCacheKey(chunk, startYear, endYear, tier);
+      const watermark = watermarks.get(cacheKey);
+      const conditionalHeaders = buildConditionalHeaders(watermark);
+
       const body: Record<string, unknown> = {
         seriesid: chunk,
         startyear: String(startYear),
@@ -743,15 +792,36 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
 
       const res = await fetch(BLS_API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...conditionalHeaders },
         body: JSON.stringify(body),
         signal,
       });
+
+      // 304 Not Modified: BLS confirmed the chunk's response is byte-
+      // identical to what we already parsed last time. Skip the parse,
+      // skip the draft fan-out for these series, and preserve the
+      // existing watermark so the next run still short-circuits.
+      if (res.status === 304) {
+        unchangedChunks += 1;
+        for (const id of chunk) unchangedSeriesIds.add(id);
+        continue;
+      }
 
       if (!res.ok) {
         throw new Error(
           `BLS API HTTP ${res.status} on chunk ${i / chunkSize + 1}: ${await res.text().catch(() => "<no body>")}`,
         );
+      }
+
+      // Capture fresh cache headers (when present) for the next run.
+      // If upstream stopped sending them, drop any stale entry so we
+      // don't accidentally keep replaying a value the server is no
+      // longer honouring.
+      const fresh = extractCacheHeaders(res);
+      if (fresh.etag !== null || fresh.lastModified !== null) {
+        newWatermarks.set(cacheKey, fresh);
+      } else {
+        newWatermarks.delete(cacheKey);
       }
 
       const json = (await res.json()) as BlsResponse;
@@ -767,13 +837,55 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
       }
     }
 
-    return buildBlsDraftsFromResponse(stitched, BLS_SERIES, {
+    // Drop short-circuited series from the fan-out so `onMissing`
+    // doesn't write a misleading "no data for series X" warning for
+    // series whose data is unchanged-and-cached, not actually missing.
+    const seriesForFanOut =
+      unchangedSeriesIds.size === 0
+        ? BLS_SERIES
+        : BLS_SERIES.filter((s) => !unchangedSeriesIds.has(s.seriesId));
+
+    // Build drafts FIRST, then queue the watermark write. If draft
+    // building throws (e.g. a malformed observation in the canned
+    // response), we must NOT queue the watermark — otherwise a future
+    // run would 304-skip the chunk we never managed to ingest.
+    const drafts = await buildBlsDraftsFromResponse(stitched, seriesForFanOut, {
       tier,
       observationCapForRef: (ref) => observationCapForMode(effectiveMode, ref),
       onMissing: async (seriesId, reason) => {
         await recordWarning(this.id, reason, { seriesId });
       },
     });
+
+    // Queue the watermark write to fire AFTER the runtime's
+    // insertSignalsWithDedupe succeeds. Writing it here directly would
+    // open a window where collect() returns OK but the downstream
+    // insert fails — leaving the next run with an advanced watermark
+    // and a 304 short-circuit on data we never committed.
+    // The runtime invokes the queued commit via
+    // `takePendingPostInsertCommit()` (see below) only on the success
+    // path; a failed run discards it.
+    setPendingCacheCommit(this.id, () =>
+      writeCacheWatermarks(this.id, newWatermarks, {
+        unchangedChunks,
+        unchangedSeriesCount: unchangedSeriesIds.size,
+        totalChunks: Math.ceil(uniqueSeriesIds.length / chunkSize),
+        tier,
+      }),
+    );
+
+    return drafts;
+  },
+
+  /**
+   * Hand the runtime the pending watermark write so it fires only after
+   * `insertSignalsWithDedupe` commits the run's drafts. See
+   * `cache-watermarks.ts` for the rationale (mirrors the ECB historical
+   * archive pattern from Task #127). Returns `null` when collect() did
+   * not queue one — e.g. a run that errored out before the queue point.
+   */
+  takePendingPostInsertCommit(): (() => Promise<void>) | null {
+    return takePendingCacheCommit(this.id);
   },
 };
 

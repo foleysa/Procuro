@@ -488,6 +488,33 @@ export async function runCollector(
     }));
     const { inserted, duplicates } = await insertSignalsWithDedupe(rows);
 
+    // Post-insert hook: collectors that maintain external cache state
+    // (ETag / Last-Modified watermarks persisted as `cache_watermark`
+    // audit rows) queued a commit during `collect()`. We invoke it ONLY
+    // now that Postgres has committed the run's drafts — mirroring the
+    // ECB historical-archive pattern (Task #127). Writing the watermark
+    // before this point would open a window where a downstream insert
+    // failure leaves the next run with an advanced watermark and a 304
+    // short-circuit on data we never persisted.
+    //
+    // Best-effort: if the audit-log write itself fails we log and move
+    // on. Postgres is already committed; the worst case is the next run
+    // wastes one HTTP round trip re-fetching a payload we could have
+    // 304-skipped.
+    if (typeof collector.takePendingPostInsertCommit === "function") {
+      const commit = collector.takePendingPostInsertCommit();
+      if (commit) {
+        try {
+          await commit();
+        } catch (e) {
+          logger.warn(
+            { collectorId, runId, err: (e as Error).message },
+            "post-insert cache-watermark commit failed; next run will re-fetch",
+          );
+        }
+      }
+    }
+
     // BigQuery dual-write. No-op when intelligence is not configured;
     // best-effort otherwise (errors logged, never bubbled — Postgres is
     // already committed).

@@ -193,6 +193,29 @@ export interface IntelligenceCollector<
     signal?: AbortSignal;
     mode?: CollectorRunMode;
   }): Promise<CollectWithRawResult>;
+
+  /**
+   * Optional: returns a callback the runtime should invoke ONLY after a
+   * successful `insertSignalsWithDedupe`. Used by collectors that
+   * maintain external cache state (ETag / Last-Modified watermarks
+   * persisted as `cache_watermark` audit rows) and need to gate state
+   * advancement on Postgres commit success.
+   *
+   * Contract:
+   *   - Called once per run, AFTER `collect()` / `collectWithRaw()`
+   *     returns AND after `insertSignalsWithDedupe` succeeds.
+   *   - Returns `null` if the collector did not queue any post-insert
+   *     work (collectors that don't use this pattern, or runs that
+   *     short-circuited before queuing).
+   *   - The callback is best-effort: runtime catches and logs errors so
+   *     a transient audit-log outage cannot fail an already-committed run.
+   *
+   * Why not return the callback alongside drafts? Keeping the existing
+   * `collect()` signature stable means we don't have to migrate every
+   * collector to a new return type. Collectors that opt in to the
+   * post-insert hook just implement this method.
+   */
+  takePendingPostInsertCommit?(): (() => Promise<void>) | null;
 }
 
 /**
