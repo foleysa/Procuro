@@ -1,10 +1,13 @@
 import {
   db,
   alertsTable,
+  alertEventsTable,
   contractsTable,
   erpConnectionsTable,
   erpSyncRunsTable,
   orgsTable,
+  type AlertChannelRow,
+  type AlertRow,
   type ErpEntityCounts,
   type ErpWatermarks,
   type JobRow,
@@ -12,6 +15,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 
 import { runAnalysisCycle } from "../ooda/cycle";
+import { emailChannelAdapter } from "../alerts/channels";
 import {
   csvSourceAdapter,
   type CsvPayload,
@@ -567,15 +571,35 @@ function aggregateDroppedByEntity(
  *   2. Appends `threshold` to `contracts.renewalAlertedThresholds` so
  *      the contract list / detail UIs can show "alerted at <X> days"
  *      without joining `alerts`.
+ *   3. If the contract has an `owner` field that parses as a valid
+ *      email, sends a renewal-notification email directly to that
+ *      address via the shared `emailChannelAdapter` (SendGrid when
+ *      `SENDGRID_API_KEY` is set; simulated otherwise) and records the
+ *      send as an `alert_events` row of `eventType='delivered'` with
+ *      `metadata.kind='owner_notification'`. This is independent of the
+ *      tenant subscription/channel fan-out in `deliverAlertsTick` —
+ *      contract owners are notified whether or not their tenant has
+ *      configured an org-wide subscription, because the contract.owner
+ *      is the person directly accountable for the renewal decision.
  *
  * Severity is computed from days-to-expiry:
  *   - <= 7 days  → critical
  *   - <= 30 days → warning
  *   - otherwise  → info
  *
- * Each tenant is processed inside its own transaction so a single bad
+ * Owner-email idempotency: we only attempt the send when the alert was
+ * NEWLY inserted on this tick (the `RETURNING id` clause returns no
+ * rows on a dedupe no-op). Combined with the alert-row dedupe
+ * `(orgId, dedupeKey)`, that means each contract gets at most one
+ * owner email per `(threshold, contract)` window — even if the daily
+ * scheduler double-fires or an operator presses "Run now". The audit
+ * trail in `alert_events` is cheap to inspect for forensic checks.
+ *
+ * Each tenant is processed inside its own try/catch so a single bad
  * tenant (e.g. an FK violation from a recently-deleted contract row)
  * cannot poison the whole scan — the handler logs and continues.
+ * Within a tenant, an email-send failure for one contract is also
+ * isolated so it cannot block the next contract's notification.
  *
  * The job is system-scoped (no `org_id` on the job row); per-tenant
  * thresholds are read inside the handler.
@@ -584,12 +608,20 @@ export async function runRenewalAlertScanHandler(
   _job: JobRow,
 ): Promise<Record<string, unknown>> {
   const orgs = await db
-    .select({ id: orgsTable.id, settings: orgsTable.settings })
+    .select({
+      id: orgsTable.id,
+      name: orgsTable.name,
+      settings: orgsTable.settings,
+    })
     .from(orgsTable);
 
   let alertsInserted = 0;
   let contractsUpdated = 0;
   let orgsScanned = 0;
+  let ownerEmailsSent = 0;
+  let ownerEmailsSimulated = 0;
+  let ownerEmailsFailed = 0;
+  let ownerEmailsSkipped = 0;
   const orgErrors: Array<{ orgId: string; error: string }> = [];
 
   for (const org of orgs) {
@@ -608,6 +640,7 @@ export async function runRenewalAlertScanHandler(
         title: string;
         supplier_id: string;
         supplier_name: string;
+        owner: string | null;
         end_date: Date | string;
         days_to_expiry: number;
         already_alerted: boolean;
@@ -617,6 +650,7 @@ export async function runRenewalAlertScanHandler(
                c.title,
                c.supplier_id,
                s.name AS supplier_name,
+               c.owner,
                c.end_date,
                CEIL(EXTRACT(EPOCH FROM (c.end_date - NOW())) / 86400.0)::int
                  AS days_to_expiry,
@@ -642,6 +676,9 @@ export async function runRenewalAlertScanHandler(
         const endDateIso = (
           r.end_date instanceof Date ? r.end_date : new Date(r.end_date)
         ).toISOString();
+        const alertId = newId("alt");
+        const title = `Contract ${r.contract_number} renewing in ${days} day${days === 1 ? "" : "s"}`;
+        const summary = `${r.title} (${r.supplier_name}) — end date ${endDateIso.slice(0, 10)}.`;
 
         // INSERT ... ON CONFLICT (alerts_dedupe_uq) DO NOTHING. The
         // unique index lives on `(org_id, dedupe_key)` (#117 schema),
@@ -655,13 +692,13 @@ export async function runRenewalAlertScanHandler(
                               summary, contract_id, supplier_id,
                               dedupe_key, payload)
           VALUES (
-            ${newId("alt")},
+            ${alertId},
             ${org.id},
             'rule_match',
             'contract_renewal',
             ${severity},
-            ${`Contract ${r.contract_number} renewing in ${days} day${days === 1 ? "" : "s"}`},
-            ${`${r.title} (${r.supplier_name}) — end date ${endDateIso.slice(0, 10)}.`},
+            ${title},
+            ${summary},
             ${r.id},
             ${r.supplier_id},
             ${dedupeKey},
@@ -676,7 +713,8 @@ export async function runRenewalAlertScanHandler(
           ON CONFLICT (org_id, dedupe_key) DO NOTHING
           RETURNING id
         `);
-        if (inserted.rows.length > 0) {
+        const insertedAlertId = inserted.rows[0]?.id;
+        if (insertedAlertId) {
           alertsInserted += 1;
         }
 
@@ -699,6 +737,38 @@ export async function runRenewalAlertScanHandler(
             );
           contractsUpdated += 1;
         }
+
+        // Owner email notification — fires only when the alert was
+        // newly inserted on this tick (`insertedAlertId !== undefined`).
+        // A dedupe no-op means we already attempted notification on a
+        // previous run, so re-sending would spam the owner.
+        if (insertedAlertId) {
+          const outcome = await maybeSendRenewalOwnerEmail({
+            ownerRaw: r.owner,
+            alertRow: {
+              id: insertedAlertId,
+              orgId: org.id,
+              severity,
+              source: "rule_match",
+              kind: "contract_renewal",
+              title,
+              summary,
+              firstSeen: new Date(),
+              occurrences: 1,
+            },
+            orgName: org.name,
+            contractNumber: r.contract_number,
+            contractTitle: r.title,
+            supplierName: r.supplier_name,
+            endDateIso,
+            daysToExpiry: days,
+            thresholdDays: threshold,
+          });
+          if (outcome === "sent") ownerEmailsSent += 1;
+          else if (outcome === "simulated") ownerEmailsSimulated += 1;
+          else if (outcome === "failed") ownerEmailsFailed += 1;
+          else ownerEmailsSkipped += 1;
+        }
       }
     } catch (err) {
       // One tenant's failure must not poison the whole scan — record
@@ -715,8 +785,167 @@ export async function runRenewalAlertScanHandler(
     orgsScanned,
     alertsInserted,
     contractsUpdated,
+    ownerEmailsSent,
+    ownerEmailsSimulated,
+    ownerEmailsFailed,
+    ownerEmailsSkipped,
     orgErrors,
   };
+}
+
+/**
+ * Owner-email validation. Mirrors the regex used by the
+ * `emailChannelAdapter` so a string that passes here is guaranteed to
+ * pass the adapter's own `validateConfig`. Reject anything that looks
+ * like a free-form name ("Bob Smith") so we don't ship to a
+ * non-deliverable address.
+ */
+const RENEWAL_OWNER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+interface OwnerEmailContext {
+  ownerRaw: string | null;
+  alertRow: {
+    id: string;
+    orgId: string;
+    severity: "info" | "low" | "medium" | "high" | "critical";
+    source: "rule_match";
+    kind: "contract_renewal";
+    title: string;
+    summary: string;
+    firstSeen: Date;
+    occurrences: number;
+  };
+  orgName: string;
+  contractNumber: string;
+  contractTitle: string;
+  supplierName: string;
+  endDateIso: string;
+  daysToExpiry: number;
+  thresholdDays: number;
+}
+
+type OwnerEmailOutcome = "sent" | "simulated" | "failed" | "skipped";
+
+/**
+ * Attempt to deliver a renewal email to the contract owner. Returns
+ * `"skipped"` (with no events row) if the contract has no owner or
+ * the owner string isn't a valid email.
+ *
+ * On any other outcome (including `"failed"`) we always append an
+ * `alert_events` row so operators can see in the alert detail drawer
+ * that we tried to notify the owner — and what happened.
+ *
+ * Errors thrown by the adapter are caught and surfaced as
+ * `eventType='delivery_failed'` so the rest of the scan keeps moving;
+ * the handler-level try/catch is reserved for unrecoverable per-tenant
+ * faults.
+ */
+async function maybeSendRenewalOwnerEmail(
+  ctx: OwnerEmailContext,
+): Promise<OwnerEmailOutcome> {
+  const ownerEmail = (ctx.ownerRaw ?? "").trim();
+  if (!ownerEmail || !RENEWAL_OWNER_EMAIL_RE.test(ownerEmail)) {
+    return "skipped";
+  }
+
+  // Synthesise a minimal `AlertChannelRow` so we can reuse the shared
+  // adapter without persisting an `alert_channels` row per owner. The
+  // adapter only reads `channel.config` and `channel.kind`; the rest
+  // of the row is ignored.
+  const syntheticChannel = {
+    id: `inline-owner-${ctx.alertRow.id}`,
+    orgId: ctx.alertRow.orgId,
+    kind: "email" as const,
+    name: "contract owner (inline)",
+    config: { to: [ownerEmail] } as Record<string, unknown>,
+    enabled: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  } as unknown as AlertChannelRow;
+
+  // Build a minimal `AlertRow` for the adapter. The adapter only reads
+  // a small surface (severity/title/summary/source/state/firstSeenAt/
+  // lastSeenAt/occurrences/id) so we don't need to round-trip via a
+  // full SELECT.
+  const adapterAlert = {
+    id: ctx.alertRow.id,
+    orgId: ctx.alertRow.orgId,
+    severity: ctx.alertRow.severity,
+    source: ctx.alertRow.source,
+    kind: ctx.alertRow.kind,
+    title: ctx.alertRow.title,
+    summary: ctx.alertRow.summary,
+    state: "open",
+    firstSeenAt: ctx.alertRow.firstSeen,
+    lastSeenAt: ctx.alertRow.firstSeen,
+    occurrences: ctx.alertRow.occurrences,
+  } as unknown as AlertRow;
+
+  let outcomeStatus: "delivered" | "failed" | "simulated" | "skipped";
+  let providerMessageId: string | undefined;
+  let httpStatus: number | undefined;
+  let lastError: string | null = null;
+
+  try {
+    const result = await emailChannelAdapter.send({
+      alert: adapterAlert,
+      channel: syntheticChannel,
+    });
+    outcomeStatus = result.status;
+    providerMessageId = result.providerMessageId;
+    httpStatus = result.httpStatus;
+    if (result.status === "failed") lastError = result.error ?? "unknown";
+  } catch (err) {
+    outcomeStatus = "failed";
+    lastError = err instanceof Error ? err.message : String(err);
+  }
+
+  // Audit row — same `eventType` taxonomy used by `deliverAlertsTick`
+  // so the alert detail drawer renders this side-channel send the same
+  // way it renders subscription-driven sends. The `metadata.kind`
+  // discriminator lets future code distinguish the two paths.
+  const eventType =
+    outcomeStatus === "failed" ? "delivery_failed" : "delivered";
+  await db.insert(alertEventsTable).values({
+    id: newId("ae"),
+    alertId: ctx.alertRow.id,
+    eventType,
+    actor: null,
+    note:
+      outcomeStatus === "failed"
+        ? (lastError ?? "owner email delivery failed")
+        : null,
+    metadata: {
+      kind: "owner_notification",
+      channelKind: "email",
+      ownerEmail,
+      orgName: ctx.orgName,
+      contractNumber: ctx.contractNumber,
+      contractTitle: ctx.contractTitle,
+      supplierName: ctx.supplierName,
+      endDate: ctx.endDateIso,
+      daysToExpiry: ctx.daysToExpiry,
+      thresholdDays: ctx.thresholdDays,
+      status: outcomeStatus,
+      providerMessageId: providerMessageId ?? null,
+      httpStatus: httpStatus ?? null,
+    },
+  });
+
+  if (outcomeStatus === "delivered") return "sent";
+  if (outcomeStatus === "simulated") return "simulated";
+  if (outcomeStatus === "failed") {
+    logger.warn(
+      {
+        alertId: ctx.alertRow.id,
+        ownerEmail,
+        error: lastError,
+      },
+      "Renewal owner email delivery failed",
+    );
+    return "failed";
+  }
+  return "skipped";
 }
 
 /**
