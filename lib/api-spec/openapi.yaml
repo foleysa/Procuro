@@ -2060,6 +2060,46 @@ paths:
           description: Deleted
         '404':
           description: Connection not found
+  /integrations/connections/{id}/runs:
+    get:
+      operationId: listErpConnectionRuns
+      tags:
+      - integrations
+      summary: List recent sync runs for this ERP connection
+      description: 'Returns the most recent N `sync_erp_connection` worker
+        runs for this connection, newest first. Each run row captures the
+        wall-clock duration, per-entity rows ingested and pages fetched,
+        per-entity dropped/skipped counts, and the terminal error
+        message on failure. Powers the per-connection ingest history
+        panel on the Integrations page (task #144). The on-connection
+        `lastSyncedAt` and `lastError` are unchanged — they remain the
+        "latest" view; this endpoint is the historical view.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      - in: query
+        name: limit
+        required: false
+        description: 'Maximum number of runs to return (default 10, max 100).
+          Returned newest-first by `startedAt`.
+
+          '
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+      responses:
+        '200':
+          description: Recent runs (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErpConnectionRunListResponse'
+        '404':
+          description: Connection not found for this tenant
   /integrations/connections/{id}/sync:
     post:
       operationId: syncErpConnection
@@ -9350,6 +9390,103 @@ components:
       properties:
         connection:
           $ref: '#/components/schemas/ErpConnection'
+    ErpConnectionRun:
+      type: object
+      required:
+      - id
+      - connectionId
+      - status
+      - startedAt
+      - finishedAt
+      - durationMs
+      - recordsByEntity
+      - pagesByEntity
+      - droppedByEntity
+      - recordsProcessed
+      - recordsSkipped
+      - createdAt
+      properties:
+        id:
+          type: string
+        connectionId:
+          type: string
+        jobId:
+          type: string
+          nullable: true
+          description: 'The `jobs.id` that produced this run, if the job row
+            still exists. Null after the row has been pruned by the
+            jobs housekeeping sweep.
+
+            '
+        status:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - skipped
+          description: '`skipped` is recorded when the worker picked the
+            job up but the connection was paused at run time (no
+            upstream call was made).
+
+            '
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
+          description: Wall-clock duration (`finishedAt − startedAt`).
+        recordsByEntity:
+          type: object
+          additionalProperties:
+            type: integer
+          description: 'Per-entity rows ingested. Keys match the connector''s
+            `ErpEntity` enum (`suppliers`, `contracts`, `purchase_orders`,
+            `invoices`, `payments`).
+
+            '
+        pagesByEntity:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Per-entity upstream pages fetched in this run.
+        droppedByEntity:
+          type: object
+          additionalProperties:
+            type: integer
+          description: 'Per-entity rows the writer intentionally dropped
+            (e.g. orphan SOWs without a parent contract). Aggregated
+            from the writer warnings so the UI can show "X rows
+            dropped" without re-parsing the full warnings array.
+
+            '
+        recordsProcessed:
+          type: integer
+          description: Total rows the writer reported as successfully processed.
+        recordsSkipped:
+          type: integer
+          description: Total rows the writer reported as intentionally skipped.
+        error:
+          type: string
+          nullable: true
+          description: Truncated failure message; null on success / skip.
+        createdAt:
+          type: string
+          format: date-time
+    ErpConnectionRunListResponse:
+      type: object
+      required:
+      - connectionId
+      - runs
+      properties:
+        connectionId:
+          type: string
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErpConnectionRun'
     ErpConnectionListResponse:
       type: object
       required:

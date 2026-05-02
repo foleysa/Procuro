@@ -23,8 +23,9 @@ process.env["ORG_ADMIN_TOKEN"] = "test-org-admin-token";
 process.env["ERP_CREDENTIAL_ENCRYPTION_KEY"] =
   process.env["ERP_CREDENTIAL_ENCRYPTION_KEY"] ?? "test-key-do-not-use-in-prod";
 
-import { db, orgsTable, erpConnectionsTable } from "@workspace/db";
+import { db, orgsTable, erpConnectionsTable, erpSyncRunsTable } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
+import { newId } from "../src/lib/ids";
 import app from "../src/app";
 import {
   _clearErpConnectorsForTest,
@@ -360,5 +361,143 @@ describe("integrations routes", () => {
     await db
       .delete(erpConnectionsTable)
       .where(eq(erpConnectionsTable.id, created.connection.id));
+  });
+
+  it("returns recent sync runs newest-first and 404s on unknown connections", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      "x-org-id": orgId,
+      "x-org-admin-token": "test-org-admin-token",
+    };
+    const label = `${LABEL_PREFIX}-runs`;
+
+    // 1. Create a connection so the route's tenant-scoping check passes.
+    const created = (await (
+      await fetch(url("/api/integrations/connections"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          label,
+          adapterKey: "coupa",
+          credentials: { clientId: "id-runs", clientSecret: "sec-runs" },
+          settings: { instanceUrl: "https://acme.coupahost.com" },
+        }),
+      })
+    ).json()) as { connection: { id: string } };
+    const connectionId = created.connection.id;
+
+    // 2. Unknown connection → 404 (and never bleeds another tenant's
+    //    history through the runs route).
+    const unknown = await fetch(
+      url(`/api/integrations/connections/does-not-exist/runs`),
+      { headers },
+    );
+    assert.equal(unknown.status, 404);
+
+    // 3. Empty history is valid — the route returns `runs: []` rather
+    //    than 404 once the connection itself is found.
+    const empty = (await (
+      await fetch(
+        url(`/api/integrations/connections/${connectionId}/runs`),
+        { headers },
+      )
+    ).json()) as { connectionId: string; runs: unknown[] };
+    assert.equal(empty.connectionId, connectionId);
+    assert.deepEqual(empty.runs, []);
+
+    // 4. Seed three run rows with monotonically increasing startedAt
+    //    timestamps to assert newest-first ordering and per-entity
+    //    payload pass-through.
+    const base = Date.now();
+    const seeds = [0, 1, 2].map((i) => ({
+      id: newId("esrun"),
+      orgId,
+      connectionId,
+      jobId: null,
+      status: (i === 1 ? "failed" : "succeeded") as
+        | "succeeded"
+        | "failed"
+        | "skipped",
+      startedAt: new Date(base + i * 1000),
+      finishedAt: new Date(base + i * 1000 + 5_000),
+      durationMs: 5_000,
+      recordsByEntity: { suppliers: 10 + i, invoices: 20 + i },
+      pagesByEntity: { suppliers: 1, invoices: 2 },
+      droppedByEntity: (i === 1 ? { invoices: 3 } : {}) as Record<
+        string,
+        number
+      >,
+      recordsProcessed: 30 + i * 2,
+      recordsSkipped: 0,
+      error: i === 1 ? "boom: simulated upstream failure" : null,
+    }));
+    await db.insert(erpSyncRunsTable).values(seeds);
+
+    // 5. Default limit returns all three, newest-first.
+    const all = (await (
+      await fetch(
+        url(`/api/integrations/connections/${connectionId}/runs`),
+        { headers },
+      )
+    ).json()) as {
+      runs: Array<{
+        id: string;
+        status: string;
+        startedAt: string;
+        recordsByEntity: Record<string, number>;
+        droppedByEntity: Record<string, number>;
+        error: string | null;
+      }>;
+    };
+    assert.equal(all.runs.length, 3);
+    assert.equal(all.runs[0]!.id, seeds[2]!.id, "newest-first ordering");
+    assert.equal(all.runs[2]!.id, seeds[0]!.id);
+    const failed = all.runs.find((r) => r.status === "failed");
+    assert.ok(failed, "failed run is preserved");
+    assert.equal(failed!.droppedByEntity["invoices"], 3);
+    assert.match(failed!.error ?? "", /simulated upstream failure/);
+
+    // 6. `limit` query trims the page; cap is enforced.
+    const oneRes = await fetch(
+      url(`/api/integrations/connections/${connectionId}/runs?limit=1`),
+      { headers },
+    );
+    const one = (await oneRes.json()) as { runs: unknown[] };
+    assert.equal(one.runs.length, 1);
+
+    const tooBig = await fetch(
+      url(`/api/integrations/connections/${connectionId}/runs?limit=999`),
+      { headers },
+    );
+    assert.equal(tooBig.status, 400);
+
+    // 7. Tenant scoping — another org cannot read these runs.
+    const others = await db
+      .select({ id: orgsTable.id })
+      .from(orgsTable)
+      .limit(5);
+    const other = others.find((o) => o.id !== orgId);
+    if (other) {
+      const cross = await fetch(
+        url(`/api/integrations/connections/${connectionId}/runs`),
+        {
+          headers: {
+            "x-org-id": other.id,
+            "x-org-admin-token": "test-org-admin-token",
+          },
+        },
+      );
+      assert.equal(cross.status, 404, "must not leak runs across tenants");
+    }
+
+    // Cleanup — runs are FK'd to the connection and will cascade if the
+    // schema sets that, but delete defensively to keep the test
+    // hermetic regardless.
+    await db
+      .delete(erpSyncRunsTable)
+      .where(eq(erpSyncRunsTable.connectionId, connectionId));
+    await db
+      .delete(erpConnectionsTable)
+      .where(eq(erpConnectionsTable.id, connectionId));
   });
 });

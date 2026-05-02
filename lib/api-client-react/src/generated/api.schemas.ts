@@ -3338,6 +3338,71 @@ export interface ErpConnectionResponse {
   connection: ErpConnection;
 }
 
+/**
+ * `skipped` is recorded when the worker picked the job up but the connection was paused at run time (no upstream call was made).
+
+ */
+export type ErpConnectionRunStatus =
+  (typeof ErpConnectionRunStatus)[keyof typeof ErpConnectionRunStatus];
+
+export const ErpConnectionRunStatus = {
+  succeeded: "succeeded",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+/**
+ * Per-entity rows ingested. Keys match the connector's `ErpEntity` enum (`suppliers`, `contracts`, `purchase_orders`, `invoices`, `payments`).
+
+ */
+export type ErpConnectionRunRecordsByEntity = { [key: string]: number };
+
+/**
+ * Per-entity upstream pages fetched in this run.
+ */
+export type ErpConnectionRunPagesByEntity = { [key: string]: number };
+
+/**
+ * Per-entity rows the writer intentionally dropped (e.g. orphan SOWs without a parent contract). Aggregated from the writer warnings so the UI can show "X rows dropped" without re-parsing the full warnings array.
+
+ */
+export type ErpConnectionRunDroppedByEntity = { [key: string]: number };
+
+export interface ErpConnectionRun {
+  id: string;
+  connectionId: string;
+  /** The `jobs.id` that produced this run, if the job row still exists. Null after the row has been pruned by the jobs housekeeping sweep.
+   */
+  jobId?: string | null;
+  /** `skipped` is recorded when the worker picked the job up but the connection was paused at run time (no upstream call was made).
+   */
+  status: ErpConnectionRunStatus;
+  startedAt: string;
+  finishedAt: string;
+  /** Wall-clock duration (`finishedAt − startedAt`). */
+  durationMs: number;
+  /** Per-entity rows ingested. Keys match the connector's `ErpEntity` enum (`suppliers`, `contracts`, `purchase_orders`, `invoices`, `payments`).
+   */
+  recordsByEntity: ErpConnectionRunRecordsByEntity;
+  /** Per-entity upstream pages fetched in this run. */
+  pagesByEntity: ErpConnectionRunPagesByEntity;
+  /** Per-entity rows the writer intentionally dropped (e.g. orphan SOWs without a parent contract). Aggregated from the writer warnings so the UI can show "X rows dropped" without re-parsing the full warnings array.
+   */
+  droppedByEntity: ErpConnectionRunDroppedByEntity;
+  /** Total rows the writer reported as successfully processed. */
+  recordsProcessed: number;
+  /** Total rows the writer reported as intentionally skipped. */
+  recordsSkipped: number;
+  /** Truncated failure message; null on success / skip. */
+  error?: string | null;
+  createdAt: string;
+}
+
+export interface ErpConnectionRunListResponse {
+  connectionId: string;
+  runs: ErpConnectionRun[];
+}
+
 export interface ErpConnectionListResponse {
   connections: ErpConnection[];
 }
@@ -4785,6 +4850,16 @@ export type ListRecentlyFailedJobsParams = {
    * @minimum 1
    * @maximum 100
    */
+  limit?: number;
+};
+
+export type ListErpConnectionRunsParams = {
+  /**
+ * Maximum number of runs to return (default 10, max 100). Returned newest-first by `startedAt`.
+
+ * @minimum 1
+ * @maximum 100
+ */
   limit?: number;
 };
 

@@ -8,10 +8,18 @@ import {
   useUpdateErpConnection,
   useSyncErpConnection,
   useTestErpConnection,
+  useListErpConnectionRuns,
   getListErpConnectionsQueryKey,
+  getListErpConnectionRunsQueryKey,
   type ErpConnection,
   type ErpAdapterDescriptor,
+  type ErpConnectionRun,
 } from "@workspace/api-client-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +47,9 @@ import {
   Loader2,
   ShieldCheck,
   KeyRound,
+  ChevronDown,
+  ChevronRight,
+  History,
 } from "lucide-react";
 
 function fmtTime(value: string | null | undefined): string {
@@ -81,6 +92,198 @@ function statusVariant(
   return "secondary";
 }
 
+function runStatusVariant(
+  status: ErpConnectionRun["status"],
+): "default" | "destructive" | "secondary" {
+  if (status === "succeeded") return "default";
+  if (status === "failed") return "destructive";
+  return "secondary";
+}
+
+/**
+ * Renders a duration as a compact human-readable string. Most ERP syncs
+ * complete in seconds-to-minutes, so we drop the millisecond precision
+ * (irrelevant for ops triage) and switch to minutes once we cross 60 s.
+ */
+function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds - minutes * 60);
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+/**
+ * Shapes the per-entity counts map into a stable display order. Coupa's
+ * five canonical entities are surfaced first; any extras (a future
+ * adapter or a renamed entity) trail in alphabetical order so the row
+ * stays predictable for screenshot-style ops sharing.
+ */
+const ENTITY_DISPLAY_ORDER: readonly string[] = [
+  "suppliers",
+  "contracts",
+  "purchase_orders",
+  "invoices",
+  "payments",
+];
+
+function orderedEntities(
+  records: Record<string, number>,
+  dropped: Record<string, number>,
+): string[] {
+  const all = new Set<string>([
+    ...Object.keys(records ?? {}),
+    ...Object.keys(dropped ?? {}),
+  ]);
+  const ordered: string[] = [];
+  for (const k of ENTITY_DISPLAY_ORDER) {
+    if (all.delete(k)) ordered.push(k);
+  }
+  ordered.push(...Array.from(all).sort());
+  return ordered;
+}
+
+interface RunsPanelProps {
+  connectionId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+function RunsPanel({
+  connectionId,
+  open,
+  onOpenChange,
+}: RunsPanelProps) {
+  // Only fetch when the panel is open. The route is fast (10-row
+  // ORDER BY query, indexed) but there's no value in pinging it for
+  // collapsed rows.
+  const runsParams = { limit: 10 } as const;
+  const runsQuery = useListErpConnectionRuns(connectionId, runsParams, {
+    query: {
+      queryKey: getListErpConnectionRunsQueryKey(connectionId, runsParams),
+      enabled: open,
+    },
+  });
+  const runs = runsQuery.data?.runs ?? [];
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mt-3">
+      <CollapsibleTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs"
+          data-testid={`btn-toggle-runs-${connectionId}`}
+        >
+          {open ? (
+            <ChevronDown className="w-3 h-3 mr-1" />
+          ) : (
+            <ChevronRight className="w-3 h-3 mr-1" />
+          )}
+          <History className="w-3 h-3 mr-1" />
+          Recent runs
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent
+        className="mt-2"
+        data-testid={`runs-panel-${connectionId}`}
+      >
+        {runsQuery.isLoading ? (
+          <p className="text-xs text-muted-foreground">Loading run history…</p>
+        ) : runsQuery.isError ? (
+          <Alert variant="destructive">
+            <AlertTitle className="text-xs">
+              Could not load run history
+            </AlertTitle>
+            <AlertDescription>
+              <TruncatedError
+                message={runsQuery.error?.message ?? "Unknown error"}
+              />
+            </AlertDescription>
+          </Alert>
+        ) : runs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No runs yet. Trigger a sync to populate this history.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {runs.map((run) => {
+              const entities = orderedEntities(
+                run.recordsByEntity,
+                run.droppedByEntity,
+              );
+              const totalDropped = Object.values(
+                run.droppedByEntity ?? {},
+              ).reduce((a, b) => a + (b ?? 0), 0);
+              return (
+                <div
+                  key={run.id}
+                  className="rounded border bg-muted/30 p-3 space-y-1.5"
+                  data-testid={`run-row-${run.id}`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <Badge variant={runStatusVariant(run.status)}>
+                      {run.status}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {fmtTime(run.startedAt)}
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">
+                      {fmtDuration(run.durationMs)}
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">
+                      {run.recordsProcessed.toLocaleString()} rows
+                    </span>
+                    {totalDropped > 0 ? (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-destructive">
+                          {totalDropped.toLocaleString()} dropped
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
+                  {entities.length > 0 ? (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground font-mono">
+                      {entities.map((entity) => {
+                        const ingested = run.recordsByEntity?.[entity] ?? 0;
+                        const dropped = run.droppedByEntity?.[entity] ?? 0;
+                        return (
+                          <span
+                            key={entity}
+                            data-testid={`run-entity-${run.id}-${entity}`}
+                          >
+                            {entity}: {ingested.toLocaleString()}
+                            {dropped > 0 ? (
+                              <span className="text-destructive">
+                                {" "}
+                                (−{dropped.toLocaleString()})
+                              </span>
+                            ) : null}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  {run.error ? (
+                    <div className="text-[11px] text-destructive break-words">
+                      <TruncatedError message={run.error} />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 interface NewConnectionForm {
   label: string;
   instanceUrl: string;
@@ -120,6 +323,17 @@ export default function Integrations() {
     | { ok: false; error: string }
     | null
   >(null);
+  // Track which per-connection runs panels are expanded. Keeping this in
+  // a Set (rather than per-row local state) lets the parent invalidate
+  // queries on Sync without forcing the panel to remount.
+  const [openRuns, setOpenRuns] = useState<Set<string>>(() => new Set());
+  const setRunsOpen = (id: string, open: boolean): void =>
+    setOpenRuns((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
 
   const adapters = adaptersQuery.data?.adapters ?? [];
   const connections = connectionsQuery.data?.connections ?? [];
@@ -206,6 +420,13 @@ export default function Integrations() {
         description: `Syncing ${c.label}…`,
       });
       await invalidateConnections();
+      // Sync runs are produced asynchronously by the worker, so the
+      // request that just queued the job won't see a new row yet.
+      // Invalidate so the next refetch (manual or background) pulls
+      // any history rows created by the worker.
+      await queryClient.invalidateQueries({
+        queryKey: getListErpConnectionRunsQueryKey(c.id),
+      });
     } catch (e) {
       toast({
         title: "Could not start sync",
@@ -611,6 +832,11 @@ export default function Integrations() {
                         </AlertDescription>
                       </Alert>
                     ) : null}
+                    <RunsPanel
+                      connectionId={c.id}
+                      open={openRuns.has(c.id)}
+                      onOpenChange={(open) => setRunsOpen(c.id, open)}
+                    />
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <Button

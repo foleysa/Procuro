@@ -78,6 +78,7 @@ import type {
   ErpAdapterListResponse,
   ErpConnectionListResponse,
   ErpConnectionResponse,
+  ErpConnectionRunListResponse,
   ErrorResponse,
   EscalationPolicy,
   EscalationPolicyList,
@@ -115,6 +116,7 @@ import type {
   ListContractsParams,
   ListDataSources200,
   ListDefensePacksParams,
+  ListErpConnectionRunsParams,
   ListIntelligenceEventsParams,
   ListIntelligenceSignalsParams,
   ListJobsParams,
@@ -5978,6 +5980,128 @@ export const useDeleteErpConnection = <
 > => {
   return useMutation(getDeleteErpConnectionMutationOptions(options));
 };
+
+/**
+ * Returns the most recent N `sync_erp_connection` worker runs for this connection, newest first. Each run row captures the wall-clock duration, per-entity rows ingested and pages fetched, per-entity dropped/skipped counts, and the terminal error message on failure. Powers the per-connection ingest history panel on the Integrations page (task #144). The on-connection `lastSyncedAt` and `lastError` are unchanged — they remain the "latest" view; this endpoint is the historical view.
+
+ * @summary List recent sync runs for this ERP connection
+ */
+export const getListErpConnectionRunsUrl = (
+  id: string,
+  params?: ListErpConnectionRunsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/integrations/connections/${id}/runs?${stringifiedParams}`
+    : `/api/integrations/connections/${id}/runs`;
+};
+
+export const listErpConnectionRuns = async (
+  id: string,
+  params?: ListErpConnectionRunsParams,
+  options?: RequestInit,
+): Promise<ErpConnectionRunListResponse> => {
+  return customFetch<ErpConnectionRunListResponse>(
+    getListErpConnectionRunsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListErpConnectionRunsQueryKey = (
+  id: string,
+  params?: ListErpConnectionRunsParams,
+) => {
+  return [
+    `/api/integrations/connections/${id}/runs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListErpConnectionRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listErpConnectionRuns>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: ListErpConnectionRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listErpConnectionRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListErpConnectionRunsQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listErpConnectionRuns>>
+  > = ({ signal }) =>
+    listErpConnectionRuns(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listErpConnectionRuns>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListErpConnectionRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listErpConnectionRuns>>
+>;
+export type ListErpConnectionRunsQueryError = ErrorType<void>;
+
+/**
+ * @summary List recent sync runs for this ERP connection
+ */
+
+export function useListErpConnectionRuns<
+  TData = Awaited<ReturnType<typeof listErpConnectionRuns>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: ListErpConnectionRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listErpConnectionRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListErpConnectionRunsQueryOptions(
+    id,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Trigger a `sync_erp_connection` job for this connection

@@ -3,7 +3,9 @@ import {
   alertsTable,
   contractsTable,
   erpConnectionsTable,
+  erpSyncRunsTable,
   orgsTable,
+  type ErpEntityCounts,
   type ErpWatermarks,
   type JobRow,
 } from "@workspace/db";
@@ -31,6 +33,7 @@ import {
 } from "./queue";
 import { UnrecoverableJobError } from "./queue";
 import { newId } from "../ids";
+import { logger } from "../logger";
 import { readRenewalAlertDays } from "../contract-settings";
 import { isStructuralIngestError } from "../structural-ingest-error";
 
@@ -306,6 +309,42 @@ export async function syncErpConnectionHandler(
     );
   }
   if (conn.status === "paused") {
+    // Capture the skip in the historical run log too — operators
+    // looking at the Integrations history want to see *why* a sync
+    // didn't actually fetch anything (paused vs. errored vs. empty).
+    const skipNow = new Date();
+    try {
+      await db.insert(erpSyncRunsTable).values({
+        id: newId("esrun"),
+        orgId,
+        connectionId: conn.id,
+        jobId: job.id,
+        status: "skipped",
+        startedAt: skipNow,
+        finishedAt: skipNow,
+        durationMs: 0,
+        recordsByEntity: {},
+        pagesByEntity: {},
+        droppedByEntity: {},
+        recordsProcessed: 0,
+        recordsSkipped: 0,
+        error: "connection paused",
+      });
+    } catch (auditErr) {
+      // Don't fail the job because the audit insert failed — but DO
+      // surface it. Silent audit drops would degrade the Integrations
+      // history panel without any operator-visible signal.
+      logger.warn(
+        {
+          err: auditErr,
+          orgId,
+          connectionId: conn.id,
+          jobId: job.id,
+          runStatus: "skipped",
+        },
+        "Failed to insert erp_sync_runs audit row (paused-skip)",
+      );
+    }
     return {
       skipped: true,
       reason: "connection paused",
@@ -345,6 +384,7 @@ export async function syncErpConnectionHandler(
     );
   }
 
+  const startedAt = new Date();
   try {
     const fetchResult = await connector.fetchAll({
       orgId,
@@ -372,16 +412,57 @@ export async function syncErpConnectionHandler(
       }
     }
 
+    const finishedAt = new Date();
     await db
       .update(erpConnectionsTable)
       .set({
         watermarks: mergedWatermarks,
-        lastSyncedAt: new Date(),
+        lastSyncedAt: finishedAt,
         lastError: null,
         status: "active",
-        updatedAt: new Date(),
+        updatedAt: finishedAt,
       })
       .where(eq(erpConnectionsTable.id, conn.id));
+
+    // Per-run audit log (task #144). Aggregate per-entity drop counts
+    // out of the writer warnings so the UI can show "X rows dropped
+    // for $entity" without re-parsing the warnings array.
+    const droppedByEntity = aggregateDroppedByEntity(writeResult.warnings);
+    try {
+      await db.insert(erpSyncRunsTable).values({
+        id: newId("esrun"),
+        orgId,
+        connectionId: conn.id,
+        jobId: job.id,
+        status: "succeeded",
+        startedAt,
+        finishedAt,
+        durationMs: Math.max(
+          0,
+          finishedAt.getTime() - startedAt.getTime(),
+        ),
+        recordsByEntity: fetchResult.recordsByEntity as ErpEntityCounts,
+        pagesByEntity: fetchResult.pagesByEntity as ErpEntityCounts,
+        droppedByEntity,
+        recordsProcessed: writeResult.recordsProcessed,
+        recordsSkipped: writeResult.recordsSkipped ?? 0,
+        error: null,
+      });
+    } catch (auditErr) {
+      // Don't fail an otherwise-successful sync because the audit
+      // insert failed — but log it so operators notice if history
+      // rows stop appearing on the Integrations page.
+      logger.warn(
+        {
+          err: auditErr,
+          orgId,
+          connectionId: conn.id,
+          jobId: job.id,
+          runStatus: "succeeded",
+        },
+        "Failed to insert erp_sync_runs audit row (succeeded)",
+      );
+    }
 
     return {
       connectionId: conn.id,
@@ -397,20 +478,80 @@ export async function syncErpConnectionHandler(
     // the Jobs table. Status flips to "error" but watermarks stay
     // exactly where they were so a retry resumes mid-feed.
     const message = err instanceof Error ? err.message : String(err);
+    const finishedAt = new Date();
     try {
       await db
         .update(erpConnectionsTable)
         .set({
           lastError: message.slice(0, 2000),
           status: "error",
-          updatedAt: new Date(),
+          updatedAt: finishedAt,
         })
         .where(eq(erpConnectionsTable.id, conn.id));
     } catch {
       // Don't mask the original error if the status update itself fails.
     }
+    try {
+      await db.insert(erpSyncRunsTable).values({
+        id: newId("esrun"),
+        orgId,
+        connectionId: conn.id,
+        jobId: job.id,
+        status: "failed",
+        startedAt,
+        finishedAt,
+        durationMs: Math.max(
+          0,
+          finishedAt.getTime() - startedAt.getTime(),
+        ),
+        recordsByEntity: {},
+        pagesByEntity: {},
+        droppedByEntity: {},
+        recordsProcessed: 0,
+        recordsSkipped: 0,
+        error: message.slice(0, 2000),
+      });
+    } catch (auditErr) {
+      // Don't mask the original failure if the audit insert itself
+      // fails — but log a warning so we notice when failure rows
+      // stop appearing on the Integrations history panel.
+      logger.warn(
+        {
+          err: auditErr,
+          orgId,
+          connectionId: conn.id,
+          jobId: job.id,
+          runStatus: "failed",
+          originalError: message.slice(0, 200),
+        },
+        "Failed to insert erp_sync_runs audit row (failed)",
+      );
+    }
     wrapStructuralError(err);
   }
+}
+
+/**
+ * Tally writer-emitted `IngestWarning`s by the entity name they
+ * reference (the leading segment of `field`, e.g. `suppliers[3]`
+ * → `suppliers`). Falls back to the warning `code` when no field
+ * path is present so unknown-record-type drops still get a count.
+ */
+function aggregateDroppedByEntity(
+  warnings: ReadonlyArray<{ field?: string; code: string }> | undefined,
+): ErpEntityCounts {
+  const out: ErpEntityCounts = {};
+  if (!warnings) return out;
+  for (const w of warnings) {
+    let key = "";
+    if (typeof w.field === "string" && w.field.length > 0) {
+      const m = /^([a-zA-Z0-9_]+)/.exec(w.field);
+      if (m) key = m[1] ?? "";
+    }
+    if (!key) key = w.code ?? "unknown";
+    out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
 }
 
 /**

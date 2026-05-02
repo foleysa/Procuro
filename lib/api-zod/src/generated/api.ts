@@ -4131,6 +4131,88 @@ export const DeleteErpConnectionHeader = zod.object({
 });
 
 /**
+ * Returns the most recent N `sync_erp_connection` worker runs for this connection, newest first. Each run row captures the wall-clock duration, per-entity rows ingested and pages fetched, per-entity dropped/skipped counts, and the terminal error message on failure. Powers the per-connection ingest history panel on the Integrations page (task #144). The on-connection `lastSyncedAt` and `lastError` are unchanged — they remain the "latest" view; this endpoint is the historical view.
+
+ * @summary List recent sync runs for this ERP connection
+ */
+export const ListErpConnectionRunsParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const listErpConnectionRunsQueryLimitDefault = 10;
+export const listErpConnectionRunsQueryLimitMax = 100;
+
+export const ListErpConnectionRunsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listErpConnectionRunsQueryLimitMax)
+    .default(listErpConnectionRunsQueryLimitDefault)
+    .describe(
+      "Maximum number of runs to return (default 10, max 100). Returned newest-first by `startedAt`.\n",
+    ),
+});
+
+export const ListErpConnectionRunsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListErpConnectionRunsResponse = zod.object({
+  connectionId: zod.string(),
+  runs: zod.array(
+    zod.object({
+      id: zod.string(),
+      connectionId: zod.string(),
+      jobId: zod
+        .string()
+        .nullish()
+        .describe(
+          "The `jobs.id` that produced this run, if the job row still exists. Null after the row has been pruned by the jobs housekeeping sweep.\n",
+        ),
+      status: zod
+        .enum(["succeeded", "failed", "skipped"])
+        .describe(
+          "`skipped` is recorded when the worker picked the job up but the connection was paused at run time (no upstream call was made).\n",
+        ),
+      startedAt: zod.coerce.date(),
+      finishedAt: zod.coerce.date(),
+      durationMs: zod
+        .number()
+        .describe("Wall-clock duration (`finishedAt − startedAt`)."),
+      recordsByEntity: zod
+        .record(zod.string(), zod.number())
+        .describe(
+          "Per-entity rows ingested. Keys match the connector's `ErpEntity` enum (`suppliers`, `contracts`, `purchase_orders`, `invoices`, `payments`).\n",
+        ),
+      pagesByEntity: zod
+        .record(zod.string(), zod.number())
+        .describe("Per-entity upstream pages fetched in this run."),
+      droppedByEntity: zod
+        .record(zod.string(), zod.number())
+        .describe(
+          'Per-entity rows the writer intentionally dropped (e.g. orphan SOWs without a parent contract). Aggregated from the writer warnings so the UI can show \"X rows dropped\" without re-parsing the full warnings array.\n',
+        ),
+      recordsProcessed: zod
+        .number()
+        .describe("Total rows the writer reported as successfully processed."),
+      recordsSkipped: zod
+        .number()
+        .describe("Total rows the writer reported as intentionally skipped."),
+      error: zod
+        .string()
+        .nullish()
+        .describe("Truncated failure message; null on success \/ skip."),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
  * @summary Trigger a `sync_erp_connection` job for this connection
  */
 export const SyncErpConnectionParams = zod.object({

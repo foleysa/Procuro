@@ -2,11 +2,12 @@ import { Router, type IRouter } from "express";
 import {
   db,
   erpConnectionsTable,
+  erpSyncRunsTable,
   erpAdapterKeyValues,
   erpConnectionStatusValues,
   type ErpAdapterKey,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requireOrgAdmin } from "../lib/org-admin";
@@ -446,6 +447,94 @@ router.post(
       settings: settingsValid.data,
     });
     res.status(result.ok ? 200 : 502).json(result);
+  },
+);
+
+// ---------- Recent sync runs (audit history) -------------------------
+
+/**
+ * Per-connection upper bound on the recent-runs window. Operators get
+ * a meaningful "last few syncs" view without us paging through months
+ * of history; if they want more they should look at the System / Jobs
+ * page or query the DB directly. 100 keeps the response payload well
+ * under 100 KB even with a chatty multi-entity feed.
+ */
+const RUNS_DEFAULT_LIMIT = 10;
+const RUNS_MAX_LIMIT = 100;
+
+const RunsQuerySchema = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(RUNS_MAX_LIMIT)
+    .optional(),
+});
+
+router.get(
+  "/integrations/connections/:id/runs",
+  tenantMiddleware,
+  requireOrgAdmin,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const id = String(req.params["id"] ?? "");
+    const parsed = RunsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ error: "Invalid query", details: parsed.error.format() });
+      return;
+    }
+    const limit = parsed.data.limit ?? RUNS_DEFAULT_LIMIT;
+
+    // Confirm the connection belongs to the requesting tenant before
+    // returning history — otherwise an operator on org A could read
+    // org B's run timestamps just by guessing connection IDs.
+    const [conn] = await db
+      .select({ id: erpConnectionsTable.id })
+      .from(erpConnectionsTable)
+      .where(
+        and(
+          eq(erpConnectionsTable.orgId, orgId),
+          eq(erpConnectionsTable.id, id),
+        ),
+      );
+    if (!conn) {
+      res.status(404).json({ error: "Connection not found" });
+      return;
+    }
+
+    const rows = await db
+      .select()
+      .from(erpSyncRunsTable)
+      .where(
+        and(
+          eq(erpSyncRunsTable.orgId, orgId),
+          eq(erpSyncRunsTable.connectionId, id),
+        ),
+      )
+      .orderBy(desc(erpSyncRunsTable.startedAt))
+      .limit(limit);
+
+    res.json({
+      connectionId: id,
+      runs: rows.map((r) => ({
+        id: r.id,
+        connectionId: r.connectionId,
+        jobId: r.jobId,
+        status: r.status,
+        startedAt: r.startedAt.toISOString(),
+        finishedAt: r.finishedAt.toISOString(),
+        durationMs: r.durationMs,
+        recordsByEntity: r.recordsByEntity,
+        pagesByEntity: r.pagesByEntity,
+        droppedByEntity: r.droppedByEntity,
+        recordsProcessed: r.recordsProcessed,
+        recordsSkipped: r.recordsSkipped,
+        error: r.error,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
   },
 );
 
