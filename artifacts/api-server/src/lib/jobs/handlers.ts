@@ -757,11 +757,18 @@ export async function runRenewalAlertScanHandler(
         //     re-sending would spam the owner.
         // Tenants that haven't opted in are tallied under
         // `ownerEmailsDisabled` so the System / Jobs page can show
-        // "we found a renewal but didn't email anyone — turn this on
-        // in Settings to start notifying owners".
+        // "we found a renewal we WOULD have emailed an owner about —
+        // turn this on in Settings to start notifying them". To keep
+        // that metric honest we only count contracts whose owner is
+        // a deliverable email; null/free-form owners would have been
+        // skipped anyway and shouldn't inflate the "you're missing
+        // notifications" nudge.
         if (insertedAlertId) {
           if (!emailEnabled) {
-            ownerEmailsDisabled += 1;
+            const ownerEmail = (r.owner ?? "").trim();
+            if (ownerEmail && RENEWAL_OWNER_EMAIL_RE.test(ownerEmail)) {
+              ownerEmailsDisabled += 1;
+            }
           } else {
             const outcome = await maybeSendRenewalOwnerEmail({
               ownerRaw: r.owner,
