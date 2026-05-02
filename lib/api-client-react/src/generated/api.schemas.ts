@@ -425,6 +425,10 @@ export type SupplierSpendRollupMonthlyItem = {
 export type SupplierSpendRollupTopCategoriesItem = {
   categoryId: string;
   categoryName: string;
+  /** Tenant `categories.code` for this row. Used by the Command Center to look up the matching CPI sub-index (#68) and any other category-keyed market signals.  */
+  categoryCode?: string | null;
+  /** Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this category maps onto a consumer-facing CPI sub-series. Non-null marks the category as eligible for the CPI pushback trend chart on Supplier 360. Null for direct-materials categories whose right benchmark is PPI / spot, not CPI.  */
+  cpiScopeCode?: string | null;
   spendUsd: number;
 };
 
@@ -1277,6 +1281,10 @@ export interface ContractChildSow {
 }
 
 export type ContractDetail = Contract & {
+  /** Tenant `categories.code` for this contract's primary category, surfaced on the detail payload so the Command Center can look up the matching CPI sub-index (#68) and other category-keyed market signals without an extra round-trip. Null when the contract has no category.  */
+  categoryCode?: string | null;
+  /** Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this contract's category maps onto a consumer-facing CPI sub-series. Non-null marks the contract as eligible for the CPI pushback trend chart shown alongside the supplier price history. Null for direct-materials contracts whose right benchmark is PPI / spot, not CPI.  */
+  cpiScopeCode?: string | null;
   items: ContractItem[];
   linkedOpportunities: ContractLinkedOpportunity[];
   /** Most-recent FX rate observations for the contract's

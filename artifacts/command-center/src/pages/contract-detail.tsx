@@ -62,6 +62,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDate, formatDateTime, leverLabel } from "@/lib/format";
 import { FxTrendChart } from "@/components/fx-trend-chart";
+import { BlsTrendChart } from "@/components/bls-trend-chart";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
 import { DerivedStatusBadge } from "./contracts";
@@ -365,6 +366,20 @@ export default function ContractDetail() {
           title={`FX exposure — ${fxPair}`}
           description={`Daily ECB reference rates for the contract's billing currency. Movement here is an early indicator that the ${contract.billingCurrency ?? "billing"} side of this contract is drifting against your USD baseline.`}
           emptyStateHint="Backfill FX history from the Collector Workbench to populate this chart."
+        />
+      )}
+
+      {contract.cpiScopeCode && (
+        <BlsTrendChart
+          series={[
+            {
+              label: cpiSeriesLabel(contract.cpiScopeCode),
+              categoryCode: contract.cpiScopeCode,
+            },
+          ]}
+          title={`CPI pushback — ${cpiSeriesLabel(contract.cpiScopeCode)}`}
+          description={`Monthly BLS CPI sub-index for ${cpiSeriesLabel(contract.cpiScopeCode)}. When this supplier asks for a price increase, compare the ask to the matching CPI move to push back on anything that runs ahead of the index.`}
+          emptyStateHint="Run the BLS Economic Index collector from the Collector Workbench to seed the CPI sub-series."
         />
       )}
 
@@ -735,6 +750,18 @@ function fmtAuditValue(v: unknown): string {
 function isoDateChanged(localYmd: string, currentIso: string | null): boolean {
   const currentYmd = currentIso ? currentIso.slice(0, 10) : "";
   return localYmd !== currentYmd;
+}
+
+/**
+ * Pretty-print a canonical BLS CPI scope code (`FOOD_AT_HOME`,
+ * `ENERGY`, …) into a chart-friendly label. Used by the CPI pushback
+ * trend chart on contract / supplier detail screens.
+ */
+function cpiSeriesLabel(scopeCode: string): string {
+  return `CPI: ${scopeCode
+    .split("_")
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ")}`;
 }
 
 /**

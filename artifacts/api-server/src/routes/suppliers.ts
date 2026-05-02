@@ -28,6 +28,7 @@ import {
   renderSupplierIntelligenceHeadline,
   type SupplierIntelligenceSignalType,
 } from "../lib/supplier-intelligence";
+import { cpiScopeForCategoryCode } from "../lib/intelligence/cpi-mapping";
 
 const router: IRouter = Router();
 
@@ -206,11 +207,15 @@ async function loadSupplierDetail(
       GROUP BY 1
       ORDER BY 1 ASC
     `),
-    // Top-N category breakdown for the Spend tab.
+    // Top-N category breakdown for the Spend tab. `cat.code` is
+    // surfaced alongside the display name so the Command Center can
+    // hang the CPI pushback trend chart (#68) off the matching
+    // consumer-facing categories without an extra round-trip.
     db.execute(sql`
       SELECT
         cat.id AS category_id,
         cat.name AS category_name,
+        cat.code AS category_code,
         COALESCE(SUM(pol.extended_usd::numeric), 0) AS spend_usd
       FROM po_lines pol
       JOIN purchase_orders po ON po.id = pol.po_id
@@ -218,7 +223,7 @@ async function loadSupplierDetail(
       WHERE pol.org_id = ${orgId}
         AND po.supplier_id = ${id}
         AND pol.order_date >= NOW() - INTERVAL '365 days'
-      GROUP BY cat.id, cat.name
+      GROUP BY cat.id, cat.name, cat.code
       ORDER BY spend_usd DESC
       LIMIT 10
     `),
@@ -509,11 +514,14 @@ async function loadSupplierDetail(
     topCategoryRows.rows as Array<{
       category_id: string;
       category_name: string;
+      category_code: string | null;
       spend_usd: string;
     }>
   ).map((r) => ({
     categoryId: r.category_id,
     categoryName: r.category_name,
+    categoryCode: r.category_code,
+    cpiScopeCode: cpiScopeForCategoryCode(r.category_code),
     spendUsd: Number(r.spend_usd),
   }));
 

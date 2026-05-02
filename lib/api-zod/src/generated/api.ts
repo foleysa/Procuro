@@ -584,6 +584,18 @@ export const GetSupplierResponse = zod
             zod.object({
               categoryId: zod.string(),
               categoryName: zod.string(),
+              categoryCode: zod
+                .string()
+                .nullish()
+                .describe(
+                  "Tenant `categories.code` for this row. Used by the Command Center to look up the matching CPI sub-index (#68) and any other category-keyed market signals. ",
+                ),
+              cpiScopeCode: zod
+                .string()
+                .nullish()
+                .describe(
+                  "Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this category maps onto a consumer-facing CPI sub-series. Non-null marks the category as eligible for the CPI pushback trend chart on Supplier 360. Null for direct-materials categories whose right benchmark is PPI \/ spot, not CPI. ",
+                ),
               spendUsd: zod.number(),
             }),
           ),
@@ -796,6 +808,18 @@ export const PatchSupplierResponse = zod
             zod.object({
               categoryId: zod.string(),
               categoryName: zod.string(),
+              categoryCode: zod
+                .string()
+                .nullish()
+                .describe(
+                  "Tenant `categories.code` for this row. Used by the Command Center to look up the matching CPI sub-index (#68) and any other category-keyed market signals. ",
+                ),
+              cpiScopeCode: zod
+                .string()
+                .nullish()
+                .describe(
+                  "Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this category maps onto a consumer-facing CPI sub-series. Non-null marks the category as eligible for the CPI pushback trend chart on Supplier 360. Null for direct-materials categories whose right benchmark is PPI \/ spot, not CPI. ",
+                ),
               spendUsd: zod.number(),
             }),
           ),
@@ -4658,6 +4682,18 @@ export const GetContractResponse = zod
   })
   .and(
     zod.object({
+      categoryCode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Tenant `categories.code` for this contract's primary category, surfaced on the detail payload so the Command Center can look up the matching CPI sub-index (#68) and other category-keyed market signals without an extra round-trip. Null when the contract has no category. ",
+        ),
+      cpiScopeCode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this contract's category maps onto a consumer-facing CPI sub-series. Non-null marks the contract as eligible for the CPI pushback trend chart shown alongside the supplier price history. Null for direct-materials contracts whose right benchmark is PPI \/ spot, not CPI. ",
+        ),
       items: zod.array(
         zod.object({
           id: zod.string(),
@@ -4882,6 +4918,18 @@ export const PatchContractResponse = zod
   })
   .and(
     zod.object({
+      categoryCode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Tenant `categories.code` for this contract's primary category, surfaced on the detail payload so the Command Center can look up the matching CPI sub-index (#68) and other category-keyed market signals without an extra round-trip. Null when the contract has no category. ",
+        ),
+      cpiScopeCode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Canonical BLS CPI scope code (`FOOD_AT_HOME`, `ENERGY`, `APPAREL`, …) when this contract's category maps onto a consumer-facing CPI sub-series. Non-null marks the contract as eligible for the CPI pushback trend chart shown alongside the supplier price history. Null for direct-materials contracts whose right benchmark is PPI \/ spot, not CPI. ",
+        ),
       items: zod.array(
         zod.object({
           id: zod.string(),

@@ -23,6 +23,7 @@ import {
   type InsightSource,
 } from "../lib/insight-sources";
 import { readRenewalAlertDays } from "../lib/contract-settings";
+import { cpiScopeForCategoryCode } from "../lib/intelligence/cpi-mapping";
 
 const router: IRouter = Router();
 
@@ -488,6 +489,13 @@ async function loadContractDetail(
       categoryName: row.categoryName,
       threshold,
     }),
+    // CPI pushback context (#68): expose the contract's category code
+    // and — when it maps to a consumer-facing CPI sub-series — the
+    // canonical BLS scope code. Lets the Command Center render the
+    // matching CPI trend chart alongside the supplier price history
+    // without re-running the lever-side mapping client-side.
+    categoryCode: row.categoryCode,
+    cpiScopeCode: cpiScopeForCategoryCode(row.categoryCode),
     items: items.map((it) => ({
       id: it.id,
       sku: it.sku,

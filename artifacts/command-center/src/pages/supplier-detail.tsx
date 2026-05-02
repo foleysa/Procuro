@@ -80,6 +80,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDate, formatDateTime } from "@/lib/format";
 import { FxTrendChart } from "@/components/fx-trend-chart";
+import { BlsTrendChart } from "@/components/bls-trend-chart";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
 import { DerivedStatusBadge } from "./contracts";
@@ -868,6 +869,22 @@ function SpendTab({ spend }: { spend: SupplierSpendRollup }) {
       })),
     [spend.monthly],
   );
+  // CPI pushback context (#68): collapse the supplier's top categories
+  // down to the unique BLS CPI scopes they map onto. Direct-materials
+  // categories are intentionally unmapped (they belong to the PPI/
+  // spot-vs-contract levers), so this list is small in practice.
+  const cpiSeries = useMemo(() => {
+    const seen = new Map<string, { label: string; categoryCode: string }>();
+    for (const c of spend.topCategories) {
+      const scope = c.cpiScopeCode;
+      if (!scope || seen.has(scope)) continue;
+      seen.set(scope, {
+        label: cpiSeriesLabel(scope),
+        categoryCode: scope,
+      });
+    }
+    return Array.from(seen.values());
+  }, [spend.topCategories]);
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       <Card className="lg:col-span-2" data-testid="card-spend-chart">
@@ -924,7 +941,19 @@ function SpendTab({ spend }: { spend: SupplierSpendRollup }) {
                   className="flex items-center justify-between py-2"
                   data-testid={`row-category-${c.categoryId}`}
                 >
-                  <span className="truncate pr-2">{c.categoryName}</span>
+                  <span className="truncate pr-2 flex items-center gap-2">
+                    {c.categoryName}
+                    {c.cpiScopeCode ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] font-normal"
+                        data-testid={`badge-cpi-${c.categoryId}`}
+                        title={`Mapped to BLS CPI sub-series ${c.cpiScopeCode}. The CPI pushback chart below shows its trend.`}
+                      >
+                        CPI
+                      </Badge>
+                    ) : null}
+                  </span>
                   <span className="tabular-nums text-muted-foreground whitespace-nowrap">
                     {formatUsd(c.spendUsd, { compact: true })}
                   </span>
@@ -934,8 +963,33 @@ function SpendTab({ spend }: { spend: SupplierSpendRollup }) {
           )}
         </CardContent>
       </Card>
+
+      {cpiSeries.length > 0 && (
+        <div className="lg:col-span-3" data-testid="card-cpi-pushback">
+          <BlsTrendChart
+            series={cpiSeries}
+            title="CPI pushback — relevant sub-indexes"
+            description="Monthly BLS CPI sub-series for the consumer-facing categories this supplier serves. When the supplier asks for a price increase citing inflation, compare the ask to the matching CPI move and push back on anything that runs ahead of the index."
+            emptyStateHint="Run the BLS Economic Index collector from the Collector Workbench to seed the CPI sub-series."
+          />
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * Pretty-print a canonical BLS CPI scope code (`FOOD_AT_HOME`,
+ * `ENERGY`, …) into a chart-friendly label. Mirrors the helper on
+ * `contract-detail.tsx` — we keep them local rather than extracting a
+ * shared util because the formatting is one line and a shared module
+ * would invert the dependency direction (page → util → page).
+ */
+function cpiSeriesLabel(scopeCode: string): string {
+  return `CPI: ${scopeCode
+    .split("_")
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ")}`;
 }
 
 // ---------------------------------------------------------------------
