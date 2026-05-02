@@ -25,6 +25,7 @@ import {
   type AlertChannelKind,
   type AlertSeverity,
   type AlertSubscription,
+  type ChannelTestResultStatus,
   type OrgSettingsAuditEntry,
 } from "@workspace/api-client-react";
 
@@ -566,15 +567,66 @@ function SettingsHistoryRow({ entry }: { entry: OrgSettingsAuditEntry }) {
 
 // ============================ Channels ============================
 
+// Inline result of the most recent "Send test" click, keyed by
+// channel id so each row can render its own status independently.
+// We deliberately keep this in component state (not a query cache)
+// because the test result is ephemeral diagnostic feedback for the
+// operator who just clicked the button — it shouldn't survive a
+// page refresh and shouldn't be polled. Reuses the generated enum
+// type so the UI can't drift from the OpenAPI contract.
+interface ChannelTestRecord {
+  status: ChannelTestResultStatus;
+  error: string | null;
+  providerMessageId: string | null;
+  httpStatus: number | null;
+  at: number;
+}
+
 function ChannelsSection() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
+  const [testResults, setTestResults] = useState<
+    Record<string, ChannelTestRecord>
+  >({});
+  // Per-id pending set so concurrent "Send test" clicks across
+  // multiple rows each render their own spinner. Tracking via the
+  // shared mutation's `variables` would only mark the most-recent
+  // call as pending and leave earlier rows looking idle.
+  const [pendingTestIds, setPendingTestIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const channelsQ = useListAlertChannels({
     query: { queryKey: getListAlertChannelsQueryKey() },
   });
   const channels = channelsQ.data?.items ?? [];
+
+  // Drop test results / pending markers for channels that have been
+  // deleted, so the in-memory map can't grow unboundedly during a
+  // long settings session and stale rows can't confuse the operator
+  // if a channel id is ever reused.
+  useEffect(() => {
+    const liveIds = new Set(channels.map((c) => c.id));
+    setTestResults((prev) => {
+      let changed = false;
+      const next: Record<string, ChannelTestRecord> = {};
+      for (const [id, rec] of Object.entries(prev)) {
+        if (liveIds.has(id)) next[id] = rec;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    setPendingTestIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (liveIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [channels]);
 
   const createM = useCreateAlertChannel({
     mutation: {
@@ -612,26 +664,78 @@ function ChannelsSection() {
         }),
     },
   });
-  const testM = useTestAlertChannel({
-    mutation: {
-      onSuccess: (result) => {
-        toast({
-          title: `Test ${result.status}`,
-          description: result.error
-            ? result.error
-            : result.providerMessageId
-              ? `provider message id: ${result.providerMessageId}`
-              : "Adapter accepted the test payload.",
-        });
-      },
-      onError: (e: Error) =>
-        toast({
-          title: "Test failed",
-          description: String(e),
-          variant: "destructive",
-        }),
-    },
-  });
+  const testM = useTestAlertChannel();
+
+  // We don't pass onSuccess/onError into useMutation because the
+  // shared `testM.variables?.id` only reflects the most-recently
+  // dispatched call. Driving the request via `mutateAsync` lets us
+  // associate each in-flight call with its own channel id, so
+  // concurrent Send-test clicks across rows each get their own
+  // pending spinner and final inline result.
+  const sendTest = async (channelId: string) => {
+    if (pendingTestIds.has(channelId)) return;
+    setPendingTestIds((prev) => {
+      const next = new Set(prev);
+      next.add(channelId);
+      return next;
+    });
+    try {
+      const result = await testM.mutateAsync({ id: channelId });
+      // Stash the result on the row so the operator can see it
+      // without having to keep the toast pinned. The toast is the
+      // accessibility / "this just happened" notification; the
+      // inline badge + error string is the durable record they can
+      // re-read while iterating on a webhook URL or email
+      // recipient list.
+      setTestResults((prev) => ({
+        ...prev,
+        [channelId]: {
+          status: result.status,
+          error: result.error ?? null,
+          providerMessageId: result.providerMessageId ?? null,
+          httpStatus: result.httpStatus ?? null,
+          at: Date.now(),
+        },
+      }));
+      toast({
+        title: `Test ${result.status}`,
+        description: result.error
+          ? result.error
+          : result.providerMessageId
+            ? `provider message id: ${result.providerMessageId}`
+            : "Adapter accepted the test payload.",
+        variant: result.status === "failed" ? "destructive" : "default",
+      });
+    } catch (e) {
+      // Network / 4xx-from-our-API failure (distinct from the
+      // adapter returning a `failed` ChannelTestResult, which
+      // arrives via the success branch above). Surface the same way
+      // so the row never gets "stuck" in a pending state.
+      const msg = e instanceof Error ? e.message : String(e);
+      setTestResults((prev) => ({
+        ...prev,
+        [channelId]: {
+          status: "failed",
+          error: msg,
+          providerMessageId: null,
+          httpStatus: null,
+          at: Date.now(),
+        },
+      }));
+      toast({
+        title: "Test failed",
+        description: msg,
+        variant: "destructive",
+      });
+    } finally {
+      setPendingTestIds((prev) => {
+        if (!prev.has(channelId)) return prev;
+        const next = new Set(prev);
+        next.delete(channelId);
+        return next;
+      });
+    }
+  };
 
   return (
     <Card>
@@ -672,7 +776,7 @@ function ChannelsSection() {
               >
                 <ChannelKindIcon kind={c.kind} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium flex items-center gap-2">
+                  <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
                     {c.name}
                     <Badge variant="outline" className="text-[10px]">
                       {c.kind}
@@ -685,10 +789,19 @@ function ChannelsSection() {
                         disabled
                       </Badge>
                     )}
+                    <ChannelTestResultBadge
+                      record={testResults[c.id]}
+                      pending={pendingTestIds.has(c.id)}
+                      channelId={c.id}
+                    />
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5 truncate">
                     {summarizeChannelConfig(c)}
                   </div>
+                  <ChannelTestResultDetail
+                    record={testResults[c.id]}
+                    channelId={c.id}
+                  />
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Switch
@@ -701,13 +814,13 @@ function ChannelsSection() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={
-                      testM.isPending && testM.variables?.id === c.id
-                    }
-                    onClick={() => testM.mutate({ id: c.id })}
+                    disabled={pendingTestIds.has(c.id)}
+                    onClick={() => {
+                      void sendTest(c.id);
+                    }}
                     data-testid={`button-test-channel-${c.id}`}
                   >
-                    Test
+                    {pendingTestIds.has(c.id) ? "Sending…" : "Send test"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -1189,5 +1302,97 @@ function summarizeChannelConfig(c: AlertChannel): string {
   }
   const url = (cfg["url"] as string | undefined) ?? "";
   return url ? `url: ${url}` : "no url";
+}
+
+// Inline status pill rendered next to the channel name. Picks a
+// shadcn `Badge` variant per outcome so a glance at the row tells
+// the operator whether the most recent test landed:
+//   - delivered → default/green-ish (real provider accepted it)
+//   - simulated → secondary (we'd have sent, but no SendGrid key /
+//     similar — useful in dev / unconfigured prod)
+//   - skipped   → outline (channel disabled or otherwise no-op)
+//   - failed    → destructive (operator needs to act)
+//   - pending   → outline with a spinner glyph
+//   - undefined → render nothing (no test has been clicked yet)
+function ChannelTestResultBadge({
+  record,
+  pending,
+  channelId,
+}: {
+  record: ChannelTestRecord | undefined;
+  pending: boolean;
+  channelId: string;
+}) {
+  if (pending) {
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] gap-1"
+        data-testid={`badge-test-channel-${channelId}-pending`}
+      >
+        <Loader2 className="w-3 h-3 animate-spin" />
+        sending…
+      </Badge>
+    );
+  }
+  if (!record) return null;
+  const variant: "default" | "secondary" | "outline" | "destructive" =
+    record.status === "delivered"
+      ? "default"
+      : record.status === "failed"
+        ? "destructive"
+        : record.status === "simulated"
+          ? "secondary"
+          : "outline";
+  return (
+    <Badge
+      variant={variant}
+      className="text-[10px]"
+      data-testid={`badge-test-channel-${channelId}-${record.status}`}
+    >
+      test {record.status}
+    </Badge>
+  );
+}
+
+// Second line under the channel summary that surfaces the actionable
+// detail of the last test result — the error string for failures, or
+// the provider message id / HTTP status for successes — so the
+// operator doesn't have to keep the toast pinned while iterating on
+// a webhook URL.
+function ChannelTestResultDetail({
+  record,
+  channelId,
+}: {
+  record: ChannelTestRecord | undefined;
+  channelId: string;
+}) {
+  if (!record) return null;
+  const tone =
+    record.status === "failed"
+      ? "text-destructive"
+      : "text-muted-foreground";
+  let body: string;
+  if (record.error) {
+    body = record.error;
+  } else if (record.providerMessageId) {
+    body = `provider message id: ${record.providerMessageId}`;
+  } else if (record.status === "simulated") {
+    body =
+      "Adapter accepted the test payload (delivery simulated — no provider key configured).";
+  } else if (record.status === "skipped") {
+    body = "Channel adapter skipped delivery (channel disabled?).";
+  } else {
+    body = "Adapter accepted the test payload.";
+  }
+  return (
+    <div
+      className={`text-xs mt-0.5 break-words ${tone}`}
+      data-testid={`text-test-channel-${channelId}-detail`}
+    >
+      {body}
+      {record.httpStatus !== null ? ` (HTTP ${record.httpStatus})` : ""}
+    </div>
+  );
 }
 

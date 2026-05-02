@@ -93,6 +93,7 @@
     "@types/papaparse": "^5.5.2",
     "@workspace/intelligence": "workspace:*",
     "jszip": "^3.10.1",
+    "mermaid": "^11.14.0",
     "papaparse": "^5.5.3"
   }
 }
