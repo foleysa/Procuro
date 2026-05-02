@@ -1,22 +1,24 @@
 /**
- * Integration test for `POST /api/ingest/csv-stream` covering the higher-risk
- * non-`suppliers` entities — `invoices`, `po_lines`, `purchase_orders`,
- * `payments`, and `shipments` — with a multi-batch CSV each (>2 *
- * `BATCH_SIZE` rows; see `TARGET_ROWS` for the rationale on file size vs.
- * row count).
+ * Integration test for `POST /api/ingest/csv-stream` covering every
+ * higher-risk non-`suppliers` entity — `invoices`, `po_lines`,
+ * `purchase_orders`, `payments`, `shipments`, `statements_of_work`,
+ * `rate_cards`, `rate_card_lines`, and `time_entries` — with a CSV that
+ * exceeds the per-entity row budget (`TARGET_ROWS`; configurable via
+ * `CSV_STREAM_FIXTURE_ROWS` for ad-hoc stress runs).
  *
  * Why this exists
  * ---------------
  * `csv-stream-large.test.ts` only exercises `suppliers`, which has the
  * simplest per-batch logic (no foreign-key lookups). The streaming endpoint
- * also accepts seven other entities. The highest-volume entity in real
+ * accepts eleven other entities. The highest-volume entity in real
  * customer data — `po_lines` — has the most complex per-batch logic: it
  * runs grouped lookups against `purchase_orders` AND `categories` for every
- * batch before the upsert. `invoices`, `purchase_orders`, `payments`, and
- * `shipments` each run one or two grouped foreign-key lookups per batch
- * before their upsert. A regression in any of those lookup paths would
- * silently drop customer data and the suppliers-only test would not catch
- * it.
+ * batch before the upsert. `invoices`, `purchase_orders`, `payments`,
+ * `shipments`, `statements_of_work`, `rate_cards`, `rate_card_lines`,
+ * and `time_entries` each run one to four grouped foreign-key lookups
+ * per batch before their upsert. A regression in any of those lookup
+ * paths would silently drop customer data and the suppliers-only test
+ * would not catch it.
  *
  * What this verifies (per entity)
  * -------------------------------
@@ -58,14 +60,19 @@ process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 
 import {
   db,
+  contractsTable,
   invoicesTable,
   paymentsTable,
   poLinesTable,
   purchaseOrdersTable,
+  rateCardsTable,
+  rateCardLinesTable,
   shipmentsTable,
+  statementsOfWorkTable,
+  timeEntriesTable,
   pool,
 } from "@workspace/db";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import app from "../src/app";
 import { parseTerminalNdjsonEvent } from "./helpers/ndjson";
 import {
@@ -75,15 +82,22 @@ import {
   openAsBlob,
   pickOrgId,
   seedCategories,
+  seedContracts,
   seedInvoices,
   seedPurchaseOrders,
+  seedRateCards,
+  seedStatementsOfWork,
   seedSuppliers,
   startServer,
   writeInvoicesCsvSync,
   writePaymentsCsvSync,
   writePoLinesCsvSync,
   writePurchaseOrdersCsvSync,
+  writeRateCardLinesCsvSync,
+  writeRateCardsCsvSync,
   writeShipmentsCsvSync,
+  writeStatementsOfWorkCsvSync,
+  writeTimeEntriesCsvSync,
 } from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `csvstreamentities-${Date.now()}-${process.pid}`;
@@ -123,6 +137,14 @@ const PARENT_CATEGORIES = 5;
 // `invoices` is exercised — i.e. the lookup map has multiple hits per batch
 // rather than a single hit which would fail to catch a misplaced filter.
 const PARENT_INVOICES = 50;
+// Dedicated parent contracts / SOWs / rate cards for the services-taxonomy
+// entity variants (`statements_of_work`, `rate_cards`, `rate_card_lines`,
+// `time_entries`). Same rationale as the other parent counts — small enough
+// that the grouped FK lookup fits in a single query, large enough that each
+// batch's lookup map has multiple hits.
+const PARENT_CONTRACTS = 50;
+const PARENT_SOWS = 50;
+const PARENT_RATE_CARDS = 50;
 
 /** Upload a CSV via the multipart streaming endpoint. */
 async function uploadCsv(args: {
@@ -184,12 +206,17 @@ test("streaming CSV ingest of large files lands every row for every supported en
   /**
    * One row per CSV-streaming entity covered by this test. Each variant:
    * - prepares the parent rows the per-batch lookups depend on (`prepare`),
-   * - writes a multi-batch single-entity CSV (`writeCsv`), and
-   * - identifies the table + child external-id prefix used to verify and
-   *   count the inserted rows (`childTable`, `childExtIdPrefix`).
+   * - writes a multi-batch single-entity CSV (`writeCsv`; >TARGET_ROWS), and
+   * - counts how many of THIS test run's rows actually landed in Postgres
+   *   (`countInsertedDbRows`).
    *
-   * Adding a new entity (e.g. `payments`, `shipments`) is a single new
-   * entry in this table — no copy/paste of the upload + assertion plumbing.
+   * `countInsertedDbRows` is per-variant rather than a generic
+   * `(table, prefix)` pair because some entities (notably `rate_card_lines`)
+   * have no `source_external_id` column and must be counted by joining
+   * back to a parent table whose external-id prefix this run owns.
+   *
+   * Adding a new entity is a single new entry in this table — no
+   * copy/paste of the upload + assertion plumbing.
    */
   type Variant = {
     entity:
@@ -197,27 +224,195 @@ test("streaming CSV ingest of large files lands every row for every supported en
       | "po_lines"
       | "purchase_orders"
       | "payments"
-      | "shipments";
+      | "shipments"
+      | "statements_of_work"
+      | "rate_cards"
+      | "rate_card_lines"
+      | "time_entries";
     /** Set up parent records and return whatever the writer needs. */
     prepare: () => Promise<{ writeArgs: unknown }>;
     /** Generate the multi-batch CSV row-by-row to disk; return row count. */
     writeCsv: (filePath: string, args: unknown) => number;
-    /** Drizzle table the inserted rows land in. */
-    childTable:
+    /**
+     * Count how many of this test run's inserted rows are currently in the
+     * real Postgres database. Implemented per-variant so entities without
+     * a `source_external_id` column (e.g. `rate_card_lines`) can count via
+     * a join through their parent table.
+     */
+    countInsertedDbRows: () => Promise<number>;
+  };
+
+  /**
+   * Look up the supplier id map for this run, seeding `PARENT_SUPPLIERS`
+   * lazily if no suppliers are present yet. Used by every variant whose
+   * upload references a supplier extId.
+   */
+  async function ensureSupplierIdMap(): Promise<Map<string, string>> {
+    let map = await loadSupplierIdMapByPrefix(orgId, EXTERNAL_ID_PREFIX);
+    if (map.size === 0) {
+      await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
+      map = await loadSupplierIdMapByPrefix(orgId, EXTERNAL_ID_PREFIX);
+    }
+    return map;
+  }
+
+  /**
+   * Look up contracts seeded under this run's prefix and return both the
+   * external IDs (for CSV references) and the internal IDs (for FK
+   * references in further seeding). Seeds `PARENT_CONTRACTS` lazily if
+   * none exist yet — `seedContracts` requires supplier internal IDs, so
+   * the caller must pass the seeded supplier list.
+   */
+  async function ensureContracts(supplierIds: string[]): Promise<{
+    externalIds: string[];
+    internalIds: string[];
+  }> {
+    const existing = await db
+      .select({
+        id: contractsTable.id,
+        ext: contractsTable.sourceExternalId,
+      })
+      .from(contractsTable)
+      .where(
+        and(
+          eq(contractsTable.orgId, orgId),
+          eq(contractsTable.sourceSystem, FIXTURE_SOURCE),
+          like(
+            contractsTable.sourceExternalId,
+            `${EXTERNAL_ID_PREFIX}ct-%`,
+          ),
+        ),
+      );
+    if (existing.length > 0) {
+      const externalIds = existing
+        .map((r) => r.ext)
+        .filter((x): x is string => Boolean(x));
+      const internalIds = existing.map((r) => r.id);
+      return { externalIds, internalIds };
+    }
+    return seedContracts(
+      orgId,
+      PARENT_CONTRACTS,
+      supplierIds,
+      EXTERNAL_ID_PREFIX,
+    );
+  }
+
+  /**
+   * Look up SOWs seeded under this run's prefix; seed
+   * `PARENT_SOWS` lazily if none exist yet. Requires contract + supplier
+   * internal IDs because `seedStatementsOfWork` needs both for FKs.
+   */
+  async function ensureStatementsOfWork(
+    contractIds: string[],
+    supplierIds: string[],
+  ): Promise<{ externalIds: string[]; internalIds: string[] }> {
+    const existing = await db
+      .select({
+        id: statementsOfWorkTable.id,
+        ext: statementsOfWorkTable.sourceExternalId,
+      })
+      .from(statementsOfWorkTable)
+      .where(
+        and(
+          eq(statementsOfWorkTable.orgId, orgId),
+          eq(statementsOfWorkTable.sourceSystem, FIXTURE_SOURCE),
+          like(
+            statementsOfWorkTable.sourceExternalId,
+            `${EXTERNAL_ID_PREFIX}sow-%`,
+          ),
+        ),
+      );
+    if (existing.length > 0) {
+      const externalIds = existing
+        .map((r) => r.ext)
+        .filter((x): x is string => Boolean(x));
+      const internalIds = existing.map((r) => r.id);
+      return { externalIds, internalIds };
+    }
+    return seedStatementsOfWork(
+      orgId,
+      PARENT_SOWS,
+      contractIds,
+      supplierIds,
+      EXTERNAL_ID_PREFIX,
+    );
+  }
+
+  /**
+   * Look up rate cards seeded under this run's prefix; seed
+   * `PARENT_RATE_CARDS` lazily if none exist yet. Optional contract /
+   * SOW internal IDs are passed straight through to `seedRateCards`.
+   */
+  async function ensureRateCards(
+    supplierIds: string[],
+    opts?: { contractIds?: string[]; sowIds?: string[] },
+  ): Promise<{ externalIds: string[]; internalIds: string[] }> {
+    const existing = await db
+      .select({
+        id: rateCardsTable.id,
+        ext: rateCardsTable.sourceExternalId,
+      })
+      .from(rateCardsTable)
+      .where(
+        and(
+          eq(rateCardsTable.orgId, orgId),
+          eq(rateCardsTable.sourceSystem, FIXTURE_SOURCE),
+          like(
+            rateCardsTable.sourceExternalId,
+            `${EXTERNAL_ID_PREFIX}rc-%`,
+          ),
+        ),
+      );
+    if (existing.length > 0) {
+      const externalIds = existing
+        .map((r) => r.ext)
+        .filter((x): x is string => Boolean(x));
+      const internalIds = existing.map((r) => r.id);
+      return { externalIds, internalIds };
+    }
+    return seedRateCards(
+      orgId,
+      PARENT_RATE_CARDS,
+      supplierIds,
+      EXTERNAL_ID_PREFIX,
+      opts,
+    );
+  }
+
+  /**
+   * Standard prefix-scoped row counter used by every variant whose target
+   * table has a `(sourceSystem, sourceExternalId)` pair. Handles the
+   * generic `WHERE sourceSystem='csv' AND sourceExternalId LIKE 'prefix%'`
+   * shape so per-variant `countInsertedDbRows` stays a single line.
+   */
+  async function countByExtIdPrefix(
+    table:
       | typeof invoicesTable
       | typeof poLinesTable
       | typeof purchaseOrdersTable
       | typeof paymentsTable
-      | typeof shipmentsTable;
-    /** External-id prefix used by `writeCsv`; scopes the row-count query. */
-    childExtIdPrefix: string;
-  };
+      | typeof shipmentsTable
+      | typeof statementsOfWorkTable
+      | typeof rateCardsTable
+      | typeof timeEntriesTable,
+    extIdPrefix: string,
+  ): Promise<number> {
+    const rows = await db
+      .select({ id: table.id })
+      .from(table)
+      .where(
+        and(
+          eq(table.sourceSystem, FIXTURE_SOURCE),
+          like(table.sourceExternalId, `${extIdPrefix}%`),
+        ),
+      );
+    return rows.length;
+  }
 
   const variants: Variant[] = [
     {
       entity: "invoices",
-      childTable: invoicesTable,
-      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}inv-`,
       prepare: async () => {
         const supplierExternalIds = await seedSuppliers(
           orgId,
@@ -236,26 +431,16 @@ test("streaming CSV ingest of large files lands every row for every supported en
           rowCount: TARGET_ROWS,
         });
       },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(invoicesTable, `${EXTERNAL_ID_PREFIX}inv-`),
     },
     {
       entity: "po_lines",
-      childTable: poLinesTable,
-      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}pol-`,
       prepare: async () => {
         // Reuse supplier seeds from earlier variants if present; otherwise
         // create them now. Either way we need the internal supplier ids to
         // build POs.
-        let supplierIdMap = await loadSupplierIdMapByPrefix(
-          orgId,
-          EXTERNAL_ID_PREFIX,
-        );
-        if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
-          supplierIdMap = await loadSupplierIdMapByPrefix(
-            orgId,
-            EXTERNAL_ID_PREFIX,
-          );
-        }
+        const supplierIdMap = await ensureSupplierIdMap();
         const supplierIds = Array.from(supplierIdMap.values());
         assert.ok(
           supplierIds.length > 0,
@@ -286,28 +471,16 @@ test("streaming CSV ingest of large files lands every row for every supported en
           rowCount: TARGET_ROWS,
         });
       },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(poLinesTable, `${EXTERNAL_ID_PREFIX}pol-`),
     },
     {
       entity: "purchase_orders",
-      childTable: purchaseOrdersTable,
-      // `writePurchaseOrdersCsvSync` uses `upo-` so uploaded POs do NOT
-      // collide with the `po-` parents seeded for the po_lines variant.
-      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}upo-`,
       prepare: async () => {
         // Reuse seeded suppliers from earlier variants when present; otherwise
         // create them now. The CSV references suppliers by external ID so we
         // only need the strings, not internal ids.
-        let supplierIdMap = await loadSupplierIdMapByPrefix(
-          orgId,
-          EXTERNAL_ID_PREFIX,
-        );
-        if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
-          supplierIdMap = await loadSupplierIdMapByPrefix(
-            orgId,
-            EXTERNAL_ID_PREFIX,
-          );
-        }
+        const supplierIdMap = await ensureSupplierIdMap();
         const supplierExternalIds = Array.from(supplierIdMap.keys());
         assert.ok(
           supplierExternalIds.length > 0,
@@ -325,27 +498,22 @@ test("streaming CSV ingest of large files lands every row for every supported en
           rowCount: TARGET_ROWS,
         });
       },
+      // `writePurchaseOrdersCsvSync` uses `upo-` so uploaded POs do NOT
+      // collide with the `po-` parents seeded for the po_lines variant.
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(
+          purchaseOrdersTable,
+          `${EXTERNAL_ID_PREFIX}upo-`,
+        ),
     },
     {
       entity: "payments",
-      childTable: paymentsTable,
-      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}pay-`,
       prepare: async () => {
         // Payments need parent invoices. We can't reuse invoices uploaded by
         // the earlier `invoices` variant because their batch-load cost grows
         // with the upload size; seed a small dedicated set instead so each
         // payment batch resolves through the same FK lookup map shape.
-        let supplierIdMap = await loadSupplierIdMapByPrefix(
-          orgId,
-          EXTERNAL_ID_PREFIX,
-        );
-        if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
-          supplierIdMap = await loadSupplierIdMapByPrefix(
-            orgId,
-            EXTERNAL_ID_PREFIX,
-          );
-        }
+        const supplierIdMap = await ensureSupplierIdMap();
         const supplierIds = Array.from(supplierIdMap.values());
         assert.ok(
           supplierIds.length > 0,
@@ -369,25 +537,15 @@ test("streaming CSV ingest of large files lands every row for every supported en
           rowCount: TARGET_ROWS,
         });
       },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(paymentsTable, `${EXTERNAL_ID_PREFIX}pay-`),
     },
     {
       entity: "shipments",
-      childTable: shipmentsTable,
-      childExtIdPrefix: `${EXTERNAL_ID_PREFIX}shp-`,
       prepare: async () => {
         // Reuse suppliers and POs seeded by earlier variants; seed any that
         // are missing so this variant can run independently.
-        let supplierIdMap = await loadSupplierIdMapByPrefix(
-          orgId,
-          EXTERNAL_ID_PREFIX,
-        );
-        if (supplierIdMap.size === 0) {
-          await seedSuppliers(orgId, PARENT_SUPPLIERS, EXTERNAL_ID_PREFIX);
-          supplierIdMap = await loadSupplierIdMapByPrefix(
-            orgId,
-            EXTERNAL_ID_PREFIX,
-          );
-        }
+        const supplierIdMap = await ensureSupplierIdMap();
         const supplierExternalIds = Array.from(supplierIdMap.keys());
         // Need PO external IDs for the shipments CSV. The po_lines variant
         // seeds them under the same prefix; query the table directly so this
@@ -435,6 +593,196 @@ test("streaming CSV ingest of large files lands every row for every supported en
           rowCount: TARGET_ROWS,
         });
       },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(shipmentsTable, `${EXTERNAL_ID_PREFIX}shp-`),
+    },
+    {
+      entity: "statements_of_work",
+      prepare: async () => {
+        // SOW flushBatch needs both `contractExternalId` and
+        // `supplierExternalId` lookups, so seed both parent sets and pass
+        // their external IDs to the writer.
+        const supplierIdMap = await ensureSupplierIdMap();
+        const supplierIds = Array.from(supplierIdMap.values());
+        const supplierExternalIds = Array.from(supplierIdMap.keys());
+        const { externalIds: contractExternalIds } =
+          await ensureContracts(supplierIds);
+        return {
+          writeArgs: { contractExternalIds, supplierExternalIds },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const { contractExternalIds, supplierExternalIds } = args as {
+          contractExternalIds: string[];
+          supplierExternalIds: string[];
+        };
+        return writeStatementsOfWorkCsvSync(filePath, {
+          contractExternalIds,
+          supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: TARGET_ROWS,
+        });
+      },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(
+          statementsOfWorkTable,
+          `${EXTERNAL_ID_PREFIX}usow-`,
+        ),
+    },
+    {
+      entity: "rate_cards",
+      prepare: async () => {
+        // Exercise all three FK lookup paths in `flushBatch` for rate
+        // cards: required `supplier`, optional `contract`, optional `sow`.
+        const supplierIdMap = await ensureSupplierIdMap();
+        const supplierIds = Array.from(supplierIdMap.values());
+        const supplierExternalIds = Array.from(supplierIdMap.keys());
+        const { externalIds: contractExternalIds, internalIds: contractIds } =
+          await ensureContracts(supplierIds);
+        const { externalIds: sowExternalIds } =
+          await ensureStatementsOfWork(contractIds, supplierIds);
+        return {
+          writeArgs: {
+            supplierExternalIds,
+            contractExternalIds,
+            sowExternalIds,
+          },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const { supplierExternalIds, contractExternalIds, sowExternalIds } =
+          args as {
+            supplierExternalIds: string[];
+            contractExternalIds: string[];
+            sowExternalIds: string[];
+          };
+        return writeRateCardsCsvSync(filePath, {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: TARGET_ROWS,
+        });
+      },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(rateCardsTable, `${EXTERNAL_ID_PREFIX}urc-`),
+    },
+    {
+      entity: "rate_card_lines",
+      prepare: async () => {
+        // Rate-card lines only need rate-card parents — every other join
+        // (role/seniority -> rate) lives entirely on the line itself.
+        // Seed the parent rate-cards (with their own contract/SOW chain)
+        // so the lookup map has multiple hits per batch.
+        const supplierIdMap = await ensureSupplierIdMap();
+        const supplierIds = Array.from(supplierIdMap.values());
+        const { externalIds: contractExternalIds, internalIds: contractIds } =
+          await ensureContracts(supplierIds);
+        // Force at least one SOW to exist so the rate-card seed can chain
+        // both FK columns (`contract_id`, `sow_id`); otherwise the seed
+        // would leave both null which is uninteresting for our lookup
+        // surface.
+        const { internalIds: sowIds } = await ensureStatementsOfWork(
+          contractIds,
+          supplierIds,
+        );
+        const { externalIds: rateCardExternalIds } = await ensureRateCards(
+          supplierIds,
+          { contractIds, sowIds },
+        );
+        return { writeArgs: { rateCardExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { rateCardExternalIds } = args as {
+          rateCardExternalIds: string[];
+        };
+        return writeRateCardLinesCsvSync(filePath, {
+          rateCardExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: TARGET_ROWS,
+        });
+      },
+      countInsertedDbRows: async () => {
+        // `rate_card_lines` has no `source_external_id` column; count via
+        // the parent rate-cards' prefixed external IDs instead. The
+        // parents seeded in `prepare` use the `${prefix}rc-` namespace,
+        // and since lines cascade-delete with their parent we know all
+        // surviving lines under those parents are this run's.
+        const rows = await db
+          .select({ id: rateCardLinesTable.id })
+          .from(rateCardLinesTable)
+          .where(
+            inArray(
+              rateCardLinesTable.rateCardId,
+              db
+                .select({ id: rateCardsTable.id })
+                .from(rateCardsTable)
+                .where(
+                  and(
+                    eq(rateCardsTable.orgId, orgId),
+                    eq(rateCardsTable.sourceSystem, FIXTURE_SOURCE),
+                    like(
+                      rateCardsTable.sourceExternalId,
+                      `${EXTERNAL_ID_PREFIX}rc-%`,
+                    ),
+                  ),
+                ),
+            ),
+          );
+        return rows.length;
+      },
+    },
+    {
+      entity: "time_entries",
+      prepare: async () => {
+        // Time-entry flushBatch performs four grouped FK lookups
+        // (`supplier` required, `contract` / `sow` / `rate_card`
+        // optional). Seed all four parent sets so each lookup map has
+        // multiple hits per batch — a regression in any of them would
+        // silently drop data and we want this variant to catch it.
+        const supplierIdMap = await ensureSupplierIdMap();
+        const supplierIds = Array.from(supplierIdMap.values());
+        const supplierExternalIds = Array.from(supplierIdMap.keys());
+        const { externalIds: contractExternalIds, internalIds: contractIds } =
+          await ensureContracts(supplierIds);
+        const { externalIds: sowExternalIds, internalIds: sowIds } =
+          await ensureStatementsOfWork(contractIds, supplierIds);
+        const { externalIds: rateCardExternalIds } = await ensureRateCards(
+          supplierIds,
+          { contractIds, sowIds },
+        );
+        return {
+          writeArgs: {
+            supplierExternalIds,
+            contractExternalIds,
+            sowExternalIds,
+            rateCardExternalIds,
+          },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          rateCardExternalIds,
+        } = args as {
+          supplierExternalIds: string[];
+          contractExternalIds: string[];
+          sowExternalIds: string[];
+          rateCardExternalIds: string[];
+        };
+        return writeTimeEntriesCsvSync(filePath, {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          rateCardExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: TARGET_ROWS,
+        });
+      },
+      countInsertedDbRows: () =>
+        countByExtIdPrefix(timeEntriesTable, `${EXTERNAL_ID_PREFIX}te-`),
     },
   ];
 
@@ -495,22 +843,11 @@ test("streaming CSV ingest of large files lands every row for every supported en
 
       // Real DB shows the same count (filtered to this run only).
       await sleep(50);
-      const dbRows = await db
-        .select({ id: variant.childTable.id })
-        .from(variant.childTable)
-        .where(
-          and(
-            eq(variant.childTable.sourceSystem, FIXTURE_SOURCE),
-            like(
-              variant.childTable.sourceExternalId,
-              `${variant.childExtIdPrefix}%`,
-            ),
-          ),
-        );
+      const dbRowCount = await variant.countInsertedDbRows();
       assert.equal(
-        dbRows.length,
+        dbRowCount,
         expectedRows,
-        `${variant.entity} DB row count mismatch: got ${dbRows.length}, expected ${expectedRows}`,
+        `${variant.entity} DB row count mismatch: got ${dbRowCount}, expected ${expectedRows}`,
       );
     });
   }

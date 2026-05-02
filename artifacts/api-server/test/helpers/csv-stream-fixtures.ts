@@ -21,6 +21,11 @@ import {
   shipmentsTable,
   itemsTable,
   categoriesTable,
+  contractsTable,
+  statementsOfWorkTable,
+  rateCardsTable,
+  rateCardLinesTable,
+  timeEntriesTable,
 } from "@workspace/db";
 import { and, eq, like, or } from "drizzle-orm";
 import type { Express } from "express";
@@ -220,6 +225,145 @@ export async function seedInvoices(
   }
   await db.insert(invoicesTable).values(rows);
   return externalIds;
+}
+
+/**
+ * Seed N contracts linked round-robin to the given supplier ids. Used as
+ * parent rows for the `statements_of_work`, `rate_cards`, and
+ * `time_entries` CSV upload tests, all of which look up parent contracts
+ * by `contractExternalId` in `flushBatch`.
+ *
+ * Returns both the external IDs (round-tripped to the writer helpers) AND
+ * the internal IDs (used by `seedStatementsOfWork` / `seedRateCards` to
+ * populate FK columns) so callers don't have to round-trip the DB after
+ * seeding.
+ */
+export async function seedContracts(
+  orgId: string,
+  count: number,
+  supplierIds: string[],
+  extIdPrefix: string,
+): Promise<{ externalIds: string[]; internalIds: string[] }> {
+  if (supplierIds.length === 0) {
+    throw new Error("seedContracts requires at least one supplier");
+  }
+  const externalIds: string[] = [];
+  const internalIds: string[] = [];
+  const rows: (typeof contractsTable.$inferInsert)[] = [];
+  const today = new Date();
+  const future = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
+  for (let i = 0; i < count; i++) {
+    const id = newId("ct");
+    const ext = `${extIdPrefix}ct-${i}`;
+    externalIds.push(ext);
+    internalIds.push(id);
+    rows.push({
+      id,
+      orgId,
+      supplierId: supplierIds[i % supplierIds.length]!,
+      contractNumber: `${extIdPrefix}CT-${i}`,
+      title: `Seeded Test Contract ${i}`,
+      startDate: today,
+      endDate: future,
+      sourceSystem: FIXTURE_SOURCE,
+      sourceExternalId: ext,
+    });
+  }
+  await db.insert(contractsTable).values(rows);
+  return { externalIds, internalIds };
+}
+
+/**
+ * Seed N statements-of-work linked round-robin to the given contract +
+ * supplier internal ids. Used as parent rows for the `rate_cards` and
+ * `time_entries` CSV upload tests (which both reference SOWs by
+ * `sowExternalId` in `flushBatch`).
+ */
+export async function seedStatementsOfWork(
+  orgId: string,
+  count: number,
+  contractIds: string[],
+  supplierIds: string[],
+  extIdPrefix: string,
+): Promise<{ externalIds: string[]; internalIds: string[] }> {
+  if (contractIds.length === 0 || supplierIds.length === 0) {
+    throw new Error(
+      "seedStatementsOfWork requires at least one contract and one supplier",
+    );
+  }
+  const externalIds: string[] = [];
+  const internalIds: string[] = [];
+  const rows: (typeof statementsOfWorkTable.$inferInsert)[] = [];
+  const today = new Date();
+  const future = new Date(today.getTime() + 180 * 24 * 60 * 60 * 1000);
+  for (let i = 0; i < count; i++) {
+    const id = newId("sow");
+    const ext = `${extIdPrefix}sow-${i}`;
+    externalIds.push(ext);
+    internalIds.push(id);
+    rows.push({
+      id,
+      orgId,
+      contractId: contractIds[i % contractIds.length]!,
+      supplierId: supplierIds[i % supplierIds.length]!,
+      sowNumber: `${extIdPrefix}SOW-${i}`,
+      title: `Seeded Test SOW ${i}`,
+      startDate: today,
+      endDate: future,
+      sourceSystem: FIXTURE_SOURCE,
+      sourceExternalId: ext,
+    });
+  }
+  await db.insert(statementsOfWorkTable).values(rows);
+  return { externalIds, internalIds };
+}
+
+/**
+ * Seed N rate cards linked round-robin to the given supplier ids (and
+ * optionally to contract / SOW internal ids). Used as parent rows for the
+ * `rate_card_lines` CSV upload test, and also referenced by the
+ * `time_entries` test through `rateCardExternalId`.
+ */
+export async function seedRateCards(
+  orgId: string,
+  count: number,
+  supplierIds: string[],
+  extIdPrefix: string,
+  opts?: { contractIds?: string[]; sowIds?: string[] },
+): Promise<{ externalIds: string[]; internalIds: string[] }> {
+  if (supplierIds.length === 0) {
+    throw new Error("seedRateCards requires at least one supplier");
+  }
+  const externalIds: string[] = [];
+  const internalIds: string[] = [];
+  const rows: (typeof rateCardsTable.$inferInsert)[] = [];
+  const today = new Date();
+  for (let i = 0; i < count; i++) {
+    const id = newId("rc");
+    const ext = `${extIdPrefix}rc-${i}`;
+    externalIds.push(ext);
+    internalIds.push(id);
+    rows.push({
+      id,
+      orgId,
+      supplierId: supplierIds[i % supplierIds.length]!,
+      contractId:
+        opts?.contractIds && opts.contractIds.length > 0
+          ? opts.contractIds[i % opts.contractIds.length]!
+          : null,
+      sowId:
+        opts?.sowIds && opts.sowIds.length > 0
+          ? opts.sowIds[i % opts.sowIds.length]!
+          : null,
+      name: `Seeded Test Rate Card ${i}`,
+      currency: "USD",
+      effectiveDate: today,
+      sourceSystem: FIXTURE_SOURCE,
+      sourceExternalId: ext,
+    });
+  }
+  await db.insert(rateCardsTable).values(rows);
+  return { externalIds, internalIds };
 }
 
 /**
@@ -571,6 +715,296 @@ export function writeShipmentsCsvSync(
 }
 
 /**
+ * Write a `statements_of_work` CSV referencing seeded contract + supplier
+ * external IDs in round-robin order, exercising both grouped lookups in
+ * `flushBatch`. Stops as soon as `minBytes` or `rowCount` is hit; one of
+ * the two must be supplied. Returns the number of rows written.
+ *
+ * Uses upload prefix `${extIdPrefix}usow-${i}` so uploaded SOWs do NOT
+ * collide with `seedStatementsOfWork` output (`sow-${i}`) when both run
+ * in the same test process.
+ */
+export function writeStatementsOfWorkCsvSync(
+  filePath: string,
+  opts: {
+    contractExternalIds: string[];
+    supplierExternalIds: string[];
+    extIdPrefix: string;
+    minBytes?: number;
+    rowCount?: number;
+  },
+): number {
+  const {
+    contractExternalIds,
+    supplierExternalIds,
+    extIdPrefix,
+    minBytes,
+    rowCount,
+  } = opts;
+  if (contractExternalIds.length === 0) {
+    throw new Error(
+      "writeStatementsOfWorkCsvSync requires at least one contract extId",
+    );
+  }
+  if (supplierExternalIds.length === 0) {
+    throw new Error(
+      "writeStatementsOfWorkCsvSync requires at least one supplier extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error(
+      "writeStatementsOfWorkCsvSync requires minBytes or rowCount",
+    );
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,contractExternalId,supplierExternalId,sowNumber,title,status,startDate,endDate,totalValueUsd,billingCurrency,acceptanceCriteria\n";
+    fs.writeSync(fd, header);
+    let bytes = header.length;
+    let rows = 0;
+    const titlePad = "T".repeat(40);
+    const accPad = "A".repeat(48);
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
+      const ext = `${extIdPrefix}usow-${rows}`;
+      const ctExt = contractExternalIds[rows % contractExternalIds.length]!;
+      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
+      const sowNo = `USOW-${rows}`;
+      const title = `Bulk Test SOW ${rows} ${titlePad}`;
+      const total = (50000 + (rows % 500000)).toFixed(2);
+      const acc = `Acceptance criteria ${rows} ${accPad}`;
+      const line = `${ext},${ctExt},${supExt},${sowNo},"${title}",active,2025-01-15,2025-12-31,${total},USD,"${acc}"\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `rate_cards` CSV referencing seeded supplier external IDs
+ * (required) and optional contract / SOW external IDs in round-robin
+ * order. Stops as soon as `minBytes` or `rowCount` is hit; one of the two
+ * must be supplied. Returns the number of rows written.
+ *
+ * Uses upload prefix `${extIdPrefix}urc-${i}` so uploaded rate cards do
+ * NOT collide with `seedRateCards` output (`rc-${i}`) when both run in
+ * the same test process.
+ */
+export function writeRateCardsCsvSync(
+  filePath: string,
+  opts: {
+    supplierExternalIds: string[];
+    contractExternalIds?: string[];
+    sowExternalIds?: string[];
+    extIdPrefix: string;
+    minBytes?: number;
+    rowCount?: number;
+  },
+): number {
+  const {
+    supplierExternalIds,
+    contractExternalIds,
+    sowExternalIds,
+    extIdPrefix,
+    minBytes,
+    rowCount,
+  } = opts;
+  if (supplierExternalIds.length === 0) {
+    throw new Error(
+      "writeRateCardsCsvSync requires at least one supplier extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error("writeRateCardsCsvSync requires minBytes or rowCount");
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,contractExternalId,sowExternalId,supplierExternalId,name,currency,effectiveDate,expiryDate\n";
+    fs.writeSync(fd, header);
+    let bytes = header.length;
+    let rows = 0;
+    const namePad = "R".repeat(48);
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
+      const ext = `${extIdPrefix}urc-${rows}`;
+      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
+      const ctExt =
+        contractExternalIds && contractExternalIds.length > 0
+          ? contractExternalIds[rows % contractExternalIds.length]!
+          : "";
+      const sowExt =
+        sowExternalIds && sowExternalIds.length > 0
+          ? sowExternalIds[rows % sowExternalIds.length]!
+          : "";
+      const name = `Bulk Test Rate Card ${rows} ${namePad}`;
+      const line = `${ext},${ctExt},${sowExt},${supExt},"${name}",USD,2025-01-15,2026-01-15\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `rate_card_lines` CSV referencing seeded rate-card external IDs
+ * in round-robin order. Each row gets a globally unique `role` so the
+ * adapter's `(rate_card_id, role, seniority)` upsert target never
+ * collides within a batch. Stops as soon as `minBytes` or `rowCount` is
+ * hit; one of the two must be supplied. Returns the number of rows
+ * written.
+ *
+ * Note: the streaming `rate_card_lines` flushBatch does NOT carry a
+ * `sourceSystem` / `sourceExternalId` (the table has no such columns),
+ * so cleanup of these rows happens via cascade-delete from the parent
+ * `rate_cards` rows in `deleteFixtureRowsByPrefix`.
+ */
+export function writeRateCardLinesCsvSync(
+  filePath: string,
+  opts: {
+    rateCardExternalIds: string[];
+    extIdPrefix: string;
+    minBytes?: number;
+    rowCount?: number;
+  },
+): number {
+  const { rateCardExternalIds, extIdPrefix, minBytes, rowCount } = opts;
+  if (rateCardExternalIds.length === 0) {
+    throw new Error(
+      "writeRateCardLinesCsvSync requires at least one rate card extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error("writeRateCardLinesCsvSync requires minBytes or rowCount");
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "rateCardExternalId,role,seniority,hourlyRate,dailyRate,roleCode\n";
+    fs.writeSync(fd, header);
+    let bytes = header.length;
+    let rows = 0;
+    const seniorities = ["junior", "mid", "senior", "principal"] as const;
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
+      const rcExt = rateCardExternalIds[rows % rateCardExternalIds.length]!;
+      // Globally unique role string namespaced by the test prefix so the
+      // (rate_card_id, role, seniority) upsert target stays unique across
+      // the whole upload — and so a stray test process running in
+      // parallel can't collide with this one's roles either.
+      const role = `${extIdPrefix}role-${rows}`;
+      const seniority = seniorities[rows % seniorities.length]!;
+      const hourly = (50 + (rows % 500)).toFixed(4);
+      const daily = (400 + (rows % 4000)).toFixed(4);
+      const roleCode = `RC-${rows}`;
+      const line = `${rcExt},${role},${seniority},${hourly},${daily},${roleCode}\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Write a `time_entries` CSV referencing seeded supplier external IDs
+ * (required) plus optional contract / SOW / rate-card external IDs in
+ * round-robin order, exercising up to four grouped lookups per batch in
+ * `flushBatch`. Stops as soon as `minBytes` or `rowCount` is hit; one of
+ * the two must be supplied. Returns the number of rows written.
+ */
+export function writeTimeEntriesCsvSync(
+  filePath: string,
+  opts: {
+    supplierExternalIds: string[];
+    contractExternalIds?: string[];
+    sowExternalIds?: string[];
+    rateCardExternalIds?: string[];
+    extIdPrefix: string;
+    minBytes?: number;
+    rowCount?: number;
+  },
+): number {
+  const {
+    supplierExternalIds,
+    contractExternalIds,
+    sowExternalIds,
+    rateCardExternalIds,
+    extIdPrefix,
+    minBytes,
+    rowCount,
+  } = opts;
+  if (supplierExternalIds.length === 0) {
+    throw new Error(
+      "writeTimeEntriesCsvSync requires at least one supplier extId",
+    );
+  }
+  if (minBytes === undefined && rowCount === undefined) {
+    throw new Error("writeTimeEntriesCsvSync requires minBytes or rowCount");
+  }
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const header =
+      "externalId,supplierExternalId,contractExternalId,sowExternalId,rateCardExternalId,resource,role,seniority,workDate,hours,billRateUsd,amountUsd,description\n";
+    fs.writeSync(fd, header);
+    let bytes = header.length;
+    let rows = 0;
+    const seniorities = ["junior", "mid", "senior", "principal"] as const;
+    const descPad = "D".repeat(48);
+    while (
+      (minBytes === undefined || bytes < minBytes) &&
+      (rowCount === undefined || rows < rowCount)
+    ) {
+      const ext = `${extIdPrefix}te-${rows}`;
+      const supExt = supplierExternalIds[rows % supplierExternalIds.length]!;
+      const ctExt =
+        contractExternalIds && contractExternalIds.length > 0
+          ? contractExternalIds[rows % contractExternalIds.length]!
+          : "";
+      const sowExt =
+        sowExternalIds && sowExternalIds.length > 0
+          ? sowExternalIds[rows % sowExternalIds.length]!
+          : "";
+      const rcExt =
+        rateCardExternalIds && rateCardExternalIds.length > 0
+          ? rateCardExternalIds[rows % rateCardExternalIds.length]!
+          : "";
+      const resource = `Consultant-${rows % 100}`;
+      const role = `Engineer-L${rows % 5}`;
+      const seniority = seniorities[rows % seniorities.length]!;
+      const workDate = "2025-04-15";
+      const hours = ((rows % 8) + 1).toFixed(2);
+      const billRate = (100 + (rows % 200)).toFixed(4);
+      const amount = (Number(billRate) * Number(hours)).toFixed(2);
+      const desc = `Time entry ${rows} ${descPad}`;
+      const line = `${ext},${supExt},${ctExt},${sowExt},${rcExt},${resource},${role},${seniority},${workDate},${hours},${billRate},${amount},"${desc}"\n`;
+      fs.writeSync(fd, line);
+      bytes += line.length;
+      rows++;
+    }
+    return rows;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * Delete every fixture row under `extIdPrefix`, in foreign-key-safe order.
  *
  * Most child tables follow the `(sourceSystem='csv', sourceExternalId LIKE
@@ -583,6 +1017,45 @@ export function writeShipmentsCsvSync(
 export async function deleteFixtureRowsByPrefix(
   extIdPrefix: string,
 ): Promise<void> {
+  // Services-taxonomy tables first (Task #214 entity types). Time entries
+  // reference supplier with CASCADE and the rest with SET NULL, so an
+  // explicit prefix-scoped delete here keeps the cleanup symmetric with
+  // the rest of this routine even though the supplier delete at the bottom
+  // would also catch them. Rate-card lines have no `source_external_id`
+  // column at all (they're keyed by `rateCardId`), so they are NOT deleted
+  // explicitly here — the `rate_cards` delete below cascades them.
+  await db
+    .delete(timeEntriesTable)
+    .where(
+      and(
+        eq(timeEntriesTable.sourceSystem, FIXTURE_SOURCE),
+        like(timeEntriesTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(rateCardsTable)
+    .where(
+      and(
+        eq(rateCardsTable.sourceSystem, FIXTURE_SOURCE),
+        like(rateCardsTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(statementsOfWorkTable)
+    .where(
+      and(
+        eq(statementsOfWorkTable.sourceSystem, FIXTURE_SOURCE),
+        like(statementsOfWorkTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
+  await db
+    .delete(contractsTable)
+    .where(
+      and(
+        eq(contractsTable.sourceSystem, FIXTURE_SOURCE),
+        like(contractsTable.sourceExternalId, `${extIdPrefix}%`),
+      ),
+    );
   // Children first. Payments cascade-delete with invoices, but deleting them
   // explicitly first keeps cleanup robust to leftover rows whose parent
   // invoice was already gone. Shipments do NOT cascade (poId / supplierId

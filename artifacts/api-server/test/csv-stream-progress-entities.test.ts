@@ -5,6 +5,15 @@
  *   - `purchase_orders`, `payments` — single grouped FK lookup per batch
  *   - `shipments`                   — dual optional FK lookups per batch
  *   - `categories`, `items`         — no FK lookup (fast batch path)
+ *   - `statements_of_work`          — dual required FK lookups per batch
+ *                                     (contract + supplier)
+ *   - `rate_cards`                  — required supplier + dual optional
+ *                                     (contract / SOW) FK lookups per batch
+ *   - `rate_card_lines`             — single required rate-card FK lookup
+ *                                     per batch (no `source_external_id`)
+ *   - `time_entries`                — required supplier + triple optional
+ *                                     (contract / SOW / rate-card) FK
+ *                                     lookups per batch
  *
  * Mirrors the shape of `csv-stream-progress.test.ts` (which covers
  * `suppliers`) so a regression that silently drops `onProgress` on any one
@@ -34,8 +43,11 @@ import {
   openAsBlob,
   pickOrgId,
   seedCategories,
+  seedContracts,
   seedInvoices,
   seedPurchaseOrders,
+  seedRateCards,
+  seedStatementsOfWork,
   seedSuppliers,
   startServer,
   writeCategoriesCsvSync,
@@ -44,7 +56,11 @@ import {
   writePaymentsCsvSync,
   writePoLinesCsvSync,
   writePurchaseOrdersCsvSync,
+  writeRateCardLinesCsvSync,
+  writeRateCardsCsvSync,
   writeShipmentsCsvSync,
+  writeStatementsOfWorkCsvSync,
+  writeTimeEntriesCsvSync,
 } from "./helpers/csv-stream-fixtures";
 
 const TEST_RUN_ID = `csvstreamprogressentities-${Date.now()}-${process.pid}`;
@@ -54,6 +70,12 @@ const PARENT_SUPPLIERS = 50;
 const PARENT_POS = 50;
 const PARENT_CATEGORIES = 5;
 const PARENT_INVOICES = 50;
+// Services-taxonomy parent counts. Sized identically to the rest so each
+// batch's grouped FK lookup map has multiple hits — see the comment on
+// PARENT_INVOICES above.
+const PARENT_CONTRACTS = 50;
+const PARENT_SOWS = 50;
+const PARENT_RATE_CARDS = 50;
 
 // 10k rows == 10 BATCH_SIZE flushes; with FK lookups on each batch this
 // comfortably exceeds the route's 250 ms PROGRESS_EMIT_INTERVAL_MS throttle
@@ -70,7 +92,11 @@ type StreamEntity =
   | "items"
   | "purchase_orders"
   | "payments"
-  | "shipments";
+  | "shipments"
+  | "statements_of_work"
+  | "rate_cards"
+  | "rate_card_lines"
+  | "time_entries";
 
 /**
  * Soft per-entity upper bound on the `first-progress → result` gap for a
@@ -106,6 +132,14 @@ const MAX_PROGRESS_TO_RESULT_GAP_MS_PER_ENTITY: Record<StreamEntity, number> = {
   shipments: 6_000,
   invoices: 8_000,
   po_lines: 8_000,
+  // Services-taxonomy entities. `rate_card_lines` has no FK lookup besides
+  // the required parent rate_card → comparable to single-FK paths above.
+  // The other three batch-load 2–4 grouped FK lookups; size their ceilings
+  // alongside the comparably-shaped invoice/po_lines branch.
+  rate_card_lines: 5_000,
+  statements_of_work: 6_000,
+  rate_cards: 6_000,
+  time_entries: 8_000,
 };
 
 type ProgressEvent = {
@@ -540,6 +574,167 @@ test("streaming CSV ingest emits progress events for every non-suppliers entity"
         return writeShipmentsCsvSync(filePath, {
           poExternalIds,
           supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "statements_of_work",
+      prepare: async () => {
+        const { supplierExternalIds, supplierIds } =
+          await ensureSeededSuppliers();
+        const { externalIds: contractExternalIds } = await seedContracts(
+          orgId,
+          PARENT_CONTRACTS,
+          supplierIds,
+          EXTERNAL_ID_PREFIX,
+        );
+        return {
+          writeArgs: { contractExternalIds, supplierExternalIds },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const { contractExternalIds, supplierExternalIds } = args as {
+          contractExternalIds: string[];
+          supplierExternalIds: string[];
+        };
+        return writeStatementsOfWorkCsvSync(filePath, {
+          contractExternalIds,
+          supplierExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "rate_cards",
+      prepare: async () => {
+        const { supplierExternalIds, supplierIds } =
+          await ensureSeededSuppliers();
+        const { externalIds: contractExternalIds, internalIds: contractIds } =
+          await seedContracts(
+            orgId,
+            PARENT_CONTRACTS,
+            supplierIds,
+            // Sub-prefix so we don't collide with the contracts that the
+            // statements_of_work variant may have already seeded.
+            `${EXTERNAL_ID_PREFIX}rc-`,
+          );
+        const { externalIds: sowExternalIds } = await seedStatementsOfWork(
+          orgId,
+          PARENT_SOWS,
+          contractIds,
+          supplierIds,
+          `${EXTERNAL_ID_PREFIX}rc-`,
+        );
+        return {
+          writeArgs: {
+            supplierExternalIds,
+            contractExternalIds,
+            sowExternalIds,
+          },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const { supplierExternalIds, contractExternalIds, sowExternalIds } =
+          args as {
+            supplierExternalIds: string[];
+            contractExternalIds: string[];
+            sowExternalIds: string[];
+          };
+        return writeRateCardsCsvSync(filePath, {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "rate_card_lines",
+      prepare: async () => {
+        // Rate-card lines only need parent rate-cards. Seed under a
+        // sub-prefix so we don't collide with any rate-cards the
+        // `rate_cards` upload variant just inserted under the parent
+        // prefix.
+        const { supplierIds } = await ensureSeededSuppliers();
+        const { externalIds: rateCardExternalIds } = await seedRateCards(
+          orgId,
+          PARENT_RATE_CARDS,
+          supplierIds,
+          `${EXTERNAL_ID_PREFIX}rcl-`,
+        );
+        return { writeArgs: { rateCardExternalIds } };
+      },
+      writeCsv: (filePath, args) => {
+        const { rateCardExternalIds } = args as {
+          rateCardExternalIds: string[];
+        };
+        return writeRateCardLinesCsvSync(filePath, {
+          rateCardExternalIds,
+          extIdPrefix: EXTERNAL_ID_PREFIX,
+          rowCount: ROW_COUNT,
+        });
+      },
+    },
+    {
+      entity: "time_entries",
+      prepare: async () => {
+        // Exercise all four FK lookups in one batch
+        // (`supplier` required, plus optional `contract` / `sow` /
+        // `rate_card`).
+        const { supplierExternalIds, supplierIds } =
+          await ensureSeededSuppliers();
+        const { externalIds: contractExternalIds, internalIds: contractIds } =
+          await seedContracts(
+            orgId,
+            PARENT_CONTRACTS,
+            supplierIds,
+            `${EXTERNAL_ID_PREFIX}te-`,
+          );
+        const { externalIds: sowExternalIds, internalIds: sowIds } =
+          await seedStatementsOfWork(
+            orgId,
+            PARENT_SOWS,
+            contractIds,
+            supplierIds,
+            `${EXTERNAL_ID_PREFIX}te-`,
+          );
+        const { externalIds: rateCardExternalIds } = await seedRateCards(
+          orgId,
+          PARENT_RATE_CARDS,
+          supplierIds,
+          `${EXTERNAL_ID_PREFIX}te-`,
+          { contractIds, sowIds },
+        );
+        return {
+          writeArgs: {
+            supplierExternalIds,
+            contractExternalIds,
+            sowExternalIds,
+            rateCardExternalIds,
+          },
+        };
+      },
+      writeCsv: (filePath, args) => {
+        const {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          rateCardExternalIds,
+        } = args as {
+          supplierExternalIds: string[];
+          contractExternalIds: string[];
+          sowExternalIds: string[];
+          rateCardExternalIds: string[];
+        };
+        return writeTimeEntriesCsvSync(filePath, {
+          supplierExternalIds,
+          contractExternalIds,
+          sowExternalIds,
+          rateCardExternalIds,
           extIdPrefix: EXTERNAL_ID_PREFIX,
           rowCount: ROW_COUNT,
         });
