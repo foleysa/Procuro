@@ -275,6 +275,7 @@ export * from "./listRateCardsStatus";
 export * from "./listRecentlyFailedJobsParams";
 export * from "./listSowsParams";
 export * from "./listSowsStatus";
+export * from "./listSuppliersConfidence";
 export * from "./listSuppliersMissing";
 export * from "./listSuppliersParams";
 export * from "./listWatchedIssuersParams";

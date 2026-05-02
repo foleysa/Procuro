@@ -536,6 +536,12 @@ export const ListSuppliersQueryParams = zod.object({
     .describe(
       "Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored.",
     ),
+  confidence: zod
+    .enum(["high", "medium", "low"])
+    .optional()
+    .describe(
+      "Filter to suppliers whose auto-detected `billingCurrency` carries the named confidence rating. Used by the supplier ingest review screen to surface low-confidence guesses (e.g. ambiguous country fallbacks) so an operator can confirm or override them before drafts are produced. Suppliers with a null `billingCurrencyConfidence` (no detection at all) are excluded when this filter is set. Unknown values are ignored.",
+    ),
   limit: zod.coerce
     .number()
     .min(1)
@@ -564,6 +570,32 @@ export const ListSuppliersResponse = zod.object({
         .nullish()
         .describe(
           'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+        ),
+      billingCurrencySource: zod
+        .enum([
+          "provided",
+          "country",
+          "country_dollarized",
+          "invoice_iso",
+          "invoice_symbol",
+          "backfill_invoice",
+          "manual_override",
+        ])
+        .describe(
+          "How `billingCurrency` was determined. `provided` = supplied\nexplicitly on the supplier feed; `country` = single-currency\ncountry auto-detect; `country_dollarized` = de-facto dollarized\n\/ multi-currency country (low confidence, not auto-applied at\ningest); `invoice_iso` \/ `invoice_symbol` = scanned at ingest\nfrom an `invoiceSample` field on the supplier row;\n`backfill_invoice` = scanned post-PO-ingest from PO line\ndescriptions; `manual_override` = set by an operator via\n`POST \/suppliers\/{id}\/billing-currency`.\n",
+        )
+        .nullish()
+        .describe(
+          "How `billingCurrency` was determined. Surfaced on the supplier ingest review screen so an operator can tell at a glance whether the value came from the upstream feed (`provided` \/ `manual_override`) or from the deterministic auto-detect path (`country` \/ `invoice_iso` \/ `invoice_symbol` \/ `backfill_invoice` \/ `country_dollarized`). Null when `billingCurrency` itself is null.",
+        ),
+      billingCurrencyConfidence: zod
+        .enum(["high", "medium", "low"])
+        .describe(
+          "Confidence level for the resolved billing currency. `provided`\nand `manual_override` sources are always `high`. `country` and\n`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`\n(symbols like `$` are ambiguous). `country_dollarized` is\n`low` (advisory only — operator confirmation expected).\n",
+        )
+        .nullish()
+        .describe(
+          "Confidence rating attached to the auto-detected `billingCurrency`. The supplier ingest review screen renders this as a chip next to the currency code and visually highlights `low` rows so the operator can spot ambiguous guesses (e.g. dollarized-country fallbacks) and override them inline. Null when `billingCurrency` itself is null.",
         ),
       paymentTermsDays: zod.string().nullish(),
       isStrategic: zod.boolean(),
@@ -608,6 +640,32 @@ export const GetSupplierResponse = zod
       .nullish()
       .describe(
         'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+      ),
+    billingCurrencySource: zod
+      .enum([
+        "provided",
+        "country",
+        "country_dollarized",
+        "invoice_iso",
+        "invoice_symbol",
+        "backfill_invoice",
+        "manual_override",
+      ])
+      .describe(
+        "How `billingCurrency` was determined. `provided` = supplied\nexplicitly on the supplier feed; `country` = single-currency\ncountry auto-detect; `country_dollarized` = de-facto dollarized\n\/ multi-currency country (low confidence, not auto-applied at\ningest); `invoice_iso` \/ `invoice_symbol` = scanned at ingest\nfrom an `invoiceSample` field on the supplier row;\n`backfill_invoice` = scanned post-PO-ingest from PO line\ndescriptions; `manual_override` = set by an operator via\n`POST \/suppliers\/{id}\/billing-currency`.\n",
+      )
+      .nullish()
+      .describe(
+        "How `billingCurrency` was determined. Surfaced on the supplier ingest review screen so an operator can tell at a glance whether the value came from the upstream feed (`provided` \/ `manual_override`) or from the deterministic auto-detect path (`country` \/ `invoice_iso` \/ `invoice_symbol` \/ `backfill_invoice` \/ `country_dollarized`). Null when `billingCurrency` itself is null.",
+      ),
+    billingCurrencyConfidence: zod
+      .enum(["high", "medium", "low"])
+      .describe(
+        "Confidence level for the resolved billing currency. `provided`\nand `manual_override` sources are always `high`. `country` and\n`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`\n(symbols like `$` are ambiguous). `country_dollarized` is\n`low` (advisory only — operator confirmation expected).\n",
+      )
+      .nullish()
+      .describe(
+        "Confidence rating attached to the auto-detected `billingCurrency`. The supplier ingest review screen renders this as a chip next to the currency code and visually highlights `low` rows so the operator can spot ambiguous guesses (e.g. dollarized-country fallbacks) and override them inline. Null when `billingCurrency` itself is null.",
       ),
     paymentTermsDays: zod.string().nullish(),
     isStrategic: zod.boolean(),
@@ -832,6 +890,32 @@ export const PatchSupplierResponse = zod
       .nullish()
       .describe(
         'ISO 4217 currency code in which this supplier bills. Null\nmeans \"unknown \/ inherits the org base currency\".\n',
+      ),
+    billingCurrencySource: zod
+      .enum([
+        "provided",
+        "country",
+        "country_dollarized",
+        "invoice_iso",
+        "invoice_symbol",
+        "backfill_invoice",
+        "manual_override",
+      ])
+      .describe(
+        "How `billingCurrency` was determined. `provided` = supplied\nexplicitly on the supplier feed; `country` = single-currency\ncountry auto-detect; `country_dollarized` = de-facto dollarized\n\/ multi-currency country (low confidence, not auto-applied at\ningest); `invoice_iso` \/ `invoice_symbol` = scanned at ingest\nfrom an `invoiceSample` field on the supplier row;\n`backfill_invoice` = scanned post-PO-ingest from PO line\ndescriptions; `manual_override` = set by an operator via\n`POST \/suppliers\/{id}\/billing-currency`.\n",
+      )
+      .nullish()
+      .describe(
+        "How `billingCurrency` was determined. Surfaced on the supplier ingest review screen so an operator can tell at a glance whether the value came from the upstream feed (`provided` \/ `manual_override`) or from the deterministic auto-detect path (`country` \/ `invoice_iso` \/ `invoice_symbol` \/ `backfill_invoice` \/ `country_dollarized`). Null when `billingCurrency` itself is null.",
+      ),
+    billingCurrencyConfidence: zod
+      .enum(["high", "medium", "low"])
+      .describe(
+        "Confidence level for the resolved billing currency. `provided`\nand `manual_override` sources are always `high`. `country` and\n`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`\n(symbols like `$` are ambiguous). `country_dollarized` is\n`low` (advisory only — operator confirmation expected).\n",
+      )
+      .nullish()
+      .describe(
+        "Confidence rating attached to the auto-detected `billingCurrency`. The supplier ingest review screen renders this as a chip next to the currency code and visually highlights `low` rows so the operator can spot ambiguous guesses (e.g. dollarized-country fallbacks) and override them inline. Null when `billingCurrency` itself is null.",
       ),
     paymentTermsDays: zod.string().nullish(),
     isStrategic: zod.boolean(),

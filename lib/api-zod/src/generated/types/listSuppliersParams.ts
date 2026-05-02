@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { ListSuppliersConfidence } from "./listSuppliersConfidence";
 import type { ListSuppliersMissing } from "./listSuppliersMissing";
 
 export type ListSuppliersParams = {
@@ -19,6 +20,10 @@ export type ListSuppliersParams = {
    * Filter to rows that are missing the named field. Used by the data-readiness card so its deep-links land on the exact gap. Unknown values are ignored.
    */
   missing?: ListSuppliersMissing;
+  /**
+   * Filter to suppliers whose auto-detected `billingCurrency` carries the named confidence rating. Used by the supplier ingest review screen to surface low-confidence guesses (e.g. ambiguous country fallbacks) so an operator can confirm or override them before drafts are produced. Suppliers with a null `billingCurrencyConfidence` (no detection at all) are excluded when this filter is set. Unknown values are ignored.
+   */
+  confidence?: ListSuppliersConfidence;
   /**
    * @minimum 1
    * @maximum 200

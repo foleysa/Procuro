@@ -44,6 +44,15 @@ function mapSupplier(s: SupplierRow): Record<string, unknown> {
     name: s.name,
     countryCode: s.countryCode,
     billingCurrency: s.billingCurrency,
+    // Surfaced on the supplier ingest review screen so the operator can
+    // see how each row's billing currency was inferred (and how
+    // confident the resolver was). The Supplier 360 detail page already
+    // exposes the same two fields via `getSupplierIntelligence`; here
+    // they're also returned at list-time so the review table can render
+    // a confidence chip + low-confidence highlight without N+1 detail
+    // fetches. Both are null when `billingCurrency` is null.
+    billingCurrencySource: s.billingCurrencySource,
+    billingCurrencyConfidence: s.billingCurrencyConfidence,
     paymentTermsDays: s.paymentTermsDays,
     isStrategic: s.isStrategic,
     isPreferred: s.isPreferred,
@@ -52,10 +61,25 @@ function mapSupplier(s: SupplierRow): Record<string, unknown> {
   };
 }
 
+/**
+ * Whitelist of values accepted by the `?confidence=` query filter on the
+ * suppliers list endpoint. Mirrors the `BillingCurrencyConfidence`
+ * OpenAPI enum exactly. Validated as a set rather than a Zod schema so
+ * unknown values are quietly ignored (consistent with the `?missing=`
+ * filter), which keeps backwards-compatibility if the enum widens
+ * before the FE catches up.
+ */
+const CONFIDENCE_FILTER_VALUES: ReadonlySet<string> = new Set([
+  "high",
+  "medium",
+  "low",
+]);
+
 router.get("/suppliers", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const search = (req.query.search as string | undefined)?.trim();
   const missing = (req.query.missing as string | undefined)?.trim();
+  const confidence = (req.query.confidence as string | undefined)?.trim();
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "50", 10) || 50, 1),
     200,
@@ -77,6 +101,14 @@ router.get("/suppliers", tenantMiddleware, async (req, res) => {
     );
   } else if (missing === "payment_terms_days") {
     where.push(isNull(suppliersTable.paymentTermsDays));
+  }
+  // `?confidence=<level>` narrows to suppliers whose detected billing
+  // currency carries the named confidence rating, used by the supplier
+  // ingest review screen to surface low-confidence guesses across all
+  // pages (the per-page client-side sort would otherwise miss them).
+  // Unknown values are silently ignored — same convention as `?missing=`.
+  if (confidence && CONFIDENCE_FILTER_VALUES.has(confidence)) {
+    where.push(eq(suppliersTable.billingCurrencyConfidence, confidence));
   }
   if (cursor) where.push(gt(suppliersTable.id, cursor));
 

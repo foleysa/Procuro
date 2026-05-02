@@ -292,6 +292,21 @@ paths:
           - billing_currency
           - payment_terms_days
       - in: query
+        name: confidence
+        description: 'Filter to suppliers whose auto-detected `billingCurrency`
+          carries the named confidence rating. Used by the supplier ingest
+          review screen to surface low-confidence guesses (e.g. ambiguous
+          country fallbacks) so an operator can confirm or override them
+          before drafts are produced. Suppliers with a null
+          `billingCurrencyConfidence` (no detection at all) are excluded
+          when this filter is set. Unknown values are ignored.'
+        schema:
+          type: string
+          enum:
+          - high
+          - medium
+          - low
+      - in: query
         name: limit
         schema:
           type: integer
@@ -4400,6 +4415,27 @@ components:
             means "unknown / inherits the org base currency".
 
             '
+        billingCurrencySource:
+          allOf:
+          - $ref: '#/components/schemas/BillingCurrencySource'
+          nullable: true
+          description: 'How `billingCurrency` was determined. Surfaced on the
+            supplier ingest review screen so an operator can tell at a
+            glance whether the value came from the upstream feed
+            (`provided` / `manual_override`) or from the deterministic
+            auto-detect path (`country` / `invoice_iso` / `invoice_symbol`
+            / `backfill_invoice` / `country_dollarized`). Null when
+            `billingCurrency` itself is null.'
+        billingCurrencyConfidence:
+          allOf:
+          - $ref: '#/components/schemas/BillingCurrencyConfidence'
+          nullable: true
+          description: 'Confidence rating attached to the auto-detected
+            `billingCurrency`. The supplier ingest review screen renders
+            this as a chip next to the currency code and visually
+            highlights `low` rows so the operator can spot ambiguous
+            guesses (e.g. dollarized-country fallbacks) and override
+            them inline. Null when `billingCurrency` itself is null.'
         paymentTermsDays:
           type: string
           nullable: true

@@ -373,6 +373,48 @@ export interface SpendOverview {
   concentration: SpendOverviewConcentration;
 }
 
+/**
+ * How `billingCurrency` was determined. `provided` = supplied
+explicitly on the supplier feed; `country` = single-currency
+country auto-detect; `country_dollarized` = de-facto dollarized
+/ multi-currency country (low confidence, not auto-applied at
+ingest); `invoice_iso` / `invoice_symbol` = scanned at ingest
+from an `invoiceSample` field on the supplier row;
+`backfill_invoice` = scanned post-PO-ingest from PO line
+descriptions; `manual_override` = set by an operator via
+`POST /suppliers/{id}/billing-currency`.
+
+ */
+export type BillingCurrencySource =
+  (typeof BillingCurrencySource)[keyof typeof BillingCurrencySource];
+
+export const BillingCurrencySource = {
+  provided: "provided",
+  country: "country",
+  country_dollarized: "country_dollarized",
+  invoice_iso: "invoice_iso",
+  invoice_symbol: "invoice_symbol",
+  backfill_invoice: "backfill_invoice",
+  manual_override: "manual_override",
+} as const;
+
+/**
+ * Confidence level for the resolved billing currency. `provided`
+and `manual_override` sources are always `high`. `country` and
+`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`
+(symbols like `$` are ambiguous). `country_dollarized` is
+`low` (advisory only — operator confirmation expected).
+
+ */
+export type BillingCurrencyConfidence =
+  (typeof BillingCurrencyConfidence)[keyof typeof BillingCurrencyConfidence];
+
+export const BillingCurrencyConfidence = {
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
 export interface Supplier {
   id: string;
   name: string;
@@ -381,6 +423,10 @@ export interface Supplier {
 means "unknown / inherits the org base currency".
  */
   billingCurrency?: string | null;
+  /** How `billingCurrency` was determined. Surfaced on the supplier ingest review screen so an operator can tell at a glance whether the value came from the upstream feed (`provided` / `manual_override`) or from the deterministic auto-detect path (`country` / `invoice_iso` / `invoice_symbol` / `backfill_invoice` / `country_dollarized`). Null when `billingCurrency` itself is null. */
+  billingCurrencySource?: BillingCurrencySource | null;
+  /** Confidence rating attached to the auto-detected `billingCurrency`. The supplier ingest review screen renders this as a chip next to the currency code and visually highlights `low` rows so the operator can spot ambiguous guesses (e.g. dollarized-country fallbacks) and override them inline. Null when `billingCurrency` itself is null. */
+  billingCurrencyConfidence?: BillingCurrencyConfidence | null;
   paymentTermsDays?: string | null;
   isStrategic: boolean;
   isPreferred: boolean;
@@ -645,48 +691,6 @@ sub-headline.
  */
   detail?: string | null;
 }
-
-/**
- * How `billingCurrency` was determined. `provided` = supplied
-explicitly on the supplier feed; `country` = single-currency
-country auto-detect; `country_dollarized` = de-facto dollarized
-/ multi-currency country (low confidence, not auto-applied at
-ingest); `invoice_iso` / `invoice_symbol` = scanned at ingest
-from an `invoiceSample` field on the supplier row;
-`backfill_invoice` = scanned post-PO-ingest from PO line
-descriptions; `manual_override` = set by an operator via
-`POST /suppliers/{id}/billing-currency`.
-
- */
-export type BillingCurrencySource =
-  (typeof BillingCurrencySource)[keyof typeof BillingCurrencySource];
-
-export const BillingCurrencySource = {
-  provided: "provided",
-  country: "country",
-  country_dollarized: "country_dollarized",
-  invoice_iso: "invoice_iso",
-  invoice_symbol: "invoice_symbol",
-  backfill_invoice: "backfill_invoice",
-  manual_override: "manual_override",
-} as const;
-
-/**
- * Confidence level for the resolved billing currency. `provided`
-and `manual_override` sources are always `high`. `country` and
-`invoice_iso` resolve to `high`. `invoice_symbol` is `medium`
-(symbols like `$` are ambiguous). `country_dollarized` is
-`low` (advisory only — operator confirmation expected).
-
- */
-export type BillingCurrencyConfidence =
-  (typeof BillingCurrencyConfidence)[keyof typeof BillingCurrencyConfidence];
-
-export const BillingCurrencyConfidence = {
-  high: "high",
-  medium: "medium",
-  low: "low",
-} as const;
 
 export interface BillingCurrencyOverrideRequest {
   /**
@@ -4458,6 +4462,10 @@ export type ListSuppliersParams = {
    */
   missing?: ListSuppliersMissing;
   /**
+   * Filter to suppliers whose auto-detected `billingCurrency` carries the named confidence rating. Used by the supplier ingest review screen to surface low-confidence guesses (e.g. ambiguous country fallbacks) so an operator can confirm or override them before drafts are produced. Suppliers with a null `billingCurrencyConfidence` (no detection at all) are excluded when this filter is set. Unknown values are ignored.
+   */
+  confidence?: ListSuppliersConfidence;
+  /**
    * @minimum 1
    * @maximum 200
    */
@@ -4471,6 +4479,15 @@ export type ListSuppliersMissing =
 export const ListSuppliersMissing = {
   billing_currency: "billing_currency",
   payment_terms_days: "payment_terms_days",
+} as const;
+
+export type ListSuppliersConfidence =
+  (typeof ListSuppliersConfidence)[keyof typeof ListSuppliersConfidence];
+
+export const ListSuppliersConfidence = {
+  high: "high",
+  medium: "medium",
+  low: "low",
 } as const;
 
 export type OverrideSupplierBillingCurrency400 = {

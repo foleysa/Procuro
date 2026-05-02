@@ -11,6 +11,8 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { BillingCurrencyConfidence } from "./billingCurrencyConfidence";
+import type { BillingCurrencySource } from "./billingCurrencySource";
 
 export interface Supplier {
   id: string;
@@ -20,6 +22,10 @@ export interface Supplier {
 means "unknown / inherits the org base currency".
  */
   billingCurrency?: string | null;
+  /** How `billingCurrency` was determined. Surfaced on the supplier ingest review screen so an operator can tell at a glance whether the value came from the upstream feed (`provided` / `manual_override`) or from the deterministic auto-detect path (`country` / `invoice_iso` / `invoice_symbol` / `backfill_invoice` / `country_dollarized`). Null when `billingCurrency` itself is null. */
+  billingCurrencySource?: BillingCurrencySource | null;
+  /** Confidence rating attached to the auto-detected `billingCurrency`. The supplier ingest review screen renders this as a chip next to the currency code and visually highlights `low` rows so the operator can spot ambiguous guesses (e.g. dollarized-country fallbacks) and override them inline. Null when `billingCurrency` itself is null. */
+  billingCurrencyConfidence?: BillingCurrencyConfidence | null;
   paymentTermsDays?: string | null;
   isStrategic: boolean;
   isPreferred: boolean;
