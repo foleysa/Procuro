@@ -38,7 +38,10 @@ import {
 import { UnrecoverableJobError } from "./queue";
 import { newId } from "../ids";
 import { logger } from "../logger";
-import { readRenewalAlertDays } from "../contract-settings";
+import {
+  readRenewalAlertDays,
+  readRenewalEmailEnabled,
+} from "../contract-settings";
 import { isStructuralIngestError } from "../structural-ingest-error";
 
 /**
@@ -571,16 +574,21 @@ function aggregateDroppedByEntity(
  *   2. Appends `threshold` to `contracts.renewalAlertedThresholds` so
  *      the contract list / detail UIs can show "alerted at <X> days"
  *      without joining `alerts`.
- *   3. If the contract has an `owner` field that parses as a valid
- *      email, sends a renewal-notification email directly to that
- *      address via the shared `emailChannelAdapter` (SendGrid when
- *      `SENDGRID_API_KEY` is set; simulated otherwise) and records the
- *      send as an `alert_events` row of `eventType='delivered'` with
- *      `metadata.kind='owner_notification'`. This is independent of the
- *      tenant subscription/channel fan-out in `deliverAlertsTick` —
- *      contract owners are notified whether or not their tenant has
- *      configured an org-wide subscription, because the contract.owner
- *      is the person directly accountable for the renewal decision.
+ *   3. If the tenant has opted in via the
+ *      `contractRenewalEmailEnabled` setting (default `false` — see
+ *      `contract-settings.ts`) AND the contract has an `owner` field
+ *      that parses as a valid email, sends a renewal-notification
+ *      email directly to that address via the shared
+ *      `emailChannelAdapter` (SendGrid when `SENDGRID_API_KEY` is set;
+ *      simulated otherwise) and records the send as an `alert_events`
+ *      row of `eventType='delivered'` with
+ *      `metadata.kind='owner_notification'`. The email body includes
+ *      a deep link back to `/contracts/:id` so the owner can act
+ *      directly. This is independent of the tenant subscription /
+ *      channel fan-out in `deliverAlertsTick` — opt-in tenants notify
+ *      contract owners whether or not they've also configured an
+ *      org-wide subscription, because the contract.owner is the
+ *      person directly accountable for the renewal decision.
  *
  * Severity is computed from days-to-expiry:
  *   - <= 7 days  → critical
@@ -622,11 +630,13 @@ export async function runRenewalAlertScanHandler(
   let ownerEmailsSimulated = 0;
   let ownerEmailsFailed = 0;
   let ownerEmailsSkipped = 0;
+  let ownerEmailsDisabled = 0;
   const orgErrors: Array<{ orgId: string; error: string }> = [];
 
   for (const org of orgs) {
     orgsScanned += 1;
     const threshold = readRenewalAlertDays(org.settings ?? null);
+    const emailEnabled = readRenewalEmailEnabled(org.settings ?? null);
     try {
       // Pull the candidate set in one query: active contracts whose
       // end_date is within the threshold window. We join supplier name
@@ -738,36 +748,48 @@ export async function runRenewalAlertScanHandler(
           contractsUpdated += 1;
         }
 
-        // Owner email notification — fires only when the alert was
-        // newly inserted on this tick (`insertedAlertId !== undefined`).
-        // A dedupe no-op means we already attempted notification on a
-        // previous run, so re-sending would spam the owner.
+        // Owner email notification — fires only when:
+        //   - The tenant has opted in via `contractRenewalEmailEnabled`
+        //     (default `false`, see `contract-settings.ts`), AND
+        //   - The alert was newly inserted on this tick
+        //     (`insertedAlertId !== undefined`). A dedupe no-op means
+        //     we already attempted notification on a previous run, so
+        //     re-sending would spam the owner.
+        // Tenants that haven't opted in are tallied under
+        // `ownerEmailsDisabled` so the System / Jobs page can show
+        // "we found a renewal but didn't email anyone — turn this on
+        // in Settings to start notifying owners".
         if (insertedAlertId) {
-          const outcome = await maybeSendRenewalOwnerEmail({
-            ownerRaw: r.owner,
-            alertRow: {
-              id: insertedAlertId,
-              orgId: org.id,
-              severity,
-              source: "rule_match",
-              kind: "contract_renewal",
-              title,
-              summary,
-              firstSeen: new Date(),
-              occurrences: 1,
-            },
-            orgName: org.name,
-            contractNumber: r.contract_number,
-            contractTitle: r.title,
-            supplierName: r.supplier_name,
-            endDateIso,
-            daysToExpiry: days,
-            thresholdDays: threshold,
-          });
-          if (outcome === "sent") ownerEmailsSent += 1;
-          else if (outcome === "simulated") ownerEmailsSimulated += 1;
-          else if (outcome === "failed") ownerEmailsFailed += 1;
-          else ownerEmailsSkipped += 1;
+          if (!emailEnabled) {
+            ownerEmailsDisabled += 1;
+          } else {
+            const outcome = await maybeSendRenewalOwnerEmail({
+              ownerRaw: r.owner,
+              alertRow: {
+                id: insertedAlertId,
+                orgId: org.id,
+                severity,
+                source: "rule_match",
+                kind: "contract_renewal",
+                title,
+                summary,
+                firstSeen: new Date(),
+                occurrences: 1,
+              },
+              orgName: org.name,
+              contractId: r.id,
+              contractNumber: r.contract_number,
+              contractTitle: r.title,
+              supplierName: r.supplier_name,
+              endDateIso,
+              daysToExpiry: days,
+              thresholdDays: threshold,
+            });
+            if (outcome === "sent") ownerEmailsSent += 1;
+            else if (outcome === "simulated") ownerEmailsSimulated += 1;
+            else if (outcome === "failed") ownerEmailsFailed += 1;
+            else ownerEmailsSkipped += 1;
+          }
         }
       }
     } catch (err) {
@@ -789,8 +811,48 @@ export async function runRenewalAlertScanHandler(
     ownerEmailsSimulated,
     ownerEmailsFailed,
     ownerEmailsSkipped,
+    ownerEmailsDisabled,
     orgErrors,
   };
+}
+
+/**
+ * Resolve a deep-link URL back into the command-center for an entity
+ * path like `/contracts/abc123`. Used in renewal owner emails so the
+ * owner can click straight through to the contract detail page.
+ *
+ * Resolution order:
+ *   1. Explicit `APP_BASE_URL` env (operator-set canonical URL).
+ *   2. First entry of `REPLIT_DOMAINS` (Replit's published domain
+ *      list — comma-separated). On a published Procuro deployment this
+ *      is the production hostname, so we get a real clickable link in
+ *      the email without any extra config.
+ *   3. Fallback to the relative path. Most email clients won't render
+ *      that as clickable, but it's still informative and avoids
+ *      shipping `localhost`-style URLs into a real inbox.
+ */
+export function buildAppDeepLink(path: string): string {
+  const explicit = process.env["APP_BASE_URL"];
+  if (typeof explicit === "string" && explicit.length > 0) {
+    return joinBaseAndPath(explicit, path);
+  }
+  const replitDomains = process.env["REPLIT_DOMAINS"];
+  if (typeof replitDomains === "string" && replitDomains.length > 0) {
+    const first = replitDomains.split(",")[0]?.trim();
+    if (first && first.length > 0) {
+      return joinBaseAndPath(`https://${first}`, path);
+    }
+  }
+  // Relative fallback. Ensure a leading slash so callers that pass
+  // "contracts/x" still produce a routable path rather than something
+  // that looks like a relative file.
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function joinBaseAndPath(base: string, path: string): string {
+  const trimmedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+  const normalisedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${trimmedBase}${normalisedPath}`;
 }
 
 /**
@@ -816,6 +878,7 @@ interface OwnerEmailContext {
     occurrences: number;
   };
   orgName: string;
+  contractId: string;
   contractNumber: string;
   contractTitle: string;
   supplierName: string;
@@ -863,6 +926,25 @@ async function maybeSendRenewalOwnerEmail(
     updatedAt: new Date(),
   } as unknown as AlertChannelRow;
 
+  // Enrich the summary the adapter renders into the email body with
+  // a renewal-specific blurb and a clickable deep link back into the
+  // contract detail page. We do NOT mutate the persisted
+  // `alerts.summary` — only the in-memory copy we hand the adapter —
+  // so the in-app alert detail drawer stays terse while the email
+  // gets the action-oriented wording its recipient needs.
+  const deepLink = buildAppDeepLink(`/contracts/${ctx.contractId}`);
+  const emailSummaryLines = [
+    ctx.alertRow.summary,
+    "",
+    `Contract:    ${ctx.contractNumber} — ${ctx.contractTitle}`,
+    `Supplier:    ${ctx.supplierName}`,
+    `Days left:   ${ctx.daysToExpiry} (within the ${ctx.thresholdDays}-day renewal window)`,
+    `Owner:       ${ownerEmail}`,
+    "",
+    `Open contract: ${deepLink}`,
+  ];
+  const emailSummary = emailSummaryLines.join("\n");
+
   // Build a minimal `AlertRow` for the adapter. The adapter only reads
   // a small surface (severity/title/summary/source/state/firstSeenAt/
   // lastSeenAt/occurrences/id) so we don't need to round-trip via a
@@ -874,7 +956,7 @@ async function maybeSendRenewalOwnerEmail(
     source: ctx.alertRow.source,
     kind: ctx.alertRow.kind,
     title: ctx.alertRow.title,
-    summary: ctx.alertRow.summary,
+    summary: emailSummary,
     state: "open",
     firstSeenAt: ctx.alertRow.firstSeen,
     lastSeenAt: ctx.alertRow.firstSeen,
@@ -920,12 +1002,14 @@ async function maybeSendRenewalOwnerEmail(
       channelKind: "email",
       ownerEmail,
       orgName: ctx.orgName,
+      contractId: ctx.contractId,
       contractNumber: ctx.contractNumber,
       contractTitle: ctx.contractTitle,
       supplierName: ctx.supplierName,
       endDate: ctx.endDateIso,
       daysToExpiry: ctx.daysToExpiry,
       thresholdDays: ctx.thresholdDays,
+      deepLink,
       status: outcomeStatus,
       providerMessageId: providerMessageId ?? null,
       httpStatus: httpStatus ?? null,
