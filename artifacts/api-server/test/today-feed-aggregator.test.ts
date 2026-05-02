@@ -126,18 +126,17 @@ before(async () => {
      WHERE id = ${`opp_stale_${RUN}`}
   `);
 
-  // Seed an alerts row using ONLY the column set that exists in BOTH
-  // the legacy and #117 schemas. `resolved_at IS NULL` is what makes
-  // it count as "open" for the schema-drift-safe query (#209).
-  // We use raw SQL because the Drizzle `alertsTable` declares columns
-  // that don't exist in the legacy DB and inserting through it would
-  // crash in the same way the original Today query did.
+  // Seed an alerts row matching the #117 schema. `state = 'open'` is
+  // what makes the Today route count it (#248 reconciled dev with
+  // schema source-of-truth, retiring the #209 resolved_at workaround).
+  // Other NOT NULL columns (state, payload, occurrences, first_seen_at,
+  // last_seen_at, summary) have DDL defaults.
   await db.execute(sql`
     INSERT INTO alerts (
-      id, org_id, kind, severity, title, dedupe_key, created_at
+      id, org_id, source, kind, severity, title, dedupe_key, created_at
     ) VALUES (
-      ${`alt_${RUN}`}, ${orgId}, 'test_alert', 'high',
-      'Test alert from #209 contract test',
+      ${`alt_${RUN}`}, ${orgId}, 'manual', 'test_alert', 'high',
+      'Test alert from #248 contract test',
       ${`dedupe_${RUN}`}, now()
     )
   `);
@@ -227,11 +226,12 @@ test("/today/feed returns the discriminated-union shape with all six kinds", asy
   assert.equal(body.partial, body.errors.length > 0);
 });
 
-test("/today/feed alerts query succeeds against the real shipping schema (#209 step 3)", async () => {
-  // The previous Today route grouped by `alertsTable.state`, a column
-  // that doesn't exist in the live database. The schema-drift-safe
-  // rewrite must not appear in errors[] given a real seeded row, AND
-  // must reflect that row's severity in the open count.
+test("/today/feed alerts query succeeds against the real shipping schema (#248)", async () => {
+  // After #248 reconciled dev with the #117 alerts schema, the Today
+  // route filters on `alertsTable.state = 'open'` directly. This test
+  // is a regression guard: the alerts source must not appear in
+  // errors[] given a real seeded row, AND must reflect that row's
+  // severity in the open count.
   const r = await fetch(`${baseUrl}/api/today/feed`, {
     headers: { "x-org-id": orgId },
   });

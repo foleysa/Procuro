@@ -25,15 +25,12 @@
  *   6. `funnel.conversion_deltas`   — per-transition conversion-rate
  *      diff between the two most recent funnel snapshots (#204).
  *
- * Schema-drift note (#209): the live `alerts` table predates the #117
- * schema and has the columns `id, org_id, kind, severity, title, body,
- * ref_type, ref_id, dedupe_key, metadata, created_at, resolved_at`. The
- * `alertsTable` Drizzle definition in `lib/db/src/schema/alerts.ts`
- * declares the new shape (`state`, `source`, `payload`, …). Touching
- * any column that lives only in the new schema crashes the live query.
- * Until a real data-preserving migration ships (P1 follow-up named in
- * `replit.md`), the alerts query here uses only columns present in
- * BOTH schemas and treats `resolved_at IS NULL` as the open filter.
+ * Alerts query uses the #117 alerts schema directly: only rows with
+ * `state = 'open'` are counted as open. Acknowledged and snoozed
+ * alerts are intentionally excluded — Today surfaces the unattended
+ * queue, not all unresolved alerts. The earlier #209 workaround
+ * (filtering on `resolved_at IS NULL`) was retired in #248 once the
+ * dev DB was reconciled with the schema source-of-truth.
  *
  * No persistence; per-request cache only. Each call hits the database
  * fresh.
@@ -46,7 +43,7 @@ import {
   jobsTable,
   analysisCyclesTable,
 } from "@workspace/db";
-import { and, eq, desc, gte, isNull, sql } from "drizzle-orm";
+import { and, eq, desc, gte, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { resolveRbacContext } from "../lib/rbac";
 import {
@@ -192,7 +189,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
         .where(
           and(
             eq(alertsTable.orgId, orgId),
-            isNull(alertsTable.resolvedAt),
+            eq(alertsTable.state, "open"),
           ),
         )
         .groupBy(alertsTable.severity);
@@ -221,7 +218,7 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
           .where(
             and(
               eq(alertsTable.orgId, orgId),
-              isNull(alertsTable.resolvedAt),
+              eq(alertsTable.state, "open"),
             ),
           )
           .orderBy(desc(alertsTable.createdAt))
