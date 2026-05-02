@@ -1,74 +1,26 @@
 /**
- * Hand-rolled fetch wrappers for the `/api/admin/*` and `/api/scim/v2/*`
- * endpoints. The product OpenAPI spec at `lib/api-spec/openapi.yaml`
- * describes the customer-facing surface; the admin surface is private,
- * tenant-scoped, and intentionally outside the spec — this module
- * provides typed access without bloating the spec.
+ * Admin-page UI helpers and SCIM-group fetch wrappers.
  *
- * Conventions match the rest of the app:
- *   - Active org is read from `localStorage.activeOrgId` and forwarded
- *     by the global fetch shim in `main.tsx` as the `x-org-id` header.
- *   - All errors are surfaced as a `Promise.reject(new Error(...))`
- *     with the server-supplied error string when present.
+ * The bulk of the admin API (`/api/admin/users`, `/api/admin/api-keys`,
+ * `/api/admin/audit-log`, `/api/admin/sso`, `/api/admin/tenant-settings`,
+ * `/api/admin/whoami`) is documented under the `admin` tag in
+ * `lib/api-spec/openapi.yaml` and consumed via the orval-generated React
+ * Query hooks from `@workspace/api-client-react` (e.g.
+ * `useListAdminUsers`, `useInviteAdminUser`, `useGetAdminSsoConfig`, …).
+ *
+ * The `/api/admin/scim/groups` surface was added later (task #151) and
+ * is not yet in the OpenAPI spec, so we keep a thin hand-rolled fetch
+ * wrapper here. Once the SCIM endpoints are documented, this client
+ * shrinks back to just `ROLE_OPTIONS` + the `AdminUserRole` re-export.
+ *
+ * This module also holds copy/labelling that lives next to the page
+ * rather than the spec — namely the role-picker option list with hint
+ * text used by every role-bearing dropdown.
  */
 
-export type AdminUserRole =
-  | "platform_admin"
-  | "org_admin"
-  | "approver"
-  | "analyst"
-  | "read_only"
-  | "auditor";
+import type { AdminUserRole } from "@workspace/api-client-react";
 
-export interface AdminUserRow {
-  id: string;
-  userId: string;
-  email: string;
-  role: AdminUserRole;
-  grantedVia: string;
-  grantedBy: string;
-  createdAt: string;
-  revokedAt: string | null;
-  active: boolean;
-}
-
-export interface AdminApiKeyRow {
-  id: string;
-  label: string;
-  prefix: string;
-  scopeRole: AdminUserRole;
-  createdAt: string;
-  createdBy: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  rotatedFromId: string | null;
-}
-
-export interface AdminApiKeyIssued extends AdminApiKeyRow {
-  /** Plaintext bearer; shown ONCE. */
-  secret: string;
-}
-
-export interface AdminAuditRow {
-  id: string;
-  actor: string;
-  action: string;
-  targetId: string | null;
-  targetLabel: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-}
-
-export interface AdminSsoConfig {
-  enabled: boolean;
-  protocol: "saml" | "oidc";
-  idpName: string;
-  emailDomains: string[];
-  clerkConnectionId: string | null;
-  metadataUrl: string | null;
-  notes: string | null;
-  scimEnabled: boolean;
-}
+export type { AdminUserRole };
 
 export interface AdminScimGroup {
   id: string;
@@ -78,14 +30,6 @@ export interface AdminScimGroup {
   memberCount: number;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface AdminTenantSettings {
-  successFeePct?: number;
-  baseCurrency?: string;
-  disclosurePolicy?: "conservative" | "standard" | "analyst";
-  contractRenewalAlertDays?: number;
-  retentionDefaultDays?: number;
 }
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -104,82 +48,6 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export const adminClient = {
-  // ---- Users
-  listUsers: () =>
-    fetch("/api/admin/users").then((r) => jsonOrThrow<AdminUserRow[]>(r)),
-  inviteUser: (email: string, role: AdminUserRole) =>
-    fetch("/api/admin/users/invite", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, role }),
-    }).then((r) =>
-      jsonOrThrow<{ id: string; email: string; role: AdminUserRole; pending: boolean }>(r),
-    ),
-  changeUserRole: (id: string, role: AdminUserRole) =>
-    fetch(`/api/admin/users/${id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role }),
-    }).then((r) =>
-      jsonOrThrow<{ id: string; email: string; role: AdminUserRole }>(r),
-    ),
-  revokeUser: (id: string) =>
-    fetch(`/api/admin/users/${id}`, { method: "DELETE" }).then((r) =>
-      jsonOrThrow<{ id: string; revoked: boolean }>(r),
-    ),
-
-  // ---- API keys
-  listKeys: () =>
-    fetch("/api/admin/api-keys").then((r) => jsonOrThrow<AdminApiKeyRow[]>(r)),
-  issueKey: (label: string, scopeRole: AdminUserRole) =>
-    fetch("/api/admin/api-keys", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ label, scopeRole }),
-    }).then((r) => jsonOrThrow<AdminApiKeyIssued>(r)),
-  rotateKey: (id: string) =>
-    fetch(`/api/admin/api-keys/${id}/rotate`, { method: "POST" }).then((r) =>
-      jsonOrThrow<AdminApiKeyIssued>(r),
-    ),
-  revokeKey: (id: string) =>
-    fetch(`/api/admin/api-keys/${id}`, { method: "DELETE" }).then((r) =>
-      jsonOrThrow<{ id: string; revoked: boolean }>(r),
-    ),
-
-  // ---- Audit log
-  listAudit: (filters?: { actor?: string; action?: string; limit?: number }) => {
-    const qs = new URLSearchParams();
-    if (filters?.actor) qs.set("actor", filters.actor);
-    if (filters?.action) qs.set("action", filters.action);
-    if (filters?.limit) qs.set("limit", String(filters.limit));
-    const query = qs.toString();
-    return fetch(`/api/admin/audit-log${query ? `?${query}` : ""}`).then((r) =>
-      jsonOrThrow<AdminAuditRow[]>(r),
-    );
-  },
-  listAuditActions: () =>
-    fetch("/api/admin/audit-log/actions").then((r) =>
-      jsonOrThrow<{ action: string; count: number }[]>(r),
-    ),
-  exportAuditCsv: (filters?: { actor?: string; action?: string }) => {
-    const qs = new URLSearchParams();
-    if (filters?.actor) qs.set("actor", filters.actor);
-    if (filters?.action) qs.set("action", filters.action);
-    const query = qs.toString();
-    window.location.href = `/api/admin/audit-log/export.csv${query ? `?${query}` : ""}`;
-  },
-
-  // ---- SSO
-  getSso: () =>
-    fetch("/api/admin/sso").then((r) => jsonOrThrow<AdminSsoConfig>(r)),
-  saveSso: (cfg: AdminSsoConfig) =>
-    fetch("/api/admin/sso", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(cfg),
-    }).then((r) => jsonOrThrow<AdminSsoConfig>(r)),
-
-  // ---- SCIM groups
   listScimGroups: () =>
     fetch("/api/admin/scim/groups").then((r) =>
       jsonOrThrow<AdminScimGroup[]>(r),
@@ -196,18 +64,6 @@ export const adminClient = {
         roleMapping: AdminUserRole | null;
       }>(r),
     ),
-
-  // ---- Tenant settings
-  getTenantSettings: () =>
-    fetch("/api/admin/tenant-settings").then((r) =>
-      jsonOrThrow<AdminTenantSettings>(r),
-    ),
-  saveTenantSettings: (s: AdminTenantSettings) =>
-    fetch("/api/admin/tenant-settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(s),
-    }).then((r) => jsonOrThrow<AdminTenantSettings>(r)),
 };
 
 export const ROLE_OPTIONS: Array<{

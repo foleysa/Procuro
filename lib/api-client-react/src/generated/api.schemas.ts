@@ -4532,6 +4532,212 @@ export interface OperationsHealth {
 }
 
 /**
+ * Resolved RBAC role assignable to a tenant member or scopable to
+an API key. `platform_admin` is reserved for Procuro staff and
+cannot be assigned to a tenant API key.
+
+ */
+export type AdminUserRole = (typeof AdminUserRole)[keyof typeof AdminUserRole];
+
+export const AdminUserRole = {
+  platform_admin: "platform_admin",
+  org_admin: "org_admin",
+  approver: "approver",
+  analyst: "analyst",
+  read_only: "read_only",
+  auditor: "auditor",
+} as const;
+
+/**
+ * Auth transport that produced the active session: Clerk-issued
+JWT (`clerk`), the development `x-org-id` shim (`dev-header`),
+or a tenant API key bearer (`api-key`).
+
+ */
+export type AdminAuthMode = (typeof AdminAuthMode)[keyof typeof AdminAuthMode];
+
+export const AdminAuthMode = {
+  clerk: "clerk",
+  "dev-header": "dev-header",
+  "api-key": "api-key",
+} as const;
+
+export interface AdminWhoamiResponse {
+  orgId: string;
+  /** Email of the resolved actor; null for system principals. */
+  email: string | null;
+  roles: AdminUserRole[];
+  /** True iff the request was authenticated by an API key bearer. */
+  viaApiKey: boolean;
+  authMode?: AdminAuthMode;
+}
+
+export interface AdminUserRow {
+  id: string;
+  /** Clerk user id once the user has signed in; otherwise
+`pending:<email>` until the invite is claimed.
+ */
+  userId: string;
+  email: string;
+  role: AdminUserRole;
+  /** How the role was provisioned (`manual`, `scim`, `seed`, …).
+   */
+  grantedVia: string;
+  /** Email or principal that issued the grant. */
+  grantedBy: string;
+  createdAt: string;
+  revokedAt: string | null;
+  active: boolean;
+}
+
+export interface InviteAdminUserRequest {
+  email: string;
+  role: AdminUserRole;
+}
+
+export interface AdminInviteResult {
+  id: string;
+  email: string;
+  role: AdminUserRole;
+  pending: boolean;
+}
+
+export interface ChangeAdminUserRoleRequest {
+  role: AdminUserRole;
+}
+
+export interface AdminRoleChangeResult {
+  id: string;
+  email: string;
+  role: AdminUserRole;
+}
+
+export interface AdminRevokeResult {
+  id: string;
+  revoked: boolean;
+}
+
+export interface AdminApiKeyRow {
+  id: string;
+  label: string;
+  /** First 12 chars of the plaintext token; safe to display. */
+  prefix: string;
+  scopeRole: AdminUserRole;
+  createdAt: string;
+  createdBy: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  /** Set on rotated keys to the id of the predecessor; lets the UI
+render rotation lineage.
+ */
+  rotatedFromId: string | null;
+}
+
+export interface IssueAdminApiKeyRequest {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  label: string;
+  /** Cannot be `platform_admin`. */
+  scopeRole: AdminUserRole;
+}
+
+export interface AdminApiKeyIssued {
+  id: string;
+  label: string;
+  prefix: string;
+  scopeRole: AdminUserRole;
+  /** Plaintext bearer; returned ONCE on issue/rotate. Cannot be
+retrieved again.
+ */
+  secret: string;
+  /** Present only on rotate responses; id of the now-revoked
+predecessor key.
+ */
+  rotatedFromId?: string;
+}
+
+export type AdminAuditLogEntryMetadata = { [key: string]: unknown };
+
+export interface AdminAuditLogEntry {
+  id: string;
+  actor: string;
+  action: string;
+  targetId: string | null;
+  targetLabel: string | null;
+  metadata: AdminAuditLogEntryMetadata;
+  createdAt: string;
+}
+
+export interface AdminAuditActionCount {
+  action: string;
+  count: number;
+}
+
+export type AdminSsoProtocol =
+  (typeof AdminSsoProtocol)[keyof typeof AdminSsoProtocol];
+
+export const AdminSsoProtocol = {
+  saml: "saml",
+  oidc: "oidc",
+} as const;
+
+export interface AdminSsoConfig {
+  enabled: boolean;
+  protocol: AdminSsoProtocol;
+  /** @maxLength 80 */
+  idpName: string;
+  /** @maxItems 20 */
+  emailDomains: string[];
+  /** @maxLength 120 */
+  clerkConnectionId?: string | null;
+  metadataUrl?: string | null;
+  /** @maxLength 2000 */
+  notes?: string | null;
+  scimEnabled: boolean;
+}
+
+export type AdminTenantDisclosurePolicy =
+  (typeof AdminTenantDisclosurePolicy)[keyof typeof AdminTenantDisclosurePolicy];
+
+export const AdminTenantDisclosurePolicy = {
+  conservative: "conservative",
+  standard: "standard",
+  analyst: "analyst",
+} as const;
+
+/**
+ * All fields are optional on PUT — only supplied keys are written.
+On GET the server fills in defaults (`disclosurePolicy=standard`,
+`contractRenewalAlertDays=60`, `retentionDefaultDays=365`).
+
+ */
+export interface AdminTenantSettings {
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  successFeePct?: number;
+  /**
+   * @minLength 3
+   * @maxLength 8
+   */
+  baseCurrency?: string;
+  disclosurePolicy?: AdminTenantDisclosurePolicy;
+  /**
+   * @minimum 0
+   * @maximum 365
+   */
+  contractRenewalAlertDays?: number;
+  /**
+   * @minimum 30
+   * @maximum 3650
+   */
+  retentionDefaultDays?: number;
+}
+
+/**
  * Not found
  */
 export type NotFoundResponse = ErrorResponse;
@@ -5120,4 +5326,30 @@ export type ListAlertsParams = {
 
 export type ListAlertSubscriptionsParams = {
   userId?: string;
+};
+
+export type ListAdminAuditLogParams = {
+  /**
+   * Filter by actor email or system principal
+   */
+  actor?: string;
+  /**
+   * Filter by action key (e.g. `user.invite`, `api_key.rotate`)
+   */
+  action?: string;
+  /**
+   * Filter by audited target id
+   */
+  targetId?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+};
+
+export type ExportAdminAuditLogParams = {
+  actor?: string;
+  action?: string;
+  targetId?: string;
 };

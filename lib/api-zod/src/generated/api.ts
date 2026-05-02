@@ -8325,3 +8325,723 @@ export const GetOperationsHealthResponse = zod.object({
     }),
   ),
 });
+
+/**
+ * Returns the orgId, email, and resolved role list for the current
+actor so the command-center UI can decide whether to render the
+Admin sidebar entry without round-tripping a 403.
+
+ * @summary Resolved RBAC context for the current request
+ */
+export const GetAdminWhoamiHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetAdminWhoamiResponse = zod.object({
+  orgId: zod.string(),
+  email: zod
+    .string()
+    .nullable()
+    .describe("Email of the resolved actor; null for system principals."),
+  roles: zod.array(
+    zod
+      .enum([
+        "platform_admin",
+        "org_admin",
+        "approver",
+        "analyst",
+        "read_only",
+        "auditor",
+      ])
+      .describe(
+        "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+      ),
+  ),
+  viaApiKey: zod
+    .boolean()
+    .describe("True iff the request was authenticated by an API key bearer."),
+  authMode: zod
+    .enum(["clerk", "dev-header", "api-key"])
+    .optional()
+    .describe(
+      "Auth transport that produced the active session: Clerk-issued\nJWT (`clerk`), the development `x-org-id` shim (`dev-header`),\nor a tenant API key bearer (`api-key`).\n",
+    ),
+});
+
+/**
+ * Lists every `user_roles` row for the active org, including
+revoked rows so the UI can render history. Requires the
+`users:manage` permission.
+
+ * @summary Members of the active tenant
+ */
+export const ListAdminUsersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAdminUsersResponseItem = zod.object({
+  id: zod.string(),
+  userId: zod
+    .string()
+    .describe(
+      "Clerk user id once the user has signed in; otherwise\n`pending:<email>` until the invite is claimed.\n",
+    ),
+  email: zod.string(),
+  role: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe(
+      "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+    ),
+  grantedVia: zod
+    .string()
+    .describe("How the role was provisioned (`manual`, `scim`, `seed`, …).\n"),
+  grantedBy: zod.string().describe("Email or principal that issued the grant."),
+  createdAt: zod.coerce.date(),
+  revokedAt: zod.coerce.date().nullable(),
+  active: zod.boolean(),
+});
+export const ListAdminUsersResponse = zod.array(ListAdminUsersResponseItem);
+
+/**
+ * Provisions a `user_roles` row keyed on `pending:<email>` so the
+invitee picks up their role on first Clerk sign-in. Returns 409
+if the email already has a pending invite.
+
+ * @summary Invite a teammate with a pre-assigned role
+ */
+export const InviteAdminUserHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const InviteAdminUserBody = zod.object({
+  email: zod.string().email(),
+  role: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe(
+      "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+    ),
+});
+
+/**
+ * @summary Change the role of an existing member
+ */
+export const ChangeAdminUserRoleParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const ChangeAdminUserRoleHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ChangeAdminUserRoleBody = zod.object({
+  role: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe(
+      "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+    ),
+});
+
+export const ChangeAdminUserRoleResponse = zod.object({
+  id: zod.string(),
+  email: zod.string(),
+  role: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe(
+      "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+    ),
+});
+
+/**
+ * Soft-revoke: sets `revokedAt` so the audit history is preserved.
+
+ * @summary Revoke a member's role
+ */
+export const RevokeAdminUserParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RevokeAdminUserHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const RevokeAdminUserResponse = zod.object({
+  id: zod.string(),
+  revoked: zod.boolean(),
+});
+
+/**
+ * Returns every API key issued for the active tenant, including
+revoked keys. The plaintext token is never returned by this
+endpoint — only the prefix.
+
+ * @summary List tenant API keys
+ */
+export const ListAdminApiKeysHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAdminApiKeysResponseItem = zod.object({
+  id: zod.string(),
+  label: zod.string(),
+  prefix: zod
+    .string()
+    .describe("First 12 chars of the plaintext token; safe to display."),
+  scopeRole: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe(
+      "Resolved RBAC role assignable to a tenant member or scopable to\nan API key. `platform_admin` is reserved for Procuro staff and\ncannot be assigned to a tenant API key.\n",
+    ),
+  createdAt: zod.coerce.date(),
+  createdBy: zod.string(),
+  lastUsedAt: zod.coerce.date().nullable(),
+  revokedAt: zod.coerce.date().nullable(),
+  rotatedFromId: zod
+    .string()
+    .nullable()
+    .describe(
+      "Set on rotated keys to the id of the predecessor; lets the UI\nrender rotation lineage.\n",
+    ),
+});
+export const ListAdminApiKeysResponse = zod.array(ListAdminApiKeysResponseItem);
+
+/**
+ * Generates a fresh token and returns the plaintext bearer ONCE in
+the `secret` field — the UI must surface it immediately and warn
+the operator they cannot retrieve it again. Cannot be scoped to
+`platform_admin`.
+
+ * @summary Issue a new tenant API key
+ */
+export const IssueAdminApiKeyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const issueAdminApiKeyBodyLabelMax = 120;
+
+export const IssueAdminApiKeyBody = zod.object({
+  label: zod.string().min(1).max(issueAdminApiKeyBodyLabelMax),
+  scopeRole: zod
+    .enum([
+      "platform_admin",
+      "org_admin",
+      "approver",
+      "analyst",
+      "read_only",
+      "auditor",
+    ])
+    .describe("Cannot be `platform_admin`."),
+});
+
+/**
+ * @summary Revoke a tenant API key
+ */
+export const RevokeAdminApiKeyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RevokeAdminApiKeyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const RevokeAdminApiKeyResponse = zod.object({
+  id: zod.string(),
+  revoked: zod.boolean(),
+});
+
+/**
+ * Issues a replacement key with the same scope and revokes the old
+one in the same transaction. The plaintext secret is returned
+ONCE on the new key.
+
+ * @summary Rotate a tenant API key
+ */
+export const RotateAdminApiKeyParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RotateAdminApiKeyHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * Append-only record of every admin / RBAC mutation. Newest first,
+capped at 200. Filterable by actor, action, and target id.
+
+ * @summary List admin audit log entries
+ */
+export const listAdminAuditLogQueryLimitDefault = 100;
+export const listAdminAuditLogQueryLimitMax = 200;
+
+export const ListAdminAuditLogQueryParams = zod.object({
+  actor: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by actor email or system principal"),
+  action: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by action key (e.g. `user.invite`, `api_key.rotate`)"),
+  targetId: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by audited target id"),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listAdminAuditLogQueryLimitMax)
+    .default(listAdminAuditLogQueryLimitDefault),
+});
+
+export const ListAdminAuditLogHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAdminAuditLogResponseItem = zod.object({
+  id: zod.string(),
+  actor: zod.string(),
+  action: zod.string(),
+  targetId: zod.string().nullable(),
+  targetLabel: zod.string().nullable(),
+  metadata: zod.record(zod.string(), zod.unknown()),
+  createdAt: zod.coerce.date(),
+});
+export const ListAdminAuditLogResponse = zod.array(
+  ListAdminAuditLogResponseItem,
+);
+
+/**
+ * Powers the action-filter dropdown in the Audit tab so users see
+only actions that have actually occurred for this tenant.
+
+ * @summary Distinct audit actions with counts
+ */
+export const ListAdminAuditActionsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListAdminAuditActionsResponseItem = zod.object({
+  action: zod.string(),
+  count: zod.number(),
+});
+export const ListAdminAuditActionsResponse = zod.array(
+  ListAdminAuditActionsResponseItem,
+);
+
+/**
+ * Streams up to 10 000 audit rows for the active tenant matching
+the supplied filters. Used by SOC 2 reviewers and exported
+directly via a browser navigation.
+
+ * @summary Export filtered audit log as CSV
+ */
+export const ExportAdminAuditLogQueryParams = zod.object({
+  actor: zod.coerce.string().optional(),
+  action: zod.coerce.string().optional(),
+  targetId: zod.coerce.string().optional(),
+});
+
+export const ExportAdminAuditLogHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
+ * Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /
+OIDC connection; this endpoint stores only the tenant-specific
+metadata operators surface in the admin UI.
+
+ * @summary Read tenant SSO configuration
+ */
+export const GetAdminSsoConfigHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const getAdminSsoConfigResponseEnabledDefault = false;
+export const getAdminSsoConfigResponseIdpNameDefault = `okta`;
+export const getAdminSsoConfigResponseIdpNameMax = 80;
+
+export const getAdminSsoConfigResponseEmailDomainsItemMin = 3;
+export const getAdminSsoConfigResponseEmailDomainsItemMax = 120;
+
+export const getAdminSsoConfigResponseEmailDomainsMax = 20;
+
+export const getAdminSsoConfigResponseClerkConnectionIdMax = 120;
+
+export const getAdminSsoConfigResponseNotesMax = 2000;
+
+export const getAdminSsoConfigResponseScimEnabledDefault = false;
+
+export const GetAdminSsoConfigResponse = zod.object({
+  enabled: zod.boolean().default(getAdminSsoConfigResponseEnabledDefault),
+  protocol: zod.enum(["saml", "oidc"]),
+  idpName: zod
+    .string()
+    .max(getAdminSsoConfigResponseIdpNameMax)
+    .default(getAdminSsoConfigResponseIdpNameDefault),
+  emailDomains: zod
+    .array(
+      zod
+        .string()
+        .min(getAdminSsoConfigResponseEmailDomainsItemMin)
+        .max(getAdminSsoConfigResponseEmailDomainsItemMax),
+    )
+    .max(getAdminSsoConfigResponseEmailDomainsMax),
+  clerkConnectionId: zod
+    .string()
+    .max(getAdminSsoConfigResponseClerkConnectionIdMax)
+    .nullish(),
+  metadataUrl: zod.string().url().nullish(),
+  notes: zod.string().max(getAdminSsoConfigResponseNotesMax).nullish(),
+  scimEnabled: zod
+    .boolean()
+    .default(getAdminSsoConfigResponseScimEnabledDefault),
+});
+
+/**
+ * @summary Replace the tenant SSO configuration
+ */
+export const SaveAdminSsoConfigHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const saveAdminSsoConfigBodyEnabledDefault = false;
+export const saveAdminSsoConfigBodyIdpNameDefault = `okta`;
+export const saveAdminSsoConfigBodyIdpNameMax = 80;
+
+export const saveAdminSsoConfigBodyEmailDomainsItemMin = 3;
+export const saveAdminSsoConfigBodyEmailDomainsItemMax = 120;
+
+export const saveAdminSsoConfigBodyEmailDomainsMax = 20;
+
+export const saveAdminSsoConfigBodyClerkConnectionIdMax = 120;
+
+export const saveAdminSsoConfigBodyNotesMax = 2000;
+
+export const saveAdminSsoConfigBodyScimEnabledDefault = false;
+
+export const SaveAdminSsoConfigBody = zod.object({
+  enabled: zod.boolean().default(saveAdminSsoConfigBodyEnabledDefault),
+  protocol: zod.enum(["saml", "oidc"]),
+  idpName: zod
+    .string()
+    .max(saveAdminSsoConfigBodyIdpNameMax)
+    .default(saveAdminSsoConfigBodyIdpNameDefault),
+  emailDomains: zod
+    .array(
+      zod
+        .string()
+        .min(saveAdminSsoConfigBodyEmailDomainsItemMin)
+        .max(saveAdminSsoConfigBodyEmailDomainsItemMax),
+    )
+    .max(saveAdminSsoConfigBodyEmailDomainsMax),
+  clerkConnectionId: zod
+    .string()
+    .max(saveAdminSsoConfigBodyClerkConnectionIdMax)
+    .nullish(),
+  metadataUrl: zod.string().url().nullish(),
+  notes: zod.string().max(saveAdminSsoConfigBodyNotesMax).nullish(),
+  scimEnabled: zod.boolean().default(saveAdminSsoConfigBodyScimEnabledDefault),
+});
+
+export const saveAdminSsoConfigResponseEnabledDefault = false;
+export const saveAdminSsoConfigResponseIdpNameDefault = `okta`;
+export const saveAdminSsoConfigResponseIdpNameMax = 80;
+
+export const saveAdminSsoConfigResponseEmailDomainsItemMin = 3;
+export const saveAdminSsoConfigResponseEmailDomainsItemMax = 120;
+
+export const saveAdminSsoConfigResponseEmailDomainsMax = 20;
+
+export const saveAdminSsoConfigResponseClerkConnectionIdMax = 120;
+
+export const saveAdminSsoConfigResponseNotesMax = 2000;
+
+export const saveAdminSsoConfigResponseScimEnabledDefault = false;
+
+export const SaveAdminSsoConfigResponse = zod.object({
+  enabled: zod.boolean().default(saveAdminSsoConfigResponseEnabledDefault),
+  protocol: zod.enum(["saml", "oidc"]),
+  idpName: zod
+    .string()
+    .max(saveAdminSsoConfigResponseIdpNameMax)
+    .default(saveAdminSsoConfigResponseIdpNameDefault),
+  emailDomains: zod
+    .array(
+      zod
+        .string()
+        .min(saveAdminSsoConfigResponseEmailDomainsItemMin)
+        .max(saveAdminSsoConfigResponseEmailDomainsItemMax),
+    )
+    .max(saveAdminSsoConfigResponseEmailDomainsMax),
+  clerkConnectionId: zod
+    .string()
+    .max(saveAdminSsoConfigResponseClerkConnectionIdMax)
+    .nullish(),
+  metadataUrl: zod.string().url().nullish(),
+  notes: zod.string().max(saveAdminSsoConfigResponseNotesMax).nullish(),
+  scimEnabled: zod
+    .boolean()
+    .default(saveAdminSsoConfigResponseScimEnabledDefault),
+});
+
+/**
+ * Aggregates fields from `orgs.successFeePct`, `orgs.baseCurrency`,
+and `orgs.settings` (disclosure policy, contract renewal alert,
+retention) so the Org-Admin UI can manage them in one place.
+
+ * @summary Read consolidated tenant-wide settings
+ */
+export const GetAdminTenantSettingsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const getAdminTenantSettingsResponseSuccessFeePctMin = 0;
+export const getAdminTenantSettingsResponseSuccessFeePctMax = 100;
+
+export const getAdminTenantSettingsResponseBaseCurrencyMin = 3;
+export const getAdminTenantSettingsResponseBaseCurrencyMax = 8;
+
+export const getAdminTenantSettingsResponseContractRenewalAlertDaysMin = 0;
+export const getAdminTenantSettingsResponseContractRenewalAlertDaysMax = 365;
+
+export const getAdminTenantSettingsResponseRetentionDefaultDaysMin = 30;
+export const getAdminTenantSettingsResponseRetentionDefaultDaysMax = 3650;
+
+export const GetAdminTenantSettingsResponse = zod
+  .object({
+    successFeePct: zod
+      .number()
+      .min(getAdminTenantSettingsResponseSuccessFeePctMin)
+      .max(getAdminTenantSettingsResponseSuccessFeePctMax)
+      .optional(),
+    baseCurrency: zod
+      .string()
+      .min(getAdminTenantSettingsResponseBaseCurrencyMin)
+      .max(getAdminTenantSettingsResponseBaseCurrencyMax)
+      .optional(),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .optional(),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(getAdminTenantSettingsResponseContractRenewalAlertDaysMin)
+      .max(getAdminTenantSettingsResponseContractRenewalAlertDaysMax)
+      .optional(),
+    retentionDefaultDays: zod
+      .number()
+      .min(getAdminTenantSettingsResponseRetentionDefaultDaysMin)
+      .max(getAdminTenantSettingsResponseRetentionDefaultDaysMax)
+      .optional(),
+  })
+  .describe(
+    "All fields are optional on PUT — only supplied keys are written.\nOn GET the server fills in defaults (`disclosurePolicy=standard`,\n`contractRenewalAlertDays=60`, `retentionDefaultDays=365`).\n",
+  );
+
+/**
+ * Partial update — only fields supplied in the body are written.
+Fields stored on `orgs.settings` are merged with the existing
+JSON blob so unrelated keys are preserved.
+
+ * @summary Update consolidated tenant-wide settings
+ */
+export const SaveAdminTenantSettingsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const saveAdminTenantSettingsBodySuccessFeePctMin = 0;
+export const saveAdminTenantSettingsBodySuccessFeePctMax = 100;
+
+export const saveAdminTenantSettingsBodyBaseCurrencyMin = 3;
+export const saveAdminTenantSettingsBodyBaseCurrencyMax = 8;
+
+export const saveAdminTenantSettingsBodyContractRenewalAlertDaysMin = 0;
+export const saveAdminTenantSettingsBodyContractRenewalAlertDaysMax = 365;
+
+export const saveAdminTenantSettingsBodyRetentionDefaultDaysMin = 30;
+export const saveAdminTenantSettingsBodyRetentionDefaultDaysMax = 3650;
+
+export const SaveAdminTenantSettingsBody = zod
+  .object({
+    successFeePct: zod
+      .number()
+      .min(saveAdminTenantSettingsBodySuccessFeePctMin)
+      .max(saveAdminTenantSettingsBodySuccessFeePctMax)
+      .optional(),
+    baseCurrency: zod
+      .string()
+      .min(saveAdminTenantSettingsBodyBaseCurrencyMin)
+      .max(saveAdminTenantSettingsBodyBaseCurrencyMax)
+      .optional(),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .optional(),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(saveAdminTenantSettingsBodyContractRenewalAlertDaysMin)
+      .max(saveAdminTenantSettingsBodyContractRenewalAlertDaysMax)
+      .optional(),
+    retentionDefaultDays: zod
+      .number()
+      .min(saveAdminTenantSettingsBodyRetentionDefaultDaysMin)
+      .max(saveAdminTenantSettingsBodyRetentionDefaultDaysMax)
+      .optional(),
+  })
+  .describe(
+    "All fields are optional on PUT — only supplied keys are written.\nOn GET the server fills in defaults (`disclosurePolicy=standard`,\n`contractRenewalAlertDays=60`, `retentionDefaultDays=365`).\n",
+  );
+
+export const saveAdminTenantSettingsResponseSuccessFeePctMin = 0;
+export const saveAdminTenantSettingsResponseSuccessFeePctMax = 100;
+
+export const saveAdminTenantSettingsResponseBaseCurrencyMin = 3;
+export const saveAdminTenantSettingsResponseBaseCurrencyMax = 8;
+
+export const saveAdminTenantSettingsResponseContractRenewalAlertDaysMin = 0;
+export const saveAdminTenantSettingsResponseContractRenewalAlertDaysMax = 365;
+
+export const saveAdminTenantSettingsResponseRetentionDefaultDaysMin = 30;
+export const saveAdminTenantSettingsResponseRetentionDefaultDaysMax = 3650;
+
+export const SaveAdminTenantSettingsResponse = zod
+  .object({
+    successFeePct: zod
+      .number()
+      .min(saveAdminTenantSettingsResponseSuccessFeePctMin)
+      .max(saveAdminTenantSettingsResponseSuccessFeePctMax)
+      .optional(),
+    baseCurrency: zod
+      .string()
+      .min(saveAdminTenantSettingsResponseBaseCurrencyMin)
+      .max(saveAdminTenantSettingsResponseBaseCurrencyMax)
+      .optional(),
+    disclosurePolicy: zod
+      .enum(["conservative", "standard", "analyst"])
+      .optional(),
+    contractRenewalAlertDays: zod
+      .number()
+      .min(saveAdminTenantSettingsResponseContractRenewalAlertDaysMin)
+      .max(saveAdminTenantSettingsResponseContractRenewalAlertDaysMax)
+      .optional(),
+    retentionDefaultDays: zod
+      .number()
+      .min(saveAdminTenantSettingsResponseRetentionDefaultDaysMin)
+      .max(saveAdminTenantSettingsResponseRetentionDefaultDaysMax)
+      .optional(),
+  })
+  .describe(
+    "All fields are optional on PUT — only supplied keys are written.\nOn GET the server fills in defaults (`disclosurePolicy=standard`,\n`contractRenewalAlertDays=60`, `retentionDefaultDays=365`).\n",
+  );

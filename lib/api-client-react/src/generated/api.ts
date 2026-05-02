@@ -25,6 +25,17 @@ import type {
 import type {
   AddWatchedIssuerRequest,
   AddWatchlistMemberRequest,
+  AdminApiKeyIssued,
+  AdminApiKeyRow,
+  AdminAuditActionCount,
+  AdminAuditLogEntry,
+  AdminInviteResult,
+  AdminRevokeResult,
+  AdminRoleChangeResult,
+  AdminSsoConfig,
+  AdminTenantSettings,
+  AdminUserRow,
+  AdminWhoamiResponse,
   Alert,
   AlertChannel,
   AlertChannelList,
@@ -48,6 +59,7 @@ import type {
   BulkRejectOpportunitiesRequest,
   BulkSnoozeOpportunitiesRequest,
   BulkUnsnoozeOpportunitiesRequest,
+  ChangeAdminUserRoleRequest,
   ChannelTestResult,
   Collector,
   CollectorAuditEntry,
@@ -82,6 +94,7 @@ import type {
   ErrorResponse,
   EscalationPolicy,
   EscalationPolicyList,
+  ExportAdminAuditLogParams,
   GetCollectorCost200,
   GetCollectorCostParams,
   GetCollectorCostTimeseries200,
@@ -101,11 +114,14 @@ import type {
   IntelligenceEventStreamResponse,
   IntelligenceRiskHeatmapResponse,
   IntelligenceSignalListResponse,
+  InviteAdminUserRequest,
+  IssueAdminApiKeyRequest,
   Job,
   JobAccepted,
   JobCancelled,
   JobKindSetting,
   LearnedPrior,
+  ListAdminAuditLogParams,
   ListAlertSubscriptionsParams,
   ListAlertsParams,
   ListCollectorCatalog200,
@@ -12492,3 +12508,1393 @@ export function useGetOperationsHealth<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns the orgId, email, and resolved role list for the current
+actor so the command-center UI can decide whether to render the
+Admin sidebar entry without round-tripping a 403.
+
+ * @summary Resolved RBAC context for the current request
+ */
+export const getGetAdminWhoamiUrl = () => {
+  return `/api/admin/whoami`;
+};
+
+export const getAdminWhoami = async (
+  options?: RequestInit,
+): Promise<AdminWhoamiResponse> => {
+  return customFetch<AdminWhoamiResponse>(getGetAdminWhoamiUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAdminWhoamiQueryKey = () => {
+  return [`/api/admin/whoami`] as const;
+};
+
+export const getGetAdminWhoamiQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdminWhoami>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminWhoami>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAdminWhoamiQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminWhoami>>> = ({
+    signal,
+  }) => getAdminWhoami({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminWhoami>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdminWhoamiQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdminWhoami>>
+>;
+export type GetAdminWhoamiQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Resolved RBAC context for the current request
+ */
+
+export function useGetAdminWhoami<
+  TData = Awaited<ReturnType<typeof getAdminWhoami>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminWhoami>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdminWhoamiQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Lists every `user_roles` row for the active org, including
+revoked rows so the UI can render history. Requires the
+`users:manage` permission.
+
+ * @summary Members of the active tenant
+ */
+export const getListAdminUsersUrl = () => {
+  return `/api/admin/users`;
+};
+
+export const listAdminUsers = async (
+  options?: RequestInit,
+): Promise<AdminUserRow[]> => {
+  return customFetch<AdminUserRow[]>(getListAdminUsersUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAdminUsersQueryKey = () => {
+  return [`/api/admin/users`] as const;
+};
+
+export const getListAdminUsersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminUsers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAdminUsersQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminUsers>>> = ({
+    signal,
+  }) => listAdminUsers({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAdminUsersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminUsers>>
+>;
+export type ListAdminUsersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Members of the active tenant
+ */
+
+export function useListAdminUsers<
+  TData = Awaited<ReturnType<typeof listAdminUsers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminUsers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAdminUsersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Provisions a `user_roles` row keyed on `pending:<email>` so the
+invitee picks up their role on first Clerk sign-in. Returns 409
+if the email already has a pending invite.
+
+ * @summary Invite a teammate with a pre-assigned role
+ */
+export const getInviteAdminUserUrl = () => {
+  return `/api/admin/users/invite`;
+};
+
+export const inviteAdminUser = async (
+  inviteAdminUserRequest: InviteAdminUserRequest,
+  options?: RequestInit,
+): Promise<AdminInviteResult> => {
+  return customFetch<AdminInviteResult>(getInviteAdminUserUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(inviteAdminUserRequest),
+  });
+};
+
+export const getInviteAdminUserMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inviteAdminUser>>,
+    TError,
+    { data: BodyType<InviteAdminUserRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inviteAdminUser>>,
+  TError,
+  { data: BodyType<InviteAdminUserRequest> },
+  TContext
+> => {
+  const mutationKey = ["inviteAdminUser"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inviteAdminUser>>,
+    { data: BodyType<InviteAdminUserRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return inviteAdminUser(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InviteAdminUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inviteAdminUser>>
+>;
+export type InviteAdminUserMutationBody = BodyType<InviteAdminUserRequest>;
+export type InviteAdminUserMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Invite a teammate with a pre-assigned role
+ */
+export const useInviteAdminUser = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inviteAdminUser>>,
+    TError,
+    { data: BodyType<InviteAdminUserRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof inviteAdminUser>>,
+  TError,
+  { data: BodyType<InviteAdminUserRequest> },
+  TContext
+> => {
+  return useMutation(getInviteAdminUserMutationOptions(options));
+};
+
+/**
+ * @summary Change the role of an existing member
+ */
+export const getChangeAdminUserRoleUrl = (id: string) => {
+  return `/api/admin/users/${id}`;
+};
+
+export const changeAdminUserRole = async (
+  id: string,
+  changeAdminUserRoleRequest: ChangeAdminUserRoleRequest,
+  options?: RequestInit,
+): Promise<AdminRoleChangeResult> => {
+  return customFetch<AdminRoleChangeResult>(getChangeAdminUserRoleUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(changeAdminUserRoleRequest),
+  });
+};
+
+export const getChangeAdminUserRoleMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof changeAdminUserRole>>,
+    TError,
+    { id: string; data: BodyType<ChangeAdminUserRoleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof changeAdminUserRole>>,
+  TError,
+  { id: string; data: BodyType<ChangeAdminUserRoleRequest> },
+  TContext
+> => {
+  const mutationKey = ["changeAdminUserRole"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof changeAdminUserRole>>,
+    { id: string; data: BodyType<ChangeAdminUserRoleRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return changeAdminUserRole(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChangeAdminUserRoleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof changeAdminUserRole>>
+>;
+export type ChangeAdminUserRoleMutationBody =
+  BodyType<ChangeAdminUserRoleRequest>;
+export type ChangeAdminUserRoleMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Change the role of an existing member
+ */
+export const useChangeAdminUserRole = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof changeAdminUserRole>>,
+    TError,
+    { id: string; data: BodyType<ChangeAdminUserRoleRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof changeAdminUserRole>>,
+  TError,
+  { id: string; data: BodyType<ChangeAdminUserRoleRequest> },
+  TContext
+> => {
+  return useMutation(getChangeAdminUserRoleMutationOptions(options));
+};
+
+/**
+ * Soft-revoke: sets `revokedAt` so the audit history is preserved.
+
+ * @summary Revoke a member's role
+ */
+export const getRevokeAdminUserUrl = (id: string) => {
+  return `/api/admin/users/${id}`;
+};
+
+export const revokeAdminUser = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AdminRevokeResult> => {
+  return customFetch<AdminRevokeResult>(getRevokeAdminUserUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRevokeAdminUserMutationOptions = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeAdminUser>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeAdminUser>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["revokeAdminUser"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeAdminUser>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return revokeAdminUser(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevokeAdminUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeAdminUser>>
+>;
+
+export type RevokeAdminUserMutationError = ErrorType<
+  NotFoundResponse | ErrorResponse
+>;
+
+/**
+ * @summary Revoke a member's role
+ */
+export const useRevokeAdminUser = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeAdminUser>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof revokeAdminUser>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRevokeAdminUserMutationOptions(options));
+};
+
+/**
+ * Returns every API key issued for the active tenant, including
+revoked keys. The plaintext token is never returned by this
+endpoint — only the prefix.
+
+ * @summary List tenant API keys
+ */
+export const getListAdminApiKeysUrl = () => {
+  return `/api/admin/api-keys`;
+};
+
+export const listAdminApiKeys = async (
+  options?: RequestInit,
+): Promise<AdminApiKeyRow[]> => {
+  return customFetch<AdminApiKeyRow[]>(getListAdminApiKeysUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAdminApiKeysQueryKey = () => {
+  return [`/api/admin/api-keys`] as const;
+};
+
+export const getListAdminApiKeysQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminApiKeys>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminApiKeys>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAdminApiKeysQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAdminApiKeys>>
+  > = ({ signal }) => listAdminApiKeys({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminApiKeys>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAdminApiKeysQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminApiKeys>>
+>;
+export type ListAdminApiKeysQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List tenant API keys
+ */
+
+export function useListAdminApiKeys<
+  TData = Awaited<ReturnType<typeof listAdminApiKeys>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminApiKeys>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAdminApiKeysQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Generates a fresh token and returns the plaintext bearer ONCE in
+the `secret` field — the UI must surface it immediately and warn
+the operator they cannot retrieve it again. Cannot be scoped to
+`platform_admin`.
+
+ * @summary Issue a new tenant API key
+ */
+export const getIssueAdminApiKeyUrl = () => {
+  return `/api/admin/api-keys`;
+};
+
+export const issueAdminApiKey = async (
+  issueAdminApiKeyRequest: IssueAdminApiKeyRequest,
+  options?: RequestInit,
+): Promise<AdminApiKeyIssued> => {
+  return customFetch<AdminApiKeyIssued>(getIssueAdminApiKeyUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(issueAdminApiKeyRequest),
+  });
+};
+
+export const getIssueAdminApiKeyMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof issueAdminApiKey>>,
+    TError,
+    { data: BodyType<IssueAdminApiKeyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof issueAdminApiKey>>,
+  TError,
+  { data: BodyType<IssueAdminApiKeyRequest> },
+  TContext
+> => {
+  const mutationKey = ["issueAdminApiKey"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof issueAdminApiKey>>,
+    { data: BodyType<IssueAdminApiKeyRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return issueAdminApiKey(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IssueAdminApiKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof issueAdminApiKey>>
+>;
+export type IssueAdminApiKeyMutationBody = BodyType<IssueAdminApiKeyRequest>;
+export type IssueAdminApiKeyMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Issue a new tenant API key
+ */
+export const useIssueAdminApiKey = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof issueAdminApiKey>>,
+    TError,
+    { data: BodyType<IssueAdminApiKeyRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof issueAdminApiKey>>,
+  TError,
+  { data: BodyType<IssueAdminApiKeyRequest> },
+  TContext
+> => {
+  return useMutation(getIssueAdminApiKeyMutationOptions(options));
+};
+
+/**
+ * @summary Revoke a tenant API key
+ */
+export const getRevokeAdminApiKeyUrl = (id: string) => {
+  return `/api/admin/api-keys/${id}`;
+};
+
+export const revokeAdminApiKey = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AdminRevokeResult> => {
+  return customFetch<AdminRevokeResult>(getRevokeAdminApiKeyUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRevokeAdminApiKeyMutationOptions = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeAdminApiKey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeAdminApiKey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["revokeAdminApiKey"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeAdminApiKey>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return revokeAdminApiKey(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevokeAdminApiKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeAdminApiKey>>
+>;
+
+export type RevokeAdminApiKeyMutationError = ErrorType<
+  NotFoundResponse | ErrorResponse
+>;
+
+/**
+ * @summary Revoke a tenant API key
+ */
+export const useRevokeAdminApiKey = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeAdminApiKey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof revokeAdminApiKey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRevokeAdminApiKeyMutationOptions(options));
+};
+
+/**
+ * Issues a replacement key with the same scope and revokes the old
+one in the same transaction. The plaintext secret is returned
+ONCE on the new key.
+
+ * @summary Rotate a tenant API key
+ */
+export const getRotateAdminApiKeyUrl = (id: string) => {
+  return `/api/admin/api-keys/${id}/rotate`;
+};
+
+export const rotateAdminApiKey = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AdminApiKeyIssued> => {
+  return customFetch<AdminApiKeyIssued>(getRotateAdminApiKeyUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRotateAdminApiKeyMutationOptions = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rotateAdminApiKey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rotateAdminApiKey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["rotateAdminApiKey"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rotateAdminApiKey>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return rotateAdminApiKey(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RotateAdminApiKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rotateAdminApiKey>>
+>;
+
+export type RotateAdminApiKeyMutationError = ErrorType<
+  NotFoundResponse | ErrorResponse
+>;
+
+/**
+ * @summary Rotate a tenant API key
+ */
+export const useRotateAdminApiKey = <
+  TError = ErrorType<NotFoundResponse | ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rotateAdminApiKey>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof rotateAdminApiKey>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRotateAdminApiKeyMutationOptions(options));
+};
+
+/**
+ * Append-only record of every admin / RBAC mutation. Newest first,
+capped at 200. Filterable by actor, action, and target id.
+
+ * @summary List admin audit log entries
+ */
+export const getListAdminAuditLogUrl = (params?: ListAdminAuditLogParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/audit-log?${stringifiedParams}`
+    : `/api/admin/audit-log`;
+};
+
+export const listAdminAuditLog = async (
+  params?: ListAdminAuditLogParams,
+  options?: RequestInit,
+): Promise<AdminAuditLogEntry[]> => {
+  return customFetch<AdminAuditLogEntry[]>(getListAdminAuditLogUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAdminAuditLogQueryKey = (
+  params?: ListAdminAuditLogParams,
+) => {
+  return [`/api/admin/audit-log`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAdminAuditLogQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminAuditLog>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAdminAuditLogParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAdminAuditLog>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListAdminAuditLogQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAdminAuditLog>>
+  > = ({ signal }) => listAdminAuditLog(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminAuditLog>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAdminAuditLogQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminAuditLog>>
+>;
+export type ListAdminAuditLogQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List admin audit log entries
+ */
+
+export function useListAdminAuditLog<
+  TData = Awaited<ReturnType<typeof listAdminAuditLog>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAdminAuditLogParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAdminAuditLog>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAdminAuditLogQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Powers the action-filter dropdown in the Audit tab so users see
+only actions that have actually occurred for this tenant.
+
+ * @summary Distinct audit actions with counts
+ */
+export const getListAdminAuditActionsUrl = () => {
+  return `/api/admin/audit-log/actions`;
+};
+
+export const listAdminAuditActions = async (
+  options?: RequestInit,
+): Promise<AdminAuditActionCount[]> => {
+  return customFetch<AdminAuditActionCount[]>(getListAdminAuditActionsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAdminAuditActionsQueryKey = () => {
+  return [`/api/admin/audit-log/actions`] as const;
+};
+
+export const getListAdminAuditActionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminAuditActions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminAuditActions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAdminAuditActionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAdminAuditActions>>
+  > = ({ signal }) => listAdminAuditActions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminAuditActions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAdminAuditActionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminAuditActions>>
+>;
+export type ListAdminAuditActionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Distinct audit actions with counts
+ */
+
+export function useListAdminAuditActions<
+  TData = Awaited<ReturnType<typeof listAdminAuditActions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminAuditActions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAdminAuditActionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Streams up to 10 000 audit rows for the active tenant matching
+the supplied filters. Used by SOC 2 reviewers and exported
+directly via a browser navigation.
+
+ * @summary Export filtered audit log as CSV
+ */
+export const getExportAdminAuditLogUrl = (
+  params?: ExportAdminAuditLogParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/audit-log/export.csv?${stringifiedParams}`
+    : `/api/admin/audit-log/export.csv`;
+};
+
+export const exportAdminAuditLog = async (
+  params?: ExportAdminAuditLogParams,
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getExportAdminAuditLogUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getExportAdminAuditLogQueryKey = (
+  params?: ExportAdminAuditLogParams,
+) => {
+  return [
+    `/api/admin/audit-log/export.csv`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getExportAdminAuditLogQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportAdminAuditLog>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ExportAdminAuditLogParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportAdminAuditLog>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getExportAdminAuditLogQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportAdminAuditLog>>
+  > = ({ signal }) =>
+    exportAdminAuditLog(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportAdminAuditLog>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ExportAdminAuditLogQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportAdminAuditLog>>
+>;
+export type ExportAdminAuditLogQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Export filtered audit log as CSV
+ */
+
+export function useExportAdminAuditLog<
+  TData = Awaited<ReturnType<typeof exportAdminAuditLog>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ExportAdminAuditLogParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportAdminAuditLog>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getExportAdminAuditLogQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /
+OIDC connection; this endpoint stores only the tenant-specific
+metadata operators surface in the admin UI.
+
+ * @summary Read tenant SSO configuration
+ */
+export const getGetAdminSsoConfigUrl = () => {
+  return `/api/admin/sso`;
+};
+
+export const getAdminSsoConfig = async (
+  options?: RequestInit,
+): Promise<AdminSsoConfig> => {
+  return customFetch<AdminSsoConfig>(getGetAdminSsoConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAdminSsoConfigQueryKey = () => {
+  return [`/api/admin/sso`] as const;
+};
+
+export const getGetAdminSsoConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdminSsoConfig>>,
+  TError = ErrorType<NotFoundResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminSsoConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAdminSsoConfigQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdminSsoConfig>>
+  > = ({ signal }) => getAdminSsoConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminSsoConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdminSsoConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdminSsoConfig>>
+>;
+export type GetAdminSsoConfigQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Read tenant SSO configuration
+ */
+
+export function useGetAdminSsoConfig<
+  TData = Awaited<ReturnType<typeof getAdminSsoConfig>>,
+  TError = ErrorType<NotFoundResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminSsoConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdminSsoConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Replace the tenant SSO configuration
+ */
+export const getSaveAdminSsoConfigUrl = () => {
+  return `/api/admin/sso`;
+};
+
+export const saveAdminSsoConfig = async (
+  adminSsoConfig: AdminSsoConfig,
+  options?: RequestInit,
+): Promise<AdminSsoConfig> => {
+  return customFetch<AdminSsoConfig>(getSaveAdminSsoConfigUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(adminSsoConfig),
+  });
+};
+
+export const getSaveAdminSsoConfigMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveAdminSsoConfig>>,
+    TError,
+    { data: BodyType<AdminSsoConfig> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveAdminSsoConfig>>,
+  TError,
+  { data: BodyType<AdminSsoConfig> },
+  TContext
+> => {
+  const mutationKey = ["saveAdminSsoConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveAdminSsoConfig>>,
+    { data: BodyType<AdminSsoConfig> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveAdminSsoConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveAdminSsoConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveAdminSsoConfig>>
+>;
+export type SaveAdminSsoConfigMutationBody = BodyType<AdminSsoConfig>;
+export type SaveAdminSsoConfigMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Replace the tenant SSO configuration
+ */
+export const useSaveAdminSsoConfig = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveAdminSsoConfig>>,
+    TError,
+    { data: BodyType<AdminSsoConfig> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveAdminSsoConfig>>,
+  TError,
+  { data: BodyType<AdminSsoConfig> },
+  TContext
+> => {
+  return useMutation(getSaveAdminSsoConfigMutationOptions(options));
+};
+
+/**
+ * Aggregates fields from `orgs.successFeePct`, `orgs.baseCurrency`,
+and `orgs.settings` (disclosure policy, contract renewal alert,
+retention) so the Org-Admin UI can manage them in one place.
+
+ * @summary Read consolidated tenant-wide settings
+ */
+export const getGetAdminTenantSettingsUrl = () => {
+  return `/api/admin/tenant-settings`;
+};
+
+export const getAdminTenantSettings = async (
+  options?: RequestInit,
+): Promise<AdminTenantSettings> => {
+  return customFetch<AdminTenantSettings>(getGetAdminTenantSettingsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAdminTenantSettingsQueryKey = () => {
+  return [`/api/admin/tenant-settings`] as const;
+};
+
+export const getGetAdminTenantSettingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAdminTenantSettings>>,
+  TError = ErrorType<NotFoundResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTenantSettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAdminTenantSettingsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAdminTenantSettings>>
+  > = ({ signal }) => getAdminTenantSettings({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTenantSettings>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAdminTenantSettingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAdminTenantSettings>>
+>;
+export type GetAdminTenantSettingsQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Read consolidated tenant-wide settings
+ */
+
+export function useGetAdminTenantSettings<
+  TData = Awaited<ReturnType<typeof getAdminTenantSettings>>,
+  TError = ErrorType<NotFoundResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAdminTenantSettings>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAdminTenantSettingsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Partial update — only fields supplied in the body are written.
+Fields stored on `orgs.settings` are merged with the existing
+JSON blob so unrelated keys are preserved.
+
+ * @summary Update consolidated tenant-wide settings
+ */
+export const getSaveAdminTenantSettingsUrl = () => {
+  return `/api/admin/tenant-settings`;
+};
+
+export const saveAdminTenantSettings = async (
+  adminTenantSettings: AdminTenantSettings,
+  options?: RequestInit,
+): Promise<AdminTenantSettings> => {
+  return customFetch<AdminTenantSettings>(getSaveAdminTenantSettingsUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(adminTenantSettings),
+  });
+};
+
+export const getSaveAdminTenantSettingsMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveAdminTenantSettings>>,
+    TError,
+    { data: BodyType<AdminTenantSettings> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveAdminTenantSettings>>,
+  TError,
+  { data: BodyType<AdminTenantSettings> },
+  TContext
+> => {
+  const mutationKey = ["saveAdminTenantSettings"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveAdminTenantSettings>>,
+    { data: BodyType<AdminTenantSettings> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveAdminTenantSettings(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveAdminTenantSettingsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveAdminTenantSettings>>
+>;
+export type SaveAdminTenantSettingsMutationBody = BodyType<AdminTenantSettings>;
+export type SaveAdminTenantSettingsMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Update consolidated tenant-wide settings
+ */
+export const useSaveAdminTenantSettings = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveAdminTenantSettings>>,
+    TError,
+    { data: BodyType<AdminTenantSettings> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveAdminTenantSettings>>,
+  TError,
+  { data: BodyType<AdminTenantSettings> },
+  TContext
+> => {
+  return useMutation(getSaveAdminTenantSettingsMutationOptions(options));
+};

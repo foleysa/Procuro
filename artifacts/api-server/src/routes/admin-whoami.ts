@@ -3,9 +3,9 @@
  * current request. Used by the command-center web UI to decide whether
  * to render the /admin sidebar entry without round-tripping a 403.
  *
- * Intentionally NOT in the OpenAPI spec: admin surface stays private
- * and the contract is small enough to consume via a hand-rolled
- * fetch wrapper in `lib/admin-client.ts`.
+ * Documented under the `admin` tag in `lib/api-spec/openapi.yaml`;
+ * the command-center consumes it via the orval-generated
+ * `useGetAdminWhoami` hook from `@workspace/api-client-react`.
  */
 import { Router, type IRouter } from "express";
 import { tenantMiddleware } from "../lib/tenant";

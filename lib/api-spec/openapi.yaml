@@ -68,6 +68,18 @@ tags:
   description: Customer-facing trust posture (live controls, citations, compliance)
 - name: alerts
   description: Alerts subsystem — inbox, channels, subscriptions, watchlists, rules, escalation
+- name: admin
+  description: 'Tenant Org-Admin surface. RBAC-gated endpoints behind
+
+    `requirePermission(...)` for managing members, API keys, SSO,
+
+    tenant-wide settings, and the immutable admin audit log. Every
+
+    mutating call appends an `admin_audit_log` row capturing actor,
+
+    target, and a JSON metadata blob.
+
+    '
 paths:
   /healthz:
     get:
@@ -3974,6 +3986,443 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperationsHealth"
+  /admin/whoami:
+    get:
+      operationId: getAdminWhoami
+      tags:
+      - admin
+      summary: Resolved RBAC context for the current request
+      description: 'Returns the orgId, email, and resolved role list for the current
+
+        actor so the command-center UI can decide whether to render the
+
+        Admin sidebar entry without round-tripping a 403.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: RBAC context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminWhoamiResponse'
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      tags:
+      - admin
+      summary: Members of the active tenant
+      description: 'Lists every `user_roles` row for the active org, including
+
+        revoked rows so the UI can render history. Requires the
+
+        `users:manage` permission.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: User role rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUserRow'
+  /admin/users/invite:
+    post:
+      operationId: inviteAdminUser
+      tags:
+      - admin
+      summary: Invite a teammate with a pre-assigned role
+      description: 'Provisions a `user_roles` row keyed on `pending:<email>` so the
+
+        invitee picks up their role on first Clerk sign-in. Returns 409
+
+        if the email already has a pending invite.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteAdminUserRequest'
+      responses:
+        '201':
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminInviteResult'
+        '409':
+          description: Invite already pending for this email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/users/{id}:
+    patch:
+      operationId: changeAdminUserRole
+      tags:
+      - admin
+      summary: Change the role of an existing member
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeAdminUserRoleRequest'
+      responses:
+        '200':
+          description: Updated role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRoleChangeResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: revokeAdminUser
+      tags:
+      - admin
+      summary: Revoke a member's role
+      description: 'Soft-revoke: sets `revokedAt` so the audit history is preserved.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRevokeResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api-keys:
+    get:
+      operationId: listAdminApiKeys
+      tags:
+      - admin
+      summary: List tenant API keys
+      description: 'Returns every API key issued for the active tenant, including
+
+        revoked keys. The plaintext token is never returned by this
+
+        endpoint — only the prefix.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: API key rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminApiKeyRow'
+    post:
+      operationId: issueAdminApiKey
+      tags:
+      - admin
+      summary: Issue a new tenant API key
+      description: 'Generates a fresh token and returns the plaintext bearer ONCE in
+
+        the `secret` field — the UI must surface it immediately and warn
+
+        the operator they cannot retrieve it again. Cannot be scoped to
+
+        `platform_admin`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueAdminApiKeyRequest'
+      responses:
+        '201':
+          description: Issued key (with one-shot plaintext secret)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminApiKeyIssued'
+  /admin/api-keys/{id}:
+    delete:
+      operationId: revokeAdminApiKey
+      tags:
+      - admin
+      summary: Revoke a tenant API key
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRevokeResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Already revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/api-keys/{id}/rotate:
+    post:
+      operationId: rotateAdminApiKey
+      tags:
+      - admin
+      summary: Rotate a tenant API key
+      description: 'Issues a replacement key with the same scope and revokes the old
+
+        one in the same transaction. The plaintext secret is returned
+
+        ONCE on the new key.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '201':
+          description: Replacement key (with one-shot plaintext secret)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminApiKeyIssued'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot rotate a revoked key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/audit-log:
+    get:
+      operationId: listAdminAuditLog
+      tags:
+      - admin
+      summary: List admin audit log entries
+      description: 'Append-only record of every admin / RBAC mutation. Newest first,
+
+        capped at 200. Filterable by actor, action, and target id.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: actor
+        schema:
+          type: string
+        description: Filter by actor email or system principal
+      - in: query
+        name: action
+        schema:
+          type: string
+        description: Filter by action key (e.g. `user.invite`, `api_key.rotate`)
+      - in: query
+        name: targetId
+        schema:
+          type: string
+        description: Filter by audited target id
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 100
+      responses:
+        '200':
+          description: Audit entries (most-recent first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminAuditLogEntry'
+  /admin/audit-log/actions:
+    get:
+      operationId: listAdminAuditActions
+      tags:
+      - admin
+      summary: Distinct audit actions with counts
+      description: 'Powers the action-filter dropdown in the Audit tab so users see
+
+        only actions that have actually occurred for this tenant.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Action / count pairs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminAuditActionCount'
+  /admin/audit-log/export.csv:
+    get:
+      operationId: exportAdminAuditLog
+      tags:
+      - admin
+      summary: Export filtered audit log as CSV
+      description: 'Streams up to 10 000 audit rows for the active tenant matching
+
+        the supplied filters. Used by SOC 2 reviewers and exported
+
+        directly via a browser navigation.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: actor
+        schema:
+          type: string
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: targetId
+        schema:
+          type: string
+      responses:
+        '200':
+          description: CSV download
+          content:
+            text/csv:
+              schema:
+                type: string
+  /admin/sso:
+    get:
+      operationId: getAdminSsoConfig
+      tags:
+      - admin
+      summary: Read tenant SSO configuration
+      description: 'Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /
+
+        OIDC connection; this endpoint stores only the tenant-specific
+
+        metadata operators surface in the admin UI.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: SSO config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSsoConfig'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: saveAdminSsoConfig
+      tags:
+      - admin
+      summary: Replace the tenant SSO configuration
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSsoConfig'
+      responses:
+        '200':
+          description: Saved SSO config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSsoConfig'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/tenant-settings:
+    get:
+      operationId: getAdminTenantSettings
+      tags:
+      - admin
+      summary: Read consolidated tenant-wide settings
+      description: 'Aggregates fields from `orgs.successFeePct`, `orgs.baseCurrency`,
+
+        and `orgs.settings` (disclosure policy, contract renewal alert,
+
+        retention) so the Org-Admin UI can manage them in one place.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Tenant settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTenantSettings'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: saveAdminTenantSettings
+      tags:
+      - admin
+      summary: Update consolidated tenant-wide settings
+      description: 'Partial update — only fields supplied in the body are written.
+
+        Fields stored on `orgs.settings` are merged with the existing
+
+        JSON blob so unrelated keys are preserved.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminTenantSettings'
+      responses:
+        '200':
+          description: Updated tenant settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTenantSettings'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
   parameters:
@@ -11311,3 +11760,360 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TodayFeedSourceError'
+    AdminUserRole:
+      type: string
+      enum:
+      - platform_admin
+      - org_admin
+      - approver
+      - analyst
+      - read_only
+      - auditor
+      description: 'Resolved RBAC role assignable to a tenant member or scopable to
+
+        an API key. `platform_admin` is reserved for Procuro staff and
+
+        cannot be assigned to a tenant API key.
+
+        '
+    AdminAuthMode:
+      type: string
+      enum:
+      - clerk
+      - dev-header
+      - api-key
+      description: 'Auth transport that produced the active session: Clerk-issued
+
+        JWT (`clerk`), the development `x-org-id` shim (`dev-header`),
+
+        or a tenant API key bearer (`api-key`).
+
+        '
+    AdminWhoamiResponse:
+      type: object
+      required:
+      - orgId
+      - email
+      - roles
+      - viaApiKey
+      properties:
+        orgId:
+          type: string
+        email:
+          type: string
+          nullable: true
+          description: Email of the resolved actor; null for system principals.
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserRole'
+        viaApiKey:
+          type: boolean
+          description: True iff the request was authenticated by an API key bearer.
+        authMode:
+          $ref: '#/components/schemas/AdminAuthMode'
+    AdminUserRow:
+      type: object
+      required:
+      - id
+      - userId
+      - email
+      - role
+      - grantedVia
+      - grantedBy
+      - createdAt
+      - revokedAt
+      - active
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+          description: 'Clerk user id once the user has signed in; otherwise
+
+            `pending:<email>` until the invite is claimed.
+
+            '
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/AdminUserRole'
+        grantedVia:
+          type: string
+          description: 'How the role was provisioned (`manual`, `scim`, `seed`, …).
+
+            '
+        grantedBy:
+          type: string
+          description: Email or principal that issued the grant.
+        createdAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        active:
+          type: boolean
+    InviteAdminUserRequest:
+      type: object
+      required:
+      - email
+      - role
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/AdminUserRole'
+    AdminInviteResult:
+      type: object
+      required:
+      - id
+      - email
+      - role
+      - pending
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/AdminUserRole'
+        pending:
+          type: boolean
+    ChangeAdminUserRoleRequest:
+      type: object
+      required:
+      - role
+      properties:
+        role:
+          $ref: '#/components/schemas/AdminUserRole'
+    AdminRoleChangeResult:
+      type: object
+      required:
+      - id
+      - email
+      - role
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/AdminUserRole'
+    AdminRevokeResult:
+      type: object
+      required:
+      - id
+      - revoked
+      properties:
+        id:
+          type: string
+        revoked:
+          type: boolean
+    AdminApiKeyRow:
+      type: object
+      required:
+      - id
+      - label
+      - prefix
+      - scopeRole
+      - createdAt
+      - createdBy
+      - lastUsedAt
+      - revokedAt
+      - rotatedFromId
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        prefix:
+          type: string
+          description: First 12 chars of the plaintext token; safe to display.
+        scopeRole:
+          $ref: '#/components/schemas/AdminUserRole'
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rotatedFromId:
+          type: string
+          nullable: true
+          description: 'Set on rotated keys to the id of the predecessor; lets the UI
+
+            render rotation lineage.
+
+            '
+    IssueAdminApiKeyRequest:
+      type: object
+      required:
+      - label
+      - scopeRole
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+        scopeRole:
+          $ref: '#/components/schemas/AdminUserRole'
+          description: Cannot be `platform_admin`.
+    AdminApiKeyIssued:
+      type: object
+      required:
+      - id
+      - label
+      - prefix
+      - scopeRole
+      - secret
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        prefix:
+          type: string
+        scopeRole:
+          $ref: '#/components/schemas/AdminUserRole'
+        secret:
+          type: string
+          description: 'Plaintext bearer; returned ONCE on issue/rotate. Cannot be
+
+            retrieved again.
+
+            '
+        rotatedFromId:
+          type: string
+          description: 'Present only on rotate responses; id of the now-revoked
+
+            predecessor key.
+
+            '
+    AdminAuditLogEntry:
+      type: object
+      required:
+      - id
+      - actor
+      - action
+      - targetId
+      - targetLabel
+      - metadata
+      - createdAt
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        targetId:
+          type: string
+          nullable: true
+        targetLabel:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    AdminAuditActionCount:
+      type: object
+      required:
+      - action
+      - count
+      properties:
+        action:
+          type: string
+        count:
+          type: integer
+    AdminSsoProtocol:
+      type: string
+      enum:
+      - saml
+      - oidc
+    AdminSsoConfig:
+      type: object
+      required:
+      - enabled
+      - protocol
+      - idpName
+      - emailDomains
+      - scimEnabled
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        protocol:
+          $ref: '#/components/schemas/AdminSsoProtocol'
+        idpName:
+          type: string
+          maxLength: 80
+          default: okta
+        emailDomains:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 3
+            maxLength: 120
+        clerkConnectionId:
+          type: string
+          maxLength: 120
+          nullable: true
+        metadataUrl:
+          type: string
+          format: uri
+          nullable: true
+        notes:
+          type: string
+          maxLength: 2000
+          nullable: true
+        scimEnabled:
+          type: boolean
+          default: false
+    AdminTenantDisclosurePolicy:
+      type: string
+      enum:
+      - conservative
+      - standard
+      - analyst
+    AdminTenantSettings:
+      type: object
+      description: 'All fields are optional on PUT — only supplied keys are written.
+
+        On GET the server fills in defaults (`disclosurePolicy=standard`,
+
+        `contractRenewalAlertDays=60`, `retentionDefaultDays=365`).
+
+        '
+      properties:
+        successFeePct:
+          type: number
+          minimum: 0
+          maximum: 100
+        baseCurrency:
+          type: string
+          minLength: 3
+          maxLength: 8
+        disclosurePolicy:
+          $ref: '#/components/schemas/AdminTenantDisclosurePolicy'
+        contractRenewalAlertDays:
+          type: integer
+          minimum: 0
+          maximum: 365
+        retentionDefaultDays:
+          type: integer
+          minimum: 30
+          maximum: 3650

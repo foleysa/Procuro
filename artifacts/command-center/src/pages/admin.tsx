@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -45,17 +45,41 @@ import {
   Download,
 } from "lucide-react";
 import {
-  adminClient,
-  ROLE_OPTIONS,
+  useListAdminUsers,
+  useInviteAdminUser,
+  useChangeAdminUserRole,
+  useRevokeAdminUser,
+  useListAdminApiKeys,
+  useIssueAdminApiKey,
+  useRotateAdminApiKey,
+  useRevokeAdminApiKey,
+  useListAdminAuditLog,
+  useListAdminAuditActions,
+  useGetAdminSsoConfig,
+  useSaveAdminSsoConfig,
+  useGetAdminTenantSettings,
+  useSaveAdminTenantSettings,
+  getListAdminUsersQueryKey,
+  getListAdminApiKeysQueryKey,
+  getListAdminAuditLogQueryKey,
+  getListAdminAuditActionsQueryKey,
+  getGetAdminSsoConfigQueryKey,
+  getGetAdminTenantSettingsQueryKey,
+  getExportAdminAuditLogUrl,
   type AdminUserRole,
   type AdminSsoConfig,
   type AdminTenantSettings,
+} from "@workspace/api-client-react";
+import {
+  ROLE_OPTIONS,
+  adminClient,
   type AdminScimGroup,
 } from "@/lib/admin-client";
 
-function formatTime(s: string | null | undefined): string {
+function formatTime(s: string | Date | null | undefined): string {
   if (!s) return "—";
-  return new Date(s).toLocaleString();
+  const d = s instanceof Date ? s : new Date(s);
+  return d.toLocaleString();
 }
 
 // ----- Users tab ---------------------------------------------------
@@ -63,38 +87,52 @@ function formatTime(s: string | null | undefined): string {
 function UsersTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data: users, isLoading } = useQuery({
-    queryKey: ["admin", "users"],
-    queryFn: () => adminClient.listUsers(),
-  });
+  const { data: users, isLoading } = useListAdminUsers();
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AdminUserRole>("analyst");
 
-  const inviteM = useMutation({
-    mutationFn: () => adminClient.inviteUser(email, role),
-    onSuccess: () => {
-      toast({ title: "Invite sent", description: `${email} → ${role}` });
-      setEmail("");
-      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+  const invalidateUsers = () =>
+    qc.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+
+  const inviteM = useInviteAdminUser({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({ title: "Invite sent", description: `${resp.email} → ${resp.role}` });
+        setEmail("");
+        invalidateUsers();
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not invite",
+          description: String(e),
+          variant: "destructive",
+        }),
     },
-    onError: (e: Error) =>
-      toast({ title: "Could not invite", description: String(e), variant: "destructive" }),
   });
 
-  const changeM = useMutation({
-    mutationFn: ({ id, role }: { id: string; role: AdminUserRole }) =>
-      adminClient.changeUserRole(id, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
-    onError: (e: Error) =>
-      toast({ title: "Could not change role", description: String(e), variant: "destructive" }),
+  const changeM = useChangeAdminUserRole({
+    mutation: {
+      onSuccess: () => invalidateUsers(),
+      onError: (e: Error) =>
+        toast({
+          title: "Could not change role",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
   });
 
-  const revokeM = useMutation({
-    mutationFn: (id: string) => adminClient.revokeUser(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
-    onError: (e: Error) =>
-      toast({ title: "Could not revoke", description: String(e), variant: "destructive" }),
+  const revokeM = useRevokeAdminUser({
+    mutation: {
+      onSuccess: () => invalidateUsers(),
+      onError: (e: Error) =>
+        toast({
+          title: "Could not revoke",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
   });
 
   return (
@@ -116,7 +154,7 @@ function UsersTab() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!email) return;
-              inviteM.mutate();
+              inviteM.mutate({ data: { email, role } });
             }}
           >
             <div className="flex-1 min-w-[260px]">
@@ -199,7 +237,10 @@ function UsersTab() {
                         value={u.role}
                         disabled={!u.active}
                         onValueChange={(v) =>
-                          changeM.mutate({ id: u.id, role: v as AdminUserRole })
+                          changeM.mutate({
+                            id: u.id,
+                            data: { role: v as AdminUserRole },
+                          })
                         }
                       >
                         <SelectTrigger
@@ -240,7 +281,7 @@ function UsersTab() {
                         variant="ghost"
                         disabled={!u.active}
                         data-testid={`button-revoke-${u.id}`}
-                        onClick={() => revokeM.mutate(u.id)}
+                        onClick={() => revokeM.mutate({ id: u.id })}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -261,41 +302,44 @@ function UsersTab() {
 function ApiKeysTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data: keys, isLoading } = useQuery({
-    queryKey: ["admin", "api-keys"],
-    queryFn: () => adminClient.listKeys(),
-  });
+  const { data: keys, isLoading } = useListAdminApiKeys();
 
   const [label, setLabel] = useState("");
   const [scopeRole, setScopeRole] = useState<AdminUserRole>("analyst");
   const [justIssued, setJustIssued] = useState<{ secret: string; label: string } | null>(null);
 
-  const issueM = useMutation({
-    mutationFn: () => adminClient.issueKey(label, scopeRole),
-    onSuccess: (resp) => {
-      setJustIssued({ secret: resp.secret, label: resp.label });
-      setLabel("");
-      qc.invalidateQueries({ queryKey: ["admin", "api-keys"] });
+  const invalidateKeys = () =>
+    qc.invalidateQueries({ queryKey: getListAdminApiKeysQueryKey() });
+
+  const issueM = useIssueAdminApiKey({
+    mutation: {
+      onSuccess: (resp) => {
+        setJustIssued({ secret: resp.secret, label: resp.label });
+        setLabel("");
+        invalidateKeys();
+      },
+      onError: (e: Error) =>
+        toast({ title: "Issue failed", description: String(e), variant: "destructive" }),
     },
-    onError: (e: Error) =>
-      toast({ title: "Issue failed", description: String(e), variant: "destructive" }),
   });
 
-  const rotateM = useMutation({
-    mutationFn: (id: string) => adminClient.rotateKey(id),
-    onSuccess: (resp) => {
-      setJustIssued({ secret: resp.secret, label: resp.label });
-      qc.invalidateQueries({ queryKey: ["admin", "api-keys"] });
+  const rotateM = useRotateAdminApiKey({
+    mutation: {
+      onSuccess: (resp) => {
+        setJustIssued({ secret: resp.secret, label: resp.label });
+        invalidateKeys();
+      },
+      onError: (e: Error) =>
+        toast({ title: "Rotate failed", description: String(e), variant: "destructive" }),
     },
-    onError: (e: Error) =>
-      toast({ title: "Rotate failed", description: String(e), variant: "destructive" }),
   });
 
-  const revokeM = useMutation({
-    mutationFn: (id: string) => adminClient.revokeKey(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "api-keys"] }),
-    onError: (e: Error) =>
-      toast({ title: "Revoke failed", description: String(e), variant: "destructive" }),
+  const revokeM = useRevokeAdminApiKey({
+    mutation: {
+      onSuccess: () => invalidateKeys(),
+      onError: (e: Error) =>
+        toast({ title: "Revoke failed", description: String(e), variant: "destructive" }),
+    },
   });
 
   return (
@@ -355,7 +399,7 @@ function ApiKeysTab() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!label) return;
-              issueM.mutate();
+              issueM.mutate({ data: { label, scopeRole } });
             }}
           >
             <div className="flex-1 min-w-[260px]">
@@ -461,7 +505,7 @@ function ApiKeysTab() {
                           variant="ghost"
                           disabled={revoked}
                           data-testid={`button-rotate-${k.id}`}
-                          onClick={() => rotateM.mutate(k.id)}
+                          onClick={() => rotateM.mutate({ id: k.id })}
                         >
                           <RotateCw className="w-4 h-4" />
                         </Button>
@@ -470,7 +514,7 @@ function ApiKeysTab() {
                           variant="ghost"
                           disabled={revoked}
                           data-testid={`button-revoke-key-${k.id}`}
-                          onClick={() => revokeM.mutate(k.id)}
+                          onClick={() => revokeM.mutate({ id: k.id })}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -492,23 +536,21 @@ function ApiKeysTab() {
 function SsoTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data, isLoading } = useQuery({
-    queryKey: ["admin", "sso"],
-    queryFn: () => adminClient.getSso(),
-  });
+  const { data, isLoading } = useGetAdminSsoConfig();
 
   const [draft, setDraft] = useState<AdminSsoConfig | null>(null);
   const cfg = draft ?? data ?? null;
 
-  const saveM = useMutation({
-    mutationFn: (next: AdminSsoConfig) => adminClient.saveSso(next),
-    onSuccess: (resp) => {
-      qc.setQueryData(["admin", "sso"], resp);
-      setDraft(null);
-      toast({ title: "SSO updated" });
+  const saveM = useSaveAdminSsoConfig({
+    mutation: {
+      onSuccess: (resp) => {
+        qc.setQueryData(getGetAdminSsoConfigQueryKey(), resp);
+        setDraft(null);
+        toast({ title: "SSO updated" });
+      },
+      onError: (e: Error) =>
+        toast({ title: "Save failed", description: String(e), variant: "destructive" }),
     },
-    onError: (e: Error) =>
-      toast({ title: "Save failed", description: String(e), variant: "destructive" }),
   });
 
   if (isLoading || !cfg) {
@@ -557,7 +599,7 @@ function SsoTab() {
             <Label>Protocol</Label>
             <Select
               value={cfg.protocol}
-              onValueChange={(v) => update("protocol", v as "saml" | "oidc")}
+              onValueChange={(v) => update("protocol", v as AdminSsoConfig["protocol"])}
             >
               <SelectTrigger data-testid="select-sso-protocol">
                 <SelectValue />
@@ -646,7 +688,7 @@ function SsoTab() {
           <Button
             data-testid="button-save-sso"
             disabled={!draft || saveM.isPending}
-            onClick={() => draft && saveM.mutate(draft)}
+            onClick={() => draft && saveM.mutate({ data: draft })}
           >
             {saveM.isPending ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -790,22 +832,20 @@ function ScimGroupsCard() {
 function TenantSettingsTab() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const { data, isLoading } = useQuery({
-    queryKey: ["admin", "tenant-settings"],
-    queryFn: () => adminClient.getTenantSettings(),
-  });
+  const { data, isLoading } = useGetAdminTenantSettings();
   const [draft, setDraft] = useState<AdminTenantSettings | null>(null);
   const cfg = draft ?? data ?? null;
 
-  const saveM = useMutation({
-    mutationFn: (next: AdminTenantSettings) => adminClient.saveTenantSettings(next),
-    onSuccess: (resp) => {
-      qc.setQueryData(["admin", "tenant-settings"], resp);
-      setDraft(null);
-      toast({ title: "Tenant settings saved" });
+  const saveM = useSaveAdminTenantSettings({
+    mutation: {
+      onSuccess: (resp) => {
+        qc.setQueryData(getGetAdminTenantSettingsQueryKey(), resp);
+        setDraft(null);
+        toast({ title: "Tenant settings saved" });
+      },
+      onError: (e: Error) =>
+        toast({ title: "Save failed", description: String(e), variant: "destructive" }),
     },
-    onError: (e: Error) =>
-      toast({ title: "Save failed", description: String(e), variant: "destructive" }),
   });
 
   if (isLoading || !cfg) {
@@ -916,7 +956,7 @@ function TenantSettingsTab() {
 
         <Button
           disabled={!draft || saveM.isPending}
-          onClick={() => draft && saveM.mutate(draft)}
+          onClick={() => draft && saveM.mutate({ data: draft })}
           data-testid="button-save-tenant"
         >
           {saveM.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
@@ -930,21 +970,16 @@ function TenantSettingsTab() {
 // ----- Audit log tab ----------------------------------------------
 
 function AuditTab() {
+  const qc = useQueryClient();
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin", "audit", actor, action],
-    queryFn: () =>
-      adminClient.listAudit({
-        actor: actor || undefined,
-        action: action || undefined,
-        limit: 200,
-      }),
-  });
-  const { data: actions } = useQuery({
-    queryKey: ["admin", "audit-actions"],
-    queryFn: () => adminClient.listAuditActions(),
-  });
+  const params = {
+    ...(actor ? { actor } : {}),
+    ...(action ? { action } : {}),
+    limit: 200,
+  };
+  const { data, isLoading } = useListAdminAuditLog(params);
+  const { data: actions } = useListAdminAuditActions();
 
   return (
     <div className="space-y-6">
@@ -989,18 +1024,31 @@ function AuditTab() {
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="outline" onClick={() => refetch()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                qc.invalidateQueries({
+                  queryKey: getListAdminAuditLogQueryKey(params),
+                });
+                qc.invalidateQueries({
+                  queryKey: getListAdminAuditActionsQueryKey(),
+                });
+              }}
+            >
               Refresh
             </Button>
             <Button
               variant="outline"
               data-testid="button-audit-export"
-              onClick={() =>
-                adminClient.exportAuditCsv({
-                  actor: actor || undefined,
-                  action: action || undefined,
-                })
-              }
+              onClick={() => {
+                // CSV is a direct browser download — let the browser handle
+                // streaming + filename via the response Content-Disposition.
+                const exportParams = {
+                  ...(actor ? { actor } : {}),
+                  ...(action ? { action } : {}),
+                };
+                window.location.href = getExportAdminAuditLogUrl(exportParams);
+              }}
             >
               <Download className="w-4 h-4 mr-2" />
               Export CSV
