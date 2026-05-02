@@ -55,6 +55,7 @@ import TrustPage from "./pages/trust";
 import TrustPublicPage from "./pages/trust-public";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
+import { WarRoomAlertsProvider } from "./lib/use-war-room-alerts";
 import Alerts from "./pages/alerts";
 import Watchlists from "./pages/watchlists";
 
@@ -415,7 +416,9 @@ function ClerkProviderWithRoutes() {
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
       <ClerkQueryClientCacheInvalidator />
-      <AppRoutes />
+      <WarRoomAlertsProvider>
+        <AppRoutes />
+      </WarRoomAlertsProvider>
     </ClerkProvider>
   );
 }

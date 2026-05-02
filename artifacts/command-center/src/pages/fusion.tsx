@@ -51,6 +51,7 @@ import { Switch } from "@/components/ui/switch";
 import { InsightCitations } from "@/components/insight-citations";
 import { RiskHeatmapMap } from "@/components/risk-heatmap-map";
 import { usePolicy } from "@/lib/use-policy";
+import { useWarRoomAlerts } from "@/lib/use-war-room-alerts";
 import { formatUsd, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -79,10 +80,12 @@ import { BlsTrendChart } from "@/components/bls-trend-chart";
 const POLL_MS = 60_000;
 // War room polls more aggressively than the rest of the fusion center
 // because operators expect new disruption events to surface promptly.
+// Same cadence is used by the global `WarRoomAlertsProvider` so the
+// two queries dedupe inside React Query.
 const WAR_ROOM_POLL_MS = 15_000;
-// How long the "NEW" highlight lingers on a freshly-arrived event row
-// before it fades back to normal styling.
-const NEW_BADGE_LINGER_MS = 30_000;
+// `NEW_BADGE_LINGER_MS` lives alongside the shared seen-id tracker in
+// `use-war-room-alerts` so the per-row highlight inside this pane and
+// the global decay loop agree on the linger window.
 
 type FusionTab =
   | "signals"
@@ -1375,25 +1378,20 @@ function EventStreamPane({
   }, [alertsQ.data]);
 
   // ---- NEW-badge tracking ---------------------------------------------
-  // `seenIds` records every event id we have ever rendered in this
-  // mounted session. The first batch is silently absorbed (no NEW
-  // badges on initial load — those are just history). Anything that
-  // shows up later is "new" and we stamp it with `firstSeenAt` so the
-  // badge can fade out after NEW_BADGE_LINGER_MS.
-  const seenIdsRef = useRef<Set<string> | null>(null);
-  const [newSince, setNewSince] = useState<Map<string, number>>(new Map());
+  // The seen-id baseline + arrival timestamps now live in the global
+  // `WarRoomAlertsProvider` (#170) so an arrival that happens while the
+  // operator is on Dashboard still shows up as NEW the moment they
+  // pivot to the war room — and so the sidebar counter and the row
+  // highlight share a single source of truth. We also tell the
+  // provider we're actively viewing so it suppresses toasts and
+  // resets the unread counter on mount.
+  const { newSince, registerViewing } = useWarRoomAlerts();
+  useEffect(() => {
+    return registerViewing();
+  }, [registerViewing]);
   // Snapshot of items rendered at the moment the user clicked Pause.
   // We render this snapshot instead of the live `items` while paused.
   const [snapshot, setSnapshot] = useState<typeof items | null>(null);
-
-  // Reset the seen-id baseline whenever the filter context changes
-  // (e.g. cross-link from /fusion?tab=events to a specific cycleId
-  // and back). Otherwise a long-lived session could carry "NEW"
-  // marks across totally different windows of events.
-  useEffect(() => {
-    seenIdsRef.current = null;
-    setNewSince(new Map());
-  }, [cycleId]);
 
   // #161: when an `?eventId=…` deep-link lands, scroll the matching
   // row into view and pulse it briefly. We watch `items` rather than
@@ -1426,55 +1424,10 @@ function EventStreamPane({
     return () => cancelAnimationFrame(handle);
   }, [focusedEventId, items]);
 
-  useEffect(() => {
-    if (!data) return;
-    const now = Date.now();
-    if (seenIdsRef.current === null) {
-      // First payload after mount — seed the seen set silently.
-      seenIdsRef.current = new Set(items.map((e) => e.id));
-      return;
-    }
-    const seen = seenIdsRef.current;
-    const arrivals: string[] = [];
-    for (const e of items) {
-      if (!seen.has(e.id)) {
-        seen.add(e.id);
-        arrivals.push(e.id);
-      }
-    }
-    if (arrivals.length > 0) {
-      setNewSince((prev) => {
-        const next = new Map(prev);
-        for (const id of arrivals) next.set(id, now);
-        return next;
-      });
-    }
-    // dataUpdatedAt changes whenever React Query writes a new payload
-    // into the cache, which is the precise moment we want to diff.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataUpdatedAt]);
-
-  // Decay the NEW badges once they exceed the linger window so the
-  // list doesn't end up with every row screaming NEW after a busy
-  // morning.
-  useEffect(() => {
-    if (newSince.size === 0) return;
-    const t = setInterval(() => {
-      const cutoff = Date.now() - NEW_BADGE_LINGER_MS;
-      setNewSince((prev) => {
-        let changed = false;
-        const next = new Map(prev);
-        for (const [id, ts] of next) {
-          if (ts < cutoff) {
-            next.delete(id);
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    }, 5_000);
-    return () => clearInterval(t);
-  }, [newSince.size]);
+  // Seen-id diff + NEW-badge decay used to live here as two effects;
+  // both moved into `WarRoomAlertsProvider` so they keep ticking when
+  // the operator is on Dashboard or Spend. We just read `newSince`
+  // from the context now.
 
   // Snapshot management: capture on pause, drop on unpause.
   useEffect(() => {

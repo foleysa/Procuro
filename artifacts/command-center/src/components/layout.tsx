@@ -31,6 +31,7 @@ import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
 import { cn } from "@/lib/utils";
 import { useMyRole } from "@/lib/use-my-role";
+import { useWarRoomAlerts } from "@/lib/use-war-room-alerts";
 import type { AdminUserRole } from "@/lib/admin-client";
 import { Button } from "@/components/ui/button";
 import { MigrationBanner } from "./migration-banner";
@@ -130,6 +131,10 @@ export function Layout({ children }: LayoutProps) {
   const { hasRole, isSignedIn } = useMyRole();
   const { user } = useUser();
   const { signOut } = useClerk();
+  // Sidebar surface for the global "unread war-room arrivals" counter
+  // (#170). The provider lives one level up in App.tsx so the counter
+  // keeps ticking even while the operator is on Dashboard or Spend.
+  const { unreadCount } = useWarRoomAlerts();
 
   const visibleGroups = NAV_GROUPS.map((g) => ({
     ...g,
@@ -167,6 +172,15 @@ export function Layout({ children }: LayoutProps) {
                   const isActive =
                     location === item.href ||
                     (item.href !== "/" && location.startsWith(item.href));
+                  // Surface the unread high-severity war-room counter on
+                  // the Intelligence entry so operators on other tabs
+                  // can spot a fresh disruption without a toast. The
+                  // badge clears the moment they open the War Room
+                  // (handled by `registerViewing` in the provider).
+                  const badgeCount =
+                    item.href === "/fusion" && unreadCount > 0
+                      ? unreadCount
+                      : 0;
                   return (
                     <Link
                       key={item.href}
@@ -180,7 +194,18 @@ export function Layout({ children }: LayoutProps) {
                       )}
                     >
                       <Icon className="w-4 h-4" />
-                      {item.label}
+                      <span className="flex-1">{item.label}</span>
+                      {badgeCount > 0 && (
+                        <span
+                          data-testid="nav-fusion-unread-badge"
+                          aria-label={`${badgeCount} unread high-severity event${
+                            badgeCount === 1 ? "" : "s"
+                          }`}
+                          className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold tabular-nums leading-none"
+                        >
+                          {badgeCount > 99 ? "99+" : badgeCount}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}
