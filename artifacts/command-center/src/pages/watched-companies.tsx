@@ -20,16 +20,19 @@ import Papa from "papaparse";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListWatchedIssuers,
+  useListWatchedIssuerSuggestions,
   useAddWatchedIssuer,
   useRemoveWatchedIssuer,
   useBulkAddWatchedIssuers,
   useListSuppliers,
   getListWatchedIssuersQueryKey,
+  getListWatchedIssuerSuggestionsQueryKey,
   type WatchedIssuer,
   type WatchedIssuerSource,
   type BulkAddWatchedIssuerRow,
   type BulkAddWatchedIssuerResultItem,
   type BulkAddWatchedIssuersResponse,
+  type WatchedIssuerSuggestion,
 } from "@workspace/api-client-react";
 import {
   Card,
@@ -74,6 +77,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -88,6 +96,10 @@ import {
   CheckCircle2,
   SkipForward,
   Copy,
+  Sparkles,
+  Check,
+  Info,
+  RefreshCw,
 } from "lucide-react";
 
 type SourceMeta = {
@@ -121,6 +133,61 @@ const SOURCES: ReadonlyArray<SourceMeta> = [
       "No UK filers on your watch list. We'll fall back to the built-in default list of UK companies until you add your own.",
   },
 ];
+
+/**
+ * Confidence tiers mirror the engine's CONFIDENCE_EXACT / _STRONG / _WEAK
+ * thresholds in `suggest-watched-issuers.ts`. We bucket the float here
+ * so the badge copy stays in sync with the engine without having to
+ * hardcode a numeric scale in user-facing strings.
+ */
+type ConfidenceTier = {
+  label: "Exact" | "Strong" | "Needs review";
+  description: string;
+  badgeClass: string;
+};
+
+function tierFor(confidence: number): ConfidenceTier {
+  if (confidence >= 0.95) {
+    return {
+      label: "Exact",
+      description:
+        "Normalised name matched exactly after stripping legal suffixes — high-confidence auto-confirm.",
+      badgeClass:
+        "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 border-emerald-200 dark:border-emerald-900",
+    };
+  }
+  if (confidence >= 0.75) {
+    return {
+      label: "Strong",
+      description:
+        "Multiple significant tokens overlap — confirm to add to your watch list.",
+      badgeClass:
+        "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200 border-blue-200 dark:border-blue-900",
+    };
+  }
+  return {
+    label: "Needs review",
+    description:
+      "Single weak token overlap — double-check the company name before confirming.",
+    badgeClass:
+      "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200 border-amber-200 dark:border-amber-900",
+  };
+}
+
+function viaLabel(via: WatchedIssuerSuggestion["via"]): string {
+  switch (via) {
+    case "sec":
+      return "SEC EDGAR ticker index";
+    case "gleif":
+      return "GLEIF (LEI confirmed)";
+    case "companies_house":
+      return "Companies House search";
+  }
+}
+
+function sourceLabel(source: WatchedIssuerSource): string {
+  return SOURCES.find((s) => s.value === source)?.label ?? source;
+}
 
 export default function WatchedCompanies() {
   const [tab, setTab] = useState<WatchedIssuerSource>("sec_edgar");
@@ -167,6 +234,10 @@ export default function WatchedCompanies() {
           </Button>
         </div>
       </div>
+
+      <SuggestionsSection
+        onConfirmedSwitchTab={(source) => setTab(source)}
+      />
 
       <Tabs
         value={tab}
@@ -700,6 +771,346 @@ function DeleteWatchedDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/**
+ * Suggested watched-issuer matches for tenant suppliers.
+ *
+ * The engine joins each supplier against SEC EDGAR / GLEIF / Companies
+ * House and returns ranked candidates with a confidence score and a
+ * human reason. We bucket the float into three tiers (Exact / Strong /
+ * Needs review) so admins can audit before clicking Confirm — that
+ * payoff is the whole point of this surface.
+ *
+ * Suggestions are grouped by supplier so an admin who has 12 suppliers
+ * with matches doesn't have to scan a flat list looking for which row
+ * belongs to whom. Within a supplier we keep the engine's confidence-
+ * descending order — the most likely match is at the top.
+ *
+ * Confirming a row POSTs through the existing `useAddWatchedIssuer`
+ * hook (the same one the manual Add dialog uses), then invalidates
+ * both the watch-list and the suggestions queries so the row hops
+ * straight from the suggestions list into the per-source watch table.
+ */
+function SuggestionsSection({
+  onConfirmedSwitchTab,
+}: {
+  onConfirmedSwitchTab: (source: WatchedIssuerSource) => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading, error, refetch, isRefetching } =
+    useListWatchedIssuerSuggestions(undefined, {
+      query: {
+        queryKey: getListWatchedIssuerSuggestionsQueryKey(),
+        // Suggestions hit upstream APIs (SEC, GLEIF, optionally Companies
+        // House) so they're slow and expensive — never refetch on focus.
+        // Admins can hit "Refresh" if they want a re-run after a CSV import.
+        refetchOnWindowFocus: false,
+        staleTime: 5 * 60_000,
+      },
+    });
+
+  // Track the row currently being POSTed. While any confirm is in
+  // flight every Confirm button is disabled — both the row that's
+  // posting (so an admin can't double-click it into a 409) and every
+  // other row (so two near-simultaneous confirms can't race the
+  // refetch and briefly show stale state).
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
+  const addM = useAddWatchedIssuer({
+    mutation: {
+      onSuccess: (row) => {
+        toast({
+          title: "Watched issuer confirmed",
+          description: `${row.name} is now on your ${sourceLabel(row.source)} watch list.`,
+        });
+        // Both the watch-list table AND the suggestions list need to
+        // refresh: the new row should appear in the table and disappear
+        // from the suggestions (the engine drops `(source, identifier)`
+        // already on the watch list).
+        qc.invalidateQueries({ queryKey: ["/api/watched-issuers"] });
+        qc.invalidateQueries({ queryKey: getListWatchedIssuersQueryKey() });
+        qc.invalidateQueries({
+          queryKey: getListWatchedIssuerSuggestionsQueryKey(),
+        });
+        // Hop the visible tab to the source we just confirmed so the
+        // admin can immediately see the new row.
+        onConfirmedSwitchTab(row.source);
+      },
+      onError: (e: Error) => {
+        toast({
+          title: "Could not confirm suggestion",
+          description: extractErrorMessage(e),
+          variant: "destructive",
+        });
+      },
+      onSettled: () => setPendingKey(null),
+    },
+  });
+
+  // Group suggestions by supplier — easier to scan than a flat list when
+  // a tenant has matches across many suppliers. Order of suppliers
+  // mirrors the order they first appear in the engine response (which
+  // is itself confidence-sorted), so the most "interesting" supplier
+  // floats to the top.
+  const grouped = useMemo(() => {
+    const items = data?.items ?? [];
+    const order: string[] = [];
+    const map = new Map<
+      string,
+      { supplierName: string; rows: WatchedIssuerSuggestion[] }
+    >();
+    for (const s of items) {
+      const existing = map.get(s.supplierUid);
+      if (existing) {
+        existing.rows.push(s);
+      } else {
+        map.set(s.supplierUid, { supplierName: s.supplierName, rows: [s] });
+        order.push(s.supplierUid);
+      }
+    }
+    return order.map((uid) => ({
+      supplierUid: uid,
+      supplierName: map.get(uid)!.supplierName,
+      rows: map.get(uid)!.rows,
+    }));
+  }, [data]);
+
+  const handleConfirm = (s: WatchedIssuerSuggestion) => {
+    if (pendingKey) return;
+    setPendingKey(s.key);
+    addM.mutate({
+      data: {
+        source: s.source,
+        identifier: s.identifier,
+        name: s.name,
+        supplierUid: s.supplierUid,
+        ...(s.ticker ? { ticker: s.ticker } : {}),
+        ...(s.lei ? { lei: s.lei } : {}),
+      },
+    });
+  };
+
+  return (
+    <Card data-testid="card-watched-suggestions">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-primary" />
+              Suggested matches for your suppliers
+            </CardTitle>
+            <CardDescription>
+              We cross-checked your supplier list against SEC EDGAR, GLEIF,
+              and (where applicable) UK Companies House. Confirm a row to
+              add it to your watch list — we'll start polling its filings
+              on the next collector run.
+            </CardDescription>
+          </div>
+          <Button
+            data-testid="button-refresh-suggestions"
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isLoading || isRefetching}
+          >
+            {isRefetching ? (
+              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 mr-1" />
+            )}
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div
+            data-testid="loading-suggestions"
+            className="flex items-center text-sm text-muted-foreground py-4"
+          >
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Looking for matches…
+          </div>
+        ) : error ? (
+          <div
+            data-testid="error-suggestions"
+            className="text-sm text-red-700 dark:text-red-400 py-4"
+          >
+            Could not load suggestions: {extractErrorMessage(error as Error)}
+          </div>
+        ) : grouped.length === 0 ? (
+          <div
+            data-testid="empty-suggestions"
+            className="text-sm text-muted-foreground py-6 text-center"
+          >
+            No new matches right now.{" "}
+            {data && data.suppliersConsidered > 0
+              ? `Checked ${data.suppliersConsidered} supplier${data.suppliersConsidered === 1 ? "" : "s"}`
+              : "Add suppliers to your master list and we'll surface filer matches here"}
+            {data && data.suppliersSkippedAlreadyWatched > 0
+              ? ` (${data.suppliersSkippedAlreadyWatched} already curated).`
+              : "."}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {grouped.map((group) => (
+              <div
+                key={group.supplierUid}
+                data-testid={`suggestion-group-${group.supplierUid}`}
+                className="space-y-2"
+              >
+                <div className="flex items-baseline gap-2">
+                  <div className="text-sm font-semibold">
+                    {group.supplierName}
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono">
+                    {group.supplierUid}
+                  </div>
+                </div>
+                <div className="border rounded-md divide-y">
+                  {group.rows.map((s) => (
+                    <SuggestionRow
+                      key={s.key}
+                      suggestion={s}
+                      onConfirm={handleConfirm}
+                      pending={pendingKey === s.key}
+                      anyPending={pendingKey !== null}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+            {data && data.suppliersSkippedAlreadyWatched > 0 ? (
+              <div
+                data-testid="suggestions-footer-summary"
+                className="text-xs text-muted-foreground pt-2 border-t"
+              >
+                {data.suppliersSkippedAlreadyWatched} supplier
+                {data.suppliersSkippedAlreadyWatched === 1 ? "" : "s"} skipped —
+                already linked to a watched issuer.
+              </div>
+            ) : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SuggestionRow({
+  suggestion,
+  onConfirm,
+  pending,
+  anyPending,
+}: {
+  suggestion: WatchedIssuerSuggestion;
+  onConfirm: (s: WatchedIssuerSuggestion) => void;
+  pending: boolean;
+  anyPending: boolean;
+}) {
+  const tier = tierFor(suggestion.confidence);
+  const sourceMeta =
+    SOURCES.find((s) => s.value === suggestion.source) ?? SOURCES[0]!;
+  const sourceIcon =
+    suggestion.source === "sec_edgar" ? (
+      <Landmark className="w-3.5 h-3.5" />
+    ) : (
+      <Building2 className="w-3.5 h-3.5" />
+    );
+
+  return (
+    <div
+      data-testid={`suggestion-row-${suggestion.key}`}
+      className="flex items-start gap-3 p-3"
+    >
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className={`text-xs gap-1 ${tier.badgeClass}`}
+            data-testid={`badge-confidence-${suggestion.key}`}
+            data-tier={tier.label}
+          >
+            {tier.label === "Exact" ? <Check className="w-3 h-3" /> : null}
+            {tier.label}
+          </Badge>
+          <Badge variant="secondary" className="text-xs gap-1">
+            {sourceIcon}
+            {sourceMeta.label}
+          </Badge>
+          <Tooltip delayDuration={150}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid={`button-why-${suggestion.key}`}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                aria-label="Why we suggested this"
+              >
+                <Info className="w-3.5 h-3.5" />
+                Why?
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="start"
+              className="max-w-xs text-left"
+              data-testid={`tooltip-why-${suggestion.key}`}
+            >
+              <div className="space-y-1">
+                <div className="font-semibold">{tier.label} match</div>
+                <div>{suggestion.matchReason}</div>
+                <div className="opacity-80">
+                  Source: {viaLabel(suggestion.via)}
+                </div>
+                <div className="opacity-80">{tier.description}</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <div className="text-sm font-medium">{suggestion.name}</div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-mono">
+            {sourceMeta.identifierLabel}: {suggestion.identifier}
+          </span>
+          {suggestion.ticker ? (
+            <Badge variant="outline" className="text-[10px]">
+              {suggestion.ticker}
+            </Badge>
+          ) : null}
+          {suggestion.lei ? (
+            <Badge variant="outline" className="text-[10px]">
+              LEI {suggestion.lei}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+      <div className="shrink-0">
+        <Button
+          size="sm"
+          data-testid={`button-confirm-${suggestion.key}`}
+          onClick={() => onConfirm(suggestion)}
+          // Lock the row that's confirming AND every other row while a
+          // mutation is in flight — prevents an admin from racing two
+          // confirms which would briefly show stale rows.
+          disabled={pending || anyPending}
+        >
+          {pending ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              Confirming…
+            </>
+          ) : (
+            <>
+              <Check className="w-3.5 h-3.5 mr-1" />
+              Confirm
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
   );
 }
 
