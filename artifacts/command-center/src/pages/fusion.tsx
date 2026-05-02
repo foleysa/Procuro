@@ -67,6 +67,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { DefensePackPane } from "@/components/defense-pack-pane";
+import { BlsTrendChart } from "@/components/bls-trend-chart";
 
 const POLL_MS = 60_000;
 // War room polls more aggressively than the rest of the fusion center
@@ -723,6 +724,23 @@ function EntityPane({
               kind={data.kind}
               details={data.details}
               onOpenEntity={onChange}
+            />
+          )}
+
+          {(data.kind === "material" || data.kind === "category") && id && (
+            <BlsTrendChart
+              series={[
+                data.kind === "material"
+                  ? { label: data.label, materialCode: id }
+                  : { label: data.label, categoryCode: id },
+              ]}
+              title={`BLS price-index trend — ${data.label}`}
+              description={
+                data.kind === "material"
+                  ? `Monthly BLS PPI observations scoped to material ${id}. Use the index trend to set context for any cost-driver discussion on this material.`
+                  : `Monthly BLS PPI/CPI observations scoped to category ${id}. Use the index trend to set context for any cost-driver discussion on this category.`
+              }
+              emptyStateHint="Run the BLS Economic Index collector from the Collector Workbench to seed the index history for this scope."
             />
           )}
 
