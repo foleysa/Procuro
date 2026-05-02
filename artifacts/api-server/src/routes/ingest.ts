@@ -9,6 +9,7 @@ import {
   streamCsvEntity,
   CsvIngestAbortedError,
   CsvBatchDuplicateError,
+  CsvExistingDuplicateError,
   type CsvPayload,
   type CsvEntity,
   type StreamCsvProgress,
@@ -593,6 +594,39 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
         entity,
         rowsParsed: err.rowsParsed,
         rowsInserted: err.rowsInserted,
+      });
+    } else if (err instanceof CsvExistingDuplicateError) {
+      // Mid-stream `INSERT ... ON CONFLICT DO UPDATE` collided with an
+      // existing row on a unique constraint that isn't the upsert's
+      // conflict target (e.g. items collide on `(orgId, sku)` even
+      // when the upsert targets `(orgId, sourceSystem,
+      // sourceExternalId)`). The adapter parsed PG's `detail` line
+      // into a `conflictKey` map and located the offending CSV row,
+      // so we can point the operator at the exact row to fix instead
+      // of falling through to the sanitized
+      // "Database error 23505 on table ..., constraint ..."
+      // path that strips the conflicting value (Task #182).
+      //
+      // Echoing the conflict values is safe here because the response
+      // only flows back to the org that uploaded the file — same
+      // trust boundary as `CsvBatchDuplicateError` above.
+      req.log.warn(
+        {
+          entity,
+          orgId,
+          rowNumber: err.rowNumber,
+          line: err.line,
+          conflictColumns: Object.keys(err.conflictKey),
+          constraint: err.constraint,
+        },
+        "Streaming CSV ingest rejected: row collides with existing record",
+      );
+      writeEvent({
+        type: "error",
+        error: `CSV stream ingest failed: ${err.message}`,
+        rowNumber: err.rowNumber,
+        conflictKey: err.conflictKey,
+        constraint: err.constraint,
       });
     } else if (err instanceof CsvBatchDuplicateError) {
       // In-batch duplicate detected by `flushBatch` BEFORE we handed

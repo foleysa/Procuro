@@ -34,6 +34,7 @@ import {
   writeIngestPayload,
   type IngestPayload,
 } from "./ingest-writer";
+import { parsePgUniqueViolation } from "../sanitize-db-error";
 
 /**
  * CSV ingestion. Two entry points:
@@ -393,6 +394,135 @@ export class CsvBatchDuplicateError extends Error {
 function formatLineList(lines: number[]): string {
   if (lines.length <= 2) return lines.join(" and ");
   return `${lines.slice(0, -1).join(", ")}, and ${lines[lines.length - 1]}`;
+}
+
+/**
+ * Thrown by `flushBatch` when an `INSERT ... ON CONFLICT DO UPDATE`
+ * upsert is rejected by Postgres with SQLSTATE 23505 because a
+ * uploaded row collides with an *existing* DB row on a unique
+ * constraint that is **not** the upsert's conflict target. Common
+ * trigger: the `items` table upserts on `(orgId, sourceSystem,
+ * sourceExternalId)` but also enforces `(orgId, sku)` — uploading a
+ * row with a fresh `externalId` but a `sku` that already lives in the
+ * tenant's catalog falls through the conflict target and trips the
+ * second unique index.
+ *
+ * Without this class the request fell through to
+ * `sanitizeDbErrorMessage`, which (correctly) refuses to echo the PG
+ * `detail` text verbatim because it can contain caller-supplied data
+ * — leaving the operator with `Database error 23505 on table "items",
+ * constraint "items_org_sku_uq"` and no pointer back into their CSV.
+ *
+ * `flushBatch` parses the structured `(columns)=(values)` out of the
+ * `detail` line via `parsePgUniqueViolation`, locates the offending
+ * `BufferedRow` by matching the parsed values against the row's CSV
+ * cells, and rethrows this class with a 1-based `rowNumber`/`line`
+ * pair plus a structured `conflictKey` map. The route's NDJSON error
+ * event then carries those fields so the UI can point the operator
+ * at the exact upload row to fix (Task #182).
+ *
+ * The conflict key is only echoed back to the org that uploaded the
+ * file, so it is safe to include the tenant's own values verbatim
+ * — the same trust boundary that justifies `CsvBatchDuplicateError`'s
+ * value echo above.
+ *
+ * Branded `unrecoverable: true` so the job worker fails the job on
+ * attempt #1 instead of burning the retry budget on user input that
+ * cannot succeed without a CSV edit.
+ */
+export class CsvExistingDuplicateError extends Error {
+  readonly unrecoverable = true as const;
+  readonly entity: CsvEntity;
+  /**
+   * 1-based index of the offending data row (header excluded). `null`
+   * when the parsed conflict values couldn't be matched against any
+   * buffered row — e.g. the colliding columns are derived (`id`,
+   * `normalizedName`) rather than copied straight from the CSV. The
+   * route still emits the conflict key in that case so the operator
+   * sees what collided, just without a row pointer.
+   */
+  readonly rowNumber: number | null;
+  /** 1-based source CSV line for `rowNumber` (header is line 1). */
+  readonly line: number | null;
+  /**
+   * Column → value pairs parsed from the PG `detail`. Keys are
+   * camelCase (snake → camel converted) so they line up with the
+   * `pg`/Drizzle column names the rest of the API uses; values are
+   * the raw bytes Postgres reported.
+   */
+  readonly conflictKey: Record<string, string>;
+  /** Name of the violated unique constraint, when PG reports it. */
+  readonly constraint: string | null;
+
+  constructor(args: {
+    entity: CsvEntity;
+    rowNumber: number | null;
+    line: number | null;
+    conflictKey: Record<string, string>;
+    constraint: string | null;
+  }) {
+    const pairs = Object.entries(args.conflictKey)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+    const where =
+      args.rowNumber !== null && args.line !== null
+        ? `Row ${args.rowNumber} (line ${args.line}) `
+        : "A row in this upload ";
+    super(
+      `${where}collides with an existing ${args.entity} record on ${pairs}. ` +
+        `Update or remove the row and try again.`,
+    );
+    this.name = "CsvExistingDuplicateError";
+    this.entity = args.entity;
+    this.rowNumber = args.rowNumber;
+    this.line = args.line;
+    this.conflictKey = args.conflictKey;
+    this.constraint = args.constraint;
+  }
+}
+
+/**
+ * `source_external_id` → `sourceExternalId`. Lossless against any
+ * snake_case identifier that doesn't start with an underscore (which
+ * PG column names never do).
+ */
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
+ * Locate the buffered row that produced a 23505 collision by matching
+ * the parsed PG values against the row's CSV cells. Most natural-key
+ * columns (`source_external_id`, `sku`, `code`) come straight from
+ * the upload, so value-membership against the row's cells finds the
+ * offender even when the DB column name doesn't equal any CSV header.
+ *
+ * Scoring is per-value rather than all-or-nothing because composite
+ * unique indexes routinely include columns that are NOT part of the
+ * CSV (`org_id` is server-injected, `normalized_name` is derived,
+ * etc.). We pick the row with the highest match count, requiring at
+ * least one value to match, and break ties by row order so the
+ * earliest offending row wins. Returns `null` only when no row in
+ * the buffer carries any of the parsed values — in which case
+ * callers still emit the conflict key without a row pointer so the
+ * operator at least sees what collided.
+ */
+function findRowMatchingPgValues(
+  buffered: BufferedRow[],
+  values: string[],
+): BufferedRow | null {
+  let best: { row: BufferedRow; score: number } | null = null;
+  for (const b of buffered) {
+    const cells = Object.values(b.row);
+    let score = 0;
+    for (const v of values) {
+      if (v.length > 0 && cells.includes(v)) score++;
+    }
+    if (score > 0 && (best === null || score > best.score)) {
+      best = { row: b, score };
+    }
+  }
+  return best?.row ?? null;
 }
 
 /**
@@ -832,6 +962,37 @@ async function flushBatch(
   // `Record<string, string>[]` parameter, so unwrap the buffered metadata
   // once and let the per-entity branches keep operating on plain rows.
   const rows: Record<string, string>[] = buffered.map((b) => b.row);
+  try {
+    return await flushBatchInner(orgId, entity, rows);
+  } catch (err) {
+    // Translate a Postgres 23505 unique-violation thrown by any of the
+    // per-entity upserts into a structured `CsvExistingDuplicateError`
+    // so the route can attach `rowNumber` + `conflictKey` to the NDJSON
+    // error event (Task #182). For non-23505 errors the original is
+    // rethrown unchanged so the route's existing sanitizer/logger path
+    // still runs.
+    const parsed = parsePgUniqueViolation(err);
+    if (!parsed) throw err;
+    const conflictKey: Record<string, string> = {};
+    parsed.columns.forEach((col, i) => {
+      conflictKey[snakeToCamel(col)] = parsed.values[i] ?? "";
+    });
+    const matched = findRowMatchingPgValues(buffered, parsed.values);
+    throw new CsvExistingDuplicateError({
+      entity,
+      rowNumber: matched?.rowIndex ?? null,
+      line: matched?.line ?? null,
+      conflictKey,
+      constraint: parsed.constraint,
+    });
+  }
+}
+
+async function flushBatchInner(
+  orgId: string,
+  entity: CsvEntity,
+  rows: Record<string, string>[],
+): Promise<number> {
   switch (entity) {
     case "suppliers": {
       const v = rows.map((r) => {

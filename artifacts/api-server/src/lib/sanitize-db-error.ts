@@ -63,6 +63,18 @@ interface PgLikeError {
   constraint?: unknown;
   schema?: unknown;
   routine?: unknown;
+  /**
+   * Postgres' free-form `detail` text. For SQLSTATE 23505 (unique
+   * violation) this carries the offending key/value pair, e.g.
+   * `Key (org_id, sku)=(uuid, SKU-X) already exists.`
+   *
+   * The sanitizer never echoes this string verbatim because it can
+   * contain caller-supplied data, but `parsePgUniqueViolation` below
+   * extracts the structured columns/values out of it so the streaming
+   * CSV path can tell the operator which row in their upload collided
+   * with an existing record (Task #182).
+   */
+  detail?: unknown;
 }
 
 function readString(v: unknown): string | undefined {
@@ -193,6 +205,88 @@ function isAllowlistedErrorMessage(msg: string): boolean {
     // allowlist entry was retired with the throw.
     msg.startsWith("Body must include")
   );
+}
+
+/**
+ * Structured shape of the PG `detail` line on a 23505 unique violation.
+ * `columns` and `values` are positionally aligned (same length); the
+ * caller is responsible for any presentation (e.g. snake→camel).
+ *
+ * Returns `null` for any non-23505 error or when `detail` cannot be
+ * parsed (different locale, future PG version, etc.) so callers can
+ * fall back to the generic sanitized message.
+ */
+export interface PgUniqueViolation {
+  columns: string[];
+  values: string[];
+  constraint: string | null;
+  table: string | null;
+}
+
+/**
+ * Split the value list inside `(val1, val2, ...)` from a PG detail
+ * line on top-level commas. Tracks parenthesis depth so a value that
+ * itself contains `(...)` (e.g. composite types, arrays) doesn't
+ * fragment. We do **not** try to undo PG's quoting rules — values
+ * are returned with surrounding whitespace trimmed and their literal
+ * bytes otherwise intact, which is what the UI ultimately needs to
+ * echo back to the operator.
+ */
+function splitPgDetailValues(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.length > 0) out.push(cur.trim());
+  return out;
+}
+
+/**
+ * Parse a Postgres SQLSTATE 23505 unique-violation error's `detail`
+ * field into structured columns/values. Used by the streaming CSV
+ * adapter (Task #182) to attach `rowNumber` and `conflictKey` to the
+ * NDJSON error event when an INSERT mid-batch collides with an
+ * existing row, so the UI can point the operator at the offending
+ * upload row instead of just naming the constraint.
+ *
+ * Postgres' canonical detail format is:
+ *   `Key (col1, col2)=(val1, val2) already exists.`
+ *
+ * Returns `null` for non-23505 errors, missing/unparseable detail, or
+ * when columns/values lengths disagree (defense against an upstream
+ * format change).
+ */
+export function parsePgUniqueViolation(
+  err: unknown,
+): PgUniqueViolation | null {
+  const pg = unwrapPgLikeError(err);
+  if (!pg) return null;
+  if (safeSqlState(pg.code) !== "23505") return null;
+  const detail = readString(pg.detail);
+  if (!detail) return null;
+  const m = detail.match(/^Key \((.+)\)=\((.+)\) already exists\.?$/);
+  if (!m) return null;
+  const columns = m[1]!
+    .split(",")
+    .map((c) => c.trim().replace(/^"(.*)"$/, "$1"));
+  const values = splitPgDetailValues(m[2]!);
+  if (columns.length === 0 || columns.length !== values.length) return null;
+  return {
+    columns,
+    values,
+    constraint: safeIdent(pg.constraint) ?? null,
+    table: safeIdent(pg.table) ?? null,
+  };
 }
 
 /**

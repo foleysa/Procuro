@@ -1113,7 +1113,28 @@ type StreamCsvEvent =
       bytesProcessed?: number;
     }
   | ({ type: "result" } & StreamCsvResult)
-  | { type: "error"; error: string }
+  | {
+      type: "error";
+      error: string;
+      /**
+       * 1-based CSV data row number (header excluded) for the row that
+       * collided with an existing DB record on a unique constraint
+       * (Task #182). Only set when the failure was a Postgres 23505
+       * unique-violation translated by the streaming adapter into a
+       * `CsvExistingDuplicateError`; absent for any other error class.
+       */
+      rowNumber?: number | null;
+      /**
+       * Column → value pairs Postgres reported in the violated unique
+       * constraint, parsed out of the PG `detail` line. Keys are
+       * camelCase column names; values are the raw bytes the tenant
+       * uploaded. Only present alongside `rowNumber` for 23505
+       * collisions (Task #182).
+       */
+      conflictKey?: Record<string, string>;
+      /** Name of the violated unique constraint, when PG reports it. */
+      constraint?: string | null;
+    }
   | {
       type: "cancelled";
       entity: IngestCsvStreamEntity;
