@@ -288,6 +288,37 @@ const PROGRESS_EMIT_INTERVAL_MS = 250;
  * change, batch-size tweak), update both this table and the ceiling
  * map in `csv-stream-progress-entities.test.ts` (and the suppliers
  * ceiling in `csv-stream-progress.test.ts`) together.
+ *
+ * --- Production observability (#73) -------------------------------------
+ * The CI ceiling above only catches regressions before they ship. To
+ * confirm or rule out a slow batch on a real customer upload after the
+ * fact, every `flushBatch` call inside `streamCsvEntity` emits a
+ * structured `event=csv_batch_flush` log line via `req.log` so it
+ * inherits the `reqId` pino-http attaches to every request.
+ *
+ * Volume is bounded by level: `debug` for healthy batches (suppressed
+ * at the production default `LOG_LEVEL=info`) and `info` for any batch
+ * that crossed `SLOW_BATCH_LOG_THRESHOLD_MS` (1000 ms) — i.e. roughly
+ * 5–10× the per-batch p50 above. A multi-million-row upload that's
+ * behaving normally produces zero log lines from this path; a single
+ * regressed batch produces exactly one.
+ *
+ * Each line carries: `entity`, `batchIndex`, `rows`, `inserted`,
+ * `durationMs`, `rowsPerSecond`, running `rowsParsed` /
+ * `rowsInserted` / `bytesProcessed` totals, and `slowBatch`.
+ *
+ * Quick queries (Datadog / `grep` / Loki):
+ *   - All slow batches across all uploads:
+ *       `event:csv_batch_flush slowBatch:true`
+ *   - All batches for one upload (after finding its reqId):
+ *       `event:csv_batch_flush reqId:<id>`
+ *   - Slow batches per entity (for a dashboard / alert):
+ *       `event:csv_batch_flush slowBatch:true | stats count by entity`
+ *
+ * To get every batch (not just slow ones) for a one-off
+ * investigation, redeploy with `LOG_LEVEL=debug` or override per-pod;
+ * do NOT lower `SLOW_BATCH_LOG_THRESHOLD_MS` permanently — that's a
+ * volume foot-gun for the largest tenants.
  */
 
 /**
@@ -303,6 +334,9 @@ function runMultipartIngest(args: {
   signal: AbortSignal;
 }): Promise<Awaited<ReturnType<typeof streamCsvEntity>>> {
   const { req, orgId, entity, onProgress, signal } = args;
+  // Per-request logger — threads `reqId` (and any other bound context)
+  // into the per-batch latency lines emitted by `streamCsvEntity` (#73).
+  const log = req.log;
   return new Promise((resolve, reject) => {
     let busboy: ReturnType<typeof Busboy>;
     try {
@@ -349,6 +383,7 @@ function runMultipartIngest(args: {
         input: fileStream,
         onProgress,
         signal,
+        log,
       }).then(
         (r) => {
           if (limitTriggered) {
@@ -493,6 +528,8 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
         input: req,
         onProgress,
         signal: abortController.signal,
+        // Per-batch latency lines (#73) inherit the per-request id.
+        log: req.log,
       });
       if (exceeded) {
         throw new Error(

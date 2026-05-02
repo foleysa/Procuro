@@ -18,6 +18,7 @@ import {
 import { sql, and, eq, inArray } from "drizzle-orm";
 import { parse, type Parser } from "csv-parse";
 import type { Readable } from "node:stream";
+import type { Logger } from "pino";
 import { newId } from "../ids";
 import { logger } from "../logger";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
@@ -323,7 +324,37 @@ interface StreamCsvArgs {
    * instead of letting the server keep writing to a dead socket.
    */
   signal?: AbortSignal;
+  /**
+   * Optional pino logger to use for per-batch latency events (#73). The
+   * `/ingest/csv-stream` route passes `req.log` so each batch flush log
+   * inherits the per-request id (`reqId`) emitted by `pino-http`, which
+   * lets an operator grep production logs by upload — e.g.
+   * `reqId=abc123 event=csv_batch_flush` — instead of guessing which
+   * batches belong to which customer's file.
+   *
+   * If omitted (e.g. async job worker, fixture-driven tests), batch logs
+   * fall back to the singleton `logger` so the lines still land in the
+   * structured log stream — they just won't carry a request id.
+   */
+  log?: Logger;
 }
+
+/**
+ * Per-batch flush latency above this threshold is escalated from `debug`
+ * to `info` so it shows up in production logs by default (#73).
+ *
+ * Sized to be ~5–10× the per-batch p50 across the entity types
+ * documented in `routes/ingest.ts` (per-batch p50 sits in the
+ * 80–200 ms range, with p95 closer to 200 ms; a single batch crossing
+ * 1 s usually means a cold pool, contended index, or a bad query plan
+ * from skewed data — exactly the kind of event we want surfaced).
+ *
+ * Volume rationale: at LOG_LEVEL=info (the production default) only
+ * slow batches log; healthy multi-million-row uploads stay quiet.
+ * Operators can flip LOG_LEVEL=debug to get every batch when
+ * investigating a regression.
+ */
+const SLOW_BATCH_LOG_THRESHOLD_MS = 1000;
 
 /**
  * Stream-parse a single-entity CSV file and bulk-upsert in fixed-size
@@ -335,9 +366,14 @@ export async function streamCsvEntity(
 ): Promise<StreamCsvResult> {
   const start = Date.now();
   const batchSize = args.batchSize ?? BATCH_SIZE;
+  // Per-batch latency lines (#73) inherit the per-request id when the
+  // route passes `req.log`; falls back to the singleton logger for
+  // job-runner / test callers that don't have a request scope.
+  const log: Logger = args.log ?? logger;
   let rowsParsed = 0;
   let rowsInserted = 0;
   let bytesProcessed = 0;
+  let batchIndex = 0;
   let buffer: Record<string, string>[] = [];
 
   const parser: Parser = args.input.pipe(
@@ -399,28 +435,45 @@ export async function streamCsvEntity(
     // Per-batch latency log (#73). Emitted as a structured event so an
     // operator (or the System page CSV throughput card) can chart
     // p50 / p95 latency over time without scraping free-form log
-    // messages. We log at info on every batch — flushBatch already
-    // batches inserts so the volume is bounded by `batchSize`.
+    // messages. To keep multi-million-row uploads from flooding the
+    // log stream, we emit at `debug` for healthy batches and only
+    // escalate to `info` when a single batch crosses
+    // `SLOW_BATCH_LOG_THRESHOLD_MS` — that's the case operators
+    // actually want paged on (cold pool, contended index, bad plan).
     const batchStart = Date.now();
     const inserted = await flushBatch(args.orgId, args.entity, chunk);
     const batchDurationMs = Date.now() - batchStart;
+    batchIndex++;
+    rowsInserted += inserted;
     const rowsPerSecond =
       batchDurationMs > 0
         ? Math.round((chunk.length / batchDurationMs) * 1000)
         : null;
-    logger.info(
-      {
-        event: "csv_batch_latency_ms",
-        orgId: args.orgId,
-        entity: args.entity,
-        rows: chunk.length,
-        inserted,
-        durationMs: batchDurationMs,
-        rowsPerSecond,
-      },
-      "csv_batch_latency_ms",
-    );
-    rowsInserted += inserted;
+    const isSlow = batchDurationMs >= SLOW_BATCH_LOG_THRESHOLD_MS;
+    const logFields = {
+      event: "csv_batch_flush",
+      orgId: args.orgId,
+      entity: args.entity,
+      batchIndex,
+      rows: chunk.length,
+      inserted,
+      durationMs: batchDurationMs,
+      rowsPerSecond,
+      // Running totals so a single line is enough to reconstruct where
+      // in the upload a slow batch happened, without correlating
+      // against earlier debug lines that may have been filtered out
+      // by the production log level.
+      rowsParsed,
+      rowsInserted,
+      bytesProcessed,
+      slowBatch: isSlow,
+      slowBatchThresholdMs: SLOW_BATCH_LOG_THRESHOLD_MS,
+    };
+    if (isSlow) {
+      log.info(logFields, "csv_batch_flush slow");
+    } else {
+      log.debug(logFields, "csv_batch_flush");
+    }
     await reportProgress();
   };
 
