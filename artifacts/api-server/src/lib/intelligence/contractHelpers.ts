@@ -24,6 +24,7 @@ const baseDraftShape = {
   scopeMaterialCode: z.string().optional(),
   scopeSupplierName: z.string().optional(),
   scopeLaneKey: z.string().optional(),
+  scopeRegionCode: z.string().optional(),
   value: z.number().finite(),
   unit: z.string().min(1),
   currency: z.string().length(3).optional(),
@@ -70,6 +71,7 @@ export function defaultStableSignalKey(
     scopeMaterialCode: draft.scopeMaterialCode ?? null,
     scopeSupplierName: draft.scopeSupplierName ?? null,
     scopeLaneKey: draft.scopeLaneKey ?? null,
+    scopeRegionCode: draft.scopeRegionCode ?? null,
     observedAt: draft.observedAt,
   });
 }

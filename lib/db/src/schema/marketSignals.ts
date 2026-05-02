@@ -146,6 +146,12 @@ export const marketSignalTypes = [
   "facility_emissions",
   /** USGS / NOAA / NASA EONET / GDACS natural hazard observation. */
   "natural_hazard",
+  /**
+   * BLS Occupational Employment & Wage Statistics (OEWS) — annual,
+   * region-specific occupational wage benchmark used to anchor
+   * services-band rate-card negotiations and contingent-labor pricing.
+   */
+  "wage_benchmark",
 ] as const;
 export type MarketSignalType = (typeof marketSignalTypes)[number];
 
@@ -173,6 +179,14 @@ export const marketSignalsTable = pgTable(
     scopeMaterialCode: text("scope_material_code"),
     scopeSupplierName: text("scope_supplier_name"),
     scopeLaneKey: text("scope_lane_key"),
+    /**
+     * Region scope for region-specific signals (e.g. BLS OEWS national/
+     * state/MSA wage benchmarks). Null for non-region signals. Indexed
+     * separately and folded into the natural-key uniqueness with a
+     * COALESCE sentinel so two rows that differ only by region remain
+     * distinct under the dedupe index.
+     */
+    scopeRegionCode: text("scope_region_code"),
     value: numeric("value", { precision: 18, scale: 6 }).notNull(),
     unit: text("unit").notNull(),
     currency: text("currency").notNull().default("USD"),
@@ -197,6 +211,7 @@ export const marketSignalsTable = pgTable(
     index("market_signals_observed_at_idx").on(t.observedAt),
     index("market_signals_material_idx").on(t.scopeMaterialCode),
     index("market_signals_lane_idx").on(t.scopeLaneKey),
+    index("market_signals_region_idx").on(t.scopeRegionCode),
     /**
      * Natural-key uniqueness. A given collector should not produce two rows
      * with the same scope + observation time on repeat runs — a re-run of a
@@ -218,6 +233,7 @@ export const marketSignalsTable = pgTable(
       sql`COALESCE(${t.scopeMaterialCode}, '')`,
       sql`COALESCE(${t.scopeSupplierName}, '')`,
       sql`COALESCE(${t.scopeLaneKey}, '')`,
+      sql`COALESCE(${t.scopeRegionCode}, '')`,
       t.observedAt,
     ),
   ],

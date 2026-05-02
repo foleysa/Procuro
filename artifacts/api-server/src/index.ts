@@ -10,6 +10,7 @@ import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-e
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
 import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
 import { blsEconomicIndexCollector } from "./lib/intelligence/collectors/bls-economic-index";
+import { blsOewsCollector } from "./lib/intelligence/collectors/bls-oews";
 import { secEdgarCollector } from "./lib/intelligence/collectors/sec-edgar";
 import { gdeltEventsCollector } from "./lib/intelligence/collectors/gdelt-events";
 import { governmentSanctionsCollector } from "./lib/intelligence/collectors/government-sanctions";
@@ -80,6 +81,9 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   eiaEnergyCollector,
   worldBankPinkSheetCollector,
   blsEconomicIndexCollector,
+  // BLS OEWS — annual, region-aware occupational wage benchmarks
+  // anchoring services-band rate-card negotiations (Task #215).
+  blsOewsCollector,
   // Phase 2 (task #78) — high-ROI free public-API collectors.
   secEdgarCollector,
   gdeltEventsCollector,

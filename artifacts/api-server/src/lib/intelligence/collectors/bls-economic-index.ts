@@ -1,33 +1,9 @@
 /**
- * BLS PPI + CPI + ECI economic-index collector.
- *
- * Pulls a curated set of Producer Price Index (PPI) sub-series for commonly
- * procured material categories, a curated set of Consumer Price Index (CPI)
- * sub-series for consumer-facing supplier categories (food at home, energy,
- * apparel, household furnishings, transportation services, medical care
- * services, etc.), plus the four headline Employment Cost Index (ECI) series,
- * from the BLS Public Data API v2. Each series produces one `economic_index`
- * `MarketSignalDraft` carrying the latest observation.
- *
- * CPI is intentionally limited to a handful of sub-indexes (NOT headline
- * CPI-U): suppliers in retail / hospitality / consumer-goods regularly cite
- * CPI when asking for price increases, and we want the appropriate sub-index
- * on hand to push back ("you're invoking CPI but the food-at-home sub-index
- * actually fell last quarter") rather than the headline number, which is too
- * coarse to be useful in category-level negotiations.
- *
- * BLS series naturally publish monthly (PPI, CPI) or quarterly (ECI); the
- * runtime polls daily so we land each release within ~24h of publication.
- *
- * `BLS_API_KEY` is optional. With a key, the v2 endpoint allows up to 50
- * series per request and 20 years per request. Without one, the same endpoint
- * remains usable but with smaller per-day quotas — we fall back to that tier
- * and emit an audit-log warning so operators know to add a key when usage
- * grows. We deliberately do NOT throw on missing key so the collector still
- * runs out-of-the-box on a fresh install.
- *
- * Overlap with `fred-economic-index` is intentional. Different `collectorId`s
- * let downstream consumers compare publication latency / revisions per source.
+ * BLS PPI + CPI + ECI economic-index collector. Emits one
+ * `economic_index` draft per (curated series × latest observation)
+ * from the BLS Public Data API v2. `BLS_API_KEY` is optional —
+ * unauthenticated tier is used with a smaller per-day quota and an
+ * audit-log warning when no key is set.
  */
 
 import {
@@ -51,6 +27,15 @@ export const BLS_API_URL =
 
 const SERIES_PAGE_BASE = "https://data.bls.gov/timeseries/";
 
+/**
+ * BLS Public Data API v2 per-request series caps. Posts that exceed
+ * these are rejected upstream, so the collector chunks its registry
+ * before issuing requests. Numbers are pinned by BLS docs:
+ * https://www.bls.gov/developers/api_signature_v2.htm
+ */
+export const BLS_API_SERIES_PER_REQUEST_AUTHENTICATED = 50;
+export const BLS_API_SERIES_PER_REQUEST_UNAUTHENTICATED = 25;
+
 export interface BlsSeriesRef {
   seriesId: string;
   label: string;
@@ -65,16 +50,18 @@ export interface BlsSeriesRef {
 }
 
 /**
- * Curated BLS series. PPI commodity series (WPU prefix) cover materials
- * commonly procured at scale; CPI sub-series (CUUR prefix, NSA, US city
- * average, base 1982-84=100) cover consumer-facing categories suppliers
- * cite when pushing for price increases; ECI series (CIU prefix) anchor
- * services rate-card negotiations. Overlap with FRED PPI is intentional.
+ * Curated BLS series:
+ * - WPU* = PPI commodity (materials).
+ * - PCU* = PPI service-industry (services towers).
+ * - CUUR* = CPI sub-series (NSA, US city average, base 1982-84=100).
+ * - CIU* = ECI total compensation; some entries fan a single upstream
+ *   `seriesId` out across multiple canonical services scopes via
+ *   distinct registry entries (request body dedupes by id, draft
+ *   builder walks every entry, natural-key dedupe keeps the
+ *   multi-emit drafts from colliding).
  *
- * Note: this list is sized to stay within the BLS unauthenticated tier's
- * 25-series-per-request cap (authenticated tier allows 50). Adding more
- * series past 25 will require splitting into multiple POSTs or requiring
- * an API key.
+ * BLS Public Data API v2 caps each request at 25 series unauth /
+ * 50 series auth; `collect` chunks POSTs accordingly.
  */
 export const BLS_SERIES: readonly BlsSeriesRef[] = [
   // --- PPI commodity sub-series (monthly, WPU = PPI commodity not seasonally adjusted) ---
@@ -253,7 +240,174 @@ export const BLS_SERIES: readonly BlsSeriesRef[] = [
     periodicity: "monthly",
   },
 
+  // --- PPI service-industry sub-series (monthly, PCU = PPI industry NSA) ---
+  // Series ID format: "PCU" + NAICS6 + NAICS6 (industry × primary product).
+  // Some PCU codes fan out to multiple canonical scopes (e.g. PCU541330
+  // → ENG_DESIGN + ENG_RND); same upstream series, distinct natural-key
+  // rows.
+  {
+    seriesId: "PCU541110541110",
+    label: "PPI: Offices of lawyers — legal services",
+    scopeCategoryCode: "PROF_LEGAL",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541211541211",
+    label: "PPI: Offices of certified public accountants — audit & tax",
+    scopeCategoryCode: "PROF_AUDIT_TAX",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  // NOTE: Task #215 specified `PCU541611541611` (NAICS 541611, the
+  // narrower "administrative management consulting" sub-line). BLS
+  // publishes that detail line only intermittently with frequent gaps,
+  // so we use the parent industry index `PCU541610541610` (NAICS
+  // 541610, "Management consulting services") which has continuous
+  // monthly history and is the standard PPI series cited in
+  // procurement benchmarks. Same scope coverage, more reliable data.
+  {
+    seriesId: "PCU541610541610",
+    label: "PPI: Management consulting services → Strategy",
+    scopeCategoryCode: "PROF_CONSULTING_STRATEGY",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541610541610",
+    label: "PPI: Management consulting services → Operations",
+    scopeCategoryCode: "PROF_CONSULTING_OPS",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  // NOTE: Task #215 referenced the broad NAICS 5415-- (computer
+  // systems design AND related services) industry group. The BLS PPI
+  // group-level series (`PCU5415----`) is publication-suppressed in
+  // many recent months. We pin to `PCU541512541512` (NAICS 541512,
+  // "Computer systems design services" — the largest sub-line by
+  // revenue) which carries continuous monthly observations and is
+  // the canonical reference for IT services rate-card negotiations.
+  {
+    seriesId: "PCU541512541512",
+    label: "PPI: Computer systems design services → Application development",
+    scopeCategoryCode: "IT_APP_DEV",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541512541512",
+    label: "PPI: Computer systems design services → Infrastructure",
+    scopeCategoryCode: "IT_INFRA",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541512541512",
+    label: "PPI: Computer systems design services → Managed services",
+    scopeCategoryCode: "IT_MANAGED_SERVICES",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU518210518210",
+    label: "PPI: Data processing & hosting services → IT SaaS",
+    scopeCategoryCode: "IT_SAAS",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU518210518210",
+    label: "PPI: Data processing & hosting services → IT Infrastructure",
+    scopeCategoryCode: "IT_INFRA",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541810541810",
+    label: "PPI: Advertising agencies",
+    scopeCategoryCode: "MKT_AGENCY_CREATIVE",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541613541613",
+    label: "PPI: Marketing consulting services",
+    scopeCategoryCode: "MKT_RESEARCH",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU561311561311",
+    label: "PPI: Employment placement agencies — recruiting",
+    scopeCategoryCode: "HR_RECRUITING",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU561320561320",
+    label: "PPI: Temporary help services — contingent labor",
+    scopeCategoryCode: "HR_CONTINGENT_LABOR",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU561110561110",
+    label: "PPI: Office administrative services — payroll & benefits ops",
+    scopeCategoryCode: "HR_PAYROLL_BENEFITS",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU561720561720",
+    label: "PPI: Janitorial services",
+    scopeCategoryCode: "FAC_JANITORIAL",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU561612561612",
+    label: "PPI: Security guards & patrol services",
+    scopeCategoryCode: "FAC_SECURITY",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541330541330",
+    label: "PPI: Engineering services → Design",
+    scopeCategoryCode: "ENG_DESIGN",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+  {
+    seriesId: "PCU541330541330",
+    label: "PPI: Engineering services → R&D engineering",
+    scopeCategoryCode: "ENG_RND",
+    unit: "index_dec2009=100",
+    baseYear: "2009",
+    periodicity: "monthly",
+  },
+
   // --- ECI headline series (quarterly index, base Dec 2005 = 100) ---
+  // Civilian-workers comp/wages/benefits land on LABOR_* aggregates;
+  // service-providing-industries series additionally fans out across
+  // canonical PROF_*/IT_*/HR_*/MKT_*/FAC_*/ENG_* scopes (see below).
   {
     seriesId: "CIU1010000000000I",
     label: "ECI: Total compensation, civilian workers (NSA index)",
@@ -286,6 +440,46 @@ export const BLS_SERIES: readonly BlsSeriesRef[] = [
     baseYear: "2005",
     periodicity: "quarterly",
   },
+  // ECI service-providing fan-out: same upstream series (CIU2020000000000I
+  // = total compensation, service-providing industries), distinct scope
+  // per entry. Request body is deduped by seriesId → one HTTP call.
+  ...(
+    [
+      "PROF_LEGAL",
+      "PROF_AUDIT_TAX",
+      "PROF_CONSULTING_STRATEGY",
+      "PROF_CONSULTING_OPS",
+      "IT_APP_DEV",
+      "IT_INFRA",
+      "IT_CYBER",
+      "IT_SAAS",
+      "IT_MANAGED_SERVICES",
+      "IT_HELP_DESK",
+      "HR_CONTINGENT_LABOR",
+      "HR_RECRUITING",
+      "HR_TRAINING",
+      "HR_PAYROLL_BENEFITS",
+      "MKT_AGENCY_CREATIVE",
+      "MKT_MEDIA_BUYING",
+      "MKT_PR",
+      "MKT_RESEARCH",
+      "FAC_JANITORIAL",
+      "FAC_SECURITY",
+      "FAC_MAINTENANCE",
+      "FAC_LANDSCAPING",
+      "FAC_CATERING",
+      "ENG_RND",
+      "ENG_DESIGN",
+      "ENG_TESTING_CERT",
+    ] as const
+  ).map((scope) => ({
+    seriesId: "CIU2020000000000I",
+    label: `ECI: Service-providing industries → ${scope}`,
+    scopeCategoryCode: scope,
+    unit: "index_dec2005=100",
+    baseYear: "2005",
+    periodicity: "quarterly" as const,
+  })),
 ];
 
 export interface BlsObservation {
@@ -369,6 +563,12 @@ export function buildBlsDraftForObservation(
     observedAt,
     sourceUrl: `${SERIES_PAGE_BASE}${ref.seriesId}`,
     confidence: 0.9,
+    // Anchor the natural-key dedupe to the upstream BLS series so two
+    // different series that resolve to the same scope+date (e.g.
+    // PPI monthly M03 + ECI quarterly Q01 both ending 2025-03-31, or
+    // two PCU series mapping to IT_INFRA) coexist as distinct rows
+    // instead of silently colliding on insert.
+    scopeSku: blsScopeSku(ref),
     metadata: {
       seriesId: ref.seriesId,
       label: ref.label,
@@ -384,6 +584,15 @@ export function buildBlsDraftForObservation(
   if (ref.scopeCategoryCode) draft.scopeCategoryCode = ref.scopeCategoryCode;
   if (ref.scopeMaterialCode) draft.scopeMaterialCode = ref.scopeMaterialCode;
   return draft;
+}
+
+/**
+ * `scope_sku` for `bls-economic-index` drafts. Encoding the upstream
+ * BLS series ID keeps the natural-key dedupe distinct per series even
+ * when multiple series share `scope_category_code` + `observed_at`.
+ */
+export function blsScopeSku(ref: BlsSeriesRef): string {
+  return `bls_series:${ref.seriesId}`;
 }
 
 async function recordWarning(
@@ -466,39 +675,64 @@ export const blsEconomicIndexCollector: IntelligenceCollector<
     // for both monthly PPI and quarterly ECI releases (which can lag by months).
     const startYear = endYear - 2;
 
-    const seriesIds = BLS_SERIES.map((s) => s.seriesId);
-
-    const body: Record<string, unknown> = {
-      seriesid: seriesIds,
-      startyear: String(startYear),
-      endyear: String(endYear),
-      catalog: false,
-      calculations: false,
-      annualaverage: false,
-    };
-    if (apiKey) body["registrationkey"] = apiKey;
-
-    const res = await fetch(BLS_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      throw new Error(
-        `BLS API HTTP ${res.status}: ${await res.text().catch(() => "<no body>")}`,
-      );
-    }
-
-    const json = (await res.json()) as BlsResponse;
-    if (json.status && json.status !== "REQUEST_SUCCEEDED") {
-      const msg =
-        (json.message && json.message.join("; ")) || "unknown BLS error";
-      throw new Error(`BLS API status=${json.status}: ${msg}`);
-    }
-
+    // De-duplicate seriesIds before request building. The registry can
+    // legitimately contain multiple entries that share an upstream
+    // seriesId (ECI fan-out → multiple canonical service categories);
+    // we still only want to fetch each series once.
+    const uniqueSeriesIds = Array.from(
+      new Set(BLS_SERIES.map((s) => s.seriesId)),
+    );
     const tier = apiKey ? "authenticated" : "unauthenticated";
-    return buildBlsDraftsFromResponse(json, BLS_SERIES, {
+    const chunkSize = apiKey
+      ? BLS_API_SERIES_PER_REQUEST_AUTHENTICATED
+      : BLS_API_SERIES_PER_REQUEST_UNAUTHENTICATED;
+
+    // Chunk + stitch so we stay within the per-request series cap.
+    // Each chunk's `Results.series` array is concatenated into a single
+    // synthetic response that `buildBlsDraftsFromResponse` walks once,
+    // preserving its existing fan-out + onMissing semantics.
+    const stitched: BlsResponse = {
+      status: "REQUEST_SUCCEEDED",
+      Results: { series: [] },
+    };
+    for (let i = 0; i < uniqueSeriesIds.length; i += chunkSize) {
+      const chunk = uniqueSeriesIds.slice(i, i + chunkSize);
+      const body: Record<string, unknown> = {
+        seriesid: chunk,
+        startyear: String(startYear),
+        endyear: String(endYear),
+        catalog: false,
+        calculations: false,
+        annualaverage: false,
+      };
+      if (apiKey) body["registrationkey"] = apiKey;
+
+      const res = await fetch(BLS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        throw new Error(
+          `BLS API HTTP ${res.status} on chunk ${i / chunkSize + 1}: ${await res.text().catch(() => "<no body>")}`,
+        );
+      }
+
+      const json = (await res.json()) as BlsResponse;
+      if (json.status && json.status !== "REQUEST_SUCCEEDED") {
+        const msg =
+          (json.message && json.message.join("; ")) || "unknown BLS error";
+        throw new Error(
+          `BLS API status=${json.status} on chunk ${i / chunkSize + 1}: ${msg}`,
+        );
+      }
+      for (const s of json.Results?.series ?? []) {
+        stitched.Results!.series!.push(s);
+      }
+    }
+
+    return buildBlsDraftsFromResponse(stitched, BLS_SERIES, {
       tier,
       onMissing: async (seriesId, reason) => {
         await recordWarning(this.id, reason, { seriesId });

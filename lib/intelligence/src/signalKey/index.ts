@@ -27,6 +27,17 @@ export interface StableSignalKeyParts {
   scopeMaterialCode?: string | null;
   scopeSupplierName?: string | null;
   scopeLaneKey?: string | null;
+  /**
+   * Region scope (e.g. ISO-3166 country, US state, MSA code) for
+   * region-specific observations such as BLS OEWS wage benchmarks.
+   *
+   * Backward-compat note: when this field is unset (or empty after
+   * normalization) the key falls back to the legacy 7-part canonical
+   * form so existing collectors that don't emit a region produce the
+   * exact same hash as before this column was introduced. Only signals
+   * that explicitly carry a region pay the appended-segment cost.
+   */
+  scopeRegionCode?: string | null;
   observedAt: Date | string;
 }
 
@@ -47,7 +58,7 @@ function isoUtc(d: Date | string): string {
 }
 
 export function computeStableSignalKey(parts: StableSignalKeyParts): string {
-  const canonical = [
+  const segments = [
     norm(parts.collectorId),
     norm(parts.signalType),
     norm(parts.scopeCategoryCode),
@@ -56,6 +67,14 @@ export function computeStableSignalKey(parts: StableSignalKeyParts): string {
     norm(parts.scopeSupplierName),
     norm(parts.scopeLaneKey),
     isoUtc(parts.observedAt),
-  ].join("|");
-  return createHash("sha1").update(canonical).digest("hex");
+  ];
+  // Append a region segment only when populated so collectors that
+  // never emit a region produce the same hash as before this field
+  // existed. Tagged with a `region:` prefix to keep the appended
+  // segment unambiguous if other suffixes are added later.
+  const region = norm(parts.scopeRegionCode);
+  if (region !== "") {
+    segments.push(`region:${region}`);
+  }
+  return createHash("sha1").update(segments.join("|")).digest("hex");
 }

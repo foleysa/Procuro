@@ -1,36 +1,21 @@
 /**
- * Guardrail test for the curated BLS series list.
- *
- * The BLS Economic Index collector ships a hand-curated `BLS_SERIES`
- * registry — each entry pins a BLS series ID to a procurement scope code
- * (material vs category) and a unit/baseYear stamp the dashboard charts
- * rely on. Two failure modes have bitten us in the past and this test
- * exists to fail loudly the moment either reappears:
- *
- *   1. **Silent registry drift.** Someone reorders, dedupes, or removes
- *      a series and the chart loses a category without any signal.
- *      The "minimum size + spot-checked headline IDs" assertion below
- *      catches this — to remove a series intentionally you must update
- *      the spot-check list in the same PR, which forces a review.
- *
- *   2. **A series ID that no longer resolves.** BLS occasionally renames
- *      or retires a series; the live collector then quietly emits zero
- *      drafts for it. The fan-out test below stubs the BLS API with a
- *      synthetic payload covering every curated ID and asserts that each
- *      one produces at least one draft, AND that material/category scope
- *      codes route to the right column. This is what would have caught a
- *      typo in the old `SeriesRef` literal before it hit production.
- *
- * No HTTP and no database — runs in milliseconds, safe in CI.
+ * Guardrail test for the curated BLS_SERIES registry. Pins headline
+ * series IDs, dedupe identity, and scope routing so silent registry
+ * drift or a renamed BLS series fails CI.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  BLS_ECONOMIC_INDEX_COLLECTOR_ID,
   BLS_SERIES,
+  blsScopeSku,
   buildBlsDraftForObservation,
   buildBlsDraftsFromResponse,
+  type BlsObservation,
   type BlsResponse,
+  type BlsSeriesRef,
 } from "../src/lib/intelligence/collectors/bls-economic-index";
+import { computeStableSignalKey } from "@workspace/intelligence";
 
 describe("BLS_SERIES registry shape", () => {
   it("contains the curated headline series the dashboards depend on", () => {
@@ -48,6 +33,20 @@ describe("BLS_SERIES registry shape", () => {
       "WPU3022", // PPI: Truck transportation of freight
       "CUUR0000SA0E", // CPI: Energy
       "CUUR0000SEHF01", // CPI: Electricity
+      // --- Task #215 services-band PCU additions ---
+      "PCU541110541110", // PPI: Offices of lawyers (PROF_LEGAL)
+      "PCU541211541211", // PPI: Offices of CPAs (PROF_AUDIT_TAX)
+      "PCU541610541610", // PPI: Management consulting (PROF_CONSULTING_STRATEGY)
+      "PCU541512541512", // PPI: Computer systems design (IT_APP_DEV)
+      "PCU518210518210", // PPI: Data processing & hosting (IT_SAAS)
+      "PCU541810541810", // PPI: Advertising agencies (MKT_AGENCY_CREATIVE)
+      "PCU541613541613", // PPI: Marketing consulting services (MKT_RESEARCH)
+      "PCU561311561311", // PPI: Employment placement agencies (HR_RECRUITING)
+      "PCU561320561320", // PPI: Temporary help services (HR_CONTINGENT_LABOR)
+      "PCU561110561110", // PPI: Office administrative services (HR_PAYROLL_BENEFITS)
+      "PCU561720561720", // PPI: Janitorial services (FAC_JANITORIAL)
+      "PCU561612561612", // PPI: Security guards & patrol (FAC_SECURITY)
+      "PCU541330541330", // PPI: Engineering services (ENG_DESIGN + ENG_RND fan-out)
     ];
     const ids = new Set(BLS_SERIES.map((s) => s.seriesId));
     for (const id of headlineSeriesIds) {
@@ -58,12 +57,25 @@ describe("BLS_SERIES registry shape", () => {
     }
   });
 
-  it("never duplicates a BLS series ID", () => {
-    const ids = BLS_SERIES.map((s) => s.seriesId);
+  it("never duplicates a (seriesId, scope) pair", () => {
+    // We allow multiple registry entries to share an upstream `seriesId`
+    // when they fan out a single observation into multiple canonical
+    // scope codes (e.g. headline ECI → several Task #214 services
+    // categories). What we never want is two entries with the same
+    // (seriesId, scope_category_code, scope_material_code) triple — that
+    // would silently double-count under the natural-key dedupe.
     const seen = new Set<string>();
-    for (const id of ids) {
-      assert.ok(!seen.has(id), `Duplicate seriesId in BLS_SERIES: ${id}`);
-      seen.add(id);
+    for (const ref of BLS_SERIES) {
+      const key = [
+        ref.seriesId,
+        ref.scopeCategoryCode ?? "",
+        ref.scopeMaterialCode ?? "",
+      ].join("|");
+      assert.ok(
+        !seen.has(key),
+        `Duplicate (seriesId, scope) pair in BLS_SERIES: ${key}`,
+      );
+      seen.add(key);
     }
   });
 
@@ -90,6 +102,101 @@ describe("BLS_SERIES registry shape", () => {
       assert.ok(
         ref.baseYear && /^[0-9]{4}(-[0-9]{4})?$/.test(ref.baseYear),
         `Series ${ref.seriesId} missing or malformed baseYear (${ref.baseYear})`,
+      );
+    }
+  });
+});
+
+describe("bls-economic-index dedupe identity", () => {
+  // Build minimal MarketSignalDraft inputs for the natural-key hash.
+  function keyFor(ref: BlsSeriesRef, observedAt: Date): string {
+    return computeStableSignalKey({
+      collectorId: BLS_ECONOMIC_INDEX_COLLECTOR_ID,
+      signalType: "economic_index",
+      scopeCategoryCode: ref.scopeCategoryCode ?? null,
+      scopeMaterialCode: ref.scopeMaterialCode ?? null,
+      scopeSku: blsScopeSku(ref),
+      observedAt,
+    });
+  }
+
+  it("PPI and ECI for the same scope on the same observed_at do not collide", () => {
+    // Real production case: PPI monthly M03 and ECI quarterly Q01 both
+    // resolve to 2025-03-31 and the ECI service-providing fan-out
+    // shares scope_category_code with each PPI services series.
+    const ppi = BLS_SERIES.find((s) => s.seriesId === "PCU541110541110")!;
+    const eci = BLS_SERIES.find(
+      (s) => s.seriesId === "CIU2020000000000I" && s.scopeCategoryCode === "PROF_LEGAL",
+    );
+    assert.ok(ppi);
+    assert.ok(eci, "ECI service-providing fan-out should land on PROF_LEGAL");
+    const observedAt = new Date("2025-03-31T00:00:00.000Z");
+    assert.notEqual(
+      keyFor(ppi, observedAt),
+      keyFor(eci!, observedAt),
+      "PPI and ECI must produce distinct dedupe keys for the same scope+date",
+    );
+  });
+
+  it("two PCU series mapping to the same scope_category_code do not collide", () => {
+    // PCU541512541512 (computer systems design → IT_INFRA) and
+    // PCU518210518210 (data processing & hosting → IT_INFRA) ship a
+    // monthly M03 observation that lands on 2025-03-31 each.
+    const a = BLS_SERIES.find(
+      (s) => s.seriesId === "PCU541512541512" && s.scopeCategoryCode === "IT_INFRA",
+    );
+    const b = BLS_SERIES.find(
+      (s) => s.seriesId === "PCU518210518210" && s.scopeCategoryCode === "IT_INFRA",
+    );
+    assert.ok(a, "PCU541512541512 should fan out to IT_INFRA");
+    assert.ok(b, "PCU518210518210 should fan out to IT_INFRA");
+    const observedAt = new Date("2025-03-31T00:00:00.000Z");
+    assert.notEqual(
+      keyFor(a!, observedAt),
+      keyFor(b!, observedAt),
+      "two PCU series mapping to the same category must produce distinct dedupe keys",
+    );
+  });
+
+  it("re-running the same series against the same observation produces a stable key", () => {
+    // The flip side: idempotency must still hold.
+    const ref = BLS_SERIES.find((s) => s.seriesId === "PCU541110541110")!;
+    const observedAt = new Date("2025-03-31T00:00:00.000Z");
+    assert.equal(keyFor(ref, observedAt), keyFor(ref, observedAt));
+  });
+
+  it("every emitted draft carries scope_sku = blsScopeSku(ref)", () => {
+    // Pin the live wiring so a future refactor that drops scopeSku
+    // from buildBlsDraftForObservation fails CI immediately.
+    const ref = BLS_SERIES.find((s) => s.seriesId === "PCU541110541110")!;
+    const draft = buildBlsDraftForObservation(
+      ref,
+      { year: "2025", period: "M03", periodName: "March", value: "100.0" },
+      { tier: "unauthenticated" },
+    );
+    assert.ok(draft);
+    assert.equal(draft!.scopeSku, blsScopeSku(ref));
+    assert.equal(draft!.scopeSku, "bls_series:PCU541110541110");
+  });
+
+  it("legacy-row backfill formula matches blsScopeSku(ref) for every series", () => {
+    // Contract: scripts/src/backfill-bls-scope-sku.ts uses the SQL
+    //   `'bls_series:' || (metadata->>'seriesId')`
+    // to upgrade pre-existing rows whose `scope_sku` was NULL. That
+    // formula MUST produce the same value the runtime now stamps on
+    // every new draft via blsScopeSku(), otherwise the post-merge
+    // backfill leaves rows with a stale scope_sku and the next
+    // collector run inserts a duplicate alongside them.
+    //
+    // This test pins the formula against every entry in BLS_SERIES so
+    // any future change to blsScopeSku()'s output prefix or seriesId
+    // shape (e.g. encoding) is caught before deploy.
+    for (const ref of BLS_SERIES) {
+      const sqlBackfilledValue = `bls_series:${ref.seriesId}`;
+      assert.equal(
+        sqlBackfilledValue,
+        blsScopeSku(ref),
+        `backfill SQL output must equal blsScopeSku(ref) for series ${ref.seriesId}`,
       );
     }
   });
@@ -151,43 +258,53 @@ describe("buildBlsDraftsFromResponse fan-out", () => {
    * data point per series to verify.
    */
   function buildResponse(): BlsResponse {
+    // The registry now carries entries that share an upstream `seriesId`
+    // (ECI fan-out → multiple canonical service categories). The BLS API
+    // returns one series per unique upstream id, so the synthetic
+    // response must dedupe on `seriesId` to mirror that contract.
+    const uniqueSeries = new Map<
+      string,
+      { seriesID: string; data: BlsObservation[] }
+    >();
+    for (const ref of BLS_SERIES) {
+      if (uniqueSeries.has(ref.seriesId)) continue;
+      uniqueSeries.set(ref.seriesId, {
+        seriesID: ref.seriesId,
+        data:
+          ref.periodicity === "monthly"
+            ? [
+                {
+                  year: "2025",
+                  period: "M02",
+                  periodName: "February",
+                  value: "240.0",
+                },
+                {
+                  year: "2025",
+                  period: "M01",
+                  periodName: "January",
+                  value: "238.5",
+                },
+              ]
+            : [
+                {
+                  year: "2025",
+                  period: "Q01",
+                  periodName: "1st Quarter",
+                  value: "168.4",
+                },
+                {
+                  year: "2024",
+                  period: "Q04",
+                  periodName: "4th Quarter",
+                  value: "166.1",
+                },
+              ],
+      });
+    }
     return {
       status: "REQUEST_SUCCEEDED",
-      Results: {
-        series: BLS_SERIES.map((ref) => ({
-          seriesID: ref.seriesId,
-          data:
-            ref.periodicity === "monthly"
-              ? [
-                  {
-                    year: "2025",
-                    period: "M02",
-                    periodName: "February",
-                    value: "240.0",
-                  },
-                  {
-                    year: "2025",
-                    period: "M01",
-                    periodName: "January",
-                    value: "238.5",
-                  },
-                ]
-              : [
-                  {
-                    year: "2025",
-                    period: "Q01",
-                    periodName: "1st Quarter",
-                    value: "168.4",
-                  },
-                  {
-                    year: "2024",
-                    period: "Q04",
-                    periodName: "4th Quarter",
-                    value: "166.1",
-                  },
-                ],
-        })),
-      },
+      Results: { series: Array.from(uniqueSeries.values()) },
     };
   }
 
@@ -225,7 +342,9 @@ describe("buildBlsDraftsFromResponse fan-out", () => {
   });
 
   it("flags series the upstream payload omits via onMissing", async () => {
-    // Drop two series from the synthetic response; collector must alert.
+    // Drop two unique series from the synthetic response; collector must
+    // alert once per registry entry that resolves to a dropped seriesId
+    // (so a multi-scope ECI fan-out drop fires N alerts, not 1).
     const dropped = [BLS_SERIES[0]!.seriesId, BLS_SERIES[5]!.seriesId];
     const partial = buildResponse();
     partial.Results!.series = (partial.Results!.series ?? []).filter(
@@ -238,9 +357,16 @@ describe("buildBlsDraftsFromResponse fan-out", () => {
         missing.push(id);
       },
     });
-    assert.deepEqual(missing.sort(), dropped.sort());
-    // Dropped series contribute zero drafts, the rest contribute 2 each.
-    assert.equal(drafts.length, (BLS_SERIES.length - dropped.length) * 2);
+    // Every BLS_SERIES entry whose seriesId we dropped should fire once.
+    const expectedMissing = BLS_SERIES.filter((r) =>
+      dropped.includes(r.seriesId),
+    ).map((r) => r.seriesId);
+    assert.deepEqual(missing.sort(), expectedMissing.sort());
+    // Dropped registry entries contribute zero drafts, the rest contribute 2 each.
+    const survivingRefs = BLS_SERIES.filter(
+      (r) => !dropped.includes(r.seriesId),
+    );
+    assert.equal(drafts.length, survivingRefs.length * 2);
   });
 
   it("routes scope codes onto the correct column", async () => {
@@ -253,8 +379,20 @@ describe("buildBlsDraftsFromResponse fan-out", () => {
       const seriesId = String(
         (draft.metadata as Record<string, unknown>)["seriesId"] ?? "",
       );
-      const ref = BLS_SERIES.find((s) => s.seriesId === seriesId);
-      assert.ok(ref, `Unknown series id in draft: ${seriesId}`);
+      // Multiple registry entries can share an upstream `seriesId` (ECI
+      // fan-out). The draft fan-out emits one draft per (ref × obs), so
+      // match the originating ref on the (seriesId × scope) tuple
+      // rather than on seriesId alone.
+      const ref = BLS_SERIES.find(
+        (s) =>
+          s.seriesId === seriesId &&
+          (s.scopeMaterialCode ?? null) === (draft.scopeMaterialCode ?? null) &&
+          (s.scopeCategoryCode ?? null) === (draft.scopeCategoryCode ?? null),
+      );
+      assert.ok(
+        ref,
+        `Unknown (seriesId, scope) pair in draft: ${seriesId} | category=${draft.scopeCategoryCode ?? "-"} | material=${draft.scopeMaterialCode ?? "-"}`,
+      );
       if (ref!.scopeMaterialCode) {
         assert.equal(draft.scopeMaterialCode, ref!.scopeMaterialCode);
         assert.equal(draft.scopeCategoryCode, undefined);

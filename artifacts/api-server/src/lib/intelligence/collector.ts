@@ -45,6 +45,14 @@ export interface MarketSignalDraft {
   scopeMaterialCode?: string;
   scopeSupplierName?: string;
   scopeLaneKey?: string;
+  /**
+   * Region scope for region-specific signals (e.g. BLS OEWS wage
+   * benchmarks scoped to "US-NATIONAL", "US-CA", or an MSA code). Only
+   * collectors whose observations are inherently region-bound should
+   * populate this — the runtime threads it into the natural-key dedupe
+   * so two rows that differ only by region remain distinct.
+   */
+  scopeRegionCode?: string;
   value: number;
   unit: string;
   currency?: string;

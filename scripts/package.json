@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "seed": "tsx ./src/seed.ts",
     "dedupe-market-signals": "tsx ./src/dedupe-market-signals.ts",
+    "backfill-bls-scope-sku": "tsx ./src/backfill-bls-scope-sku.ts",
     "replay-collector": "tsx ./src/replay-collector.ts",
     "backfill-funnel-snapshots": "tsx ./src/backfill-funnel-snapshots.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"

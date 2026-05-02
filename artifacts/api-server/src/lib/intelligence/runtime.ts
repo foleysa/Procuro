@@ -85,6 +85,7 @@ const NATURAL_KEY_ON_CONFLICT = sql`ON CONFLICT (
   COALESCE(scope_material_code, ''),
   COALESCE(scope_supplier_name, ''),
   COALESCE(scope_lane_key, ''),
+  COALESCE(scope_region_code, ''),
   observed_at
 ) DO NOTHING`;
 
@@ -148,6 +149,7 @@ async function insertSignalsWithDedupe(
         ${r.scopeMaterialCode ?? null},
         ${r.scopeSupplierName ?? null},
         ${r.scopeLaneKey ?? null},
+        ${r.scopeRegionCode ?? null},
         ${String(r.value)}::numeric,
         ${r.unit},
         ${r.currency ?? "USD"},
@@ -165,7 +167,7 @@ async function insertSignalsWithDedupe(
     INSERT INTO ${marketSignalsTable}
       (id, org_id, collector_id, signal_type,
        scope_category_code, scope_sku, scope_material_code,
-       scope_supplier_name, scope_lane_key,
+       scope_supplier_name, scope_lane_key, scope_region_code,
        value, unit, currency,
        observed_at, source_url, posture, confidence, metadata)
     VALUES ${valuesClause}
@@ -455,6 +457,7 @@ export async function runCollector(
       scopeMaterialCode: normalizeScope(d.scopeMaterialCode),
       scopeSupplierName: normalizeScope(d.scopeSupplierName),
       scopeLaneKey: normalizeScope(d.scopeLaneKey),
+      scopeRegionCode: normalizeScope(d.scopeRegionCode),
       value: String(d.value),
       unit: d.unit,
       currency: d.currency ?? "USD",
@@ -702,6 +705,7 @@ function signalDedupeKey(args: {
   scopeSku: string | null;
   scopeSupplierName: string | null;
   scopeLaneKey: string | null;
+  scopeRegionCode: string | null;
   observedAt: Date;
 }): string {
   return [
@@ -711,6 +715,7 @@ function signalDedupeKey(args: {
     args.scopeSku ?? "",
     args.scopeSupplierName ?? "",
     args.scopeLaneKey ?? "",
+    args.scopeRegionCode ?? "",
     args.observedAt.toISOString(),
   ].join("|");
 }
@@ -751,6 +756,7 @@ async function insertSignalsIdempotent(
     const scopeSku = normalizeScope(d.scopeSku);
     const scopeSupplierName = normalizeScope(d.scopeSupplierName);
     const scopeLaneKey = normalizeScope(d.scopeLaneKey);
+    const scopeRegionCode = normalizeScope(d.scopeRegionCode);
     const k = signalDedupeKey({
       signalType: d.signalType,
       scopeMaterialCode,
@@ -758,6 +764,7 @@ async function insertSignalsIdempotent(
       scopeSku,
       scopeSupplierName,
       scopeLaneKey,
+      scopeRegionCode,
       observedAt: d.observedAt,
     });
     if (seenInBatch.has(k)) {
@@ -775,6 +782,7 @@ async function insertSignalsIdempotent(
       scopeMaterialCode,
       scopeSupplierName,
       scopeLaneKey,
+      scopeRegionCode,
       value: String(d.value),
       unit: d.unit,
       currency: d.currency ?? "USD",
