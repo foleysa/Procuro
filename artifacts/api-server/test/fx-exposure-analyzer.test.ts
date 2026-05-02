@@ -536,13 +536,16 @@ describe("supplierFxExposureLever", () => {
       // This is what the disclosure-tier renderer keys off in the UI;
       // a single uncited opportunity would render with the wrong
       // posture badge and break the trust contract.
+      //
+      // The asserted shape mirrors the spot-vs-contract lever test
+      // (`test/spot-vs-contract-lever.test.ts`) verbatim so a regression
+      // that strips any field — collectorName, sourceUrl, observedAt,
+      // or any of the contract sub-fields — would fail both levers
+      // identically.
       for (const draft of drafts) {
         const inputs = draft.inputs as Record<string, unknown>;
         const sources = inputs.sources as
-          | Array<{
-              collectorId: string;
-              contract: { disclosureTier: string; postureClass: string };
-            }>
+          | Array<Record<string, unknown>>
           | undefined;
         assert.ok(
           Array.isArray(sources) && sources.length >= 1,
@@ -554,22 +557,63 @@ describe("supplierFxExposureLever", () => {
           ours,
           `every FX opportunity must cite the registered T1 collector ${COLLECTOR_ID}; ` +
             `draft ${draft.supplierId} cited: ${sources!
-              .map((s) => s.collectorId)
+              .map((s) => s["collectorId"])
               .join(", ")}`,
         );
         assert.equal(
-          ours!.contract.disclosureTier,
+          ours!["collectorId"],
+          COLLECTOR_ID,
+          `sources[].collectorId should be the registered collector id`,
+        );
+        assert.equal(
+          ours!["collectorName"],
+          `Test FX Collector ${TEST_RUN_ID}`,
+          `sources[].collectorName should match the registered collector's name`,
+        );
+        assert.equal(
+          ours!["sourceUrl"],
+          "https://example.invalid/test",
+          `sources[].sourceUrl should be the registered collector's URL`,
+        );
+        assert.ok(
+          typeof ours!["observedAt"] === "string" &&
+            !Number.isNaN(Date.parse(ours!["observedAt"] as string)),
+          `sources[].observedAt should be an ISO-8601 string the renderer can parse; ` +
+            `draft ${draft.supplierId} had observedAt=${JSON.stringify(ours!["observedAt"])}`,
+        );
+        const contract = ours!["contract"] as Record<string, unknown>;
+        assert.ok(
+          contract && typeof contract === "object",
+          `sources[].contract must be an object; draft ${draft.supplierId} had ${JSON.stringify(contract)}`,
+        );
+        assert.equal(
+          contract["disclosureTier"],
           "T1",
           `every FX opportunity must surface the registered collector's ` +
             `disclosureTier verbatim; draft ${draft.supplierId} had ` +
-            `disclosureTier=${ours!.contract.disclosureTier}`,
+            `disclosureTier=${contract["disclosureTier"]}`,
         );
         assert.equal(
-          ours!.contract.postureClass,
+          contract["postureClass"],
           "public_api",
           `every FX opportunity must surface the registered collector's ` +
             `postureClass verbatim; draft ${draft.supplierId} had ` +
-            `postureClass=${ours!.contract.postureClass}`,
+            `postureClass=${contract["postureClass"]}`,
+        );
+        assert.equal(
+          contract["jurisdiction"],
+          "GLOBAL",
+          `sources[].contract.jurisdiction must come from the registered collector`,
+        );
+        assert.equal(
+          typeof contract["retentionDays"],
+          "number",
+          `sources[].contract.retentionDays must be a number`,
+        );
+        assert.equal(
+          typeof contract["tenantOptInDefault"],
+          "boolean",
+          `sources[].contract.tenantOptInDefault must be a boolean`,
         );
       }
 
