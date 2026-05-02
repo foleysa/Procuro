@@ -14,14 +14,17 @@ import {
   type MarketSignal,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, LineChart as LineChartIcon, History } from "lucide-react";
-import { formatDate } from "@/lib/format";
 import {
-  SeriesDeltaCallouts,
-  type SeriesDeltaInput,
-} from "./series-delta-callouts";
+  Loader2,
+  LineChart as LineChartIcon,
+  History,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
+import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type ChartMode = "indexed" | "absolute";
 
@@ -155,39 +158,86 @@ export function FxTrendChart({
     );
   }, [queries, pairs, mode]);
 
-  // Compute first/last raw values per active pair for the delta callouts.
-  // We always work off raw values (not the indexed view) so the percentage
-  // shown matches the underlying market move regardless of which display
-  // mode is selected.
-  const deltas = useMemo<SeriesDeltaInput[]>(() => {
-    return pairs
-      .filter((p) => activePairs.has(p))
-      .map((pair, idx): SeriesDeltaInput => {
-        const i = pairs.indexOf(pair);
-        const data = queries[i]?.data ?? [];
-        const first = data[0];
-        const last = data[data.length - 1];
-        return {
-          label: pair,
-          color: PAIR_COLORS[idx % PAIR_COLORS.length]!,
-          first: first ? first.value : null,
-          last: last ? last.value : null,
-          firstAt: first ? first.observedAt : null,
-          lastAt: last ? last.observedAt : null,
-        };
-      });
-  }, [pairs, queries, activePairs]);
+  // Per-pair summary used to decorate each toggle button with a "% change
+  // over the visible window" figure plus the latest rate. We compute this
+  // for *every* pair (not just the active ones) so the user can see the
+  // headline numbers before deciding which lines to render. The percentage
+  // is always derived from raw values so it matches the underlying market
+  // move regardless of which display mode is selected — the displayed
+  // "latest" value, however, reflects the active mode so it lines up with
+  // the value the user sees at the right edge of the chart.
+  type PairStat = {
+    pair: string;
+    color: string;
+    pointCount: number;
+    firstRaw: number | null;
+    latestRaw: number | null;
+    firstAt: string | null;
+    lastAt: string | null;
+    /** Pct change from first to last raw value over the visible window. */
+    pct: number | null;
+    /** Latest value formatted for the active display mode. */
+    latestDisplay: string | null;
+  };
+
+  const pairStats = useMemo<PairStat[]>(() => {
+    return pairs.map((pair, i): PairStat => {
+      const data = queries[i]?.data ?? [];
+      const first = data[0];
+      const last = data[data.length - 1];
+      const firstRaw = first ? first.value : null;
+      const latestRaw = last ? last.value : null;
+      const pct =
+        firstRaw !== null && latestRaw !== null && firstRaw !== 0
+          ? ((latestRaw - firstRaw) / firstRaw) * 100
+          : null;
+      let latestDisplay: string | null = null;
+      if (latestRaw !== null) {
+        if (mode === "indexed" && firstRaw !== null && firstRaw !== 0) {
+          // Match what the chart's right-edge tick shows in indexed mode.
+          latestDisplay = ((latestRaw / firstRaw) * 100).toFixed(1);
+        } else {
+          // Absolute mode: show enough precision for sub-1 rates without
+          // making 158.3 noisy.
+          latestDisplay =
+            Math.abs(latestRaw) >= 10
+              ? latestRaw.toFixed(2)
+              : latestRaw.toFixed(4);
+        }
+      }
+      return {
+        pair,
+        color: PAIR_COLORS[i % PAIR_COLORS.length]!,
+        pointCount: data.length,
+        firstRaw,
+        latestRaw,
+        firstAt: first ? first.observedAt : null,
+        lastAt: last ? last.observedAt : null,
+        pct,
+        latestDisplay,
+      };
+    });
+  }, [pairs, queries, mode]);
 
   const windowLabel = useMemo(() => {
-    const visible = deltas
-      .map((d) => (d.firstAt ? new Date(d.firstAt).getTime() : null))
-      .filter((v): v is number => v !== null);
+    // Anchor the label on the earliest observation across the *active*
+    // pairs so the figure lines up with what the chart is actually showing.
+    const visible = pairStats
+      .filter((s) => activePairs.has(s.pair) && s.firstAt)
+      .map((s) => new Date(s.firstAt!).getTime())
+      .filter((v) => Number.isFinite(v));
     if (visible.length === 0) return "5y";
     const earliest = Math.min(...visible);
     const days = Math.round((Date.now() - earliest) / ONE_DAY_MS);
     if (days >= 365) return `${(days / 365).toFixed(1)}y`;
     return `${days}d`;
-  }, [deltas]);
+  }, [pairStats, activePairs]);
+
+  const formatPct = (pct: number) => {
+    const sign = pct > 0 ? "+" : "";
+    const digits = Math.abs(pct) >= 10 ? 1 : 2;
+    return `${sign}${pct.toFixed(digits)}%`;
+  };
 
   const togglePair = (pair: string) => {
     setActivePairs((prev) => {
@@ -242,10 +292,28 @@ export function FxTrendChart({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2" data-testid="fx-pair-toggles">
-          {pairs.map((pair, i) => {
+          {pairStats.map((stat) => {
+            const { pair, color, pointCount, pct, latestDisplay } = stat;
             const isActive = activePairs.has(pair);
-            const color = PAIR_COLORS[i % PAIR_COLORS.length];
-            const pointCount = queries[i]?.data?.length ?? 0;
+            const hasData = pointCount > 0 && pct !== null;
+            const TrendIcon =
+              pct === null || Math.abs(pct) < 0.05
+                ? Minus
+                : pct > 0
+                  ? TrendingUp
+                  : TrendingDown;
+            const tooltip =
+              pointCount === 0
+                ? `No data for ${pair} yet`
+                : [
+                    `${pair}: ${stat.firstRaw?.toFixed(4)} → ${stat.latestRaw?.toFixed(4)}`,
+                    stat.firstAt && stat.lastAt
+                      ? `${new Date(stat.firstAt).toLocaleDateString()} → ${new Date(stat.lastAt).toLocaleDateString()}`
+                      : null,
+                    `${pointCount.toLocaleString()} observations · window ${windowLabel}`,
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
             return (
               <Button
                 key={pair}
@@ -254,22 +322,37 @@ export function FxTrendChart({
                 variant={isActive ? "default" : "outline"}
                 onClick={() => togglePair(pair)}
                 data-testid={`fx-pair-toggle-${pair}`}
-                className="h-7 text-xs gap-2"
+                className="h-auto py-1.5 px-2.5 text-xs gap-2"
                 disabled={pointCount === 0}
-                title={
-                  pointCount === 0
-                    ? `No data for ${pair} yet`
-                    : `${pointCount.toLocaleString()} observations`
-                }
+                title={tooltip}
               >
                 <span
-                  className="inline-block w-2 h-2 rounded-full"
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
                   style={{ backgroundColor: color }}
                 />
-                {pair}
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
-                  {pointCount.toLocaleString()}
-                </Badge>
+                <span className="font-medium">{pair}</span>
+                {hasData ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 tabular-nums",
+                      isActive ? "opacity-90" : "opacity-80",
+                    )}
+                    data-testid={`fx-pair-stat-${pair}`}
+                  >
+                    <TrendIcon className="w-3 h-3" aria-hidden />
+                    <span data-testid={`fx-pair-pct-${pair}`}>
+                      {formatPct(pct!)}
+                    </span>
+                    <span
+                      className="opacity-70"
+                      data-testid={`fx-pair-latest-${pair}`}
+                    >
+                      · {latestDisplay}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="opacity-60 italic">no data</span>
+                )}
               </Button>
             );
           })}
@@ -295,13 +378,7 @@ export function FxTrendChart({
             </div>
           </div>
         ) : (
-          <>
-            <SeriesDeltaCallouts
-              series={deltas}
-              windowLabel={windowLabel}
-              data-testid="fx-trend-deltas"
-            />
-            <div className="h-80 w-full" data-testid="fx-trend-chart-canvas">
+          <div className="h-80 w-full" data-testid="fx-trend-chart-canvas">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={chartData}
@@ -372,8 +449,7 @@ export function FxTrendChart({
                 })}
               </LineChart>
             </ResponsiveContainer>
-            </div>
-          </>
+          </div>
         )}
       </CardContent>
     </Card>
