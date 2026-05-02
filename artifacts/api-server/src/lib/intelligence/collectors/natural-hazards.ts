@@ -327,21 +327,23 @@ const hazardMetadataSchema = z
 
 const hazardSignalSchema = buildSignalDraftSchema(hazardMetadataSchema);
 
-async function fetchJson<T>(url: string): Promise<{ payload: T; body: string }> {
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<{ payload: T; body: string }> {
   const res = await fetch(url, {
     headers: {
       Accept: "application/json",
       "User-Agent": "Procuro Procurement Platform compliance@procuro.ai",
     },
+    signal,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   const body = await res.text();
   return { payload: JSON.parse(body) as T, body };
 }
 
-async function fetchText(url: string): Promise<string> {
+async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
   const res = await fetch(url, {
     headers: { "User-Agent": "Procuro Procurement Platform" },
+    signal,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.text();
@@ -365,10 +367,10 @@ export const naturalHazardsCollector: IntelligenceCollector<typeof hazardSignalS
   stableSignalKey(draft) {
     return defaultStableSignalKey(NATURAL_HAZARDS_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
@@ -382,7 +384,7 @@ export const naturalHazardsCollector: IntelligenceCollector<typeof hazardSignalS
         key: "USGS",
         contentType: "application/geo+json",
         run: async () => {
-          const { payload, body } = await fetchJson<UsgsFeed>(HAZARD_SOURCES.USGS);
+          const { payload, body } = await fetchJson<UsgsFeed>(HAZARD_SOURCES.USGS, signal);
           return { drafts: parseUsgsFeed(payload), body };
         },
       },
@@ -392,6 +394,7 @@ export const naturalHazardsCollector: IntelligenceCollector<typeof hazardSignalS
         run: async () => {
           const { payload, body } = await fetchJson<NwsAlertsResponse>(
             HAZARD_SOURCES.NWS,
+            signal,
           );
           return { drafts: parseNwsAlerts(payload), body };
         },
@@ -402,6 +405,7 @@ export const naturalHazardsCollector: IntelligenceCollector<typeof hazardSignalS
         run: async () => {
           const { payload, body } = await fetchJson<EonetResponse>(
             HAZARD_SOURCES.EONET,
+            signal,
           );
           return { drafts: parseEonetEvents(payload), body };
         },
@@ -410,7 +414,7 @@ export const naturalHazardsCollector: IntelligenceCollector<typeof hazardSignalS
         key: "GDACS",
         contentType: "application/rss+xml",
         run: async () => {
-          const body = await fetchText(HAZARD_SOURCES.GDACS);
+          const body = await fetchText(HAZARD_SOURCES.GDACS, signal);
           return {
             drafts: parseGdacsRss(body).map(gdacsItemToDraft),
             body,

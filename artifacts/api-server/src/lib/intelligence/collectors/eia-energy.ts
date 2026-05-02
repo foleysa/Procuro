@@ -122,6 +122,7 @@ function parsePeriodToUtc(period: string): Date {
 async function fetchLatestPoint(
   series: EiaSeriesConfig,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<{ point: EiaDataPoint; rawUnit: string | undefined }> {
   const url = new URL(
     `https://api.eia.gov/v2/seriesid/${encodeURIComponent(series.seriesId)}`,
@@ -131,6 +132,7 @@ async function fetchLatestPoint(
 
   const res = await fetch(url.toString(), {
     headers: { accept: "application/json" },
+    signal,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -191,7 +193,7 @@ export const eiaEnergyCollector: IntelligenceCollector<typeof eiaSignalSchema> =
   stableSignalKey(draft) {
     return defaultStableSignalKey(EIA_ENERGY_COLLECTOR_ID, draft);
   },
-  async collect({ since: _since }): Promise<MarketSignalDraft[]> {
+  async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
     const apiKey = process.env["EIA_API_KEY"];
     if (!apiKey || apiKey.trim() === "") {
       throw new Error(
@@ -204,7 +206,7 @@ export const eiaEnergyCollector: IntelligenceCollector<typeof eiaSignalSchema> =
 
     for (const series of SERIES) {
       try {
-        const { point, rawUnit } = await fetchLatestPoint(series, apiKey);
+        const { point, rawUnit } = await fetchLatestPoint(series, apiKey, signal);
         const value = coerceValue(point.value, series.seriesId);
         const observedAt = parsePeriodToUtc(point.period);
         drafts.push({

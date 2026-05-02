@@ -471,7 +471,7 @@ export const blsOewsCollector: IntelligenceCollector<typeof oewsSignalSchema> =
       return defaultStableSignalKey(BLS_OEWS_COLLECTOR_ID, draft);
     },
 
-    async collect({ since: _since }): Promise<MarketSignalDraft[]> {
+    async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
       const apiKey = process.env["BLS_API_KEY"];
       if (!apiKey) {
         await recordWarning(
@@ -515,6 +515,7 @@ export const blsOewsCollector: IntelligenceCollector<typeof oewsSignalSchema> =
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          signal,
         });
         if (!res.ok) {
           throw new Error(

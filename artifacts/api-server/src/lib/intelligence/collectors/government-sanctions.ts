@@ -338,8 +338,11 @@ const sanctionsMetadataSchema = z
 
 const sanctionsSignalSchema = buildSignalDraftSchema(sanctionsMetadataSchema);
 
-async function fetchText(url: string): Promise<{ body: string; contentType: string }> {
-  const res = await fetch(url, { headers: { "User-Agent": "Procuro Compliance Platform" } });
+async function fetchText(url: string, signal?: AbortSignal): Promise<{ body: string; contentType: string }> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Procuro Compliance Platform" },
+    signal,
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   const contentType = res.headers.get("content-type") ?? "application/octet-stream";
   return { body: await res.text(), contentType };
@@ -365,10 +368,10 @@ export const governmentSanctionsCollector: IntelligenceCollector<typeof sanction
   stableSignalKey(draft) {
     return defaultStableSignalKey(GOVERNMENT_SANCTIONS_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
     const observedAt = new Date();
     const drafts: MarketSignalDraft[] = [];
     const rawPayloads: RawPayload[] = [];
@@ -385,7 +388,7 @@ export const governmentSanctionsCollector: IntelligenceCollector<typeof sanction
     for (const { key, parse } of sources) {
       const url = SANCTIONS_LIST_SOURCES[key];
       try {
-        const { body, contentType } = await fetchText(url);
+        const { body, contentType } = await fetchText(url, signal);
         const entries = parse(body, observedAt);
         for (const e of entries) drafts.push(entryToDraft(e, url));
         rawPayloads.push({

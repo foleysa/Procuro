@@ -194,11 +194,11 @@ export const gdeltEventsCollector: IntelligenceCollector<typeof gdeltSignalSchem
   stableSignalKey(draft) {
     return defaultStableSignalKey(GDELT_EVENTS_COLLECTOR_ID, draft);
   },
-  async collect(): Promise<MarketSignalDraft[]> {
-    return (await this.collectWithRaw!({ since: null })).drafts;
+  async collect({ signal } = { since: null }): Promise<MarketSignalDraft[]> {
+    return (await this.collectWithRaw!({ since: null, signal })).drafts;
   },
-  async collectWithRaw(): Promise<CollectWithRawResult> {
-    const lastUpdateRes = await fetch(GDELT_LASTUPDATE_URL);
+  async collectWithRaw({ signal } = { since: null }): Promise<CollectWithRawResult> {
+    const lastUpdateRes = await fetch(GDELT_LASTUPDATE_URL, { signal });
     if (!lastUpdateRes.ok) {
       throw new Error(`GDELT lastupdate HTTP ${lastUpdateRes.status}`);
     }
@@ -207,7 +207,7 @@ export const gdeltEventsCollector: IntelligenceCollector<typeof gdeltSignalSchem
     if (!eventsUrl) {
       throw new Error("GDELT lastupdate: no events URL found");
     }
-    const eventsRes = await fetch(eventsUrl);
+    const eventsRes = await fetch(eventsUrl, { signal });
     if (!eventsRes.ok) {
       throw new Error(`GDELT events HTTP ${eventsRes.status} for ${eventsUrl}`);
     }

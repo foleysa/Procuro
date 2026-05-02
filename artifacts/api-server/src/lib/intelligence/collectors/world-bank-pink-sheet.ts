@@ -207,11 +207,11 @@ function parseMonthlyPricesSheet(buf: Buffer): ParsedSheet {
   return { rows, headers, units, dataStart: 6 };
 }
 
-async function fetchPinkSheetWorkbook(): Promise<{
+async function fetchPinkSheetWorkbook(signal?: AbortSignal): Promise<{
   buffer: Buffer;
   lastModified: string | null;
 }> {
-  const res = await fetch(PINK_SHEET_XLSX_URL);
+  const res = await fetch(PINK_SHEET_XLSX_URL, { signal });
   if (!res.ok) {
     throw new Error(
       `Pink Sheet fetch failed: ${res.status} ${res.statusText} for ${PINK_SHEET_XLSX_URL}`,
@@ -260,8 +260,8 @@ export const worldBankPinkSheetCollector: IntelligenceCollector<
   stableSignalKey(draft) {
     return defaultStableSignalKey(WORLD_BANK_PINK_SHEET_COLLECTOR_ID, draft);
   },
-  async collect({ since: _since }): Promise<MarketSignalDraft[]> {
-    const { buffer, lastModified } = await fetchPinkSheetWorkbook();
+  async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
+    const { buffer, lastModified } = await fetchPinkSheetWorkbook(signal);
     const { rows, headers, units, dataStart } = parseMonthlyPricesSheet(buffer);
 
     // Build a header-name → column-index lookup (trim + lowercase).
