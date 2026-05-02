@@ -30,6 +30,7 @@ import {
   orgsTable,
   suppliersTable,
   categoriesTable,
+  itemsTable,
   contractsTable,
   purchaseOrdersTable,
   poLinesTable,
@@ -324,6 +325,401 @@ describe("material_index_arbitrage Tier-4 lever (#62)", () => {
             or(
               like(categoriesTable.sourceExternalId, `${RUN}-%`),
               like(categoriesTable.code, `${RUN}-%`),
+            ),
+          ),
+      );
+    }
+  });
+});
+
+/**
+ * Companion test for the explicit `material_code` tag path (#62).
+ *
+ * The first describe above exercises the alias-name fallback
+ * (tenant `category.code = 'STEEL_PLATE'` matched via
+ * `MATERIAL_TO_CATEGORY_CODES`). This block verifies the OTHER two
+ * tagging paths the lever supports:
+ *
+ *   1. `categories.material_code` set explicitly to the canonical
+ *      material code, on a category whose `code` is a tenant-specific
+ *      string that is NOT in any alias list (e.g. an arbitrary BU
+ *      code like "BU-RESIN-PKG-A1"). Without the explicit tag, the
+ *      lever would never match this category — so emitting a draft
+ *      proves the explicit tag drives the join.
+ *
+ *   2. `items.material_code` set on an item used on a po_line in a
+ *      similarly arbitrary category. The lever rolls up the
+ *      item-grain tag through `po_lines` to the category, so a draft
+ *      against this contract proves the item-grain tag path works.
+ *
+ * Both fixtures are namespaced under per-run prefixes and torn down
+ * in `after()`.
+ */
+const RUN_TAG = `t62tag-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+
+let tagOrgId: string;
+let tagSupplierId: string;
+let tagExplicitCatId: string;
+let tagItemTagCatId: string;
+let tagExplicitContractId: string;
+let tagItemContractId: string;
+let tagExplicitPoId: string;
+let tagItemPoId: string;
+let tagItemId: string;
+let tagEarliestSignalId: string;
+let tagLatestSignalId: string;
+let tagCollectorId: string;
+
+const TAG_MATERIAL_CODE = "PLASTIC_RESINS";
+// Arbitrary tenant-supplied codes that are NOT in MATERIAL_TO_CATEGORY_CODES
+// for PLASTIC_RESINS — proves the matching is driven by the explicit
+// material_code column, not by the category code naming.
+const TAG_EXPLICIT_CATEGORY_CODE = `${RUN_TAG}-BU-RESIN-PKG-A1`;
+const TAG_ITEM_CATEGORY_CODE = `${RUN_TAG}-PLANT-7-MOLDING`;
+
+describe("material_index_arbitrage Tier-4 lever (#62, explicit material_code tag)", () => {
+  before(async () => {
+    tagOrgId = newId("org");
+    await db.insert(orgsTable).values({
+      id: tagOrgId,
+      name: `${RUN_TAG} Test Org`,
+      slug: `${RUN_TAG}-org`,
+    });
+
+    tagSupplierId = newId("sup");
+    await db.insert(suppliersTable).values({
+      id: tagSupplierId,
+      orgId: tagOrgId,
+      name: `${RUN_TAG} Resin Co`,
+      normalizedName: `${RUN_TAG} resin co`,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-sup`,
+    });
+
+    // (a) Category tagged explicitly with material_code = PLASTIC_RESINS,
+    //     but with an arbitrary tenant code that is NOT in any alias list.
+    tagExplicitCatId = newId("cat");
+    await db.insert(categoriesTable).values({
+      id: tagExplicitCatId,
+      orgId: tagOrgId,
+      code: TAG_EXPLICIT_CATEGORY_CODE,
+      name: "Plant A1 Packaging Resins",
+      class: "direct",
+      materialCode: TAG_MATERIAL_CODE,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-cat-a`,
+    });
+
+    // (b) Category WITHOUT the explicit tag — its only signal is an
+    //     item under it that carries the tag.
+    tagItemTagCatId = newId("cat");
+    await db.insert(categoriesTable).values({
+      id: tagItemTagCatId,
+      orgId: tagOrgId,
+      code: TAG_ITEM_CATEGORY_CODE,
+      name: "Plant 7 Injection Molding",
+      class: "direct",
+      // materialCode intentionally null — must come from the item.
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-cat-b`,
+    });
+    tagItemId = newId("itm");
+    await db.insert(itemsTable).values({
+      id: tagItemId,
+      orgId: tagOrgId,
+      sku: `${RUN_TAG}-RESIN-PELLETS-A`,
+      description: `${RUN_TAG} polyethylene resin pellets`,
+      normalizedKey: `${RUN_TAG}-resin-pellets-a`,
+      categoryId: tagItemTagCatId,
+      materialCode: TAG_MATERIAL_CODE,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-itm`,
+    });
+
+    const today = new Date();
+    const inOneYear = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+    // Contract + spend on the explicit-category-tag fixture.
+    tagExplicitContractId = newId("con");
+    await db.insert(contractsTable).values({
+      id: tagExplicitContractId,
+      orgId: tagOrgId,
+      supplierId: tagSupplierId,
+      categoryId: tagExplicitCatId,
+      contractNumber: `${RUN_TAG}-MSA-A`,
+      title: `${RUN_TAG} resin packaging MSA`,
+      status: "active",
+      startDate: today,
+      endDate: inOneYear,
+      annualBaselineUsd: "150000.00",
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-con-a`,
+    });
+    tagExplicitPoId = newId("po");
+    await db.insert(purchaseOrdersTable).values({
+      id: tagExplicitPoId,
+      orgId: tagOrgId,
+      poNumber: `${RUN_TAG}-PO-A`,
+      supplierId: tagSupplierId,
+      contractId: tagExplicitContractId,
+      orderDate: today,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-po-a`,
+    });
+    await db.insert(poLinesTable).values({
+      id: newId("pol"),
+      orgId: tagOrgId,
+      poId: tagExplicitPoId,
+      lineNumber: 1,
+      sku: `${RUN_TAG}-RESIN-PKG-1`,
+      description: `${RUN_TAG} resin packaging line 1`,
+      categoryId: tagExplicitCatId,
+      spendClass: "direct",
+      qty: "1000",
+      unitPriceUsd: "150.0000",
+      extendedUsd: "150000.00",
+      orderDate: today,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-pol-a`,
+    });
+
+    // Contract + spend on the item-tag fixture (po_line references the
+    // tagged item; categoriesTable row itself has no material_code).
+    tagItemContractId = newId("con");
+    await db.insert(contractsTable).values({
+      id: tagItemContractId,
+      orgId: tagOrgId,
+      supplierId: tagSupplierId,
+      categoryId: tagItemTagCatId,
+      contractNumber: `${RUN_TAG}-MSA-B`,
+      title: `${RUN_TAG} molding feedstock MSA`,
+      status: "active",
+      startDate: today,
+      endDate: inOneYear,
+      annualBaselineUsd: "120000.00",
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-con-b`,
+    });
+    tagItemPoId = newId("po");
+    await db.insert(purchaseOrdersTable).values({
+      id: tagItemPoId,
+      orgId: tagOrgId,
+      poNumber: `${RUN_TAG}-PO-B`,
+      supplierId: tagSupplierId,
+      contractId: tagItemContractId,
+      orderDate: today,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-po-b`,
+    });
+    await db.insert(poLinesTable).values({
+      id: newId("pol"),
+      orgId: tagOrgId,
+      poId: tagItemPoId,
+      lineNumber: 1,
+      sku: `${RUN_TAG}-RESIN-PELLETS-A`,
+      description: `${RUN_TAG} polyethylene resin pellets`,
+      categoryId: tagItemTagCatId,
+      itemId: tagItemId,
+      spendClass: "direct",
+      qty: "1000",
+      unitPriceUsd: "120.0000",
+      extendedUsd: "120000.00",
+      orderDate: today,
+      sourceSystem: SOURCE,
+      sourceExternalId: `${RUN_TAG}-pol-b`,
+    });
+
+    // Stub collector for FK + in-memory registry.
+    tagCollectorId = newId("col");
+    await db.insert(collectorsTable).values({
+      id: tagCollectorId,
+      name: `${RUN_TAG} fred-stub`,
+      description: "Stub for material_index_arbitrage explicit-tag test",
+      posture: "public-api",
+      status: "approved",
+      owner: "test",
+      sourceUrl: "https://fred.stlouisfed.org/series/WPU072",
+      rateLimitRpm: 30,
+      killSwitch: 0,
+    });
+    const stubCollector: IntelligenceCollector = {
+      id: tagCollectorId,
+      name: `${RUN_TAG} fred-stub`,
+      description: "Stub for material_index_arbitrage explicit-tag test",
+      posture: "public-api",
+      sourceUrl: "https://fred.stlouisfed.org/series/WPU072",
+      defaultRateLimitRpm: 30,
+      defaultScheduleCron: null,
+      postureClass: "public_api",
+      disclosureTier: "T1",
+      jurisdiction: "US",
+      retentionDays: 365,
+      tenantOptInDefault: true,
+      signalSchema: z.object({}).passthrough(),
+      stableSignalKey: () => `${tagCollectorId}::stub`,
+      collect: async () => [],
+    };
+    registerCollector(stubCollector);
+
+    // Two FRED-style PLASTIC_RESINS signals — earliest at 200, latest at
+    // 220, +10% move (PPI up → "lock-in" branch).
+    const earliestAt = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    tagEarliestSignalId = newId("sig");
+    await db.insert(marketSignalsTable).values({
+      id: tagEarliestSignalId,
+      orgId: null,
+      collectorId: tagCollectorId,
+      signalType: "economic_index",
+      scopeMaterialCode: TAG_MATERIAL_CODE,
+      value: "200.0000",
+      unit: "index",
+      currency: "USD",
+      observedAt: earliestAt,
+      sourceUrl: "https://fred.stlouisfed.org/series/WPU072",
+      posture: "public-api",
+      confidence: "0.9500",
+      metadata: { seriesId: "WPU072", basis: "test_fixture" },
+    });
+    tagLatestSignalId = newId("sig");
+    await db.insert(marketSignalsTable).values({
+      id: tagLatestSignalId,
+      orgId: null,
+      collectorId: tagCollectorId,
+      signalType: "economic_index",
+      scopeMaterialCode: TAG_MATERIAL_CODE,
+      value: "220.0000",
+      unit: "index",
+      currency: "USD",
+      observedAt: new Date(),
+      sourceUrl: "https://fred.stlouisfed.org/series/WPU072",
+      posture: "public-api",
+      confidence: "0.9500",
+      metadata: { seriesId: "WPU072", basis: "test_fixture" },
+    });
+  });
+
+  it("matches contracts via the explicit category-level material_code tag", async () => {
+    const drafts = toAnalyzeResult(
+      await materialIndexArbitrageLever.analyze({
+        orgId: tagOrgId,
+        cycleId: "test-cycle",
+      }),
+    ).drafts;
+
+    const ours = drafts.find(
+      (d) =>
+        (d.inputs as { contractId?: string }).contractId ===
+        tagExplicitContractId,
+    );
+    assert.ok(
+      ours,
+      `expected a draft for the explicit-tag contract; got ${drafts.length} drafts: ${drafts
+        .map((d) => (d.inputs as { contractId?: string }).contractId)
+        .join(", ")}`,
+    );
+
+    assert.equal(ours.leverId, "material_index_arbitrage");
+    assert.equal(ours.categoryId, tagExplicitCatId);
+
+    // +10% on $150,000 with 0.5 passthrough → $7,500.
+    assert.equal(ours.rawProjectedSavingsUsd, 7500);
+
+    const inputs = ours.inputs as Record<string, unknown>;
+    assert.equal(inputs["materialScopeCode"], TAG_MATERIAL_CODE);
+    // The category code on the draft is the tenant's arbitrary code,
+    // proving the lever joined via the explicit material_code tag and
+    // not via the alias-name fallback.
+    assert.equal(inputs["categoryCode"], TAG_EXPLICIT_CATEGORY_CODE);
+    assert.ok(Number(inputs["movePct"]) > 0);
+
+    // PPI-up branch surfaces a lock-in / pull-forward action.
+    assert.match(ours.title, /lock.?in/i);
+    assert.match(ours.rationale, /WPU072/);
+  });
+
+  it("matches contracts via the explicit item-level material_code tag", async () => {
+    const drafts = toAnalyzeResult(
+      await materialIndexArbitrageLever.analyze({
+        orgId: tagOrgId,
+        cycleId: "test-cycle",
+      }),
+    ).drafts;
+
+    const ours = drafts.find(
+      (d) =>
+        (d.inputs as { contractId?: string }).contractId ===
+        tagItemContractId,
+    );
+    assert.ok(
+      ours,
+      `expected a draft for the item-tag contract; got ${drafts.length} drafts`,
+    );
+    assert.equal(ours.categoryId, tagItemTagCatId);
+    // +10% on $120,000 with 0.5 passthrough → $6,000.
+    assert.equal(ours.rawProjectedSavingsUsd, 6000);
+    const inputs = ours.inputs as Record<string, unknown>;
+    assert.equal(inputs["materialScopeCode"], TAG_MATERIAL_CODE);
+    assert.equal(inputs["categoryCode"], TAG_ITEM_CATEGORY_CODE);
+  });
+
+  after(async () => {
+    const safe = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch {
+        /* swallow */
+      }
+    };
+    for (const sigId of [tagEarliestSignalId, tagLatestSignalId]) {
+      if (sigId) {
+        await safe(
+          db
+            .delete(marketSignalsTable)
+            .where(eq(marketSignalsTable.id, sigId)),
+        );
+      }
+    }
+    if (tagCollectorId) {
+      await safe(
+        db
+          .delete(collectorsTable)
+          .where(eq(collectorsTable.id, tagCollectorId)),
+      );
+    }
+    if (tagOrgId) {
+      await safe(db.delete(orgsTable).where(eq(orgsTable.id, tagOrgId)));
+      await safe(
+        db
+          .delete(poLinesTable)
+          .where(like(poLinesTable.sourceExternalId, `${RUN_TAG}-%`)),
+      );
+      await safe(
+        db
+          .delete(purchaseOrdersTable)
+          .where(like(purchaseOrdersTable.sourceExternalId, `${RUN_TAG}-%`)),
+      );
+      await safe(
+        db
+          .delete(contractsTable)
+          .where(like(contractsTable.sourceExternalId, `${RUN_TAG}-%`)),
+      );
+      await safe(
+        db
+          .delete(itemsTable)
+          .where(like(itemsTable.sourceExternalId, `${RUN_TAG}-%`)),
+      );
+      await safe(
+        db
+          .delete(suppliersTable)
+          .where(like(suppliersTable.sourceExternalId, `${RUN_TAG}-%`)),
+      );
+      await safe(
+        db
+          .delete(categoriesTable)
+          .where(
+            or(
+              like(categoriesTable.sourceExternalId, `${RUN_TAG}-%`),
+              like(categoriesTable.code, `${RUN_TAG}-%`),
             ),
           ),
       );

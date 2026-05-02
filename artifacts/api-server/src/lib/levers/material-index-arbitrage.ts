@@ -199,15 +199,50 @@ export const materialIndexArbitrageLever: LeverAnalyzer = {
       const aliases = MATERIAL_TO_CATEGORY_CODES[materialCode];
       if (!aliases || aliases.length === 0) continue;
 
-      // 3. Find tenant contracts in matching categories with material spend.
+      // 3. Find tenant contracts in matching categories with material
+      //    spend. Tenants can declare the link in three independent
+      //    ways; the lever ORs them together so any of the three
+      //    surfaces an opportunity:
+      //
+      //      a. `categories.material_code` set explicitly to the
+      //         canonical material code (precision tag, preferred).
+      //      b. Any `items.material_code` rolled up to the category
+      //         via po_lines (item-grain tag, also explicit).
+      //      c. `categories.code` matches one of the documented
+      //         aliases in `MATERIAL_TO_CATEGORY_CODES` (heuristic
+      //         fallback for tenants who haven't tagged yet).
+      //
+      //    All three paths land on the SAME shape of `cat_match` rows
+      //    (category_id + code + name) so the downstream join and
+      //    rationale don't care which path matched.
       const matched = (await db.execute(sql`
         WITH cat_match AS (
-          SELECT id AS category_id, code AS category_code, name AS category_name
-          FROM categories
-          WHERE org_id = ${orgId}
-            AND UPPER(code) = ANY(${sql.raw(
-              `ARRAY[${aliases.map((a) => `'${a.toUpperCase()}'`).join(",")}]::text[]`,
-            )})
+          SELECT DISTINCT id AS category_id, code AS category_code, name AS category_name
+          FROM (
+            -- (a) explicit category-level tag.
+            SELECT id, code, name
+            FROM categories
+            WHERE org_id = ${orgId}
+              AND UPPER(material_code) = ${materialCode}
+            UNION
+            -- (b) explicit item-level tag rolled up via po_lines.
+            SELECT cat.id, cat.code, cat.name
+            FROM categories cat
+            JOIN po_lines pol ON pol.category_id = cat.id
+            JOIN items i ON i.id = pol.item_id
+            WHERE cat.org_id = ${orgId}
+              AND pol.org_id = ${orgId}
+              AND i.org_id = ${orgId}
+              AND UPPER(i.material_code) = ${materialCode}
+            UNION
+            -- (c) heuristic alias match on category.code.
+            SELECT id, code, name
+            FROM categories
+            WHERE org_id = ${orgId}
+              AND UPPER(code) = ANY(${sql.raw(
+                `ARRAY[${aliases.map((a) => `'${a.toUpperCase()}'`).join(",")}]::text[]`,
+              )})
+          ) m
         ),
         actuals AS (
           SELECT po.contract_id,

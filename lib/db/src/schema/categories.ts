@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
 
 export const categoryClassValues = ["direct", "indirect", "service"] as const;
@@ -32,6 +33,22 @@ export const categoriesTable = pgTable(
      * Nullable; complements UNSPSC for North American industry mapping.
      */
     naicsCode: text("naics_code"),
+    /**
+     * Canonical raw-material code from `scope-taxonomy.ts`
+     * (`CANONICAL_MATERIAL_CODES`: `IRON_STEEL`, `PLASTIC_RESINS`,
+     * `LUMBER`, `CRUDE_PETROLEUM`, etc.). Tagged on a tenant category
+     * to declare "this category consumes this raw input", which lets
+     * the `material_index_arbitrage` Tier-4 lever (#62) join FRED
+     * material PPI signals to the category's contracts even when the
+     * tenant's `code` doesn't follow the canonical naming convention.
+     *
+     * Nullable; the lever falls back to the alias-name match in
+     * `MATERIAL_TO_CATEGORY_CODES` when the column is unset, so this
+     * is a precision tag, not a hard requirement. Stored as text
+     * (no FK) because the canonical list is a TS literal type, not a
+     * DB-backed enum.
+     */
+    materialCode: text("material_code"),
     sourceSystem: text("source_system").notNull().default("seed"),
     sourceExternalId: text("source_external_id"),
     sourceSyncedAt: timestamp("source_synced_at", { withTimezone: true })
@@ -47,6 +64,13 @@ export const categoriesTable = pgTable(
     index("categories_class_idx").on(t.orgId, t.class),
     index("categories_unspsc_family_idx").on(t.orgId, t.unspscFamily),
     index("categories_naics_idx").on(t.orgId, t.naicsCode),
+    // Drives the `material_index_arbitrage` lever's per-material join:
+    // for each FRED material PPI signal in window, the lever filters
+    // categories on (orgId, materialCode) — a partial index keeps the
+    // index small (most categories never carry a material tag).
+    index("categories_material_code_idx")
+      .on(t.orgId, t.materialCode)
+      .where(sql`material_code IS NOT NULL`),
     uniqueIndex("categories_source_uq").on(
       t.orgId,
       t.sourceSystem,
