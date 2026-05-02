@@ -3057,6 +3057,12 @@ export const ListMarketSignalsQueryParams = zod.object({
     .describe(
       "Filter by signal type (e.g. `fx_rate`, `commodity_index`,\n`economic_index`).\n",
     ),
+  collectorId: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter by the collector that produced the signal (e.g.\n`fred-economic-index`, `bls-economic-index`, `ecb-fx-rates`).\nUseful when two collectors share the same `signalType` (BLS and\nFRED both emit `economic_index`) and the caller wants only one\nsource's history.\n",
+    ),
   scopeMaterialCode: zod.coerce
     .string()
     .optional()

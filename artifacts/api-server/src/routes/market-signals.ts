@@ -39,6 +39,14 @@ router.get("/market-signals", tenantMiddleware, async (req, res) => {
     );
   }
 
+  // BLS and FRED both emit `signalType='economic_index'` so the chart
+  // surfaces need a way to ask for "just this collector's history".
+  // The market_signals_collector_idx covers this filter.
+  const collectorId = req.query.collectorId;
+  if (typeof collectorId === "string" && collectorId.length > 0) {
+    conditions.push(eq(marketSignalsTable.collectorId, collectorId));
+  }
+
   const scopeMaterialCode = req.query.scopeMaterialCode;
   if (typeof scopeMaterialCode === "string" && scopeMaterialCode.length > 0) {
     conditions.push(

@@ -26,6 +26,15 @@ export type ListMarketSignalsParams = {
  */
   signalType?: string;
   /**
+ * Filter by the collector that produced the signal (e.g.
+`fred-economic-index`, `bls-economic-index`, `ecb-fx-rates`).
+Useful when two collectors share the same `signalType` (BLS and
+FRED both emit `economic_index`) and the caller wants only one
+source's history.
+
+ */
+  collectorId?: string;
+  /**
  * Filter by scope material code. For FX rates this is the currency
 pair (e.g. `EUR/USD`, `USD/JPY`). For BLS / FRED commodity PPI
 sub-series this is the canonical material code (e.g. `STEEL`,

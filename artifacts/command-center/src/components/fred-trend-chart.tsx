@@ -25,31 +25,45 @@ import {
 
 type ChartMode = "indexed" | "absolute";
 
-/**
- * Curated headline BLS price-index series rendered on the dashboard.
- *
- * These mirror entries from the api-server BLS_SERIES registry. Each
- * series is identified by exactly one of `materialCode` or `categoryCode`
- * — that's how the api-server emits the signal and how `/market-signals`
- * filters them, so the same disambiguation lives here on the client.
- *
- * The list is deliberately a subset of the full collector registry — a
- * dashboard chart with 25 toggles is unreadable. Extend cautiously.
- */
-const DEFAULT_BLS_SERIES = [
-  { label: "PPI: Iron and steel", materialCode: "STEEL" },
-  { label: "PPI: Crude petroleum", materialCode: "CRUDE_OIL" },
-  { label: "PPI: Diesel fuel", materialCode: "DIESEL" },
-  { label: "PPI: Natural gas (industrial)", materialCode: "NATURAL_GAS" },
-  { label: "PPI: Softwood lumber", materialCode: "LUMBER" },
-  { label: "PPI: Plastic resins", materialCode: "PLASTIC_RESIN" },
-  { label: "PPI: Industrial chemicals", categoryCode: "CHEMICALS" },
-  { label: "PPI: Truck freight", categoryCode: "FREIGHT" },
-  { label: "CPI: Energy", categoryCode: "ENERGY" },
-  { label: "CPI: Electricity", categoryCode: "ELECTRICITY_RETAIL" },
-] as const satisfies readonly BlsTrendSeries[];
+const FRED_COLLECTOR_ID = "fred-economic-index";
 
-export interface BlsTrendSeries {
+/**
+ * Curated FRED PPI series rendered on the workbench.
+ *
+ * Each entry mirrors a row in the api-server `FRED_SERIES_CATALOG`
+ * (see `artifacts/api-server/src/lib/intelligence/scope-taxonomy.ts`)
+ * via its `materialCode` or `categoryCode`. The chart filters by both
+ * `collectorId='fred-economic-index'` and that scope code so it stays
+ * a true FRED-only view even though BLS shares `signalType='economic_index'`.
+ *
+ * The default visible subset is the four most asked-about cost drivers
+ * (steel, plastics, lumber, freight) so the chart is legible on first
+ * load — operators can toggle on the rest from the chip row.
+ */
+const DEFAULT_FRED_SERIES = [
+  // Materials
+  { label: "PPI: Iron and steel", materialCode: "IRON_STEEL" },
+  { label: "PPI: Steel mill products", materialCode: "STEEL_MILL_PRODUCTS" },
+  { label: "PPI: Nonferrous metals", materialCode: "NONFERROUS_METALS" },
+  { label: "PPI: Industrial chemicals", materialCode: "INDUSTRIAL_CHEMICALS" },
+  { label: "PPI: Plastic resins", materialCode: "PLASTIC_RESINS" },
+  { label: "PPI: Lumber", materialCode: "LUMBER" },
+  { label: "PPI: Pulp & paper", materialCode: "PULP_PAPER" },
+  { label: "PPI: Crude petroleum", materialCode: "CRUDE_PETROLEUM" },
+  {
+    label: "PPI: Natural gas (industrial)",
+    materialCode: "NATURAL_GAS_INDUSTRIAL",
+  },
+  { label: "PPI: Fuels & power", materialCode: "FUELS_AND_POWER" },
+  // Freight & logistics categories
+  { label: "PPI: Truckload freight", categoryCode: "FREIGHT_TRUCKING_TL" },
+  { label: "PPI: LTL freight", categoryCode: "FREIGHT_TRUCKING_LTL" },
+  { label: "PPI: Rail freight", categoryCode: "RAIL_FREIGHT" },
+  { label: "PPI: Warehousing & storage", categoryCode: "WAREHOUSING_STORAGE" },
+  { label: "PPI: Freight brokerage", categoryCode: "FREIGHT_BROKERAGE" },
+] as const satisfies readonly FredTrendSeries[];
+
+export interface FredTrendSeries {
   label: string;
   materialCode?: string;
   categoryCode?: string;
@@ -69,62 +83,58 @@ const PAIR_COLORS = [
 ];
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const TWO_YEARS_MS = 2 * 365 * ONE_DAY_MS;
-
-/**
- * The BLS Economic Index collector that emits these signals. Used to
- * scope the chart away from FRED's `economic_index` rows — FRED uses
- * the same `signalType` and overlaps on some scope codes (e.g. LUMBER),
- * so without this filter the chart could interleave points from both
- * sources for the same series.
- */
-const BLS_COLLECTOR_ID = "bls-economic-index";
+const FIVE_YEARS_MS = 5 * 365 * ONE_DAY_MS;
 
 type ChartPoint = { observedAtMs: number } & Record<string, number>;
 
-export interface BlsTrendChartProps {
-  series?: readonly BlsTrendSeries[];
+export interface FredTrendChartProps {
+  series?: readonly FredTrendSeries[];
   title?: string;
   description?: string;
   emptyStateHint?: string;
 }
 
 /**
- * Multi-series line chart for BLS PPI / CPI economic indexes.
+ * Multi-series line chart for FRED Producer Price Index sub-series.
  *
- * Mirrors the FX trend chart (so admins get a consistent UX), but
- * filters market signals by the BLS-specific scope codes. Like the FX
- * chart, defaults to indexed mode (rebased to 100) so series whose
- * absolute index values diverge wildly (e.g. CPI Electricity ~270 vs
- * PPI Crude Oil ~120) can still be compared on one axis.
+ * Mirrors the BLS trend chart UX (toggle chips, indexed vs absolute,
+ * window-delta callouts) but pulls only FRED rows by adding the
+ * `collectorId='fred-economic-index'` filter. That distinction matters
+ * because both BLS and FRED emit `signalType='economic_index'` — without
+ * the collector filter, the same `scopeMaterialCode` (e.g. STEEL) could
+ * show data from both sources interleaved.
+ *
+ * Defaults to indexed mode (each series rebased to 100 at the start of
+ * the visible window) so series with very different absolute index
+ * values can be compared on a single axis.
  */
-export function BlsTrendChart({
-  series = DEFAULT_BLS_SERIES,
-  title = "BLS price-index trends",
-  description = "Monthly PPI commodity and CPI sub-series from the U.S. Bureau of Labor Statistics. Use these to explain category-level cost swings on suppliers and contracts.",
+export function FredTrendChart({
+  series = DEFAULT_FRED_SERIES,
+  title = "FRED PPI category trends",
+  description = "Producer Price Index sub-series (metals, chemicals, plastics, lumber, energy, freight, warehousing) from the St. Louis Fed FRED API. Use these to spot category-level cost momentum and inflection points on contracts and supplier scorecards.",
   emptyStateHint,
-}: BlsTrendChartProps) {
+}: FredTrendChartProps) {
   const [activeKeys, setActiveKeys] = useState<Set<string>>(
     () => new Set(series.slice(0, 4).map((s) => s.label)),
   );
   const [mode, setMode] = useState<ChartMode>("indexed");
 
-  // BLS sub-series are released monthly (PPI commodity) or quarterly
-  // (ECI). Two years gives the chart enough rhythm without spamming
-  // tick marks; the underlying collector keeps even more history.
+  // FRED PPI sub-series are released monthly. Five years matches the
+  // backfill window the FRED collector seeds, so the chart can show
+  // every backfilled point without truncating the start of the window.
   const observedAfter = useMemo(
-    () => new Date(Date.now() - TWO_YEARS_MS).toISOString(),
+    () => new Date(Date.now() - FIVE_YEARS_MS).toISOString(),
     [],
   );
 
-  // One query per series. The BLS collector emits one signal per
-  // observation in its 2-year window, so a 600-row cap covers monthly
-  // (24 obs) and quarterly (8 obs) series with comfortable headroom.
+  // One query per series. 600 rows comfortably covers five years of
+  // monthly observations (~60 points) with headroom for any extra
+  // weekly/daily series we may add later.
   const queries = useQueries({
     queries: series.map((s) =>
       getListMarketSignalsQueryOptions<MarketSignal[], Error>({
         signalType: "economic_index",
-        collectorId: BLS_COLLECTOR_ID,
+        collectorId: FRED_COLLECTOR_ID,
         ...(s.materialCode ? { scopeMaterialCode: s.materialCode } : {}),
         ...(s.categoryCode ? { scopeCategoryCode: s.categoryCode } : {}),
         observedAfter,
@@ -163,8 +173,8 @@ export function BlsTrendChart({
     );
   }, [queries, series, mode]);
 
-  // Window-delta callout inputs. Always raw values (not indexed) so the
-  // % shown matches the underlying index move regardless of display mode.
+  // Window-delta callout inputs use raw values (not indexed) so the %
+  // matches the underlying index move regardless of display mode.
   const deltas = useMemo<SeriesDeltaInput[]>(() => {
     return series
       .filter((s) => activeKeys.has(s.label))
@@ -188,7 +198,7 @@ export function BlsTrendChart({
     const visible = deltas
       .map((d) => (d.firstAt ? new Date(d.firstAt).getTime() : null))
       .filter((v): v is number => v !== null);
-    if (visible.length === 0) return "2y";
+    if (visible.length === 0) return "5y";
     const earliest = Math.min(...visible);
     const days = Math.round((Date.now() - earliest) / ONE_DAY_MS);
     if (days >= 365) return `${(days / 365).toFixed(1)}y`;
@@ -208,7 +218,7 @@ export function BlsTrendChart({
   };
 
   return (
-    <Card data-testid="bls-trend-chart">
+    <Card data-testid="fred-trend-chart">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -229,7 +239,7 @@ export function BlsTrendChart({
               size="sm"
               variant={mode === "indexed" ? "default" : "ghost"}
               onClick={() => setMode("indexed")}
-              data-testid="bls-mode-indexed"
+              data-testid="fred-mode-indexed"
               className="h-7 text-xs"
               title="Rebase each series to 100 at the start of the visible window so trend shapes can be compared on a single axis."
             >
@@ -240,9 +250,9 @@ export function BlsTrendChart({
               size="sm"
               variant={mode === "absolute" ? "default" : "ghost"}
               onClick={() => setMode("absolute")}
-              data-testid="bls-mode-absolute"
+              data-testid="fred-mode-absolute"
               className="h-7 text-xs"
-              title="Show raw BLS index values (1982=100 for PPI commodity series)."
+              title="Show raw FRED PPI index values (1982=100 for most WPU sub-series)."
             >
               Absolute
             </Button>
@@ -250,7 +260,7 @@ export function BlsTrendChart({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2" data-testid="bls-series-toggles">
+        <div className="flex flex-wrap gap-2" data-testid="fred-series-toggles">
           {series.map((s, i) => {
             const isActive = activeKeys.has(s.label);
             const color = PAIR_COLORS[i % PAIR_COLORS.length];
@@ -262,7 +272,7 @@ export function BlsTrendChart({
                 size="sm"
                 variant={isActive ? "default" : "outline"}
                 onClick={() => toggle(s.label)}
-                data-testid={`bls-series-toggle-${s.label}`}
+                data-testid={`fred-series-toggle-${s.label}`}
                 className="h-7 text-xs gap-2"
                 disabled={pointCount === 0}
                 title={
@@ -290,19 +300,19 @@ export function BlsTrendChart({
         {isLoading && totalPoints === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" />
-            Loading BLS history…
+            Loading FRED history…
           </div>
         ) : totalPoints === 0 ? (
           <div
-            data-testid="bls-trend-empty-state"
+            data-testid="fred-trend-empty-state"
             className="flex flex-col items-center justify-center gap-3 py-12 text-center border border-dashed rounded-md"
           >
             <History className="w-8 h-8 text-muted-foreground" />
             <div className="space-y-1 max-w-md">
-              <p className="text-sm font-medium">No BLS history yet</p>
+              <p className="text-sm font-medium">No FRED history yet</p>
               <p className="text-xs text-muted-foreground">
                 {emptyStateHint ??
-                  "Run the BLS Economic Index collector above. It emits two years of monthly/quarterly observations per series on each successful run."}
+                  'Click "Backfill history" on the FRED Economic Index collector above to seed five years of monthly PPI observations.'}
               </p>
             </div>
           </div>
@@ -311,9 +321,9 @@ export function BlsTrendChart({
             <SeriesDeltaCallouts
               series={deltas}
               windowLabel={windowLabel}
-              data-testid="bls-trend-deltas"
+              data-testid="fred-trend-deltas"
             />
-            <div className="h-80 w-full" data-testid="bls-trend-chart-canvas">
+            <div className="h-80 w-full" data-testid="fred-trend-chart-canvas">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartData}
