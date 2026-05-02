@@ -179,6 +179,16 @@ export const sowChangeOrdersTable = pgTable(
     dateDeltaDays: integer("date_delta_days"),
     proposedAt: timestamp("proposed_at", { withTimezone: true }),
     executedAt: timestamp("executed_at", { withTimezone: true }),
+    /**
+     * Free-text identity (name / email / role) of the approver who
+     * signed off on this change order. Surfaces in the audit trail
+     * alongside delta-value and approval-date so an operator can
+     * answer "who approved this scope creep?" without leaving the
+     * SOW detail page. Nullable: not every source system carries an
+     * approver identity, and rows in `proposed`/`rejected` states
+     * may not have one yet.
+     */
+    approver: text("approver"),
     sourceSystem: text("source_system").notNull().default("seed"),
     sourceExternalId: text("source_external_id"),
     createdAt: timestamp("created_at", { withTimezone: true })

@@ -32,6 +32,9 @@ import funnelRouter from "./funnel";
 import todayRouter from "./today";
 import operationsRouter from "./operations";
 import routingRouter from "./routing";
+import servicesRouter from "./services";
+import sowsRouter from "./sows";
+import rateCardsRouter from "./rate-cards";
 
 const router: IRouter = Router();
 
@@ -68,5 +71,8 @@ router.use(funnelRouter);
 router.use(todayRouter);
 router.use(operationsRouter);
 router.use(routingRouter);
+router.use(servicesRouter);
+router.use(sowsRouter);
+router.use(rateCardsRouter);
 
 export default router;

@@ -9,9 +9,11 @@ import {
   orgsTable,
   opportunitiesTable,
   marketSignalsTable,
+  statementsOfWorkTable,
+  sowMilestonesTable,
   type ContractRow,
 } from "@workspace/db";
-import { and, asc, eq, ilike, or, sql, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, or, sql, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
@@ -118,6 +120,10 @@ function mapContractRow(args: {
     contractNumber: c.contractNumber,
     title: c.title,
     status: c.status,
+    contractType: c.contractType,
+    msaParentId: c.msaParentId,
+    serviceLevelTerms: c.serviceLevelTerms ?? null,
+    acceptanceCriteria: c.acceptanceCriteria,
     derivedStatus: deriveContractStatus(c.status, c.endDate, threshold),
     daysToExpiry: daysToExpiry(c.endDate),
     startDate: c.startDate,
@@ -428,6 +434,45 @@ async function loadContractDetail(
       .limit(200),
   ]);
 
+  // Child SOWs: only relevant for MSA-shaped contracts. We always
+  // run the query (cheap with the `sow_contract_idx` index) so the
+  // section can render an empty state for non-MSA contracts. The
+  // `openMilestoneCount` aggregate uses the same terminal-status set
+  // as the SOW list/detail endpoints so the badges agree.
+  const childSowRowsRaw = await db.execute(sql`
+    SELECT
+      s.id,
+      s.sow_number,
+      s.title,
+      s.status,
+      s.start_date,
+      s.end_date,
+      s.total_value_usd,
+      COUNT(m.id)::int AS milestone_count,
+      COUNT(m.id) FILTER (
+        WHERE m.status NOT IN ('accepted','invoiced','paid','cancelled')
+      )::int AS open_milestone_count
+    FROM statements_of_work s
+    LEFT JOIN sow_milestones m ON m.sow_id = s.id
+    WHERE s.org_id = ${orgId}
+      AND s.contract_id = ${id}
+    GROUP BY s.id
+    ORDER BY s.start_date DESC
+    LIMIT 50
+  `);
+  type ChildSowRaw = {
+    id: string;
+    sow_number: string;
+    title: string;
+    status: string;
+    start_date: Date | string | null;
+    end_date: Date | string | null;
+    total_value_usd: string | null;
+    milestone_count: number;
+    open_milestone_count: number;
+  };
+  const childSowRows = childSowRowsRaw.rows as ChildSowRaw[];
+
   // Fold the linked opportunities' citations into a single
   // de-duplicated InsightSource[] for the detail page's footer.
   const sources: InsightSource[] = dedupeSources(
@@ -484,6 +529,21 @@ async function loadContractDetail(
       oldValue: a.oldValue,
       newValue: a.newValue,
       createdAt: a.createdAt,
+    })),
+    childSows: childSowRows.map((r) => ({
+      id: r.id,
+      sowNumber: r.sow_number,
+      title: r.title,
+      status: r.status,
+      startDate:
+        r.start_date instanceof Date
+          ? r.start_date.toISOString()
+          : r.start_date,
+      endDate:
+        r.end_date instanceof Date ? r.end_date.toISOString() : r.end_date,
+      totalValueUsd: r.total_value_usd === null ? 0 : Number(r.total_value_usd),
+      milestoneCount: Number(r.milestone_count ?? 0),
+      openMilestoneCount: Number(r.open_milestone_count ?? 0),
     })),
   };
 }

@@ -89,6 +89,10 @@ export const rateCardLinesTable = pgTable(
     dailyRate: numeric("daily_rate", { precision: 14, scale: 4 }),
     /** Optional code (vendor's role code). */
     roleCode: text("role_code"),
+    /** Optional geography / region tag (e.g. "US", "EMEA", "India"). */
+    geography: text("geography"),
+    /** Commercial structure for this line: t_and_m, fixed, milestone, retainer, outcome. */
+    billingModel: text("billing_model"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

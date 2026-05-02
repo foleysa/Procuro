@@ -25,6 +25,7 @@ import {
   Cpu,
   Bookmark,
   Tag,
+  Wrench,
 } from "lucide-react";
 import { Show, useClerk, useUser } from "@clerk/react";
 import { OrgSwitcher } from "./org-switcher";
@@ -73,6 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/spend", label: "Spend Overview", icon: BarChart3 },
       { href: "/suppliers", label: "Suppliers", icon: Building2 },
       { href: "/contracts", label: "Contracts", icon: FileText },
+      { href: "/services", label: "Services", icon: Wrench },
       { href: "/approvals", label: "Approvals", icon: CheckSquare, minRole: "approver" },
     ],
   },

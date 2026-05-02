@@ -375,7 +375,7 @@ export async function runAnalysisCycle(args: {
         last_seen_at: Date | null;
         mapped_via: OpportunityRow["mappedVia"];
         source_tenant_category_string: string | null;
-        re_categorized_after_persistence: boolean;
+        re_categorized_after_persistence: number;
         created_at: Date;
         inserted: boolean;
       }

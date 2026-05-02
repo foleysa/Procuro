@@ -29,6 +29,9 @@ import Opportunities from "./pages/opportunities";
 import OpportunityDetail from "./pages/opportunity-detail";
 import Contracts from "./pages/contracts";
 import ContractDetail from "./pages/contract-detail";
+import Services from "./pages/services";
+import SowDetail from "./pages/sow-detail";
+import RateCardDetail from "./pages/rate-card-detail";
 import Approvals from "./pages/approvals";
 import Fusion from "./pages/fusion";
 import Results from "./pages/results";
@@ -335,6 +338,9 @@ function AppRoutes() {
             <Route path="/opportunities/:id" component={OpportunityDetail} />
             <Route path="/contracts" component={Contracts} />
             <Route path="/contracts/:id" component={ContractDetail} />
+            <Route path="/services" component={Services} />
+            <Route path="/sows/:id" component={SowDetail} />
+            <Route path="/rate-cards/:id" component={RateCardDetail} />
             <Route path="/approvals" component={Approvals} />
             <Route path="/fusion" component={Fusion} />
             <Route path="/alerts" component={Alerts} />

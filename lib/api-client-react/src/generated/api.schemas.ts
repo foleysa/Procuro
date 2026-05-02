@@ -264,6 +264,56 @@ export const RejectionReasonCode = {
   other: "other",
 } as const;
 
+export type SpendByBandByBandItemBand =
+  (typeof SpendByBandByBandItemBand)[keyof typeof SpendByBandByBandItemBand];
+
+export const SpendByBandByBandItemBand = {
+  indexable: "indexable",
+  concentrated: "concentrated",
+  fragmented: "fragmented",
+  subscription: "subscription",
+  capital: "capital",
+  services: "services",
+} as const;
+
+export type SpendByBandByBandItemTopCategoriesItem = {
+  categoryId: string;
+  categoryName: string;
+  spendUsd: number;
+};
+
+export type SpendByBandByBandItem = {
+  band: SpendByBandByBandItemBand;
+  spendUsd: number;
+  /** Fraction of total spend in this band (0–1). */
+  share: number;
+  categoryCount?: number;
+  supplierCount?: number;
+  /** Top categories driving spend within this band, capped at 5. Powers the per-band drill-down on Spend Overview so operators can jump straight to the rows they need to address. */
+  topCategories?: SpendByBandByBandItemTopCategoriesItem[];
+};
+
+/**
+ * Spend bucketed by routing band. Drives the "by-Band" lens on Spend Overview. Trailing 90 days. The six bands are the routing model's shared vocabulary (`indexable`, `concentrated`, `fragmented`, `subscription`, `capital`, `services`); rows whose category has no band assigned and isn't taxonomy-classed as a service fall through to `fragmented` AND are also tallied as the unmapped tail (`unmappedCategoryCount` / `unmappedSpendUsd`) so the operator can prioritise routing decisions without losing total reconciliation.
+ */
+export interface SpendByBand {
+  totalSpendUsd: number;
+  /** Distinct categories in the 90-day window with no `category_bands` row and not classed as `service`. These rows still get counted in the `fragmented` bucket so totals reconcile. */
+  unmappedCategoryCount: number;
+  /** 90-day spend attributable to unmapped categories. */
+  unmappedSpendUsd: number;
+  byBand: SpendByBandByBandItem[];
+}
+
+export interface GoodsVsServicesBlock {
+  goodsSpendUsd: number;
+  servicesSpendUsd: number;
+  /** Fraction of total spend on goods (0–1). */
+  goodsShare: number;
+  /** Fraction of total spend on services (0–1). */
+  servicesShare: number;
+}
+
 export type SpendOverviewByClassItem = {
   spendClass: string;
   spendUsd: number;
@@ -297,6 +347,7 @@ export type SpendOverviewConcentration = {
 
 export interface SpendOverview {
   totalSpendUsd: number;
+  goodsVsServices: GoodsVsServicesBlock;
   byClass: SpendOverviewByClassItem[];
   byCategory: SpendOverviewByCategoryItem[];
   bySupplier: SpendOverviewBySupplierItem[];
@@ -399,6 +450,36 @@ export interface SupplierAuditEntry {
   createdAt: string;
 }
 
+/**
+ * Services-side rollup for a single supplier — drives the "Services engagement" card on Supplier 360. Activity counters and `totalServicesSpendUsd` are trailing 365d; `avgBlendedRateUsd` and `offCardSpendShare` are trailing 90d; `changeOrderRatio` is computed across all currently active SOWs (not time-windowed).
+ */
+export interface SupplierServicesEngagement {
+  activeSowCount: number;
+  /** SOW milestones not yet `accepted`/`invoiced`/`paid`/`cancelled`. */
+  openMilestoneCount: number;
+  rateCardCount: number;
+  /** Trailing-365d spend tied to services contracts only. */
+  totalServicesSpendUsd: number;
+  timeAndMaterialsSpendUsd: number;
+  fixedPriceSpendUsd: number;
+  /** Earliest non-cancelled milestone due date, if any. */
+  upcomingMilestoneDueDate?: string | null;
+  /** Trailing-90d weighted blended bill rate across all time entries logged for this supplier (sum(amount_usd) / sum(hours)). Null when no time entries exist. */
+  avgBlendedRateUsd: number | null;
+  /** Share of trailing-90d time-entry spend that priced outside any rate card line (`rate_card_line_id IS NULL`). 0–1; 0 if there's no time-entry activity at all. */
+  offCardSpendShare: number;
+  /** Sum of committed (approved/executed) change-order value across the supplier's currently active SOWs, divided by the total NTE of those active SOWs. 0 when there is no active-SOW NTE to divide by. */
+  changeOrderRatio: number;
+  /** True when the supplier has at least one services contract, SOW (any status), or time entry on record. Lets the FE show the Services Engagement card for suppliers that have engagement history without recent numeric spend. */
+  hasServicesActivity: boolean;
+  /** Total person-week hours-audit signals over the trailing 90 days — sum of `utilizationOverloadCount` and `utilizationUnderutilCount`. Each signal is a (resource, ISO-week) pair where weekly hours either exceed the overload threshold (>50 hrs) or fall below the under-utilization threshold (<10 hrs while the resource was otherwise active that quarter). Replaces the earlier opportunity-count derivation so the KPI is grounded in time-entry actuals. */
+  utilizationSignalCount: number;
+  /** Person-week pairs over the trailing 90 days where weekly hours exceeded 50. Sustained overload is a burnout/quality risk and a renegotiation lever (extra staffing under the same NTE). */
+  utilizationOverloadCount?: number;
+  /** Person-week pairs over the trailing 90 days where weekly hours fell below 10 while the resource was otherwise active that quarter. Captures bench burn the client is paying for. */
+  utilizationUnderutilCount?: number;
+}
+
 export interface MarketSignal {
   id: string;
   collectorId?: string | null;
@@ -418,6 +499,7 @@ export interface MarketSignal {
 
 export type SupplierDetail = Supplier & {
   spend: SupplierSpendRollup;
+  services: SupplierServicesEngagement;
   contracts: SupplierLinkedContract[];
   opportunities: SupplierLinkedOpportunity[];
   /** Most-recent FX rate observations for the supplier's
@@ -1063,6 +1145,25 @@ export const ContractStatus = {
   cancelled: "cancelled",
 } as const;
 
+/**
+ * Commercial structure of the contract. `goods` is the legacy
+default and back-fills any pre-#214 row. Anything other than
+`goods` is a services contract and unlocks the services-side
+UI (SOW list, rate cards, services KPIs).
+
+ */
+export type ContractContractType =
+  (typeof ContractContractType)[keyof typeof ContractContractType];
+
+export const ContractContractType = {
+  goods: "goods",
+  t_and_m: "t_and_m",
+  fixed_price: "fixed_price",
+  milestone: "milestone",
+  retainer: "retainer",
+  outcome: "outcome",
+} as const;
+
 export interface Contract {
   id: string;
   orgId: string;
@@ -1073,6 +1174,26 @@ export interface Contract {
   contractNumber: string;
   title: string;
   status: ContractStatus;
+  /** Commercial structure of the contract. `goods` is the legacy
+default and back-fills any pre-#214 row. Anything other than
+`goods` is a services contract and unlocks the services-side
+UI (SOW list, rate cards, services KPIs).
+ */
+  contractType?: ContractContractType;
+  /** Self-FK to the parent MSA when this row is itself a child
+agreement under a master agreement. Null for top-level
+contracts.
+ */
+  msaParentId?: string | null;
+  /** Free-form SLA terms. Either a structured object
+(e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by
+adapters or a partner's verbatim text payload.
+ */
+  serviceLevelTerms?: unknown | null;
+  /** Plain-text acceptance criteria. Used on services contracts
+to document what "delivered" means at MSA level.
+ */
+  acceptanceCriteria?: string | null;
   derivedStatus: ContractDerivedStatus;
   /** Whole days from now to `endDate`. Negative if already
 expired. Null when `endDate` is somehow missing.
@@ -1130,6 +1251,31 @@ export interface ContractAuditEntry {
   createdAt: string;
 }
 
+export type ContractChildSowStatus =
+  (typeof ContractChildSowStatus)[keyof typeof ContractChildSowStatus];
+
+export const ContractChildSowStatus = {
+  draft: "draft",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * A SOW row rendered inline on the contract-detail page.
+ */
+export interface ContractChildSow {
+  id: string;
+  sowNumber: string;
+  title: string;
+  status: ContractChildSowStatus;
+  startDate?: string | null;
+  endDate?: string | null;
+  totalValueUsd: number;
+  milestoneCount: number;
+  openMilestoneCount: number;
+}
+
 export type ContractDetail = Contract & {
   items: ContractItem[];
   linkedOpportunities: ContractLinkedOpportunity[];
@@ -1144,6 +1290,11 @@ opportunities. Render through `renderInsight()`.
  */
   sources: InsightSource[];
   auditLog: ContractAuditEntry[];
+  /** When this contract is a master agreement, the SOWs that
+point at it via `msa_contract_id`. Empty for non-master /
+non-services contracts.
+ */
+  childSows?: ContractChildSow[];
 };
 
 /**
@@ -1160,6 +1311,432 @@ export interface PatchContractRequest {
   renewalTargetDate?: string | null;
   /** @maxLength 1000 */
   renewalTargetAction?: string | null;
+}
+
+export type StatementOfWorkStatus =
+  (typeof StatementOfWorkStatus)[keyof typeof StatementOfWorkStatus];
+
+export const StatementOfWorkStatus = {
+  draft: "draft",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * A Statement of Work — a child agreement under a master services
+contract (MSA). Powers the Services > SOWs tab and the SOW
+detail page.
+
+ */
+export interface StatementOfWork {
+  id: string;
+  sowNumber: string;
+  title: string;
+  status: StatementOfWorkStatus;
+  supplierId: string | null;
+  supplierName: string | null;
+  msaContractId: string | null;
+  msaContractNumber?: string | null;
+  msaContractTitle?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  /** ISO 4217 currency for `totalValue` (USD-converted in `totalValueUsd`). */
+  currency: string;
+  /** Native-currency total committed under this SOW. */
+  totalValue?: number | null;
+  /** USD-converted total committed under this SOW. */
+  totalValueUsd: number;
+  /** Not-to-exceed ceiling for this SOW (mirrors `totalValueUsd`). Surfaced as a distinct field so the FE can render NTE-anchored burn copy without aliasing. */
+  nteUsd: number;
+  /** Sum of accepted/invoiced/paid milestone values for this SOW. Drives the burned% on the list page so it reconciles with the detail view. */
+  earnedUsd: number;
+  /** `earnedUsd / nteUsd`, clamped to [0,1]. 0 when there is no NTE on the SOW. */
+  burnedPct: number;
+  milestoneCount: number;
+  /** Milestones not in a terminal state. */
+  openMilestoneCount: number;
+  /** Total change orders issued against this SOW (any status). The Services tab uses this for the CO column on the SOWs list. */
+  changeOrderCount: number;
+  owner?: string | null;
+  createdAt: string;
+}
+
+export interface SowListResponse {
+  items: StatementOfWork[];
+  nextCursor?: string | null;
+}
+
+export type SowMilestoneStatus =
+  (typeof SowMilestoneStatus)[keyof typeof SowMilestoneStatus];
+
+export const SowMilestoneStatus = {
+  pending: "pending",
+  in_progress: "in_progress",
+  delivered: "delivered",
+  accepted: "accepted",
+  invoiced: "invoiced",
+  paid: "paid",
+  cancelled: "cancelled",
+} as const;
+
+export interface SowMilestone {
+  id: string;
+  sowId: string;
+  /** 1-based ordering within the SOW. */
+  sequence: number;
+  title: string;
+  status: SowMilestoneStatus;
+  dueDate?: string | null;
+  deliveredDate?: string | null;
+  acceptedDate?: string | null;
+  amount?: number | null;
+  amountUsd: number;
+  currency?: string | null;
+  acceptanceCriteria?: string | null;
+  /** True when the milestone is still open (not accepted/invoiced/paid/cancelled) and `dueDate` is in the past. Drives the red highlight on the milestone row. */
+  isOverdue?: boolean;
+}
+
+export type SowChangeOrderStatus =
+  (typeof SowChangeOrderStatus)[keyof typeof SowChangeOrderStatus];
+
+export const SowChangeOrderStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+} as const;
+
+export interface SowChangeOrder {
+  id: string;
+  sowId: string;
+  changeNumber: string;
+  title: string;
+  status: SowChangeOrderStatus;
+  amountDelta?: number | null;
+  amountDeltaUsd: number;
+  currency?: string | null;
+  reason?: string | null;
+  createdAt: string;
+  /** Timestamp when the change order was approved/executed (mirrors `executed_at` in storage). Null while the change order is still pending or has been rejected. */
+  approvedAt?: string | null;
+  /** Free-text identity (name / email / role) of the approver who signed off on this change order. Surfaces in the audit trail alongside delta value and approval date so operators can answer "who approved this scope creep?" without leaving the SOW detail page. Null when the source system does not carry approver identity, or when the row is still in proposed/rejected state. */
+  approver?: string | null;
+}
+
+/**
+ * Open opportunity referencing this SOW.
+ */
+export interface SowLinkedOpportunity {
+  id: string;
+  leverId: string;
+  status: string;
+  title: string;
+  projectedSavingsUsd: number;
+  createdAt: string;
+}
+
+/**
+ * Commercial model the SOW operates under. Derived from the parent MSA contract's `contract_type` so the SOW detail can reason about how to render rate / milestone widgets without re-deriving from data.
+ */
+export type SowDetailBillingModel =
+  | (typeof SowDetailBillingModel)[keyof typeof SowDetailBillingModel]
+  | null;
+
+export const SowDetailBillingModel = {
+  t_and_m: "t_and_m",
+  fixed_price: "fixed_price",
+  milestone: "milestone",
+  retainer: "retainer",
+  outcome: "outcome",
+  goods: "goods",
+} as const;
+
+export type SowDetailBurnWeeklyItem = {
+  weekStart: string;
+  hoursBilled: number;
+  amountUsd: number;
+  cumulativeUsd: number;
+};
+
+/**
+ * Snapshot of how this SOW is burning through committed budget plus a 26-week weekly burn series sourced from `time_entries`. `committedUsd` and `nteUsd` are the SOW ceiling (synonyms surfaced for clarity); `earnedUsd` sums accepted/invoiced/paid milestones; `burnedUsd` sums actual time-entry spend (the chart's y-axis); `invoicedUsd` sums invoiced/paid milestones only. `runwayDays` is the NTE-anchored projection — remaining capacity divided by the trailing 4-week average burn rate, expressed in days. `weekly` is the per-week series the FE renders as a stacked-area chart against the NTE ceiling.
+ */
+export type SowDetailBurn = {
+  committedUsd: number;
+  /** Not-to-exceed ceiling (mirrors `committedUsd`). */
+  nteUsd: number;
+  earnedUsd: number;
+  /** Total time-entry burn over the visible window (sum of `weekly[].amountUsd`). */
+  burnedUsd: number;
+  /** `burnedUsd / nteUsd`, clamped to [0,1]. */
+  burnedPct: number;
+  invoicedUsd: number;
+  runwayDays?: number | null;
+  /** Trailing 4-week average burn rate. Used to size the runway projection. */
+  avgWeeklyBurnUsd: number;
+  /** Per-week time-entry burn series (last 26 weeks). The chart anchors every bar to ISO Monday so it lines up regardless of when individual entries were logged. */
+  weekly: SowDetailBurnWeeklyItem[];
+};
+
+export type SowDetail = StatementOfWork & {
+  description?: string | null;
+  /** Structured scope JSON as captured on the SOW (free-form shape — typically a deliverables list, assumptions, and exclusions). Null if the SOW was loaded without a structured scope. */
+  scope?: unknown | null;
+  /** Commercial model the SOW operates under. Derived from the parent MSA contract's `contract_type` so the SOW detail can reason about how to render rate / milestone widgets without re-deriving from data. */
+  billingModel?: SowDetailBillingModel;
+  /** Plain-text acceptance criteria recorded on the SOW. Distinct from per-milestone acceptance criteria; this is the SOW-wide gate. */
+  acceptanceCriteria?: string | null;
+  /** Snapshot of how this SOW is burning through committed budget plus a 26-week weekly burn series sourced from `time_entries`. `committedUsd` and `nteUsd` are the SOW ceiling (synonyms surfaced for clarity); `earnedUsd` sums accepted/invoiced/paid milestones; `burnedUsd` sums actual time-entry spend (the chart's y-axis); `invoicedUsd` sums invoiced/paid milestones only. `runwayDays` is the NTE-anchored projection — remaining capacity divided by the trailing 4-week average burn rate, expressed in days. `weekly` is the per-week series the FE renders as a stacked-area chart against the NTE ceiling. */
+  burn: SowDetailBurn;
+  /** Open opportunities (`status='open'`) drafted by any
+lever whose `inputs.sowId` references this SOW. Empty
+list when no levers have flagged anything.
+ */
+  linkedOpportunities: SowLinkedOpportunity[];
+  milestones: SowMilestone[];
+  changeOrders: SowChangeOrder[];
+};
+
+export type RateCardStatus =
+  (typeof RateCardStatus)[keyof typeof RateCardStatus];
+
+export const RateCardStatus = {
+  draft: "draft",
+  active: "active",
+  expired: "expired",
+} as const;
+
+/**
+ * A negotiated rate card for a supplier. Powers the
+Services > Rate Cards tab.
+
+ */
+export interface RateCard {
+  id: string;
+  name: string;
+  status: RateCardStatus;
+  supplierId: string | null;
+  supplierName: string | null;
+  msaContractId?: string | null;
+  /** ISO 4217 currency the lines are priced in. */
+  currency: string;
+  effectiveStart?: string | null;
+  effectiveEnd?: string | null;
+  lineCount: number;
+  /** Trailing-365d time-entry leakage: hours billed against this card whose `rate_card_line_id` is NULL (could not match any role/seniority on the card). */
+  offCardSpendUsd: number;
+  createdAt: string;
+}
+
+export interface RateCardListResponse {
+  items: RateCard[];
+  nextCursor?: string | null;
+}
+
+export type RateCardLineMarketBenchmarkBand =
+  (typeof RateCardLineMarketBenchmarkBand)[keyof typeof RateCardLineMarketBenchmarkBand];
+
+export const RateCardLineMarketBenchmarkBand = {
+  green: "green",
+  yellow: "yellow",
+  orange: "orange",
+  red: "red",
+} as const;
+
+/**
+ * Most-recent OEWS wage benchmark for this role/geography, if
+any. Drives the per-line colour band on the rate-card
+detail page (green ≤p50, yellow p50–p75, orange p75–p90,
+red >p90).
+
+ */
+export type RateCardLineMarketBenchmark = {
+  band: RateCardLineMarketBenchmarkBand;
+  p50Usd?: number | null;
+  p75Usd?: number | null;
+  p90Usd?: number | null;
+  /** Citation source code, e.g. `oews_wage`. */
+  source: string;
+  observedAt?: string | null;
+} | null;
+
+export interface RateCardLine {
+  id: string;
+  /** Role / labour category (e.g. "Senior Consultant"). */
+  role: string;
+  seniority?: string | null;
+  skill?: string | null;
+  /** Region / geography tag (e.g. "US", "EMEA", "India"). */
+  geography?: string | null;
+  /** Commercial structure for the line: t_and_m, fixed, milestone, retainer, outcome. */
+  billingModel?: string | null;
+  /** Pricing unit, e.g. `hour`, `day`, `month`. */
+  unit: string;
+  unitRate: number;
+  unitRateUsd: number;
+  currency?: string | null;
+  /** Most-recent OEWS wage benchmark for this role/geography, if
+any. Drives the per-line colour band on the rate-card
+detail page (green ≤p50, yellow p50–p75, orange p75–p90,
+red >p90).
+ */
+  marketBenchmark?: RateCardLineMarketBenchmark;
+}
+
+export interface RateCardOffCardEntry {
+  id: string;
+  workDate: string;
+  role: string;
+  seniority?: string | null;
+  hours: number;
+  unitRateUsd?: number | null;
+  billedAmount?: number | null;
+  billedAmountUsd: number;
+  currency?: string | null;
+  sowId?: string | null;
+  sowNumber?: string | null;
+}
+
+/**
+ * PO-line leakage row: a services-class purchase-order line booked against this card's parent MSA contract whose unit price exceeds the highest hourly rate on the card (or any line if the card has no hourly rates). Each row carries source-document identifiers (PO number, supplier, category) the FE renders as deep links so the operator can pivot directly to the PO and supplier records.
+ */
+export interface RateCardOffCardPoLine {
+  poLineId: string;
+  poId: string;
+  poNumber?: string | null;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  /** ISO date (yyyy-mm-dd) of the PO line. */
+  orderDate?: string | null;
+  description?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  unitPriceUsd?: number | null;
+  extendedUsd: number;
+  /** Highest hourly rate on the card at query time (the threshold this line breached). Null when the card has no hourly rates — every services PO line on the parent contract is then flagged. */
+  cardMaxHourlyUsd?: number | null;
+}
+
+export type RateCardLineGridGroupCellsItemBand =
+  | (typeof RateCardLineGridGroupCellsItemBand)[keyof typeof RateCardLineGridGroupCellsItemBand]
+  | null;
+
+export const RateCardLineGridGroupCellsItemBand = {
+  green: "green",
+  yellow: "yellow",
+  orange: "orange",
+  red: "red",
+} as const;
+
+export type RateCardLineGridGroupCellsItem = {
+  seniority: string | null;
+  geography?: string | null;
+  billingModel?: string | null;
+  lineId: string;
+  unitRateUsd: number;
+  unit: string;
+  band?: RateCardLineGridGroupCellsItemBand;
+};
+
+/**
+ * A single role in the rate card laid out as a row of seniority cells. Powers the role × seniority grid on the rate-card detail page so an operator can sweep a full role ladder without scrolling a flat table.
+ */
+export interface RateCardLineGridGroup {
+  role: string;
+  cells: RateCardLineGridGroupCellsItem[];
+}
+
+/**
+ * Open opportunity referencing this rate card.
+ */
+export interface RateCardLinkedOpportunity {
+  id: string;
+  leverId: string;
+  status: string;
+  title: string;
+  projectedSavingsUsd: number;
+  createdAt: string;
+}
+
+/**
+ * Invoice off-card row — a services-class invoice booked against this card's parent MSA contract that bypassed the rate-card line schedule.
+ */
+export interface RateCardOffCardInvoice {
+  invoiceId: string;
+  invoiceNumber?: string | null;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  poId?: string | null;
+  poNumber?: string | null;
+  /** ISO date (yyyy-mm-dd) of the invoice. */
+  invoiceDate?: string | null;
+  status?: string | null;
+  amountUsd: number;
+}
+
+export type RateCardDetail = RateCard & {
+  /** Trailing-365d PO-line leakage: services-class PO lines booked against this card's parent MSA contract whose `unit_price_usd` exceeds the highest hourly line on the card. Captures rate-card bypasses that never made it into a time entry. Combined with `offCardSpendUsd` this is the full leakage surface a category manager negotiates against. 0 when the card has no parent contract. */
+  offCardPoMismatchUsd: number;
+  /** Trailing-365d invoice off-card spend: invoices billed against POs on this card's parent MSA contract over the past year. Captures direct-bill leakage that never went through a time entry or rate-card-aligned PO line. 0 when the card has no parent contract. */
+  offCardInvoiceUsd: number;
+  lines: RateCardLine[];
+  /** Same lines as `lines`, but pivoted into a role-by-seniority grid so the FE can render a true ladder view without re-sorting. */
+  linesByRole: RateCardLineGridGroup[];
+  /** Last 10 time entries that priced outside the card. */
+  recentOffCardEntries: RateCardOffCardEntry[];
+  /** Per-line PO leakage rows (up to 50, ordered by extended USD desc). Each row carries source-document identifiers — PO number, supplier, category — that the FE renders as deep links so the operator can pivot into the originating PO/supplier records. Empty when the card has no parent contract or no breaching lines. */
+  recentOffCardPoLines: RateCardOffCardPoLine[];
+  /** Per-invoice off-card listing (up to 50, ordered by amount desc). Surfaces invoice-level leakage so the operator can pivot into the source invoice. Empty when the card has no parent contract. */
+  recentOffCardInvoices: RateCardOffCardInvoice[];
+  /** Open opportunities (`status='open'`) drafted by the
+`services_rate_card_benchmark` lever (or any other
+services-side lever) whose `inputs.rateCardId` points at
+this card. Empty list when no benchmark levers have
+flagged anything.
+ */
+  linkedOpportunities: RateCardLinkedOpportunity[];
+};
+
+export type ServicesSpendResponseByContractTypeItemContractType =
+  (typeof ServicesSpendResponseByContractTypeItemContractType)[keyof typeof ServicesSpendResponseByContractTypeItemContractType];
+
+export const ServicesSpendResponseByContractTypeItemContractType = {
+  goods: "goods",
+  t_and_m: "t_and_m",
+  fixed_price: "fixed_price",
+  milestone: "milestone",
+  retainer: "retainer",
+  outcome: "outcome",
+} as const;
+
+export type ServicesSpendResponseByContractTypeItem = {
+  contractType: ServicesSpendResponseByContractTypeItemContractType;
+  spendUsd: number;
+  /** Fraction of services spend in this bucket (0–1). */
+  share: number;
+};
+
+export type ServicesSpendResponseTopSuppliersItem = {
+  supplierId: string;
+  supplierName: string;
+  spendUsd: number;
+};
+
+export type ServicesSpendResponseTopCategoriesItem = {
+  categoryCode: string;
+  categoryName: string;
+  spendUsd: number;
+};
+
+/**
+ * Services-only spend slice rendered on the Services > Spend tab.
+ */
+export interface ServicesSpendResponse {
+  totalServicesSpendUsd: number;
+  byContractType: ServicesSpendResponseByContractTypeItem[];
+  topSuppliers: ServicesSpendResponseTopSuppliersItem[];
+  topCategories: ServicesSpendResponseTopCategoriesItem[];
 }
 
 export type IntelligenceSignalTier =
@@ -3715,6 +4292,22 @@ accepted standalone.
  */
 export type OrgIdHeaderParameter = string;
 
+export type GetSpendOverviewParams = {
+  /**
+   * Restrict every aggregation in the response to a slice of spend. `goods` = lines whose category class is not `service` and which are not bound to the `services` routing band. `services` = the inverse. `all` (default) returns the full roll-up.
+   */
+  segment?: GetSpendOverviewSegment;
+};
+
+export type GetSpendOverviewSegment =
+  (typeof GetSpendOverviewSegment)[keyof typeof GetSpendOverviewSegment];
+
+export const GetSpendOverviewSegment = {
+  all: "all",
+  goods: "goods",
+  services: "services",
+} as const;
+
 export type ListSuppliersParams = {
   search?: string;
   /**
@@ -4095,6 +4688,63 @@ export const ListContractsMissing = {
   owner: "owner",
   reference_index: "reference_index",
 } as const;
+
+export type ListSowsParams = {
+  /**
+   * Substring match on `sowNumber` or `title`.
+   */
+  search?: string;
+  status?: ListSowsStatus;
+  supplierId?: string;
+  msaContractId?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  cursor?: string;
+};
+
+export type ListSowsStatus =
+  (typeof ListSowsStatus)[keyof typeof ListSowsStatus];
+
+export const ListSowsStatus = {
+  draft: "draft",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+} as const;
+
+export type ListRateCardsParams = {
+  /**
+   * Substring match on `name`.
+   */
+  search?: string;
+  status?: ListRateCardsStatus;
+  supplierId?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  cursor?: string;
+};
+
+export type ListRateCardsStatus =
+  (typeof ListRateCardsStatus)[keyof typeof ListRateCardsStatus];
+
+export const ListRateCardsStatus = {
+  draft: "draft",
+  active: "active",
+  expired: "expired",
+} as const;
+
+export type GetServicesSpendParams = {
+  /**
+   * Optional supplier filter — when set, every aggregate (total, byContractType, topCategories) reduces to that one supplier's services spend. Used by the supplier-360 deep link from the Services Engagement card.
+   */
+  supplierId?: string;
+};
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;

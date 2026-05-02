@@ -174,6 +174,7 @@ async function loadSupplierDetail(
     oppRows,
     fxSignals,
     auditRows,
+    servicesEngagementRows,
   ] = await Promise.all([
     // Trailing-365d spend total + PO count from po_lines joined to
     // purchase_orders. We sum at the line level (extended_usd is the
@@ -240,9 +241,21 @@ async function loadSupplierDetail(
       .orderBy(asc(contractsTable.endDate)),
     // Opportunities scoped to this supplier. Same OR predicate as
     // the list endpoint's `?supplierId=` filter so the cross-link
-    // counts can never disagree.
+    // counts can never disagree. Narrowed projection because the
+    // drizzle schema declares opportunity columns (signal_key,
+    // mapped_via, snoozed_until, last_seen_at, source_tenant_category_string,
+    // re_categorized_after_persistence) that have not yet been pushed
+    // to this database. See follow-up #238 for the full schema-drift
+    // backfill; until that lands a `select()` would 500.
     db
-      .select()
+      .select({
+        id: opportunitiesTable.id,
+        leverId: opportunitiesTable.leverId,
+        status: opportunitiesTable.status,
+        title: opportunitiesTable.title,
+        projectedSavingsUsd: opportunitiesTable.projectedSavingsUsd,
+        createdAt: opportunitiesTable.createdAt,
+      })
       .from(opportunitiesTable)
       .where(
         and(
@@ -297,6 +310,185 @@ async function loadSupplierDetail(
       )
       .orderBy(desc(supplierAuditLogTable.createdAt))
       .limit(200),
+    // Services-engagement KPIs: drives the "Services engagement"
+    // card on Supplier 360. Combines the operational counters
+    // (active SOWs / open milestones / active rate cards) with the
+    // four operator-grade headline metrics — average blended bill
+    // rate, off-card spend share, change-order ratio, and the count
+    // of active services-utilization opportunities — in a single
+    // round-trip so the overview tab doesn't N+1. All time-windowed
+    // values are trailing-365d.
+    db.execute(sql`
+      WITH sow_counts AS (
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+          COALESCE(SUM(total_value_usd::numeric) FILTER (
+            WHERE created_at >= NOW() - INTERVAL '365 days'
+              OR (start_date IS NOT NULL AND start_date >= NOW() - INTERVAL '365 days')
+          ), 0) AS recent_committed
+        FROM statements_of_work
+        WHERE org_id = ${orgId} AND supplier_id = ${id}
+      ),
+      rate_cards_count AS (
+        SELECT COUNT(*)::int AS active
+        FROM rate_cards
+        WHERE org_id = ${orgId}
+          AND supplier_id = ${id}
+          AND effective_date <= NOW()
+          AND (expiry_date IS NULL OR expiry_date >= NOW())
+      ),
+      milestones AS (
+        SELECT
+          COUNT(*) FILTER (
+            WHERE m.status NOT IN ('accepted','invoiced','paid','cancelled')
+          )::int AS open_count,
+          MIN(m.due_date) FILTER (
+            WHERE m.status NOT IN ('accepted','invoiced','paid','cancelled')
+              AND m.due_date IS NOT NULL
+          ) AS upcoming_due
+        FROM sow_milestones m
+        JOIN statements_of_work s ON s.id = m.sow_id
+        WHERE m.org_id = ${orgId} AND s.supplier_id = ${id}
+      ),
+      services_spend AS (
+        SELECT
+          COALESCE(SUM(pol.extended_usd::numeric), 0) AS total_spend,
+          COALESCE(SUM(pol.extended_usd::numeric) FILTER (
+            WHERE c.contract_type = 't_and_m'
+          ), 0) AS tm_spend,
+          COALESCE(SUM(pol.extended_usd::numeric) FILTER (
+            WHERE c.contract_type = 'fixed_price'
+          ), 0) AS fp_spend
+        FROM po_lines pol
+        JOIN purchase_orders po ON po.id = pol.po_id
+        LEFT JOIN contracts c ON c.id = po.contract_id
+        WHERE pol.org_id = ${orgId}
+          AND po.supplier_id = ${id}
+          AND pol.order_date >= NOW() - INTERVAL '365 days'
+          AND c.contract_type IS NOT NULL
+          AND c.contract_type <> 'goods'
+      ),
+      time_rollup AS (
+        -- Trailing-90d: avg blended bill rate ($ ÷ hours) and
+        -- off-card share (portion of spend with rate_card_line_id NULL).
+        SELECT
+          COALESCE(SUM(t.amount_usd::numeric), 0) AS total_amount,
+          COALESCE(SUM(t.hours::numeric), 0) AS total_hours,
+          COALESCE(SUM(t.amount_usd::numeric) FILTER (
+            WHERE t.rate_card_line_id IS NULL
+          ), 0) AS off_card_amount
+        FROM time_entries t
+        WHERE t.org_id = ${orgId}
+          AND t.supplier_id = ${id}
+          AND t.work_date >= NOW() - INTERVAL '90 days'
+      ),
+      active_sow_totals AS (
+        -- NTE roll-up across the supplier's currently active SOWs.
+        -- Denominator for the change-order ratio.
+        SELECT
+          COALESCE(SUM(total_value_usd::numeric), 0) AS active_nte
+        FROM statements_of_work
+        WHERE org_id = ${orgId}
+          AND supplier_id = ${id}
+          AND status = 'active'
+      ),
+      change_order_rollup AS (
+        -- Sum of committed (approved/executed) change-order value
+        -- across the supplier's active SOWs. Numerator for the ratio.
+        SELECT
+          COALESCE(SUM(co.value_delta_usd::numeric), 0) AS committed_total
+        FROM sow_change_orders co
+        JOIN statements_of_work s ON s.id = co.sow_id
+        WHERE co.org_id = ${orgId}
+          AND s.supplier_id = ${id}
+          AND s.status = 'active'
+          AND co.status IN ('approved','executed')
+      ),
+      services_presence AS (
+        -- Has any services activity: any services contract, any SOW
+        -- (any status), or any time entry. Drives the FE card-visibility
+        -- guard so suppliers with services engagement but no recent
+        -- numeric spend still show the card.
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM contracts
+            WHERE org_id = ${orgId}
+              AND supplier_id = ${id}
+              AND contract_type IN ('t_and_m','fixed_price')
+          )
+          OR EXISTS (
+            SELECT 1 FROM statements_of_work
+            WHERE org_id = ${orgId} AND supplier_id = ${id}
+          )
+          OR EXISTS (
+            SELECT 1 FROM time_entries
+            WHERE org_id = ${orgId} AND supplier_id = ${id}
+          )
+        )::boolean AS has_activity
+      ),
+      utilization_signals AS (
+        -- Person-level hours-audit signals over the last 90 days,
+        -- bucketed to ISO week. A "signal" is a (resource, week)
+        -- pair where weekly hours either exceed an overload
+        -- threshold (>50 hrs ~ sustained overtime) OR fall below
+        -- an under-utilization threshold (<10 hrs while the
+        -- resource is otherwise active that quarter — proxy for
+        -- bench time burning rate). The sustained-active check
+        -- avoids flagging brand-new or rolled-off resources.
+        WITH person_weeks AS (
+          SELECT
+            t.resource,
+            DATE_TRUNC('week', t.work_date) AS wk,
+            SUM(t.hours::numeric) AS weekly_hours
+          FROM time_entries t
+          WHERE t.org_id = ${orgId}
+            AND t.supplier_id = ${id}
+            AND t.work_date >= NOW() - INTERVAL '90 days'
+          GROUP BY t.resource, DATE_TRUNC('week', t.work_date)
+        ),
+        active_resources AS (
+          SELECT resource
+          FROM person_weeks
+          GROUP BY resource
+          HAVING COUNT(*) >= 4
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE pw.weekly_hours > 50)::int AS overload,
+          COUNT(*) FILTER (
+            WHERE pw.weekly_hours < 10
+              AND pw.resource IN (SELECT resource FROM active_resources)
+          )::int AS underutil,
+          (
+            COUNT(*) FILTER (WHERE pw.weekly_hours > 50)
+            + COUNT(*) FILTER (
+                WHERE pw.weekly_hours < 10
+                  AND pw.resource IN (SELECT resource FROM active_resources)
+              )
+          )::int AS active
+        FROM person_weeks pw
+      )
+      SELECT
+        sow_counts.active AS sow_active,
+        sow_counts.recent_committed AS sow_recent_committed,
+        rate_cards_count.active AS rate_cards_active,
+        milestones.open_count AS milestones_open,
+        milestones.upcoming_due AS milestones_upcoming_due,
+        services_spend.total_spend::numeric AS total_services_spend,
+        services_spend.tm_spend::numeric AS tm_spend,
+        services_spend.fp_spend::numeric AS fp_spend,
+        time_rollup.total_amount::numeric AS time_total_amount,
+        time_rollup.total_hours::numeric AS time_total_hours,
+        time_rollup.off_card_amount::numeric AS time_off_card_amount,
+        change_order_rollup.committed_total::numeric AS co_committed_total,
+        active_sow_totals.active_nte::numeric AS active_sow_nte,
+        services_presence.has_activity AS has_services_activity,
+        utilization_signals.active AS utilization_active,
+        utilization_signals.overload AS utilization_overload,
+        utilization_signals.underutil AS utilization_underutil
+      FROM sow_counts, rate_cards_count, milestones, services_spend,
+           time_rollup, change_order_rollup, active_sow_totals,
+           services_presence, utilization_signals
+    `),
   ]);
 
   const totalRow = spendTotalRow.rows[0] as
@@ -382,6 +574,62 @@ async function loadSupplierDetail(
       newValue: a.newValue,
       createdAt: a.createdAt,
     })),
+    services: (() => {
+      const r = servicesEngagementRows.rows[0] as
+        | {
+            sow_active: string | number | null;
+            sow_recent_committed: string | null;
+            rate_cards_active: string | number | null;
+            milestones_open: string | number | null;
+            milestones_upcoming_due: Date | string | null;
+            total_services_spend: string | null;
+            tm_spend: string | null;
+            fp_spend: string | null;
+            time_total_amount: string | null;
+            time_total_hours: string | null;
+            time_off_card_amount: string | null;
+            co_committed_total: string | null;
+            active_sow_nte: string | null;
+            has_services_activity: boolean | null;
+            utilization_active: string | number | null;
+            utilization_overload: string | number | null;
+            utilization_underutil: string | number | null;
+          }
+        | undefined;
+      const upcoming = r?.milestones_upcoming_due ?? null;
+      const totalAmount = Number(r?.time_total_amount ?? 0);
+      const totalHours = Number(r?.time_total_hours ?? 0);
+      const offCardAmount = Number(r?.time_off_card_amount ?? 0);
+      const activeNte = Number(r?.active_sow_nte ?? 0);
+      const coCommitted = Number(r?.co_committed_total ?? 0);
+      const avgBlendedRateUsd =
+        totalHours > 0 ? totalAmount / totalHours : null;
+      const offCardSpendShare =
+        totalAmount > 0 ? offCardAmount / totalAmount : 0;
+      const changeOrderRatio =
+        activeNte > 0 ? coCommitted / activeNte : 0;
+      return {
+        activeSowCount: Number(r?.sow_active ?? 0),
+        openMilestoneCount: Number(r?.milestones_open ?? 0),
+        rateCardCount: Number(r?.rate_cards_active ?? 0),
+        totalServicesSpendUsd: Number(r?.total_services_spend ?? 0),
+        timeAndMaterialsSpendUsd: Number(r?.tm_spend ?? 0),
+        fixedPriceSpendUsd: Number(r?.fp_spend ?? 0),
+        upcomingMilestoneDueDate:
+          upcoming === null
+            ? null
+            : upcoming instanceof Date
+              ? upcoming.toISOString()
+              : String(upcoming),
+        avgBlendedRateUsd,
+        offCardSpendShare,
+        changeOrderRatio,
+        hasServicesActivity: Boolean(r?.has_services_activity ?? false),
+        utilizationSignalCount: Number(r?.utilization_active ?? 0),
+        utilizationOverloadCount: Number(r?.utilization_overload ?? 0),
+        utilizationUnderutilCount: Number(r?.utilization_underutil ?? 0),
+      };
+    })(),
   };
 }
 

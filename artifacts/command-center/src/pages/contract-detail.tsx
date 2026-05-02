@@ -29,6 +29,8 @@ import {
   type ContractItem,
   type ContractLinkedOpportunity,
   type ContractAuditEntry,
+  type ContractChildSow,
+  type ContractContractType,
   type MarketSignal,
 } from "@workspace/api-client-react";
 import {
@@ -41,6 +43,9 @@ import {
   AlertTriangle,
   Activity as ActivityIcon,
   TrendingUp,
+  Wrench,
+  FileSignature,
+  ArrowRight,
 } from "lucide-react";
 import {
   Card,
@@ -325,6 +330,19 @@ export default function ContractDetail() {
         </CardContent>
       </Card>
 
+      {isServicesContract(contract.contractType) && (
+        <ServicesContractCard
+          contractType={contract.contractType}
+          serviceLevelTerms={contract.serviceLevelTerms}
+          acceptanceCriteria={contract.acceptanceCriteria}
+          msaParentId={contract.msaParentId}
+        />
+      )}
+
+      {contract.childSows && contract.childSows.length > 0 && (
+        <ChildSowsCard sows={contract.childSows} />
+      )}
+
       {contract.linkedOpportunities.length > 0 && (
         <Card>
           <CardHeader>
@@ -529,6 +547,181 @@ function AuditRow({ entry }: { entry: ContractAuditEntry }) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+const CONTRACT_TYPE_LABELS: Record<ContractContractType, string> = {
+  goods: "Goods",
+  t_and_m: "Time & Materials",
+  fixed_price: "Fixed Price",
+  milestone: "Milestone",
+  retainer: "Retainer",
+  outcome: "Outcome",
+};
+
+function isServicesContract(t: ContractContractType | undefined): boolean {
+  return t != null && t !== "goods";
+}
+
+function ServicesContractCard({
+  contractType,
+  serviceLevelTerms,
+  acceptanceCriteria,
+  msaParentId,
+}: {
+  contractType: ContractContractType | undefined;
+  serviceLevelTerms: unknown;
+  acceptanceCriteria: string | null | undefined;
+  msaParentId: string | null | undefined;
+}) {
+  const slaText = formatSlaTerms(serviceLevelTerms);
+  return (
+    <Card data-testid="card-services-contract">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Wrench className="w-5 h-5" />
+          Services terms
+        </CardTitle>
+        <CardDescription>
+          Commercial structure and SLA / acceptance criteria specific to the
+          services side of this agreement.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <div className="text-xs uppercase text-muted-foreground tracking-wide">
+              Contract type
+            </div>
+            <div
+              className="font-medium mt-1"
+              data-testid="services-contract-type"
+            >
+              {contractType
+                ? CONTRACT_TYPE_LABELS[contractType] ?? contractType
+                : "—"}
+            </div>
+          </div>
+          {msaParentId && (
+            <div>
+              <div className="text-xs uppercase text-muted-foreground tracking-wide">
+                Master agreement
+              </div>
+              <Link
+                href={`/contracts/${msaParentId}`}
+                className="font-medium mt-1 text-primary hover:underline inline-flex items-center gap-1"
+                data-testid="link-msa-parent"
+              >
+                Open parent MSA →
+              </Link>
+            </div>
+          )}
+        </div>
+        {slaText && (
+          <div>
+            <div className="text-xs uppercase text-muted-foreground tracking-wide">
+              Service level terms
+            </div>
+            <pre
+              className="text-xs bg-muted/40 rounded p-3 mt-1 whitespace-pre-wrap break-words"
+              data-testid="services-sla"
+            >
+              {slaText}
+            </pre>
+          </div>
+        )}
+        {acceptanceCriteria && (
+          <div>
+            <div className="text-xs uppercase text-muted-foreground tracking-wide">
+              Acceptance criteria
+            </div>
+            <p
+              className="mt-1 whitespace-pre-wrap"
+              data-testid="services-acceptance"
+            >
+              {acceptanceCriteria}
+            </p>
+          </div>
+        )}
+        {!slaText && !acceptanceCriteria && (
+          <p className="text-xs text-muted-foreground italic">
+            No SLA terms or acceptance criteria recorded yet.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatSlaTerms(terms: unknown): string | null {
+  if (terms == null) return null;
+  if (typeof terms === "string") return terms.trim() || null;
+  try {
+    return JSON.stringify(terms, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function ChildSowsCard({ sows }: { sows: ContractChildSow[] }) {
+  const totalCommitted = sows.reduce((s, x) => s + x.totalValueUsd, 0);
+  const openMilestones = sows.reduce((s, x) => s + x.openMilestoneCount, 0);
+  return (
+    <Card data-testid="card-child-sows">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileSignature className="w-5 h-5" />
+          Statements of work ({sows.length})
+        </CardTitle>
+        <CardDescription>
+          {formatUsd(totalCommitted, { compact: true })} committed across these
+          SOWs · {openMilestones} open milestone
+          {openMilestones === 1 ? "" : "s"}.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0 divide-y">
+        {sows.map((s) => (
+          <Link
+            key={s.id}
+            href={`/sows/${s.id}`}
+            className="flex items-center gap-4 p-3 hover:bg-accent/40 transition-colors"
+            data-testid={`child-sow-${s.id}`}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-medium truncate flex items-center gap-2">
+                <span className="font-mono text-xs text-muted-foreground">
+                  {s.sowNumber}
+                </span>
+                <span className="truncate">{s.title}</span>
+                <Badge
+                  variant={
+                    s.status === "active"
+                      ? "default"
+                      : s.status === "completed"
+                        ? "secondary"
+                        : s.status === "cancelled"
+                          ? "destructive"
+                          : "outline"
+                  }
+                  className="capitalize text-[10px]"
+                >
+                  {s.status}
+                </Badge>
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {formatDate(s.startDate ?? null)} →{" "}
+                {formatDate(s.endDate ?? null)} · {s.openMilestoneCount}/
+                {s.milestoneCount} open milestones
+              </div>
+            </div>
+            <div className="text-right tabular-nums text-sm font-semibold w-28 shrink-0">
+              {formatUsd(s.totalValueUsd, { compact: true })}
+            </div>
+            <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+          </Link>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
 function fmtAuditValue(v: unknown): string {
   if (v == null) return "—";

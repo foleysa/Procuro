@@ -174,8 +174,30 @@ paths:
       tags:
       - spend
       summary: Spend overview (last 12 months)
+      description: 'Trailing-12-month spend rollup. Optional `segment` query
+        narrows every aggregation in the response (byClass, byCategory,
+        bySupplier, byBusinessUnit, concentration, …) to either the
+        `goods` or `services` slice — defined identically to the
+        `services` band on `/spend/by-band` so the two cards always
+        reconcile. The `goodsVsServices` block is always returned at
+        the org-wide totals so the segmented control can render its
+        share pills regardless of the active segment.'
       parameters:
       - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: segment
+        schema:
+          type: string
+          enum:
+          - all
+          - goods
+          - services
+          default: all
+        description: 'Restrict every aggregation in the response to a slice of
+          spend. `goods` = lines whose category class is not
+          `service` and which are not bound to the `services` routing
+          band. `services` = the inverse. `all` (default) returns the
+          full roll-up.'
       responses:
         '200':
           description: Aggregated spend
@@ -183,6 +205,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SpendOverview'
+  /spend/by-band:
+    get:
+      operationId: getSpendByBand
+      tags:
+      - spend
+      summary: Spend bucketed by routing band (last 90 days)
+      description: 'Returns trailing-90-day spend split across the six routing
+        bands (`indexable`, `concentrated`, `fragmented`, `subscription`,
+        `capital`, `services`). Powers the "by-Band" lens on Spend
+        Overview. The 90-day window keeps the band signal recent enough
+        to drive routing decisions; the longer 12-month series stays
+        available on `/spend/overview`. Categories without a band
+        binding AND without a `service` taxonomy class are surfaced
+        separately as `unmappedCategoryCount` / `unmappedSpendUsd` so
+        the operator can see the addressable-but-unrouted tail; the
+        same rows are also folded into the `fragmented` bucket so
+        bucket totals always reconcile to the 90-day total.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Spend by routing band
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpendByBand'
   /suppliers:
     get:
       operationId: listSuppliers
@@ -2424,6 +2472,195 @@ paths:
                 $ref: '#/components/schemas/ContractDetail'
         '404':
           $ref: '#/components/responses/NotFound'
+  /sows:
+    get:
+      operationId: listSows
+      tags:
+      - services
+      summary: List Statements of Work (search + filters + cursor pagination)
+      description: 'Returns the tenant''s SOWs alongside their rolled-up milestone
+
+        counts and total value. Powers the "SOWs" tab on the Services
+
+        page.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: search
+        description: Substring match on `sowNumber` or `title`.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - draft
+          - active
+          - completed
+          - cancelled
+      - in: query
+        name: supplierId
+        schema:
+          type: string
+      - in: query
+        name: msaContractId
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: query
+        name: cursor
+        schema:
+          type: string
+      responses:
+        '200':
+          description: SOWs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SowListResponse'
+  /sows/{id}:
+    get:
+      operationId: getSow
+      tags:
+      - services
+      summary: SOW detail (header + milestones + change orders + supplier/MSA links)
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: SOW detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SowDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /rate-cards:
+    get:
+      operationId: listRateCards
+      tags:
+      - services
+      summary: List rate cards
+      description: 'Returns the tenant''s rate cards plus a derived `lineCount`
+
+        and `offCardSpendUsd` (trailing-365d spend at unit prices that
+
+        do not match any line on the card — the leakage indicator on
+
+        the Rate Cards tab).
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: search
+        description: Substring match on `name`.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - draft
+          - active
+          - expired
+      - in: query
+        name: supplierId
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: query
+        name: cursor
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Rate cards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCardListResponse'
+  /rate-cards/{id}:
+    get:
+      operationId: getRateCard
+      tags:
+      - services
+      summary: Rate card detail (header + lines + market benchmarks + recent time entries)
+      description: 'Returns each `RateCardLine` annotated with a market-benchmark
+
+        band derived from the most recent `oews_wage` market signal for
+
+        that role/geography (when available): green ≤ p50, yellow
+
+        p50–p75, orange p75–p90, red > p90. Also returns the most
+
+        recent off-card time entries so the operator can drill in from
+
+        the leakage KPI on the list page.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Rate card detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCardDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /services/spend:
+    get:
+      operationId: getServicesSpend
+      tags:
+      - services
+      summary: Services spend slice (last 12 months)
+      description: 'Trailing-12-month services-only rollup powering the "Services
+
+        Spend" tab. Splits services spend by contract type (T&M vs
+
+        fixed-price vs milestone vs retainer vs outcome), top services
+
+        suppliers, and top services categories.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: supplierId
+        required: false
+        schema:
+          type: string
+        description: 'Optional supplier filter — when set, every aggregate
+          (total, byContractType, topCategories) reduces to that one
+          supplier''s services spend. Used by the supplier-360 deep
+          link from the Services Engagement card.'
+      responses:
+        '200':
+          description: Services spend
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicesSpendResponse'
   /watched-issuers:
     get:
       operationId: listWatchedIssuers
@@ -3780,6 +4017,98 @@ components:
       - savings_overstated
       - already_actioned
       - other
+    SpendByBand:
+      type: object
+      description: 'Spend bucketed by routing band. Drives the "by-Band" lens on
+        Spend Overview. Trailing 90 days. The six bands are the routing
+        model''s shared vocabulary (`indexable`, `concentrated`,
+        `fragmented`, `subscription`, `capital`, `services`); rows
+        whose category has no band assigned and isn''t taxonomy-classed
+        as a service fall through to `fragmented` AND are also tallied
+        as the unmapped tail (`unmappedCategoryCount` /
+        `unmappedSpendUsd`) so the operator can prioritise routing
+        decisions without losing total reconciliation.'
+      required:
+      - totalSpendUsd
+      - byBand
+      - unmappedCategoryCount
+      - unmappedSpendUsd
+      properties:
+        totalSpendUsd:
+          type: number
+        unmappedCategoryCount:
+          type: integer
+          description: 'Distinct categories in the 90-day window with no
+            `category_bands` row and not classed as `service`. These
+            rows still get counted in the `fragmented` bucket so
+            totals reconcile.'
+        unmappedSpendUsd:
+          type: number
+          description: 90-day spend attributable to unmapped categories.
+        byBand:
+          type: array
+          items:
+            type: object
+            required:
+            - band
+            - spendUsd
+            - share
+            properties:
+              band:
+                type: string
+                enum:
+                - indexable
+                - concentrated
+                - fragmented
+                - subscription
+                - capital
+                - services
+              spendUsd:
+                type: number
+              share:
+                type: number
+                description: Fraction of total spend in this band (0–1).
+              categoryCount:
+                type: integer
+              supplierCount:
+                type: integer
+              topCategories:
+                type: array
+                description: 'Top categories driving spend within this band, capped
+                  at 5. Powers the per-band drill-down on Spend
+                  Overview so operators can jump straight to the
+                  rows they need to address.'
+                items:
+                  type: object
+                  required:
+                  - categoryId
+                  - categoryName
+                  - spendUsd
+                  properties:
+                    categoryId:
+                      type: string
+                    categoryName:
+                      type: string
+                    spendUsd:
+                      type: number
+    GoodsVsServicesBlock:
+      type: object
+      required:
+      - goodsSpendUsd
+      - servicesSpendUsd
+      - goodsShare
+      - servicesShare
+      properties:
+        goodsSpendUsd:
+          type: number
+        servicesSpendUsd:
+          type: number
+        goodsShare:
+          type: number
+          description: Fraction of total spend on goods (0–1).
+        servicesShare:
+          type: number
+          description: Fraction of total spend on services (0–1).
     SpendOverview:
       type: object
       required:
@@ -3789,9 +4118,12 @@ components:
       - bySupplier
       - byBusinessUnit
       - concentration
+      - goodsVsServices
       properties:
         totalSpendUsd:
           type: number
+        goodsVsServices:
+          $ref: '#/components/schemas/GoodsVsServicesBlock'
         byClass:
           type: array
           items:
@@ -4037,6 +4369,92 @@ components:
         createdAt:
           type: string
           format: date-time
+    SupplierServicesEngagement:
+      type: object
+      description: 'Services-side rollup for a single supplier — drives the
+        "Services engagement" card on Supplier 360. Activity counters
+        and `totalServicesSpendUsd` are trailing 365d;
+        `avgBlendedRateUsd` and `offCardSpendShare` are trailing 90d;
+        `changeOrderRatio` is computed across all currently active
+        SOWs (not time-windowed).'
+      required:
+      - activeSowCount
+      - openMilestoneCount
+      - rateCardCount
+      - totalServicesSpendUsd
+      - timeAndMaterialsSpendUsd
+      - fixedPriceSpendUsd
+      - avgBlendedRateUsd
+      - offCardSpendShare
+      - changeOrderRatio
+      - hasServicesActivity
+      - utilizationSignalCount
+      properties:
+        activeSowCount:
+          type: integer
+        openMilestoneCount:
+          type: integer
+          description: SOW milestones not yet `accepted`/`invoiced`/`paid`/`cancelled`.
+        rateCardCount:
+          type: integer
+        totalServicesSpendUsd:
+          type: number
+          description: Trailing-365d spend tied to services contracts only.
+        timeAndMaterialsSpendUsd:
+          type: number
+        fixedPriceSpendUsd:
+          type: number
+        upcomingMilestoneDueDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Earliest non-cancelled milestone due date, if any.
+        avgBlendedRateUsd:
+          type: number
+          nullable: true
+          description: 'Trailing-90d weighted blended bill rate across all time
+            entries logged for this supplier (sum(amount_usd) /
+            sum(hours)). Null when no time entries exist.'
+        offCardSpendShare:
+          type: number
+          description: 'Share of trailing-90d time-entry spend that priced
+            outside any rate card line (`rate_card_line_id IS NULL`).
+            0–1; 0 if there''s no time-entry activity at all.'
+        changeOrderRatio:
+          type: number
+          description: 'Sum of committed (approved/executed) change-order value
+            across the supplier''s currently active SOWs, divided by
+            the total NTE of those active SOWs. 0 when there is no
+            active-SOW NTE to divide by.'
+        hasServicesActivity:
+          type: boolean
+          description: 'True when the supplier has at least one services
+            contract, SOW (any status), or time entry on record. Lets
+            the FE show the Services Engagement card for suppliers
+            that have engagement history without recent numeric spend.'
+        utilizationSignalCount:
+          type: integer
+          description: 'Total person-week hours-audit signals over the
+            trailing 90 days — sum of `utilizationOverloadCount` and
+            `utilizationUnderutilCount`. Each signal is a (resource,
+            ISO-week) pair where weekly hours either exceed the
+            overload threshold (>50 hrs) or fall below the
+            under-utilization threshold (<10 hrs while the resource
+            was otherwise active that quarter). Replaces the earlier
+            opportunity-count derivation so the KPI is grounded in
+            time-entry actuals.'
+        utilizationOverloadCount:
+          type: integer
+          description: 'Person-week pairs over the trailing 90 days where
+            weekly hours exceeded 50. Sustained overload is a
+            burnout/quality risk and a renegotiation lever (extra
+            staffing under the same NTE).'
+        utilizationUnderutilCount:
+          type: integer
+          description: 'Person-week pairs over the trailing 90 days where
+            weekly hours fell below 10 while the resource was
+            otherwise active that quarter. Captures bench burn the
+            client is paying for.'
     SupplierDetail:
       allOf:
       - $ref: '#/components/schemas/Supplier'
@@ -4047,9 +4465,12 @@ components:
         - opportunities
         - fxSignals
         - auditLog
+        - services
         properties:
           spend:
             $ref: '#/components/schemas/SupplierSpendRollup'
+          services:
+            $ref: '#/components/schemas/SupplierServicesEngagement'
           contracts:
             type: array
             items:
@@ -5158,6 +5579,51 @@ components:
           - pending
           - expired
           - cancelled
+        contractType:
+          type: string
+          enum:
+          - goods
+          - t_and_m
+          - fixed_price
+          - milestone
+          - retainer
+          - outcome
+          description: 'Commercial structure of the contract. `goods` is the legacy
+
+            default and back-fills any pre-#214 row. Anything other than
+
+            `goods` is a services contract and unlocks the services-side
+
+            UI (SOW list, rate cards, services KPIs).
+
+            '
+        msaParentId:
+          type: string
+          nullable: true
+          description: 'Self-FK to the parent MSA when this row is itself a child
+
+            agreement under a master agreement. Null for top-level
+
+            contracts.
+
+            '
+        serviceLevelTerms:
+          nullable: true
+          description: 'Free-form SLA terms. Either a structured object
+
+            (e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by
+
+            adapters or a partner''s verbatim text payload.
+
+            '
+        acceptanceCriteria:
+          type: string
+          nullable: true
+          description: 'Plain-text acceptance criteria. Used on services contracts
+
+            to document what "delivered" means at MSA level.
+
+            '
         derivedStatus:
           $ref: '#/components/schemas/ContractDerivedStatus'
         daysToExpiry:
@@ -5337,6 +5803,56 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/ContractAuditEntry'
+          childSows:
+            type: array
+            description: 'When this contract is a master agreement, the SOWs that
+
+              point at it via `msa_contract_id`. Empty for non-master /
+
+              non-services contracts.
+
+              '
+            items:
+              $ref: '#/components/schemas/ContractChildSow'
+    ContractChildSow:
+      type: object
+      description: A SOW row rendered inline on the contract-detail page.
+      required:
+      - id
+      - sowNumber
+      - title
+      - status
+      - totalValueUsd
+      - milestoneCount
+      - openMilestoneCount
+      properties:
+        id:
+          type: string
+        sowNumber:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - active
+          - completed
+          - cancelled
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        totalValueUsd:
+          type: number
+        milestoneCount:
+          type: integer
+        openMilestoneCount:
+          type: integer
     PatchContractRequest:
       type: object
       description: 'Partial update for the operator-controlled fields on a contract.
@@ -5363,6 +5879,864 @@ components:
           type: string
           nullable: true
           maxLength: 1000
+    StatementOfWork:
+      type: object
+      description: 'A Statement of Work — a child agreement under a master services
+
+        contract (MSA). Powers the Services > SOWs tab and the SOW
+
+        detail page.
+
+        '
+      required:
+      - id
+      - sowNumber
+      - title
+      - status
+      - supplierId
+      - supplierName
+      - msaContractId
+      - currency
+      - totalValueUsd
+      - milestoneCount
+      - openMilestoneCount
+      - nteUsd
+      - earnedUsd
+      - burnedPct
+      - changeOrderCount
+      - createdAt
+      properties:
+        id:
+          type: string
+        sowNumber:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - active
+          - completed
+          - cancelled
+        supplierId:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        msaContractId:
+          type: string
+          nullable: true
+        msaContractNumber:
+          type: string
+          nullable: true
+        msaContractTitle:
+          type: string
+          nullable: true
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        currency:
+          type: string
+          description: ISO 4217 currency for `totalValue` (USD-converted in `totalValueUsd`).
+        totalValue:
+          type: number
+          nullable: true
+          description: Native-currency total committed under this SOW.
+        totalValueUsd:
+          type: number
+          description: USD-converted total committed under this SOW.
+        nteUsd:
+          type: number
+          description: 'Not-to-exceed ceiling for this SOW (mirrors
+            `totalValueUsd`). Surfaced as a distinct field so the FE
+            can render NTE-anchored burn copy without aliasing.'
+        earnedUsd:
+          type: number
+          description: 'Sum of accepted/invoiced/paid milestone values for
+            this SOW. Drives the burned% on the list page so it
+            reconciles with the detail view.'
+        burnedPct:
+          type: number
+          description: '`earnedUsd / nteUsd`, clamped to [0,1]. 0 when
+            there is no NTE on the SOW.'
+        milestoneCount:
+          type: integer
+        openMilestoneCount:
+          type: integer
+          description: Milestones not in a terminal state.
+        changeOrderCount:
+          type: integer
+          description: 'Total change orders issued against this SOW (any
+            status). The Services tab uses this for the CO column on
+            the SOWs list.'
+        owner:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    SowListResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatementOfWork'
+        nextCursor:
+          type: string
+          nullable: true
+    SowMilestone:
+      type: object
+      required:
+      - id
+      - sowId
+      - sequence
+      - title
+      - status
+      - amountUsd
+      properties:
+        id:
+          type: string
+        sowId:
+          type: string
+        sequence:
+          type: integer
+          description: 1-based ordering within the SOW.
+        title:
+          type: string
+        status:
+          type: string
+          enum:
+          - pending
+          - in_progress
+          - delivered
+          - accepted
+          - invoiced
+          - paid
+          - cancelled
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        deliveredDate:
+          type: string
+          format: date-time
+          nullable: true
+        acceptedDate:
+          type: string
+          format: date-time
+          nullable: true
+        amount:
+          type: number
+          nullable: true
+        amountUsd:
+          type: number
+        currency:
+          type: string
+          nullable: true
+        acceptanceCriteria:
+          type: string
+          nullable: true
+        isOverdue:
+          type: boolean
+          description: 'True when the milestone is still open (not
+            accepted/invoiced/paid/cancelled) and `dueDate` is in the
+            past. Drives the red highlight on the milestone row.'
+    SowChangeOrder:
+      type: object
+      required:
+      - id
+      - sowId
+      - changeNumber
+      - title
+      - status
+      - amountDeltaUsd
+      - createdAt
+      properties:
+        id:
+          type: string
+        sowId:
+          type: string
+        changeNumber:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+        amountDelta:
+          type: number
+          nullable: true
+        amountDeltaUsd:
+          type: number
+        currency:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Timestamp when the change order was approved/executed
+            (mirrors `executed_at` in storage). Null while the change
+            order is still pending or has been rejected.'
+        approver:
+          type: string
+          nullable: true
+          description: 'Free-text identity (name / email / role) of the
+            approver who signed off on this change order. Surfaces in
+            the audit trail alongside delta value and approval date so
+            operators can answer "who approved this scope creep?"
+            without leaving the SOW detail page. Null when the source
+            system does not carry approver identity, or when the row
+            is still in proposed/rejected state.'
+    SowLinkedOpportunity:
+      type: object
+      description: Open opportunity referencing this SOW.
+      required:
+      - id
+      - leverId
+      - status
+      - title
+      - projectedSavingsUsd
+      - createdAt
+      properties:
+        id:
+          type: string
+        leverId:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        projectedSavingsUsd:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+    SowDetail:
+      allOf:
+      - $ref: '#/components/schemas/StatementOfWork'
+      - type: object
+        required:
+        - milestones
+        - changeOrders
+        - burn
+        - linkedOpportunities
+        properties:
+          description:
+            type: string
+            nullable: true
+          scope:
+            description: 'Structured scope JSON as captured on the SOW (free-form
+              shape — typically a deliverables list, assumptions, and
+              exclusions). Null if the SOW was loaded without a
+              structured scope.'
+            nullable: true
+          billingModel:
+            type: string
+            nullable: true
+            enum:
+            - t_and_m
+            - fixed_price
+            - milestone
+            - retainer
+            - outcome
+            - goods
+            description: 'Commercial model the SOW operates under. Derived from
+              the parent MSA contract''s `contract_type` so the SOW
+              detail can reason about how to render rate / milestone
+              widgets without re-deriving from data.'
+          acceptanceCriteria:
+            type: string
+            nullable: true
+            description: 'Plain-text acceptance criteria recorded on the SOW.
+              Distinct from per-milestone acceptance criteria; this is
+              the SOW-wide gate.'
+          burn:
+            type: object
+            description: 'Snapshot of how this SOW is burning through committed
+              budget plus a 26-week weekly burn series sourced from
+              `time_entries`. `committedUsd` and `nteUsd` are the SOW
+              ceiling (synonyms surfaced for clarity); `earnedUsd`
+              sums accepted/invoiced/paid milestones; `burnedUsd` sums
+              actual time-entry spend (the chart''s y-axis);
+              `invoicedUsd` sums invoiced/paid milestones only.
+              `runwayDays` is the NTE-anchored projection — remaining
+              capacity divided by the trailing 4-week average burn
+              rate, expressed in days. `weekly` is the per-week
+              series the FE renders as a stacked-area chart against
+              the NTE ceiling.'
+            required:
+            - committedUsd
+            - nteUsd
+            - earnedUsd
+            - burnedUsd
+            - burnedPct
+            - invoicedUsd
+            - avgWeeklyBurnUsd
+            - weekly
+            properties:
+              committedUsd:
+                type: number
+              nteUsd:
+                type: number
+                description: Not-to-exceed ceiling (mirrors `committedUsd`).
+              earnedUsd:
+                type: number
+              burnedUsd:
+                type: number
+                description: 'Total time-entry burn over the visible window
+                  (sum of `weekly[].amountUsd`).'
+              burnedPct:
+                type: number
+                description: '`burnedUsd / nteUsd`, clamped to [0,1].'
+              invoicedUsd:
+                type: number
+              runwayDays:
+                type: integer
+                nullable: true
+              avgWeeklyBurnUsd:
+                type: number
+                description: 'Trailing 4-week average burn rate. Used to size
+                  the runway projection.'
+              weekly:
+                type: array
+                description: 'Per-week time-entry burn series (last 26
+                  weeks). The chart anchors every bar to ISO Monday so
+                  it lines up regardless of when individual entries
+                  were logged.'
+                items:
+                  type: object
+                  required:
+                  - weekStart
+                  - hoursBilled
+                  - amountUsd
+                  - cumulativeUsd
+                  properties:
+                    weekStart:
+                      type: string
+                      format: date
+                    hoursBilled:
+                      type: number
+                    amountUsd:
+                      type: number
+                    cumulativeUsd:
+                      type: number
+          linkedOpportunities:
+            type: array
+            description: |
+              Open opportunities (`status='open'`) drafted by any
+              lever whose `inputs.sowId` references this SOW. Empty
+              list when no levers have flagged anything.
+            items:
+              $ref: '#/components/schemas/SowLinkedOpportunity'
+          milestones:
+            type: array
+            items:
+              $ref: '#/components/schemas/SowMilestone'
+          changeOrders:
+            type: array
+            items:
+              $ref: '#/components/schemas/SowChangeOrder'
+    RateCard:
+      type: object
+      description: 'A negotiated rate card for a supplier. Powers the
+
+        Services > Rate Cards tab.
+
+        '
+      required:
+      - id
+      - name
+      - status
+      - supplierId
+      - supplierName
+      - currency
+      - lineCount
+      - offCardSpendUsd
+      - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - active
+          - expired
+        supplierId:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        msaContractId:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          description: ISO 4217 currency the lines are priced in.
+        effectiveStart:
+          type: string
+          format: date-time
+          nullable: true
+        effectiveEnd:
+          type: string
+          format: date-time
+          nullable: true
+        lineCount:
+          type: integer
+        offCardSpendUsd:
+          type: number
+          description: 'Trailing-365d time-entry leakage: hours billed against
+            this card whose `rate_card_line_id` is NULL (could not
+            match any role/seniority on the card).'
+        createdAt:
+          type: string
+          format: date-time
+    RateCardListResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateCard'
+        nextCursor:
+          type: string
+          nullable: true
+    RateCardLine:
+      type: object
+      required:
+      - id
+      - role
+      - unit
+      - unitRate
+      - unitRateUsd
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          description: Role / labour category (e.g. "Senior Consultant").
+        seniority:
+          type: string
+          nullable: true
+        skill:
+          type: string
+          nullable: true
+        geography:
+          type: string
+          nullable: true
+          description: Region / geography tag (e.g. "US", "EMEA", "India").
+        billingModel:
+          type: string
+          nullable: true
+          description: 'Commercial structure for the line: t_and_m,
+            fixed, milestone, retainer, outcome.'
+        unit:
+          type: string
+          description: Pricing unit, e.g. `hour`, `day`, `month`.
+        unitRate:
+          type: number
+        unitRateUsd:
+          type: number
+        currency:
+          type: string
+          nullable: true
+        marketBenchmark:
+          type: object
+          nullable: true
+          description: 'Most-recent OEWS wage benchmark for this role/geography, if
+
+            any. Drives the per-line colour band on the rate-card
+
+            detail page (green ≤p50, yellow p50–p75, orange p75–p90,
+
+            red >p90).
+
+            '
+          required:
+          - band
+          - source
+          properties:
+            band:
+              type: string
+              enum:
+              - green
+              - yellow
+              - orange
+              - red
+            p50Usd:
+              type: number
+              nullable: true
+            p75Usd:
+              type: number
+              nullable: true
+            p90Usd:
+              type: number
+              nullable: true
+            source:
+              type: string
+              description: Citation source code, e.g. `oews_wage`.
+            observedAt:
+              type: string
+              format: date-time
+              nullable: true
+    RateCardOffCardEntry:
+      type: object
+      required:
+      - id
+      - workDate
+      - role
+      - hours
+      - billedAmountUsd
+      properties:
+        id:
+          type: string
+        workDate:
+          type: string
+          format: date-time
+        role:
+          type: string
+        seniority:
+          type: string
+          nullable: true
+        hours:
+          type: number
+        unitRateUsd:
+          type: number
+          nullable: true
+        billedAmount:
+          type: number
+          nullable: true
+        billedAmountUsd:
+          type: number
+        currency:
+          type: string
+          nullable: true
+        sowId:
+          type: string
+          nullable: true
+        sowNumber:
+          type: string
+          nullable: true
+    RateCardOffCardPoLine:
+      type: object
+      description: 'PO-line leakage row: a services-class purchase-order
+        line booked against this card''s parent MSA contract whose
+        unit price exceeds the highest hourly rate on the card (or
+        any line if the card has no hourly rates). Each row carries
+        source-document identifiers (PO number, supplier, category)
+        the FE renders as deep links so the operator can pivot
+        directly to the PO and supplier records.'
+      required:
+      - poLineId
+      - poId
+      - extendedUsd
+      properties:
+        poLineId:
+          type: string
+        poId:
+          type: string
+        poNumber:
+          type: string
+          nullable: true
+        supplierId:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        orderDate:
+          type: string
+          nullable: true
+          description: ISO date (yyyy-mm-dd) of the PO line.
+        description:
+          type: string
+          nullable: true
+        categoryId:
+          type: string
+          nullable: true
+        categoryName:
+          type: string
+          nullable: true
+        unitPriceUsd:
+          type: number
+          nullable: true
+        extendedUsd:
+          type: number
+        cardMaxHourlyUsd:
+          type: number
+          nullable: true
+          description: 'Highest hourly rate on the card at query time
+            (the threshold this line breached). Null when the card
+            has no hourly rates — every services PO line on the
+            parent contract is then flagged.'
+    RateCardLineGridGroup:
+      type: object
+      description: 'A single role in the rate card laid out as a row of
+        seniority cells. Powers the role × seniority grid on the
+        rate-card detail page so an operator can sweep a full role
+        ladder without scrolling a flat table.'
+      required:
+      - role
+      - cells
+      properties:
+        role:
+          type: string
+        cells:
+          type: array
+          items:
+            type: object
+            required:
+            - seniority
+            - lineId
+            - unitRateUsd
+            - unit
+            properties:
+              seniority:
+                type: string
+                nullable: true
+              geography:
+                type: string
+                nullable: true
+              billingModel:
+                type: string
+                nullable: true
+              lineId:
+                type: string
+              unitRateUsd:
+                type: number
+              unit:
+                type: string
+              band:
+                type: string
+                nullable: true
+                enum:
+                - green
+                - yellow
+                - orange
+                - red
+    RateCardLinkedOpportunity:
+      type: object
+      description: Open opportunity referencing this rate card.
+      required:
+      - id
+      - leverId
+      - status
+      - title
+      - projectedSavingsUsd
+      - createdAt
+      properties:
+        id:
+          type: string
+        leverId:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        projectedSavingsUsd:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+    RateCardOffCardInvoice:
+      type: object
+      description: Invoice off-card row — a services-class invoice
+        booked against this card's parent MSA contract that bypassed
+        the rate-card line schedule.
+      required:
+      - invoiceId
+      - amountUsd
+      properties:
+        invoiceId:
+          type: string
+        invoiceNumber:
+          type: string
+          nullable: true
+        supplierId:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        poId:
+          type: string
+          nullable: true
+        poNumber:
+          type: string
+          nullable: true
+        invoiceDate:
+          type: string
+          nullable: true
+          description: ISO date (yyyy-mm-dd) of the invoice.
+        status:
+          type: string
+          nullable: true
+        amountUsd:
+          type: number
+    RateCardDetail:
+      allOf:
+      - $ref: '#/components/schemas/RateCard'
+      - type: object
+        required:
+        - lines
+        - linesByRole
+        - recentOffCardEntries
+        - recentOffCardPoLines
+        - recentOffCardInvoices
+        - linkedOpportunities
+        - offCardPoMismatchUsd
+        - offCardInvoiceUsd
+        properties:
+          offCardPoMismatchUsd:
+            type: number
+            description: 'Trailing-365d PO-line leakage: services-class PO
+              lines booked against this card''s parent MSA contract
+              whose `unit_price_usd` exceeds the highest hourly line
+              on the card. Captures rate-card bypasses that never
+              made it into a time entry. Combined with
+              `offCardSpendUsd` this is the full leakage surface a
+              category manager negotiates against. 0 when the card
+              has no parent contract.'
+          offCardInvoiceUsd:
+            type: number
+            description: 'Trailing-365d invoice off-card spend: invoices
+              billed against POs on this card''s parent MSA contract
+              over the past year. Captures direct-bill leakage that
+              never went through a time entry or rate-card-aligned
+              PO line. 0 when the card has no parent contract.'
+          lines:
+            type: array
+            items:
+              $ref: '#/components/schemas/RateCardLine'
+          linesByRole:
+            type: array
+            description: 'Same lines as `lines`, but pivoted into a
+              role-by-seniority grid so the FE can render a true
+              ladder view without re-sorting.'
+            items:
+              $ref: '#/components/schemas/RateCardLineGridGroup'
+          recentOffCardEntries:
+            type: array
+            description: Last 10 time entries that priced outside the card.
+            items:
+              $ref: '#/components/schemas/RateCardOffCardEntry'
+          recentOffCardPoLines:
+            type: array
+            description: 'Per-line PO leakage rows (up to 50, ordered
+              by extended USD desc). Each row carries source-document
+              identifiers — PO number, supplier, category — that the
+              FE renders as deep links so the operator can pivot
+              into the originating PO/supplier records. Empty when
+              the card has no parent contract or no breaching lines.'
+            items:
+              $ref: '#/components/schemas/RateCardOffCardPoLine'
+          recentOffCardInvoices:
+            type: array
+            description: 'Per-invoice off-card listing (up to 50, ordered
+              by amount desc). Surfaces invoice-level leakage so the
+              operator can pivot into the source invoice. Empty when
+              the card has no parent contract.'
+            items:
+              $ref: '#/components/schemas/RateCardOffCardInvoice'
+          linkedOpportunities:
+            type: array
+            description: |
+              Open opportunities (`status='open'`) drafted by the
+              `services_rate_card_benchmark` lever (or any other
+              services-side lever) whose `inputs.rateCardId` points at
+              this card. Empty list when no benchmark levers have
+              flagged anything.
+            items:
+              $ref: '#/components/schemas/RateCardLinkedOpportunity'
+    ServicesSpendResponse:
+      type: object
+      description: Services-only spend slice rendered on the Services > Spend tab.
+      required:
+      - totalServicesSpendUsd
+      - byContractType
+      - topSuppliers
+      - topCategories
+      properties:
+        totalServicesSpendUsd:
+          type: number
+        byContractType:
+          type: array
+          items:
+            type: object
+            required:
+            - contractType
+            - spendUsd
+            - share
+            properties:
+              contractType:
+                type: string
+                enum:
+                - goods
+                - t_and_m
+                - fixed_price
+                - milestone
+                - retainer
+                - outcome
+              spendUsd:
+                type: number
+              share:
+                type: number
+                description: Fraction of services spend in this bucket (0–1).
+        topSuppliers:
+          type: array
+          items:
+            type: object
+            required:
+            - supplierId
+            - supplierName
+            - spendUsd
+            properties:
+              supplierId:
+                type: string
+              supplierName:
+                type: string
+              spendUsd:
+                type: number
+        topCategories:
+          type: array
+          items:
+            type: object
+            required:
+            - categoryCode
+            - categoryName
+            - spendUsd
+            properties:
+              categoryCode:
+                type: string
+              categoryName:
+                type: string
+              spendUsd:
+                type: number
     IntelligenceSignal:
       type: object
       description: 'Signal Browser row. Includes the resolved scope label and a

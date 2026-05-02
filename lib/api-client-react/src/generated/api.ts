@@ -85,6 +85,8 @@ import type {
   GetCollectorCostParams,
   GetIntelligenceCoverageGapsParams,
   GetIntelligenceRiskHeatmapParams,
+  GetServicesSpendParams,
+  GetSpendOverviewParams,
   HealthStatus,
   IngestCsvBatchParams,
   IngestCsvStreamBodyOne,
@@ -115,6 +117,8 @@ import type {
   ListJobsParams,
   ListMarketSignalsParams,
   ListOpportunitiesParams,
+  ListRateCardsParams,
+  ListSowsParams,
   ListSuppliersParams,
   ListWatchedIssuersParams,
   MarketSignal,
@@ -139,6 +143,8 @@ import type {
   PatchOnboardingStateRequest,
   PatchSupplierRequest,
   PatchWatchlistRequest,
+  RateCardDetail,
+  RateCardListResponse,
   ReadinessResponse,
   RealizeOpportunityRequest,
   RegisterCollectorRequest,
@@ -146,6 +152,10 @@ import type {
   RunCycleResponse,
   RunNextCycleParams,
   SampleDataResult,
+  ServicesSpendResponse,
+  SowDetail,
+  SowListResponse,
+  SpendByBand,
   SpendOverview,
   SubmitDefensePackFeedbackRequest,
   SupplierDetail,
@@ -555,43 +565,63 @@ export function useGetTrustSummary<
 }
 
 /**
+ * Trailing-12-month spend rollup. Optional `segment` query narrows every aggregation in the response (byClass, byCategory, bySupplier, byBusinessUnit, concentration, …) to either the `goods` or `services` slice — defined identically to the `services` band on `/spend/by-band` so the two cards always reconcile. The `goodsVsServices` block is always returned at the org-wide totals so the segmented control can render its share pills regardless of the active segment.
  * @summary Spend overview (last 12 months)
  */
-export const getGetSpendOverviewUrl = () => {
-  return `/api/spend/overview`;
+export const getGetSpendOverviewUrl = (params?: GetSpendOverviewParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/spend/overview?${stringifiedParams}`
+    : `/api/spend/overview`;
 };
 
 export const getSpendOverview = async (
+  params?: GetSpendOverviewParams,
   options?: RequestInit,
 ): Promise<SpendOverview> => {
-  return customFetch<SpendOverview>(getGetSpendOverviewUrl(), {
+  return customFetch<SpendOverview>(getGetSpendOverviewUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetSpendOverviewQueryKey = () => {
-  return [`/api/spend/overview`] as const;
+export const getGetSpendOverviewQueryKey = (
+  params?: GetSpendOverviewParams,
+) => {
+  return [`/api/spend/overview`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetSpendOverviewQueryOptions = <
   TData = Awaited<ReturnType<typeof getSpendOverview>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSpendOverview>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params?: GetSpendOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSpendOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetSpendOverviewQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSpendOverviewQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getSpendOverview>>
-  > = ({ signal }) => getSpendOverview({ signal, ...requestOptions });
+  > = ({ signal }) => getSpendOverview(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getSpendOverview>>,
@@ -612,15 +642,94 @@ export type GetSpendOverviewQueryError = ErrorType<unknown>;
 export function useGetSpendOverview<
   TData = Awaited<ReturnType<typeof getSpendOverview>>,
   TError = ErrorType<unknown>,
+>(
+  params?: GetSpendOverviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSpendOverview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSpendOverviewQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns trailing-90-day spend split across the six routing bands (`indexable`, `concentrated`, `fragmented`, `subscription`, `capital`, `services`). Powers the "by-Band" lens on Spend Overview. The 90-day window keeps the band signal recent enough to drive routing decisions; the longer 12-month series stays available on `/spend/overview`. Categories without a band binding AND without a `service` taxonomy class are surfaced separately as `unmappedCategoryCount` / `unmappedSpendUsd` so the operator can see the addressable-but-unrouted tail; the same rows are also folded into the `fragmented` bucket so bucket totals always reconcile to the 90-day total.
+ * @summary Spend bucketed by routing band (last 90 days)
+ */
+export const getGetSpendByBandUrl = () => {
+  return `/api/spend/by-band`;
+};
+
+export const getSpendByBand = async (
+  options?: RequestInit,
+): Promise<SpendByBand> => {
+  return customFetch<SpendByBand>(getGetSpendByBandUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSpendByBandQueryKey = () => {
+  return [`/api/spend/by-band`] as const;
+};
+
+export const getGetSpendByBandQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSpendByBand>>,
+  TError = ErrorType<unknown>,
 >(options?: {
   query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSpendOverview>>,
+    Awaited<ReturnType<typeof getSpendByBand>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSpendByBandQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSpendByBand>>> = ({
+    signal,
+  }) => getSpendByBand({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSpendByBand>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSpendByBandQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSpendByBand>>
+>;
+export type GetSpendByBandQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Spend bucketed by routing band (last 90 days)
+ */
+
+export function useGetSpendByBand<
+  TData = Awaited<ReturnType<typeof getSpendByBand>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSpendByBand>>,
     TError,
     TData
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSpendOverviewQueryOptions(options);
+  const queryOptions = getGetSpendByBandQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -7006,6 +7115,474 @@ export const usePatchContract = <
 > => {
   return useMutation(getPatchContractMutationOptions(options));
 };
+
+/**
+ * Returns the tenant's SOWs alongside their rolled-up milestone
+counts and total value. Powers the "SOWs" tab on the Services
+page.
+
+ * @summary List Statements of Work (search + filters + cursor pagination)
+ */
+export const getListSowsUrl = (params?: ListSowsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sows?${stringifiedParams}`
+    : `/api/sows`;
+};
+
+export const listSows = async (
+  params?: ListSowsParams,
+  options?: RequestInit,
+): Promise<SowListResponse> => {
+  return customFetch<SowListResponse>(getListSowsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSowsQueryKey = (params?: ListSowsParams) => {
+  return [`/api/sows`, ...(params ? [params] : [])] as const;
+};
+
+export const getListSowsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSows>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSowsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSows>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSowsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSows>>> = ({
+    signal,
+  }) => listSows(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSows>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSowsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSows>>
+>;
+export type ListSowsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List Statements of Work (search + filters + cursor pagination)
+ */
+
+export function useListSows<
+  TData = Awaited<ReturnType<typeof listSows>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSowsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSows>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSowsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary SOW detail (header + milestones + change orders + supplier/MSA links)
+ */
+export const getGetSowUrl = (id: string) => {
+  return `/api/sows/${id}`;
+};
+
+export const getSow = async (
+  id: string,
+  options?: RequestInit,
+): Promise<SowDetail> => {
+  return customFetch<SowDetail>(getGetSowUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSowQueryKey = (id: string) => {
+  return [`/api/sows/${id}`] as const;
+};
+
+export const getGetSowQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSow>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSow>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSowQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSow>>> = ({
+    signal,
+  }) => getSow(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getSow>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetSowQueryResult = NonNullable<Awaited<ReturnType<typeof getSow>>>;
+export type GetSowQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary SOW detail (header + milestones + change orders + supplier/MSA links)
+ */
+
+export function useGetSow<
+  TData = Awaited<ReturnType<typeof getSow>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSow>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSowQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the tenant's rate cards plus a derived `lineCount`
+and `offCardSpendUsd` (trailing-365d spend at unit prices that
+do not match any line on the card — the leakage indicator on
+the Rate Cards tab).
+
+ * @summary List rate cards
+ */
+export const getListRateCardsUrl = (params?: ListRateCardsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/rate-cards?${stringifiedParams}`
+    : `/api/rate-cards`;
+};
+
+export const listRateCards = async (
+  params?: ListRateCardsParams,
+  options?: RequestInit,
+): Promise<RateCardListResponse> => {
+  return customFetch<RateCardListResponse>(getListRateCardsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRateCardsQueryKey = (params?: ListRateCardsParams) => {
+  return [`/api/rate-cards`, ...(params ? [params] : [])] as const;
+};
+
+export const getListRateCardsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRateCards>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRateCardsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRateCards>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListRateCardsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listRateCards>>> = ({
+    signal,
+  }) => listRateCards(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRateCards>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRateCardsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRateCards>>
+>;
+export type ListRateCardsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List rate cards
+ */
+
+export function useListRateCards<
+  TData = Awaited<ReturnType<typeof listRateCards>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRateCardsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRateCards>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRateCardsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns each `RateCardLine` annotated with a market-benchmark
+band derived from the most recent `oews_wage` market signal for
+that role/geography (when available): green ≤ p50, yellow
+p50–p75, orange p75–p90, red > p90. Also returns the most
+recent off-card time entries so the operator can drill in from
+the leakage KPI on the list page.
+
+ * @summary Rate card detail (header + lines + market benchmarks + recent time entries)
+ */
+export const getGetRateCardUrl = (id: string) => {
+  return `/api/rate-cards/${id}`;
+};
+
+export const getRateCard = async (
+  id: string,
+  options?: RequestInit,
+): Promise<RateCardDetail> => {
+  return customFetch<RateCardDetail>(getGetRateCardUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRateCardQueryKey = (id: string) => {
+  return [`/api/rate-cards/${id}`] as const;
+};
+
+export const getGetRateCardQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRateCard>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRateCard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRateCardQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRateCard>>> = ({
+    signal,
+  }) => getRateCard(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRateCard>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRateCardQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRateCard>>
+>;
+export type GetRateCardQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Rate card detail (header + lines + market benchmarks + recent time entries)
+ */
+
+export function useGetRateCard<
+  TData = Awaited<ReturnType<typeof getRateCard>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRateCard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRateCardQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Trailing-12-month services-only rollup powering the "Services
+Spend" tab. Splits services spend by contract type (T&M vs
+fixed-price vs milestone vs retainer vs outcome), top services
+suppliers, and top services categories.
+
+ * @summary Services spend slice (last 12 months)
+ */
+export const getGetServicesSpendUrl = (params?: GetServicesSpendParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/services/spend?${stringifiedParams}`
+    : `/api/services/spend`;
+};
+
+export const getServicesSpend = async (
+  params?: GetServicesSpendParams,
+  options?: RequestInit,
+): Promise<ServicesSpendResponse> => {
+  return customFetch<ServicesSpendResponse>(getGetServicesSpendUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetServicesSpendQueryKey = (
+  params?: GetServicesSpendParams,
+) => {
+  return [`/api/services/spend`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetServicesSpendQueryOptions = <
+  TData = Awaited<ReturnType<typeof getServicesSpend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetServicesSpendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getServicesSpend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetServicesSpendQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getServicesSpend>>
+  > = ({ signal }) => getServicesSpend(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getServicesSpend>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetServicesSpendQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getServicesSpend>>
+>;
+export type GetServicesSpendQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Services spend slice (last 12 months)
+ */
+
+export function useGetServicesSpend<
+  TData = Awaited<ReturnType<typeof getServicesSpend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetServicesSpendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getServicesSpend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetServicesSpendQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the rows the active tenant has added to the watched-issuer

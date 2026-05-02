@@ -343,8 +343,20 @@ export const GetTrustSummaryResponse = zod.object({
 });
 
 /**
+ * Trailing-12-month spend rollup. Optional `segment` query narrows every aggregation in the response (byClass, byCategory, bySupplier, byBusinessUnit, concentration, …) to either the `goods` or `services` slice — defined identically to the `services` band on `/spend/by-band` so the two cards always reconcile. The `goodsVsServices` block is always returned at the org-wide totals so the segmented control can render its share pills regardless of the active segment.
  * @summary Spend overview (last 12 months)
  */
+export const getSpendOverviewQuerySegmentDefault = `all`;
+
+export const GetSpendOverviewQueryParams = zod.object({
+  segment: zod
+    .enum(["all", "goods", "services"])
+    .default(getSpendOverviewQuerySegmentDefault)
+    .describe(
+      "Restrict every aggregation in the response to a slice of spend. `goods` = lines whose category class is not `service` and which are not bound to the `services` routing band. `services` = the inverse. `all` (default) returns the full roll-up.",
+    ),
+});
+
 export const GetSpendOverviewHeader = zod.object({
   "x-org-id": zod
     .string()
@@ -356,6 +368,16 @@ export const GetSpendOverviewHeader = zod.object({
 
 export const GetSpendOverviewResponse = zod.object({
   totalSpendUsd: zod.number(),
+  goodsVsServices: zod.object({
+    goodsSpendUsd: zod.number(),
+    servicesSpendUsd: zod.number(),
+    goodsShare: zod
+      .number()
+      .describe("Fraction of total spend on goods (0–1)."),
+    servicesShare: zod
+      .number()
+      .describe("Fraction of total spend on services (0–1)."),
+  }),
   byClass: zod.array(
     zod.object({
       spendClass: zod.string(),
@@ -391,6 +413,65 @@ export const GetSpendOverviewResponse = zod.object({
     tailSpendUsd: zod.number(),
   }),
 });
+
+/**
+ * Returns trailing-90-day spend split across the six routing bands (`indexable`, `concentrated`, `fragmented`, `subscription`, `capital`, `services`). Powers the "by-Band" lens on Spend Overview. The 90-day window keeps the band signal recent enough to drive routing decisions; the longer 12-month series stays available on `/spend/overview`. Categories without a band binding AND without a `service` taxonomy class are surfaced separately as `unmappedCategoryCount` / `unmappedSpendUsd` so the operator can see the addressable-but-unrouted tail; the same rows are also folded into the `fragmented` bucket so bucket totals always reconcile to the 90-day total.
+ * @summary Spend bucketed by routing band (last 90 days)
+ */
+export const GetSpendByBandHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetSpendByBandResponse = zod
+  .object({
+    totalSpendUsd: zod.number(),
+    unmappedCategoryCount: zod
+      .number()
+      .describe(
+        "Distinct categories in the 90-day window with no `category_bands` row and not classed as `service`. These rows still get counted in the `fragmented` bucket so totals reconcile.",
+      ),
+    unmappedSpendUsd: zod
+      .number()
+      .describe("90-day spend attributable to unmapped categories."),
+    byBand: zod.array(
+      zod.object({
+        band: zod.enum([
+          "indexable",
+          "concentrated",
+          "fragmented",
+          "subscription",
+          "capital",
+          "services",
+        ]),
+        spendUsd: zod.number(),
+        share: zod
+          .number()
+          .describe("Fraction of total spend in this band (0–1)."),
+        categoryCount: zod.number().optional(),
+        supplierCount: zod.number().optional(),
+        topCategories: zod
+          .array(
+            zod.object({
+              categoryId: zod.string(),
+              categoryName: zod.string(),
+              spendUsd: zod.number(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Top categories driving spend within this band, capped at 5. Powers the per-band drill-down on Spend Overview so operators can jump straight to the rows they need to address.",
+          ),
+      }),
+    ),
+  })
+  .describe(
+    "Spend bucketed by routing band. Drives the \"by-Band\" lens on Spend Overview. Trailing 90 days. The six bands are the routing model's shared vocabulary (`indexable`, `concentrated`, `fragmented`, `subscription`, `capital`, `services`); rows whose category has no band assigned and isn't taxonomy-classed as a service fall through to `fragmented` AND are also tallied as the unmapped tail (`unmappedCategoryCount` \/ `unmappedSpendUsd`) so the operator can prioritise routing decisions without losing total reconciliation.",
+  );
 
 /**
  * @summary List suppliers
@@ -509,6 +590,66 @@ export const GetSupplierResponse = zod
         })
         .describe(
           "Trailing-365-day spend rollup for one supplier. Numbers are in\nUSD; `monthly` is ordered oldest-first so the chart can render\na left-to-right time series without re-sorting.\n",
+        ),
+      services: zod
+        .object({
+          activeSowCount: zod.number(),
+          openMilestoneCount: zod
+            .number()
+            .describe(
+              "SOW milestones not yet `accepted`\/`invoiced`\/`paid`\/`cancelled`.",
+            ),
+          rateCardCount: zod.number(),
+          totalServicesSpendUsd: zod
+            .number()
+            .describe("Trailing-365d spend tied to services contracts only."),
+          timeAndMaterialsSpendUsd: zod.number(),
+          fixedPriceSpendUsd: zod.number(),
+          upcomingMilestoneDueDate: zod.coerce
+            .date()
+            .nullish()
+            .describe("Earliest non-cancelled milestone due date, if any."),
+          avgBlendedRateUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "Trailing-90d weighted blended bill rate across all time entries logged for this supplier (sum(amount_usd) \/ sum(hours)). Null when no time entries exist.",
+            ),
+          offCardSpendShare: zod
+            .number()
+            .describe(
+              "Share of trailing-90d time-entry spend that priced outside any rate card line (`rate_card_line_id IS NULL`). 0–1; 0 if there's no time-entry activity at all.",
+            ),
+          changeOrderRatio: zod
+            .number()
+            .describe(
+              "Sum of committed (approved\/executed) change-order value across the supplier's currently active SOWs, divided by the total NTE of those active SOWs. 0 when there is no active-SOW NTE to divide by.",
+            ),
+          hasServicesActivity: zod
+            .boolean()
+            .describe(
+              "True when the supplier has at least one services contract, SOW (any status), or time entry on record. Lets the FE show the Services Engagement card for suppliers that have engagement history without recent numeric spend.",
+            ),
+          utilizationSignalCount: zod
+            .number()
+            .describe(
+              "Total person-week hours-audit signals over the trailing 90 days — sum of `utilizationOverloadCount` and `utilizationUnderutilCount`. Each signal is a (resource, ISO-week) pair where weekly hours either exceed the overload threshold (>50 hrs) or fall below the under-utilization threshold (<10 hrs while the resource was otherwise active that quarter). Replaces the earlier opportunity-count derivation so the KPI is grounded in time-entry actuals.",
+            ),
+          utilizationOverloadCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Person-week pairs over the trailing 90 days where weekly hours exceeded 50. Sustained overload is a burnout\/quality risk and a renegotiation lever (extra staffing under the same NTE).",
+            ),
+          utilizationUnderutilCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Person-week pairs over the trailing 90 days where weekly hours fell below 10 while the resource was otherwise active that quarter. Captures bench burn the client is paying for.",
+            ),
+        })
+        .describe(
+          'Services-side rollup for a single supplier — drives the \"Services engagement\" card on Supplier 360. Activity counters and `totalServicesSpendUsd` are trailing 365d; `avgBlendedRateUsd` and `offCardSpendShare` are trailing 90d; `changeOrderRatio` is computed across all currently active SOWs (not time-windowed).',
         ),
       contracts: zod.array(
         zod.object({
@@ -661,6 +802,66 @@ export const PatchSupplierResponse = zod
         })
         .describe(
           "Trailing-365-day spend rollup for one supplier. Numbers are in\nUSD; `monthly` is ordered oldest-first so the chart can render\na left-to-right time series without re-sorting.\n",
+        ),
+      services: zod
+        .object({
+          activeSowCount: zod.number(),
+          openMilestoneCount: zod
+            .number()
+            .describe(
+              "SOW milestones not yet `accepted`\/`invoiced`\/`paid`\/`cancelled`.",
+            ),
+          rateCardCount: zod.number(),
+          totalServicesSpendUsd: zod
+            .number()
+            .describe("Trailing-365d spend tied to services contracts only."),
+          timeAndMaterialsSpendUsd: zod.number(),
+          fixedPriceSpendUsd: zod.number(),
+          upcomingMilestoneDueDate: zod.coerce
+            .date()
+            .nullish()
+            .describe("Earliest non-cancelled milestone due date, if any."),
+          avgBlendedRateUsd: zod
+            .number()
+            .nullable()
+            .describe(
+              "Trailing-90d weighted blended bill rate across all time entries logged for this supplier (sum(amount_usd) \/ sum(hours)). Null when no time entries exist.",
+            ),
+          offCardSpendShare: zod
+            .number()
+            .describe(
+              "Share of trailing-90d time-entry spend that priced outside any rate card line (`rate_card_line_id IS NULL`). 0–1; 0 if there's no time-entry activity at all.",
+            ),
+          changeOrderRatio: zod
+            .number()
+            .describe(
+              "Sum of committed (approved\/executed) change-order value across the supplier's currently active SOWs, divided by the total NTE of those active SOWs. 0 when there is no active-SOW NTE to divide by.",
+            ),
+          hasServicesActivity: zod
+            .boolean()
+            .describe(
+              "True when the supplier has at least one services contract, SOW (any status), or time entry on record. Lets the FE show the Services Engagement card for suppliers that have engagement history without recent numeric spend.",
+            ),
+          utilizationSignalCount: zod
+            .number()
+            .describe(
+              "Total person-week hours-audit signals over the trailing 90 days — sum of `utilizationOverloadCount` and `utilizationUnderutilCount`. Each signal is a (resource, ISO-week) pair where weekly hours either exceed the overload threshold (>50 hrs) or fall below the under-utilization threshold (<10 hrs while the resource was otherwise active that quarter). Replaces the earlier opportunity-count derivation so the KPI is grounded in time-entry actuals.",
+            ),
+          utilizationOverloadCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Person-week pairs over the trailing 90 days where weekly hours exceeded 50. Sustained overload is a burnout\/quality risk and a renegotiation lever (extra staffing under the same NTE).",
+            ),
+          utilizationUnderutilCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Person-week pairs over the trailing 90 days where weekly hours fell below 10 while the resource was otherwise active that quarter. Captures bench burn the client is paying for.",
+            ),
+        })
+        .describe(
+          'Services-side rollup for a single supplier — drives the \"Services engagement\" card on Supplier 360. Activity counters and `totalServicesSpendUsd` are trailing 365d; `avgBlendedRateUsd` and `offCardSpendShare` are trailing 90d; `changeOrderRatio` is computed across all currently active SOWs (not time-windowed).',
         ),
       contracts: zod.array(
         zod.object({
@@ -4310,6 +4511,37 @@ export const ListContractsResponse = zod.object({
       contractNumber: zod.string(),
       title: zod.string(),
       status: zod.enum(["active", "pending", "expired", "cancelled"]),
+      contractType: zod
+        .enum([
+          "goods",
+          "t_and_m",
+          "fixed_price",
+          "milestone",
+          "retainer",
+          "outcome",
+        ])
+        .optional()
+        .describe(
+          "Commercial structure of the contract. `goods` is the legacy\ndefault and back-fills any pre-#214 row. Anything other than\n`goods` is a services contract and unlocks the services-side\nUI (SOW list, rate cards, services KPIs).\n",
+        ),
+      msaParentId: zod
+        .string()
+        .nullish()
+        .describe(
+          "Self-FK to the parent MSA when this row is itself a child\nagreement under a master agreement. Null for top-level\ncontracts.\n",
+        ),
+      serviceLevelTerms: zod
+        .unknown()
+        .nullish()
+        .describe(
+          "Free-form SLA terms. Either a structured object\n(e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by\nadapters or a partner's verbatim text payload.\n",
+        ),
+      acceptanceCriteria: zod
+        .string()
+        .nullish()
+        .describe(
+          'Plain-text acceptance criteria. Used on services contracts\nto document what \"delivered\" means at MSA level.\n',
+        ),
       derivedStatus: zod
         .enum(["active", "expiring", "expired", "pending", "cancelled"])
         .describe(
@@ -4367,6 +4599,37 @@ export const GetContractResponse = zod
     contractNumber: zod.string(),
     title: zod.string(),
     status: zod.enum(["active", "pending", "expired", "cancelled"]),
+    contractType: zod
+      .enum([
+        "goods",
+        "t_and_m",
+        "fixed_price",
+        "milestone",
+        "retainer",
+        "outcome",
+      ])
+      .optional()
+      .describe(
+        "Commercial structure of the contract. `goods` is the legacy\ndefault and back-fills any pre-#214 row. Anything other than\n`goods` is a services contract and unlocks the services-side\nUI (SOW list, rate cards, services KPIs).\n",
+      ),
+    msaParentId: zod
+      .string()
+      .nullish()
+      .describe(
+        "Self-FK to the parent MSA when this row is itself a child\nagreement under a master agreement. Null for top-level\ncontracts.\n",
+      ),
+    serviceLevelTerms: zod
+      .unknown()
+      .nullish()
+      .describe(
+        "Free-form SLA terms. Either a structured object\n(e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by\nadapters or a partner's verbatim text payload.\n",
+      ),
+    acceptanceCriteria: zod
+      .string()
+      .nullish()
+      .describe(
+        'Plain-text acceptance criteria. Used on services contracts\nto document what \"delivered\" means at MSA level.\n',
+      ),
     derivedStatus: zod
       .enum(["active", "expiring", "expired", "pending", "cancelled"])
       .describe(
@@ -4480,6 +4743,26 @@ export const GetContractResponse = zod
           createdAt: zod.coerce.date(),
         }),
       ),
+      childSows: zod
+        .array(
+          zod
+            .object({
+              id: zod.string(),
+              sowNumber: zod.string(),
+              title: zod.string(),
+              status: zod.enum(["draft", "active", "completed", "cancelled"]),
+              startDate: zod.coerce.date().nullish(),
+              endDate: zod.coerce.date().nullish(),
+              totalValueUsd: zod.number(),
+              milestoneCount: zod.number(),
+              openMilestoneCount: zod.number(),
+            })
+            .describe("A SOW row rendered inline on the contract-detail page."),
+        )
+        .optional()
+        .describe(
+          "When this contract is a master agreement, the SOWs that\npoint at it via `msa_contract_id`. Empty for non-master \/\nnon-services contracts.\n",
+        ),
     }),
   );
 
@@ -4540,6 +4823,37 @@ export const PatchContractResponse = zod
     contractNumber: zod.string(),
     title: zod.string(),
     status: zod.enum(["active", "pending", "expired", "cancelled"]),
+    contractType: zod
+      .enum([
+        "goods",
+        "t_and_m",
+        "fixed_price",
+        "milestone",
+        "retainer",
+        "outcome",
+      ])
+      .optional()
+      .describe(
+        "Commercial structure of the contract. `goods` is the legacy\ndefault and back-fills any pre-#214 row. Anything other than\n`goods` is a services contract and unlocks the services-side\nUI (SOW list, rate cards, services KPIs).\n",
+      ),
+    msaParentId: zod
+      .string()
+      .nullish()
+      .describe(
+        "Self-FK to the parent MSA when this row is itself a child\nagreement under a master agreement. Null for top-level\ncontracts.\n",
+      ),
+    serviceLevelTerms: zod
+      .unknown()
+      .nullish()
+      .describe(
+        "Free-form SLA terms. Either a structured object\n(e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by\nadapters or a partner's verbatim text payload.\n",
+      ),
+    acceptanceCriteria: zod
+      .string()
+      .nullish()
+      .describe(
+        'Plain-text acceptance criteria. Used on services contracts\nto document what \"delivered\" means at MSA level.\n',
+      ),
     derivedStatus: zod
       .enum(["active", "expiring", "expired", "pending", "cancelled"])
       .describe(
@@ -4653,8 +4967,680 @@ export const PatchContractResponse = zod
           createdAt: zod.coerce.date(),
         }),
       ),
+      childSows: zod
+        .array(
+          zod
+            .object({
+              id: zod.string(),
+              sowNumber: zod.string(),
+              title: zod.string(),
+              status: zod.enum(["draft", "active", "completed", "cancelled"]),
+              startDate: zod.coerce.date().nullish(),
+              endDate: zod.coerce.date().nullish(),
+              totalValueUsd: zod.number(),
+              milestoneCount: zod.number(),
+              openMilestoneCount: zod.number(),
+            })
+            .describe("A SOW row rendered inline on the contract-detail page."),
+        )
+        .optional()
+        .describe(
+          "When this contract is a master agreement, the SOWs that\npoint at it via `msa_contract_id`. Empty for non-master \/\nnon-services contracts.\n",
+        ),
     }),
   );
+
+/**
+ * Returns the tenant's SOWs alongside their rolled-up milestone
+counts and total value. Powers the "SOWs" tab on the Services
+page.
+
+ * @summary List Statements of Work (search + filters + cursor pagination)
+ */
+export const listSowsQueryLimitDefault = 50;
+export const listSowsQueryLimitMax = 200;
+
+export const ListSowsQueryParams = zod.object({
+  search: zod.coerce
+    .string()
+    .optional()
+    .describe("Substring match on `sowNumber` or `title`."),
+  status: zod.enum(["draft", "active", "completed", "cancelled"]).optional(),
+  supplierId: zod.coerce.string().optional(),
+  msaContractId: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listSowsQueryLimitMax)
+    .default(listSowsQueryLimitDefault),
+  cursor: zod.coerce.string().optional(),
+});
+
+export const ListSowsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListSowsResponse = zod.object({
+  items: zod.array(
+    zod
+      .object({
+        id: zod.string(),
+        sowNumber: zod.string(),
+        title: zod.string(),
+        status: zod.enum(["draft", "active", "completed", "cancelled"]),
+        supplierId: zod.string().nullable(),
+        supplierName: zod.string().nullable(),
+        msaContractId: zod.string().nullable(),
+        msaContractNumber: zod.string().nullish(),
+        msaContractTitle: zod.string().nullish(),
+        startDate: zod.coerce.date().nullish(),
+        endDate: zod.coerce.date().nullish(),
+        currency: zod
+          .string()
+          .describe(
+            "ISO 4217 currency for `totalValue` (USD-converted in `totalValueUsd`).",
+          ),
+        totalValue: zod
+          .number()
+          .nullish()
+          .describe("Native-currency total committed under this SOW."),
+        totalValueUsd: zod
+          .number()
+          .describe("USD-converted total committed under this SOW."),
+        nteUsd: zod
+          .number()
+          .describe(
+            "Not-to-exceed ceiling for this SOW (mirrors `totalValueUsd`). Surfaced as a distinct field so the FE can render NTE-anchored burn copy without aliasing.",
+          ),
+        earnedUsd: zod
+          .number()
+          .describe(
+            "Sum of accepted\/invoiced\/paid milestone values for this SOW. Drives the burned% on the list page so it reconciles with the detail view.",
+          ),
+        burnedPct: zod
+          .number()
+          .describe(
+            "`earnedUsd \/ nteUsd`, clamped to [0,1]. 0 when there is no NTE on the SOW.",
+          ),
+        milestoneCount: zod.number(),
+        openMilestoneCount: zod
+          .number()
+          .describe("Milestones not in a terminal state."),
+        changeOrderCount: zod
+          .number()
+          .describe(
+            "Total change orders issued against this SOW (any status). The Services tab uses this for the CO column on the SOWs list.",
+          ),
+        owner: zod.string().nullish(),
+        createdAt: zod.coerce.date(),
+      })
+      .describe(
+        "A Statement of Work — a child agreement under a master services\ncontract (MSA). Powers the Services > SOWs tab and the SOW\ndetail page.\n",
+      ),
+  ),
+  nextCursor: zod.string().nullish(),
+});
+
+/**
+ * @summary SOW detail (header + milestones + change orders + supplier/MSA links)
+ */
+export const GetSowParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetSowHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetSowResponse = zod
+  .object({
+    id: zod.string(),
+    sowNumber: zod.string(),
+    title: zod.string(),
+    status: zod.enum(["draft", "active", "completed", "cancelled"]),
+    supplierId: zod.string().nullable(),
+    supplierName: zod.string().nullable(),
+    msaContractId: zod.string().nullable(),
+    msaContractNumber: zod.string().nullish(),
+    msaContractTitle: zod.string().nullish(),
+    startDate: zod.coerce.date().nullish(),
+    endDate: zod.coerce.date().nullish(),
+    currency: zod
+      .string()
+      .describe(
+        "ISO 4217 currency for `totalValue` (USD-converted in `totalValueUsd`).",
+      ),
+    totalValue: zod
+      .number()
+      .nullish()
+      .describe("Native-currency total committed under this SOW."),
+    totalValueUsd: zod
+      .number()
+      .describe("USD-converted total committed under this SOW."),
+    nteUsd: zod
+      .number()
+      .describe(
+        "Not-to-exceed ceiling for this SOW (mirrors `totalValueUsd`). Surfaced as a distinct field so the FE can render NTE-anchored burn copy without aliasing.",
+      ),
+    earnedUsd: zod
+      .number()
+      .describe(
+        "Sum of accepted\/invoiced\/paid milestone values for this SOW. Drives the burned% on the list page so it reconciles with the detail view.",
+      ),
+    burnedPct: zod
+      .number()
+      .describe(
+        "`earnedUsd \/ nteUsd`, clamped to [0,1]. 0 when there is no NTE on the SOW.",
+      ),
+    milestoneCount: zod.number(),
+    openMilestoneCount: zod
+      .number()
+      .describe("Milestones not in a terminal state."),
+    changeOrderCount: zod
+      .number()
+      .describe(
+        "Total change orders issued against this SOW (any status). The Services tab uses this for the CO column on the SOWs list.",
+      ),
+    owner: zod.string().nullish(),
+    createdAt: zod.coerce.date(),
+  })
+  .describe(
+    "A Statement of Work — a child agreement under a master services\ncontract (MSA). Powers the Services > SOWs tab and the SOW\ndetail page.\n",
+  )
+  .and(
+    zod.object({
+      description: zod.string().nullish(),
+      scope: zod
+        .unknown()
+        .nullish()
+        .describe(
+          "Structured scope JSON as captured on the SOW (free-form shape — typically a deliverables list, assumptions, and exclusions). Null if the SOW was loaded without a structured scope.",
+        ),
+      billingModel: zod
+        .enum([
+          "t_and_m",
+          "fixed_price",
+          "milestone",
+          "retainer",
+          "outcome",
+          "goods",
+        ])
+        .nullish()
+        .describe(
+          "Commercial model the SOW operates under. Derived from the parent MSA contract's `contract_type` so the SOW detail can reason about how to render rate \/ milestone widgets without re-deriving from data.",
+        ),
+      acceptanceCriteria: zod
+        .string()
+        .nullish()
+        .describe(
+          "Plain-text acceptance criteria recorded on the SOW. Distinct from per-milestone acceptance criteria; this is the SOW-wide gate.",
+        ),
+      burn: zod
+        .object({
+          committedUsd: zod.number(),
+          nteUsd: zod
+            .number()
+            .describe("Not-to-exceed ceiling (mirrors `committedUsd`)."),
+          earnedUsd: zod.number(),
+          burnedUsd: zod
+            .number()
+            .describe(
+              "Total time-entry burn over the visible window (sum of `weekly[].amountUsd`).",
+            ),
+          burnedPct: zod
+            .number()
+            .describe("`burnedUsd \/ nteUsd`, clamped to [0,1]."),
+          invoicedUsd: zod.number(),
+          runwayDays: zod.number().nullish(),
+          avgWeeklyBurnUsd: zod
+            .number()
+            .describe(
+              "Trailing 4-week average burn rate. Used to size the runway projection.",
+            ),
+          weekly: zod
+            .array(
+              zod.object({
+                weekStart: zod.coerce.date(),
+                hoursBilled: zod.number(),
+                amountUsd: zod.number(),
+                cumulativeUsd: zod.number(),
+              }),
+            )
+            .describe(
+              "Per-week time-entry burn series (last 26 weeks). The chart anchors every bar to ISO Monday so it lines up regardless of when individual entries were logged.",
+            ),
+        })
+        .describe(
+          "Snapshot of how this SOW is burning through committed budget plus a 26-week weekly burn series sourced from `time_entries`. `committedUsd` and `nteUsd` are the SOW ceiling (synonyms surfaced for clarity); `earnedUsd` sums accepted\/invoiced\/paid milestones; `burnedUsd` sums actual time-entry spend (the chart's y-axis); `invoicedUsd` sums invoiced\/paid milestones only. `runwayDays` is the NTE-anchored projection — remaining capacity divided by the trailing 4-week average burn rate, expressed in days. `weekly` is the per-week series the FE renders as a stacked-area chart against the NTE ceiling.",
+        ),
+      linkedOpportunities: zod
+        .array(
+          zod
+            .object({
+              id: zod.string(),
+              leverId: zod.string(),
+              status: zod.string(),
+              title: zod.string(),
+              projectedSavingsUsd: zod.number(),
+              createdAt: zod.coerce.date(),
+            })
+            .describe("Open opportunity referencing this SOW."),
+        )
+        .describe(
+          "Open opportunities (`status='open'`) drafted by any\nlever whose `inputs.sowId` references this SOW. Empty\nlist when no levers have flagged anything.\n",
+        ),
+      milestones: zod.array(
+        zod.object({
+          id: zod.string(),
+          sowId: zod.string(),
+          sequence: zod.number().describe("1-based ordering within the SOW."),
+          title: zod.string(),
+          status: zod.enum([
+            "pending",
+            "in_progress",
+            "delivered",
+            "accepted",
+            "invoiced",
+            "paid",
+            "cancelled",
+          ]),
+          dueDate: zod.coerce.date().nullish(),
+          deliveredDate: zod.coerce.date().nullish(),
+          acceptedDate: zod.coerce.date().nullish(),
+          amount: zod.number().nullish(),
+          amountUsd: zod.number(),
+          currency: zod.string().nullish(),
+          acceptanceCriteria: zod.string().nullish(),
+          isOverdue: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the milestone is still open (not accepted\/invoiced\/paid\/cancelled) and `dueDate` is in the past. Drives the red highlight on the milestone row.",
+            ),
+        }),
+      ),
+      changeOrders: zod.array(
+        zod.object({
+          id: zod.string(),
+          sowId: zod.string(),
+          changeNumber: zod.string(),
+          title: zod.string(),
+          status: zod.enum(["pending", "approved", "rejected"]),
+          amountDelta: zod.number().nullish(),
+          amountDeltaUsd: zod.number(),
+          currency: zod.string().nullish(),
+          reason: zod.string().nullish(),
+          createdAt: zod.coerce.date(),
+          approvedAt: zod.coerce
+            .date()
+            .nullish()
+            .describe(
+              "Timestamp when the change order was approved\/executed (mirrors `executed_at` in storage). Null while the change order is still pending or has been rejected.",
+            ),
+          approver: zod
+            .string()
+            .nullish()
+            .describe(
+              'Free-text identity (name \/ email \/ role) of the approver who signed off on this change order. Surfaces in the audit trail alongside delta value and approval date so operators can answer \"who approved this scope creep?\" without leaving the SOW detail page. Null when the source system does not carry approver identity, or when the row is still in proposed\/rejected state.',
+            ),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * Returns the tenant's rate cards plus a derived `lineCount`
+and `offCardSpendUsd` (trailing-365d spend at unit prices that
+do not match any line on the card — the leakage indicator on
+the Rate Cards tab).
+
+ * @summary List rate cards
+ */
+export const listRateCardsQueryLimitDefault = 50;
+export const listRateCardsQueryLimitMax = 200;
+
+export const ListRateCardsQueryParams = zod.object({
+  search: zod.coerce.string().optional().describe("Substring match on `name`."),
+  status: zod.enum(["draft", "active", "expired"]).optional(),
+  supplierId: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listRateCardsQueryLimitMax)
+    .default(listRateCardsQueryLimitDefault),
+  cursor: zod.coerce.string().optional(),
+});
+
+export const ListRateCardsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListRateCardsResponse = zod.object({
+  items: zod.array(
+    zod
+      .object({
+        id: zod.string(),
+        name: zod.string(),
+        status: zod.enum(["draft", "active", "expired"]),
+        supplierId: zod.string().nullable(),
+        supplierName: zod.string().nullable(),
+        msaContractId: zod.string().nullish(),
+        currency: zod
+          .string()
+          .describe("ISO 4217 currency the lines are priced in."),
+        effectiveStart: zod.coerce.date().nullish(),
+        effectiveEnd: zod.coerce.date().nullish(),
+        lineCount: zod.number(),
+        offCardSpendUsd: zod
+          .number()
+          .describe(
+            "Trailing-365d time-entry leakage: hours billed against this card whose `rate_card_line_id` is NULL (could not match any role\/seniority on the card).",
+          ),
+        createdAt: zod.coerce.date(),
+      })
+      .describe(
+        "A negotiated rate card for a supplier. Powers the\nServices > Rate Cards tab.\n",
+      ),
+  ),
+  nextCursor: zod.string().nullish(),
+});
+
+/**
+ * Returns each `RateCardLine` annotated with a market-benchmark
+band derived from the most recent `oews_wage` market signal for
+that role/geography (when available): green ≤ p50, yellow
+p50–p75, orange p75–p90, red > p90. Also returns the most
+recent off-card time entries so the operator can drill in from
+the leakage KPI on the list page.
+
+ * @summary Rate card detail (header + lines + market benchmarks + recent time entries)
+ */
+export const GetRateCardParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetRateCardHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetRateCardResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    status: zod.enum(["draft", "active", "expired"]),
+    supplierId: zod.string().nullable(),
+    supplierName: zod.string().nullable(),
+    msaContractId: zod.string().nullish(),
+    currency: zod
+      .string()
+      .describe("ISO 4217 currency the lines are priced in."),
+    effectiveStart: zod.coerce.date().nullish(),
+    effectiveEnd: zod.coerce.date().nullish(),
+    lineCount: zod.number(),
+    offCardSpendUsd: zod
+      .number()
+      .describe(
+        "Trailing-365d time-entry leakage: hours billed against this card whose `rate_card_line_id` is NULL (could not match any role\/seniority on the card).",
+      ),
+    createdAt: zod.coerce.date(),
+  })
+  .describe(
+    "A negotiated rate card for a supplier. Powers the\nServices > Rate Cards tab.\n",
+  )
+  .and(
+    zod.object({
+      offCardPoMismatchUsd: zod
+        .number()
+        .describe(
+          "Trailing-365d PO-line leakage: services-class PO lines booked against this card's parent MSA contract whose `unit_price_usd` exceeds the highest hourly line on the card. Captures rate-card bypasses that never made it into a time entry. Combined with `offCardSpendUsd` this is the full leakage surface a category manager negotiates against. 0 when the card has no parent contract.",
+        ),
+      offCardInvoiceUsd: zod
+        .number()
+        .describe(
+          "Trailing-365d invoice off-card spend: invoices billed against POs on this card's parent MSA contract over the past year. Captures direct-bill leakage that never went through a time entry or rate-card-aligned PO line. 0 when the card has no parent contract.",
+        ),
+      lines: zod.array(
+        zod.object({
+          id: zod.string(),
+          role: zod
+            .string()
+            .describe('Role \/ labour category (e.g. \"Senior Consultant\").'),
+          seniority: zod.string().nullish(),
+          skill: zod.string().nullish(),
+          geography: zod
+            .string()
+            .nullish()
+            .describe(
+              'Region \/ geography tag (e.g. \"US\", \"EMEA\", \"India\").',
+            ),
+          billingModel: zod
+            .string()
+            .nullish()
+            .describe(
+              "Commercial structure for the line: t_and_m, fixed, milestone, retainer, outcome.",
+            ),
+          unit: zod
+            .string()
+            .describe("Pricing unit, e.g. `hour`, `day`, `month`."),
+          unitRate: zod.number(),
+          unitRateUsd: zod.number(),
+          currency: zod.string().nullish(),
+          marketBenchmark: zod
+            .object({
+              band: zod.enum(["green", "yellow", "orange", "red"]),
+              p50Usd: zod.number().nullish(),
+              p75Usd: zod.number().nullish(),
+              p90Usd: zod.number().nullish(),
+              source: zod
+                .string()
+                .describe("Citation source code, e.g. `oews_wage`."),
+              observedAt: zod.coerce.date().nullish(),
+            })
+            .nullish()
+            .describe(
+              "Most-recent OEWS wage benchmark for this role\/geography, if\nany. Drives the per-line colour band on the rate-card\ndetail page (green ≤p50, yellow p50–p75, orange p75–p90,\nred >p90).\n",
+            ),
+        }),
+      ),
+      linesByRole: zod
+        .array(
+          zod
+            .object({
+              role: zod.string(),
+              cells: zod.array(
+                zod.object({
+                  seniority: zod.string().nullable(),
+                  geography: zod.string().nullish(),
+                  billingModel: zod.string().nullish(),
+                  lineId: zod.string(),
+                  unitRateUsd: zod.number(),
+                  unit: zod.string(),
+                  band: zod
+                    .enum(["green", "yellow", "orange", "red"])
+                    .nullish(),
+                }),
+              ),
+            })
+            .describe(
+              "A single role in the rate card laid out as a row of seniority cells. Powers the role × seniority grid on the rate-card detail page so an operator can sweep a full role ladder without scrolling a flat table.",
+            ),
+        )
+        .describe(
+          "Same lines as `lines`, but pivoted into a role-by-seniority grid so the FE can render a true ladder view without re-sorting.",
+        ),
+      recentOffCardEntries: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            workDate: zod.coerce.date(),
+            role: zod.string(),
+            seniority: zod.string().nullish(),
+            hours: zod.number(),
+            unitRateUsd: zod.number().nullish(),
+            billedAmount: zod.number().nullish(),
+            billedAmountUsd: zod.number(),
+            currency: zod.string().nullish(),
+            sowId: zod.string().nullish(),
+            sowNumber: zod.string().nullish(),
+          }),
+        )
+        .describe("Last 10 time entries that priced outside the card."),
+      recentOffCardPoLines: zod
+        .array(
+          zod
+            .object({
+              poLineId: zod.string(),
+              poId: zod.string(),
+              poNumber: zod.string().nullish(),
+              supplierId: zod.string().nullish(),
+              supplierName: zod.string().nullish(),
+              orderDate: zod
+                .string()
+                .nullish()
+                .describe("ISO date (yyyy-mm-dd) of the PO line."),
+              description: zod.string().nullish(),
+              categoryId: zod.string().nullish(),
+              categoryName: zod.string().nullish(),
+              unitPriceUsd: zod.number().nullish(),
+              extendedUsd: zod.number(),
+              cardMaxHourlyUsd: zod
+                .number()
+                .nullish()
+                .describe(
+                  "Highest hourly rate on the card at query time (the threshold this line breached). Null when the card has no hourly rates — every services PO line on the parent contract is then flagged.",
+                ),
+            })
+            .describe(
+              "PO-line leakage row: a services-class purchase-order line booked against this card's parent MSA contract whose unit price exceeds the highest hourly rate on the card (or any line if the card has no hourly rates). Each row carries source-document identifiers (PO number, supplier, category) the FE renders as deep links so the operator can pivot directly to the PO and supplier records.",
+            ),
+        )
+        .describe(
+          "Per-line PO leakage rows (up to 50, ordered by extended USD desc). Each row carries source-document identifiers — PO number, supplier, category — that the FE renders as deep links so the operator can pivot into the originating PO\/supplier records. Empty when the card has no parent contract or no breaching lines.",
+        ),
+      recentOffCardInvoices: zod
+        .array(
+          zod
+            .object({
+              invoiceId: zod.string(),
+              invoiceNumber: zod.string().nullish(),
+              supplierId: zod.string().nullish(),
+              supplierName: zod.string().nullish(),
+              poId: zod.string().nullish(),
+              poNumber: zod.string().nullish(),
+              invoiceDate: zod
+                .string()
+                .nullish()
+                .describe("ISO date (yyyy-mm-dd) of the invoice."),
+              status: zod.string().nullish(),
+              amountUsd: zod.number(),
+            })
+            .describe(
+              "Invoice off-card row — a services-class invoice booked against this card's parent MSA contract that bypassed the rate-card line schedule.",
+            ),
+        )
+        .describe(
+          "Per-invoice off-card listing (up to 50, ordered by amount desc). Surfaces invoice-level leakage so the operator can pivot into the source invoice. Empty when the card has no parent contract.",
+        ),
+      linkedOpportunities: zod
+        .array(
+          zod
+            .object({
+              id: zod.string(),
+              leverId: zod.string(),
+              status: zod.string(),
+              title: zod.string(),
+              projectedSavingsUsd: zod.number(),
+              createdAt: zod.coerce.date(),
+            })
+            .describe("Open opportunity referencing this rate card."),
+        )
+        .describe(
+          "Open opportunities (`status='open'`) drafted by the\n`services_rate_card_benchmark` lever (or any other\nservices-side lever) whose `inputs.rateCardId` points at\nthis card. Empty list when no benchmark levers have\nflagged anything.\n",
+        ),
+    }),
+  );
+
+/**
+ * Trailing-12-month services-only rollup powering the "Services
+Spend" tab. Splits services spend by contract type (T&M vs
+fixed-price vs milestone vs retainer vs outcome), top services
+suppliers, and top services categories.
+
+ * @summary Services spend slice (last 12 months)
+ */
+export const GetServicesSpendQueryParams = zod.object({
+  supplierId: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Optional supplier filter — when set, every aggregate (total, byContractType, topCategories) reduces to that one supplier's services spend. Used by the supplier-360 deep link from the Services Engagement card.",
+    ),
+});
+
+export const GetServicesSpendHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetServicesSpendResponse = zod
+  .object({
+    totalServicesSpendUsd: zod.number(),
+    byContractType: zod.array(
+      zod.object({
+        contractType: zod.enum([
+          "goods",
+          "t_and_m",
+          "fixed_price",
+          "milestone",
+          "retainer",
+          "outcome",
+        ]),
+        spendUsd: zod.number(),
+        share: zod
+          .number()
+          .describe("Fraction of services spend in this bucket (0–1)."),
+      }),
+    ),
+    topSuppliers: zod.array(
+      zod.object({
+        supplierId: zod.string(),
+        supplierName: zod.string(),
+        spendUsd: zod.number(),
+      }),
+    ),
+    topCategories: zod.array(
+      zod.object({
+        categoryCode: zod.string(),
+        categoryName: zod.string(),
+        spendUsd: zod.number(),
+      }),
+    ),
+  })
+  .describe("Services-only spend slice rendered on the Services > Spend tab.");
 
 /**
  * Returns the rows the active tenant has added to the watched-issuer

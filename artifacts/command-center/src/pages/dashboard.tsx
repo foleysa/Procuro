@@ -111,7 +111,7 @@ export default function Dashboard() {
     },
   });
 
-  const spendQ = useGetSpendOverview({
+  const spendQ = useGetSpendOverview(undefined, {
     query: {
       queryKey: getGetSpendOverviewQueryKey(),
       refetchInterval: POLL_MS,

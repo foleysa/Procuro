@@ -23,6 +23,7 @@ import {
   type SupplierLinkedOpportunity,
   type SupplierAuditEntry,
   type SupplierSpendRollup,
+  type SupplierServicesEngagement,
   type MarketSignal,
   type PatchSupplierRequest,
   type SupplierIntelligenceSignal,
@@ -50,6 +51,7 @@ import {
   Star,
   TrendingUp,
   Wind,
+  Wrench,
   X,
   Zap,
 } from "lucide-react";
@@ -315,6 +317,12 @@ export default function SupplierDetailPage() {
           />
           {intel ? <BillingCurrencyCard intel={intel} /> : null}
           <OverviewSummaryCard data={data} />
+          {data.services.hasServicesActivity ? (
+            <ServicesEngagementCard
+              services={data.services}
+              supplierId={data.id}
+            />
+          ) : null}
         </TabsContent>
 
         <TabsContent value="spend" className="mt-4">
@@ -673,23 +681,178 @@ function OverviewSummaryCard({ data }: { data: SupplierDetail }) {
   );
 }
 
+function ServicesEngagementCard({
+  services,
+  supplierId,
+}: {
+  services: SupplierServicesEngagement;
+  supplierId: string;
+}) {
+  // KPI deep-link targets — every counter that has a meaningful list
+  // page on the Services tab routes through `?supplier=<id>` so the
+  // operator can pivot from this 360 card straight into the filtered
+  // listing. The Services page reads `supplier` off the URL and
+  // applies it to the SOW/rate-card list endpoints.
+  const sowsHref = `/services?tab=sows&supplier=${supplierId}`;
+  const rateCardsHref = `/services?tab=rate-cards&supplier=${supplierId}`;
+  const spendHref = `/services?tab=spend&supplier=${supplierId}`;
+  return (
+    <Card data-testid="card-services-engagement">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-primary" />
+          Services engagement (last 365 days)
+        </CardTitle>
+        <CardDescription>
+          Operator-grade services KPIs: blended bill rate, off-card spend
+          leakage, change-order volatility, and active utilisation signals.
+          Each counter links to the filtered listing for this supplier.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+            Headline metrics
+          </div>
+          <div className="grid sm:grid-cols-4 gap-4">
+            <Stat
+              label="Avg blended rate"
+              value={
+                services.avgBlendedRateUsd != null
+                  ? `${formatUsd(services.avgBlendedRateUsd)}/hr`
+                  : "—"
+              }
+              href={rateCardsHref}
+              testid="stat-avg-blended-rate"
+            />
+            <Stat
+              label="Off-card spend"
+              value={
+                services.offCardSpendShare > 0
+                  ? `${(services.offCardSpendShare * 100).toFixed(1)}%`
+                  : "0%"
+              }
+              href={rateCardsHref}
+              testid="stat-off-card-share"
+            />
+            <Stat
+              label="Change-order ratio"
+              value={
+                services.changeOrderRatio > 0
+                  ? `${(services.changeOrderRatio * 100).toFixed(1)}%`
+                  : "0%"
+              }
+              href={sowsHref}
+              testid="stat-change-order-ratio"
+            />
+            <Stat
+              label="Utilisation signals"
+              value={services.utilizationSignalCount.toLocaleString()}
+              sub={
+                services.utilizationSignalCount > 0
+                  ? `${services.utilizationOverloadCount} overload · ${services.utilizationUnderutilCount} bench`
+                  : "no person-week alerts"
+              }
+              href={sowsHref}
+              testid="stat-utilization-signals"
+            />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+            Operational counters
+          </div>
+          <div className="grid sm:grid-cols-4 gap-4">
+            <Stat
+              label="Active SOWs"
+              value={services.activeSowCount.toLocaleString()}
+              href={sowsHref}
+              testid="stat-active-sows"
+            />
+            <Stat
+              label="Open milestones"
+              value={services.openMilestoneCount.toLocaleString()}
+              href={sowsHref}
+              testid="stat-open-milestones"
+            />
+            <Stat
+              label="Rate cards"
+              value={services.rateCardCount.toLocaleString()}
+              href={rateCardsHref}
+              testid="stat-rate-cards"
+            />
+            <Stat
+              label="Services spend"
+              value={formatUsd(services.totalServicesSpendUsd, { compact: true })}
+              href={spendHref}
+              testid="stat-services-spend"
+            />
+            <Stat
+              label="T&M spend"
+              value={formatUsd(services.timeAndMaterialsSpendUsd, { compact: true })}
+              href={spendHref}
+              testid="stat-tm-spend"
+            />
+            <Stat
+              label="Fixed-price spend"
+              value={formatUsd(services.fixedPriceSpendUsd, { compact: true })}
+              href={spendHref}
+              testid="stat-fp-spend"
+            />
+            <Stat
+              label="Next milestone due"
+              value={
+                services.upcomingMilestoneDueDate
+                  ? formatDate(services.upcomingMilestoneDueDate)
+                  : "—"
+              }
+              href={sowsHref}
+              testid="stat-next-milestone"
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Stat({
   label,
   value,
+  sub,
+  href,
   testid,
 }: {
   label: string;
   value: string;
+  sub?: string;
+  /** Optional deep-link target. When set, the value renders as a link. */
+  href?: string;
   testid?: string;
 }) {
-  return (
-    <div data-testid={testid}>
+  const inner = (
+    <>
       <div className="text-xs text-muted-foreground uppercase tracking-wide">
         {label}
       </div>
-      <div className="text-2xl font-semibold tabular-nums mt-0.5">{value}</div>
-    </div>
+      <div
+        className={`text-base font-semibold tabular-nums mt-0.5${href ? " text-primary hover:underline" : ""}`}
+      >
+        {value}
+      </div>
+      {sub ? (
+        <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div>
+      ) : null}
+    </>
   );
+  if (href) {
+    return (
+      <Link href={href} data-testid={testid} className="block group">
+        {inner}
+      </Link>
+    );
+  }
+  return <div data-testid={testid}>{inner}</div>;
 }
 
 // ---------------------------------------------------------------------

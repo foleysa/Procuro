@@ -13,6 +13,7 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 import type { Contract } from "./contract";
 import type { ContractAuditEntry } from "./contractAuditEntry";
+import type { ContractChildSow } from "./contractChildSow";
 import type { ContractItem } from "./contractItem";
 import type { ContractLinkedOpportunity } from "./contractLinkedOpportunity";
 import type { InsightSource } from "./insightSource";
@@ -32,4 +33,9 @@ opportunities. Render through `renderInsight()`.
  */
   sources: InsightSource[];
   auditLog: ContractAuditEntry[];
+  /** When this contract is a master agreement, the SOWs that
+point at it via `msa_contract_id`. Empty for non-master /
+non-services contracts.
+ */
+  childSows?: ContractChildSow[];
 };

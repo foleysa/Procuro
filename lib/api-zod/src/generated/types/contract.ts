@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { ContractContractType } from "./contractContractType";
 import type { ContractDerivedStatus } from "./contractDerivedStatus";
 import type { ContractStatus } from "./contractStatus";
 
@@ -24,6 +25,26 @@ export interface Contract {
   contractNumber: string;
   title: string;
   status: ContractStatus;
+  /** Commercial structure of the contract. `goods` is the legacy
+default and back-fills any pre-#214 row. Anything other than
+`goods` is a services contract and unlocks the services-side
+UI (SOW list, rate cards, services KPIs).
+ */
+  contractType?: ContractContractType;
+  /** Self-FK to the parent MSA when this row is itself a child
+agreement under a master agreement. Null for top-level
+contracts.
+ */
+  msaParentId?: string | null;
+  /** Free-form SLA terms. Either a structured object
+(e.g. `{ uptimePct: 99.9, mttrHours: 4 }`) emitted by
+adapters or a partner's verbatim text payload.
+ */
+  serviceLevelTerms?: unknown | null;
+  /** Plain-text acceptance criteria. Used on services contracts
+to document what "delivered" means at MSA level.
+ */
+  acceptanceCriteria?: string | null;
   derivedStatus: ContractDerivedStatus;
   /** Whole days from now to `endDate`. Negative if already
 expired. Null when `endDate` is somehow missing.

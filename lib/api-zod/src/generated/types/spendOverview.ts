@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { GoodsVsServicesBlock } from "./goodsVsServicesBlock";
 import type { SpendOverviewByBusinessUnitItem } from "./spendOverviewByBusinessUnitItem";
 import type { SpendOverviewByCategoryItem } from "./spendOverviewByCategoryItem";
 import type { SpendOverviewByClassItem } from "./spendOverviewByClassItem";
@@ -19,6 +20,7 @@ import type { SpendOverviewConcentration } from "./spendOverviewConcentration";
 
 export interface SpendOverview {
   totalSpendUsd: number;
+  goodsVsServices: GoodsVsServicesBlock;
   byClass: SpendOverviewByClassItem[];
   byCategory: SpendOverviewByCategoryItem[];
   bySupplier: SpendOverviewBySupplierItem[];

@@ -16,10 +16,12 @@ import type { Supplier } from "./supplier";
 import type { SupplierAuditEntry } from "./supplierAuditEntry";
 import type { SupplierLinkedContract } from "./supplierLinkedContract";
 import type { SupplierLinkedOpportunity } from "./supplierLinkedOpportunity";
+import type { SupplierServicesEngagement } from "./supplierServicesEngagement";
 import type { SupplierSpendRollup } from "./supplierSpendRollup";
 
 export type SupplierDetail = Supplier & {
   spend: SupplierSpendRollup;
+  services: SupplierServicesEngagement;
   contracts: SupplierLinkedContract[];
   opportunities: SupplierLinkedOpportunity[];
   /** Most-recent FX rate observations for the supplier's
