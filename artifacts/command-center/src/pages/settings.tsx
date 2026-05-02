@@ -73,6 +73,7 @@ import {
   Webhook,
   MessageSquare,
   History,
+  CalendarClock,
 } from "lucide-react";
 
 const POLICY_OPTIONS: ReadonlyArray<{
@@ -135,6 +136,7 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
+          <RenewalAlertSection />
           <ChannelsSection />
           <SubscriptionsSection />
         </TabsContent>
@@ -253,6 +255,160 @@ function DisclosurePolicySection() {
             )}
           </Button>
           {dirty && !saving ? (
+            <span className="text-xs text-muted-foreground">
+              Unsaved change
+            </span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================ Renewal alert lead time ============================
+
+const MIN_RENEWAL_ALERT_DAYS = 1;
+const MAX_RENEWAL_ALERT_DAYS = 365;
+
+/**
+ * Lets admins tune how many days before a contract's expiry the daily
+ * `renewal_alert_scan` worker should surface it. Server-side default
+ * is 90 days (`ORG_DEFAULT_RENEWAL_ALERT_DAYS`); the API accepts an
+ * integer in [1, 365] and rejects anything outside that range. We
+ * mirror those bounds in the input control and show a friendly inline
+ * error before the request is even attempted, so admins don't see a
+ * raw 400 from the server.
+ */
+function RenewalAlertSection() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useGetMe();
+
+  const currentDays = data?.org.contractRenewalAlertDays;
+  // Stored as a string so the field can be temporarily empty while
+  // the admin is typing — the parser below validates the final value
+  // before we enable the Save button.
+  const [draft, setDraft] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof currentDays === "number") setDraft(String(currentDays));
+  }, [currentDays]);
+
+  const trimmed = draft.trim();
+  let parsed: number | null = null;
+  let error: string | null = null;
+  if (trimmed === "") {
+    error = "Enter a number of days between 1 and 365.";
+  } else {
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      error = "Enter a whole number of days.";
+    } else if (n < MIN_RENEWAL_ALERT_DAYS || n > MAX_RENEWAL_ALERT_DAYS) {
+      error = `Pick a value between ${MIN_RENEWAL_ALERT_DAYS} and ${MAX_RENEWAL_ALERT_DAYS} days.`;
+    } else {
+      parsed = n;
+    }
+  }
+
+  const patchM = usePatchMeSettings({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Renewal alert lead time updated",
+          description: `Contracts expiring within ${resp.org.contractRenewalAlertDays} day${resp.org.contractRenewalAlertDays === 1 ? "" : "s"} will trigger a renewal alert.`,
+        });
+        qc.setQueryData(getGetMeQueryKey(), resp);
+        qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        qc.invalidateQueries({ queryKey: getListMeSettingsAuditQueryKey() });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not save renewal alert window",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  const saving = patchM.isPending;
+  // "Dirty" tracks whether the user has touched the field at all
+  // (string-level comparison) so the inline error renders even when
+  // they've blanked the input. Save eligibility additionally requires
+  // a valid parsed value that actually differs from the saved one.
+  const dirty =
+    typeof currentDays === "number" ? draft !== String(currentDays) : true;
+  const canSave = parsed !== null && parsed !== currentDays && !saving;
+
+  return (
+    <Card data-testid="card-renewal-alert">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarClock className="w-5 h-5" />
+          Renewal alert lead time
+        </CardTitle>
+        <CardDescription>
+          How many days before a contract's expiry the daily renewal scan
+          should surface it as a renewal alert. Lower values produce a
+          tighter, more urgent feed; higher values give your team more
+          runway to plan the renegotiation.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex items-center text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Loading current value…
+          </div>
+        ) : (
+          <div className="space-y-2 max-w-xs">
+            <Label htmlFor="renewal-alert-days">Days before expiry</Label>
+            <Input
+              id="renewal-alert-days"
+              type="number"
+              inputMode="numeric"
+              min={MIN_RENEWAL_ALERT_DAYS}
+              max={MAX_RENEWAL_ALERT_DAYS}
+              step={1}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              aria-invalid={dirty && error ? true : undefined}
+              data-testid="input-renewal-alert-days"
+            />
+            {dirty && error ? (
+              <p
+                className="text-xs text-destructive"
+                data-testid="text-renewal-alert-error"
+              >
+                {error}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Allowed range: {MIN_RENEWAL_ALERT_DAYS}–{MAX_RENEWAL_ALERT_DAYS}{" "}
+                days. The next daily scan will use the saved value.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <Button
+            data-testid="button-save-renewal-alert"
+            disabled={!canSave}
+            onClick={() => {
+              if (parsed === null) return;
+              patchM.mutate({ data: { contractRenewalAlertDays: parsed } });
+            }}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save lead time"
+            )}
+          </Button>
+          {dirty && !saving && parsed !== null && parsed !== currentDays ? (
             <span className="text-xs text-muted-foreground">
               Unsaved change
             </span>
