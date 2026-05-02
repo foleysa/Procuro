@@ -23,8 +23,9 @@
  */
 
 import { z } from "zod";
-import { db, watchedIssuersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, watchedIssuersTable, collectorAuditLogTable } from "@workspace/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { newId } from "../../ids";
 import {
   buildSignalDraftSchema,
   defaultStableSignalKey,
@@ -157,21 +158,114 @@ export async function getActiveCompaniesHouseNumbers(
  * warning per process when it happens. Keyed by call-site label so
  * the live collector and the backfill helper don't shout over each
  * other.
+ *
+ * On the very first call per (callSite) per process we lazily seed
+ * this from the most recent `issuer_list_source_changed` audit row
+ * (see `seedChNumbersSourceFromAudit`) so a transition that happens
+ * across a process restart still fires.
  */
 const lastChNumbersSource = new Map<string, CompaniesHouseNumberSource>();
+const seededChNumbersCallSites = new Set<string>();
+/**
+ * Test-only short-circuit. See the matching comment in
+ * `sec-edgar.ts` — same rationale: the pure-helper unit test runs
+ * with a placeholder/real DB and must stay hermetic.
+ */
+let chNumbersPersistenceEnabled = true;
+
+/**
+ * Lazily seed `lastChNumbersSource` for `callSite` from the most
+ * recent durable `issuer_list_source_changed` audit row. Best-effort:
+ * if the DB is unreachable we just skip seeding — the in-memory map
+ * still catches every transition during this process's lifetime.
+ */
+async function seedChNumbersSourceFromAudit(callSite: string): Promise<void> {
+  if (seededChNumbersCallSites.has(callSite)) return;
+  seededChNumbersCallSites.add(callSite);
+  if (lastChNumbersSource.has(callSite)) return;
+  if (!chNumbersPersistenceEnabled) return;
+  try {
+    const [latest] = await db
+      .select({ metadata: collectorAuditLogTable.metadata })
+      .from(collectorAuditLogTable)
+      .where(
+        and(
+          eq(collectorAuditLogTable.collectorId, COMPANIES_HOUSE_COLLECTOR_ID),
+          eq(collectorAuditLogTable.event, "issuer_list_source_changed"),
+          sql`${collectorAuditLogTable.metadata}->>'callSite' = ${callSite}`,
+        ),
+      )
+      .orderBy(desc(collectorAuditLogTable.createdAt))
+      .limit(1);
+    if (!latest) return;
+    const meta = latest.metadata as Record<string, unknown>;
+    const last = meta["listSource"];
+    if (
+      last === "seed" ||
+      last === "tenant" ||
+      last === "override"
+    ) {
+      lastChNumbersSource.set(callSite, last);
+    }
+  } catch (err) {
+    logger.debug(
+      { collectorId: COMPANIES_HOUSE_COLLECTOR_ID, callSite, err },
+      "Companies House: could not seed number-list source memory from audit log",
+    );
+  }
+}
+
+/**
+ * Persist a transition to `collector_audit_log` so the operational-
+ * alert synthesizer can fan it out as an
+ * `operational_collector_issuer_list_flip` alert. Best-effort: a
+ * failed audit write must never break the collector tick.
+ */
+async function recordChNumbersSourceTransition(args: {
+  previousSource: CompaniesHouseNumberSource;
+  listSource: CompaniesHouseNumberSource;
+  numberCount: number;
+  callSite: string;
+}): Promise<void> {
+  if (!chNumbersPersistenceEnabled) return;
+  try {
+    await db.insert(collectorAuditLogTable).values({
+      id: newId("aud"),
+      collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
+      event: "issuer_list_source_changed",
+      metadata: {
+        previousSource: args.previousSource,
+        listSource: args.listSource,
+        // Carry the count under both `issuerCount` (the synthesizer's
+        // generic field name across both collectors) and the
+        // collector-native `numberCount` so existing log search
+        // queries keep working.
+        issuerCount: args.numberCount,
+        numberCount: args.numberCount,
+        callSite: args.callSite,
+      },
+    });
+  } catch (err) {
+    logger.warn(
+      { collectorId: COMPANIES_HOUSE_COLLECTOR_ID, callSite: args.callSite, err },
+      "Companies House: failed to persist number-list transition to audit log",
+    );
+  }
+}
 
 /**
  * Emit a one-line INFO per tick describing which list resolved and
- * how many numbers we will poll, plus a one-shot WARN whenever the
- * source transitions (seed → tenant, tenant → seed). Operators rely
- * on the transition warning to notice "the seed silently stopped
- * being polled because a tenant just added their first row" without
- * tailing every tick.
+ * how many numbers we will poll, plus a one-shot WARN + durable
+ * audit-log row whenever the source transitions (seed → tenant,
+ * tenant → seed). The audit row drives
+ * `synthesizeOperationalAlerts` →
+ * `operational_collector_issuer_list_flip`, which routes through the
+ * same delivery channels as collector-failure pages.
  */
-export function logResolvedCompaniesHouseNumbers(
+export async function logResolvedCompaniesHouseNumbers(
   resolved: ResolvedCompaniesHouseNumbers,
   callSite: "collect" | "backfill",
-): void {
+): Promise<void> {
   logger.info(
     {
       collectorId: COMPANIES_HOUSE_COLLECTOR_ID,
@@ -181,6 +275,7 @@ export function logResolvedCompaniesHouseNumbers(
     },
     `Companies House: polling ${resolved.numbers.length} company number(s) (source=${resolved.source})`,
   );
+  await seedChNumbersSourceFromAudit(callSite);
   const previous = lastChNumbersSource.get(callSite);
   if (previous && previous !== resolved.source) {
     logger.warn(
@@ -193,6 +288,12 @@ export function logResolvedCompaniesHouseNumbers(
       },
       `Companies House: number-list source transitioned ${previous} → ${resolved.source}`,
     );
+    await recordChNumbersSourceTransition({
+      previousSource: previous,
+      listSource: resolved.source,
+      numberCount: resolved.numbers.length,
+      callSite,
+    });
   }
   lastChNumbersSource.set(callSite, resolved.source);
 }
@@ -200,6 +301,15 @@ export function logResolvedCompaniesHouseNumbers(
 /** Test-only: reset the transition memory between cases. */
 export function _resetCompaniesHouseSourceMemoryForTests(): void {
   lastChNumbersSource.clear();
+  seededChNumbersCallSites.clear();
+}
+
+/**
+ * Test-only: disable the best-effort `collector_audit_log`
+ * write/seed so pure-helper unit tests stay hermetic.
+ */
+export function _disableCompaniesHousePersistenceForTests(): void {
+  chNumbersPersistenceEnabled = false;
 }
 
 export const FILING_CATEGORY_CODES: Record<string, number> = {
@@ -433,7 +543,7 @@ export const companiesHouseCollector: IntelligenceCollector<typeof chSignalSchem
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
     const resolved = await resolveActiveCompaniesHouseNumbers();
-    logResolvedCompaniesHouseNumbers(resolved, "collect");
+    await logResolvedCompaniesHouseNumbers(resolved, "collect");
     const numbers = resolved.numbers;
     if (numbers.length === 0) {
       throw new Error(
@@ -475,7 +585,7 @@ export async function fetchCompaniesHouseBackfillDrafts(opts?: {
   // Same resolution rule as the live collector: explicit override beats
   // tenant rows, which beat the seed list.
   const resolved = await resolveActiveCompaniesHouseNumbers(opts?.numbers);
-  logResolvedCompaniesHouseNumbers(resolved, "backfill");
+  await logResolvedCompaniesHouseNumbers(resolved, "backfill");
   const numbers = resolved.numbers;
   const drafts: MarketSignalDraft[] = [];
   const failed: Array<{ number: string; error: string }> = [];

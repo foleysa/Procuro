@@ -20,6 +20,19 @@
  *     opted-in collector with zero market_signals rows ever. Same
  *     per-(tenant, collectorId) dedupe.
  *
+ *   - `operational_collector_issuer_list_flip`: the SEC EDGAR /
+ *     Companies House collector resolved a different issuer-list
+ *     `listSource` than the previous tick (seed ↔ tenant ↔ override).
+ *     The collectors record the transition in `collector_audit_log`
+ *     under event=`issuer_list_source_changed`; this synthesizer
+ *     fans the most recent transition per (collector, callSite) out
+ *     to every opted-in tenant exactly once per day, severity
+ *     `medium`. The `previousSource → listSource` direction in the
+ *     payload tells on-call whether to celebrate (a tenant just
+ *     onboarded watched issuers) or escalate (everyone deleted their
+ *     rows and we silently fell back to the seed list). See the
+ *     "Issuer-list resolution" runbook section.
+ *
  *   - `operational_high_confidence_opportunity`: a `proposed`
  *     opportunity with confidence ≥ 0.85 (high-confidence
  *     recommendation that no human has acted on yet). Dedupe per
@@ -35,6 +48,7 @@ import {
   jobsTable,
   collectorsTable,
   collectorTenantOptInsTable,
+  collectorAuditLogTable,
   marketSignalsTable,
   opportunitiesTable,
   orgsTable,
@@ -47,11 +61,13 @@ import { logger } from "../logger";
 
 const STALE_HOURS_DEFAULT = 48;
 const HIGH_CONFIDENCE_THRESHOLD = 0.85;
+const ISSUER_LIST_FLIP_LOOKBACK_HOURS = 24;
 
 export interface SynthesizeResult {
   jobFailedAlerts: number;
   collectorStaleAlerts: number;
   collectorNeverRunAlerts: number;
+  collectorIssuerListFlipAlerts: number;
   highConfidenceOpportunityAlerts: number;
 }
 
@@ -72,6 +88,7 @@ export async function synthesizeOperationalAlerts(
     jobFailedAlerts: 0,
     collectorStaleAlerts: 0,
     collectorNeverRunAlerts: 0,
+    collectorIssuerListFlipAlerts: 0,
     highConfidenceOpportunityAlerts: 0,
   };
 
@@ -79,6 +96,7 @@ export async function synthesizeOperationalAlerts(
   const collector = await synthesizeCollectorHealth(now, staleHours);
   result.collectorStaleAlerts = collector.stale;
   result.collectorNeverRunAlerts = collector.neverRun;
+  result.collectorIssuerListFlipAlerts = await synthesizeIssuerListFlips(now);
   result.highConfidenceOpportunityAlerts =
     await synthesizeHighConfidenceOpportunities(now);
 
@@ -219,6 +237,145 @@ async function synthesizeCollectorHealth(
     }
   }
   return { stale, neverRun };
+}
+
+/**
+ * Scan `collector_audit_log` for issuer-list source flips
+ * (event = `issuer_list_source_changed`) within the last 24h and
+ * emit one `operational_collector_issuer_list_flip` alert per
+ * opted-in tenant, per (collector, callSite), per day. Multiple
+ * flaps within the window collapse onto the most-recent end-state
+ * so we don't spam the inbox while a tenant tinkers with their
+ * watched-issuer list.
+ */
+async function synthesizeIssuerListFlips(now: Date): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - ISSUER_LIST_FLIP_LOOKBACK_HOURS * 60 * 60 * 1000,
+  );
+  const rows = await db
+    .select({
+      collectorId: collectorAuditLogTable.collectorId,
+      metadata: collectorAuditLogTable.metadata,
+      createdAt: collectorAuditLogTable.createdAt,
+    })
+    .from(collectorAuditLogTable)
+    .where(
+      and(
+        eq(collectorAuditLogTable.event, "issuer_list_source_changed"),
+        gt(collectorAuditLogTable.createdAt, cutoff),
+      ),
+    )
+    .orderBy(desc(collectorAuditLogTable.createdAt));
+  if (rows.length === 0) return 0;
+
+  // Collapse to the latest flip per (collectorId, callSite). The
+  // first row we see for a key is the most recent thanks to the
+  // `desc(createdAt)` order above.
+  interface FlipRow {
+    collectorId: string;
+    callSite: string;
+    previousSource: string;
+    listSource: string;
+    issuerCount: number;
+    createdAt: Date;
+  }
+  const latestByKey = new Map<string, FlipRow>();
+  for (const r of rows) {
+    const meta = (r.metadata ?? {}) as Record<string, unknown>;
+    const callSite = String(meta["callSite"] ?? "unknown");
+    const key = `${r.collectorId}:${callSite}`;
+    if (latestByKey.has(key)) continue;
+    latestByKey.set(key, {
+      collectorId: r.collectorId,
+      callSite,
+      previousSource: String(meta["previousSource"] ?? "unknown"),
+      listSource: String(meta["listSource"] ?? "unknown"),
+      issuerCount: Number(meta["issuerCount"] ?? 0),
+      createdAt: r.createdAt,
+    });
+  }
+
+  // Fan-out to every tenant opted into the affected collector,
+  // mirroring `synthesizeCollectorHealth`. An issuer-list flip is
+  // platform-wide (the watched_issuers union spans tenants), so each
+  // opted-in tenant sees the same alert routed to their configured
+  // channel — same fan-out shape as `operational_collector_stale`.
+  const optInRows = await db
+    .select({
+      orgId: collectorTenantOptInsTable.orgId,
+      collectorId: collectorTenantOptInsTable.collectorId,
+    })
+    .from(collectorTenantOptInsTable)
+    .where(eq(collectorTenantOptInsTable.optedIn, 1));
+  const orgsByCollector = new Map<string, string[]>();
+  for (const r of optInRows) {
+    const arr = orgsByCollector.get(r.collectorId) ?? [];
+    arr.push(r.orgId);
+    orgsByCollector.set(r.collectorId, arr);
+  }
+
+  // Pull collector display names for nicer alert titles. Approved
+  // status isn't required — a flip on a paused collector is still
+  // worth knowing about.
+  const collectorIds = Array.from(latestByKey.values()).map((f) => f.collectorId);
+  const uniqueCollectorIds = Array.from(new Set(collectorIds));
+  const collectorNameById = new Map<string, string>();
+  if (uniqueCollectorIds.length > 0) {
+    const collectorRows = await db
+      .select({ id: collectorsTable.id, name: collectorsTable.name })
+      .from(collectorsTable);
+    for (const c of collectorRows) collectorNameById.set(c.id, c.name);
+  }
+
+  const dayKey = isoDayKey(now);
+  let count = 0;
+  for (const flip of latestByKey.values()) {
+    const orgIds = orgsByCollector.get(flip.collectorId) ?? [];
+    if (orgIds.length === 0) continue;
+    const collectorName =
+      collectorNameById.get(flip.collectorId) ?? flip.collectorId;
+    const transition = `${flip.previousSource} → ${flip.listSource}`;
+    // Direction-specific summary so on-call sees at a glance whether
+    // to celebrate ("first tenant onboarded their watched issuers")
+    // or escalate ("everyone deleted their rows and we fell back to
+    // the seed list — fix it before the seed silently masks the
+    // outage"). Mirrors the runbook decision tree.
+    const direction =
+      flip.listSource === "seed"
+        ? "fell back to the built-in seed list — every tenant row was deleted (or never existed). Confirm this is intentional before a stale seed silently masks an outage."
+        : flip.previousSource === "seed" && flip.listSource === "tenant"
+          ? "switched off the seed list because a tenant just added their first watched issuer. Usually a healthy onboarding event — no action needed unless the issuer count looks wrong."
+          : flip.listSource === "override"
+            ? "switched to an explicit override list (likely an admin backfill). Expected to revert on the next normal tick."
+            : `switched to ${flip.listSource}.`;
+    for (const orgId of orgIds) {
+      await createAlert({
+        orgId,
+        severity: "medium",
+        source: "operational_collector_issuer_list_flip",
+        kind: `collector_issuer_list_flip:${flip.collectorId}`,
+        title: `Collector "${collectorName}" issuer-list source flipped: ${transition}`,
+        summary: `${flip.collectorId} (${flip.callSite}) ${direction} Now polling ${flip.issuerCount} entr${flip.issuerCount === 1 ? "y" : "ies"}. See the "Issuer-list resolution" section of the collectors runbook.`,
+        // Dedupe per (org, collector, callSite, day, direction) so a
+        // sustained flip only fires once per day, but a flip that
+        // *reverses* re-fires immediately (different direction).
+        dedupeKey: `op:issuer_list_flip:${orgId}:${flip.collectorId}:${flip.callSite}:${dayKey}:${flip.previousSource}->${flip.listSource}`,
+        payload: {
+          collectorId: flip.collectorId,
+          collectorName,
+          callSite: flip.callSite,
+          previousSource: flip.previousSource,
+          listSource: flip.listSource,
+          issuerCount: flip.issuerCount,
+          flippedAt: flip.createdAt.toISOString(),
+          runbookSection: "Issuer-list resolution & seed fallback",
+          sources: [],
+        },
+      });
+      count += 1;
+    }
+  }
+  return count;
 }
 
 async function synthesizeHighConfidenceOpportunities(

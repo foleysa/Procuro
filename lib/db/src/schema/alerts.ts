@@ -61,6 +61,18 @@ export const alertSourceValues = [
   "operational_job_failed",
   "operational_collector_stale",
   "operational_collector_never_run",
+  /**
+   * The issuer-driven collectors (`sec-edgar`, `companies-house`)
+   * resolve their poll list from one of three sources — `override`,
+   * tenant-curated `watched_issuers` rows, or the built-in seed list.
+   * A flip between these sources is silently load-bearing: a tenant
+   * adding their first watched issuer drops the seed list, and
+   * accidentally deleting every row brings it back. The on-call needs
+   * to know which direction the flip happened in to triage. See the
+   * "Issuer-list resolution" section of
+   * `collectors-public-apis.md` for the runbook.
+   */
+  "operational_collector_issuer_list_flip",
   "operational_high_confidence_opportunity",
   "rule_match",
   "manual",

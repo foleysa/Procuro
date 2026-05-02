@@ -28,8 +28,9 @@
  */
 
 import { z } from "zod";
-import { db, watchedIssuersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, watchedIssuersTable, collectorAuditLogTable } from "@workspace/db";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { newId } from "../../ids";
 import {
   buildSignalDraftSchema,
   defaultStableSignalKey,
@@ -183,21 +184,114 @@ export async function getActiveSecIssuers(
  * warning per process when it happens. Keyed by call-site label so
  * the live collector and the backfill helper don't shout over each
  * other.
+ *
+ * On the very first call per (callSite) per process we lazily seed
+ * this from the most recent `issuer_list_source_changed` audit row
+ * (see `seedSecIssuerSourceFromAudit`) so a transition that happens
+ * across a process restart still fires.
  */
 const lastSecIssuerSource = new Map<string, SecIssuerListSource>();
+const seededSecIssuerCallSites = new Set<string>();
+/**
+ * Test-only short-circuit. The pure-helper unit test in
+ * `watched-issuers-loaders.test.ts` deliberately exercises this
+ * function without a clean DB, so allow it to disable both the
+ * audit-write and the audit-seed side effects to keep the test
+ * hermetic. Set via `_disableSecIssuerPersistenceForTests`.
+ */
+let secIssuerPersistenceEnabled = true;
+
+/**
+ * Lazily seed `lastSecIssuerSource` for `callSite` from the most
+ * recent durable `issuer_list_source_changed` audit row. Best-effort:
+ * if the DB is unreachable (tests with placeholder URLs, transient
+ * outage) we just skip seeding — the in-memory map alone still
+ * catches every transition that happens during this process's
+ * lifetime.
+ */
+async function seedSecIssuerSourceFromAudit(callSite: string): Promise<void> {
+  if (seededSecIssuerCallSites.has(callSite)) return;
+  seededSecIssuerCallSites.add(callSite);
+  if (lastSecIssuerSource.has(callSite)) return;
+  if (!secIssuerPersistenceEnabled) return;
+  try {
+    const [latest] = await db
+      .select({ metadata: collectorAuditLogTable.metadata })
+      .from(collectorAuditLogTable)
+      .where(
+        and(
+          eq(collectorAuditLogTable.collectorId, SEC_EDGAR_COLLECTOR_ID),
+          eq(collectorAuditLogTable.event, "issuer_list_source_changed"),
+          sql`${collectorAuditLogTable.metadata}->>'callSite' = ${callSite}`,
+        ),
+      )
+      .orderBy(desc(collectorAuditLogTable.createdAt))
+      .limit(1);
+    if (!latest) return;
+    const meta = latest.metadata as Record<string, unknown>;
+    const last = meta["listSource"];
+    if (
+      last === "seed" ||
+      last === "tenant" ||
+      last === "override"
+    ) {
+      lastSecIssuerSource.set(callSite, last);
+    }
+  } catch (err) {
+    logger.debug(
+      { collectorId: SEC_EDGAR_COLLECTOR_ID, callSite, err },
+      "SEC EDGAR: could not seed issuer-list source memory from audit log",
+    );
+  }
+}
+
+/**
+ * Persist a transition to `collector_audit_log` so the operational-
+ * alert synthesizer can fan it out as an
+ * `operational_collector_issuer_list_flip` alert (same delivery
+ * channel as collector-failure pages). Best-effort: a failed audit
+ * write must never break the collector tick.
+ */
+async function recordSecIssuerSourceTransition(args: {
+  previousSource: SecIssuerListSource;
+  listSource: SecIssuerListSource;
+  issuerCount: number;
+  callSite: string;
+}): Promise<void> {
+  if (!secIssuerPersistenceEnabled) return;
+  try {
+    await db.insert(collectorAuditLogTable).values({
+      id: newId("aud"),
+      collectorId: SEC_EDGAR_COLLECTOR_ID,
+      event: "issuer_list_source_changed",
+      metadata: {
+        previousSource: args.previousSource,
+        listSource: args.listSource,
+        issuerCount: args.issuerCount,
+        callSite: args.callSite,
+      },
+    });
+  } catch (err) {
+    logger.warn(
+      { collectorId: SEC_EDGAR_COLLECTOR_ID, callSite: args.callSite, err },
+      "SEC EDGAR: failed to persist issuer-list transition to audit log",
+    );
+  }
+}
 
 /**
  * Emit a one-line INFO per tick describing which list resolved and
- * how many issuers we will poll, plus a one-shot WARN whenever the
- * source transitions (seed → tenant, tenant → seed). Operators rely
- * on the transition warning to notice "the seed silently stopped
- * being polled because a tenant just added their first row" without
- * tailing every tick.
+ * how many issuers we will poll, plus a one-shot WARN + durable
+ * audit-log row whenever the source transitions (seed → tenant,
+ * tenant → seed). The audit row drives
+ * `synthesizeOperationalAlerts` →
+ * `operational_collector_issuer_list_flip`, which routes through the
+ * same delivery channels as collector-failure pages.
  */
-export function logResolvedSecIssuers(
+export async function logResolvedSecIssuers(
   resolved: ResolvedSecIssuerList,
   callSite: "collect" | "backfill",
-): void {
+): Promise<void> {
   logger.info(
     {
       collectorId: SEC_EDGAR_COLLECTOR_ID,
@@ -207,6 +301,7 @@ export function logResolvedSecIssuers(
     },
     `SEC EDGAR: polling ${resolved.issuers.length} issuer(s) (source=${resolved.source})`,
   );
+  await seedSecIssuerSourceFromAudit(callSite);
   const previous = lastSecIssuerSource.get(callSite);
   if (previous && previous !== resolved.source) {
     logger.warn(
@@ -219,6 +314,12 @@ export function logResolvedSecIssuers(
       },
       `SEC EDGAR: issuer-list source transitioned ${previous} → ${resolved.source}`,
     );
+    await recordSecIssuerSourceTransition({
+      previousSource: previous,
+      listSource: resolved.source,
+      issuerCount: resolved.issuers.length,
+      callSite,
+    });
   }
   lastSecIssuerSource.set(callSite, resolved.source);
 }
@@ -226,6 +327,16 @@ export function logResolvedSecIssuers(
 /** Test-only: reset the transition memory between cases. */
 export function _resetSecIssuerSourceMemoryForTests(): void {
   lastSecIssuerSource.clear();
+  seededSecIssuerCallSites.clear();
+}
+
+/**
+ * Test-only: disable the best-effort `collector_audit_log`
+ * write/seed so pure-helper unit tests don't depend on (and don't
+ * contaminate) a live DB.
+ */
+export function _disableSecIssuerPersistenceForTests(): void {
+  secIssuerPersistenceEnabled = false;
 }
 
 /**
@@ -459,7 +570,7 @@ export const secEdgarCollector: IntelligenceCollector<typeof edgarSignalSchema> 
     const rawPayloads: RawPayload[] = [];
     const failures: string[] = [];
     const resolved = await resolveActiveSecIssuers();
-    logResolvedSecIssuers(resolved, "collect");
+    await logResolvedSecIssuers(resolved, "collect");
     const issuers = resolved.issuers;
     for (const issuer of issuers) {
       try {
@@ -521,7 +632,7 @@ export async function fetchEdgarBackfillDrafts(opts?: {
   // target a single CIK while a no-arg backfill still sweeps whatever
   // tenants have curated.
   const resolved = await resolveActiveSecIssuers(opts?.issuers);
-  logResolvedSecIssuers(resolved, "backfill");
+  await logResolvedSecIssuers(resolved, "backfill");
   const issuers = resolved.issuers;
   const drafts: MarketSignalDraft[] = [];
   const failedIssuers: Array<{ cik: string; error: string }> = [];

@@ -149,13 +149,66 @@ To make the transition explicit, every tick logs:
   with `{ collectorId, listSource, issuerCount, callSite }`.
 - A one-shot **WARN** the first time the resolved source changes
   (e.g. `seed → tenant` after a tenant adds their first row, or
-  `tenant → seed` if every tenant row is removed). Operators should
-  alert on `listSource` transitions to catch silent migrations.
+  `tenant → seed` if every tenant row is removed).
 
 Implemented in `resolveActiveSecIssuers` /
 `resolveActiveCompaniesHouseNumbers`; the back-compat
 `getActiveSecIssuers` / `getActiveCompaniesHouseNumbers` functions
 still return just the array for callers that don't need the source.
+
+### Alerting & on-call runbook
+
+The transition is **also persisted** as a `collector_audit_log` row
+(event = `issuer_list_source_changed`, metadata =
+`{ previousSource, listSource, issuerCount, callSite }`) so a
+process-restart-spanning flip still raises the alarm — the in-memory
+WARN map alone would silently miss it.
+
+`synthesizeOperationalAlerts` (job kind
+`synthesize_operational_alerts`, runs every 15 min) scans those
+audit rows in the last 24h and emits an
+`operational_collector_issuer_list_flip` alert (severity `medium`)
+for every tenant opted into the affected collector. Delivery is the
+same path as `operational_collector_stale` /
+`operational_collector_never_run` — opted-in tenants' configured
+channels (Slack, Teams, email, webhook) get paged through the
+shared `alert_deliveries` worker.
+
+Dedupe key is
+`op:issuer_list_flip:<orgId>:<collectorId>:<callSite>:<day>:<from>-><to>`
+so a sustained flip alerts once per day, but a *reversal*
+(e.g. `seed → tenant` followed by `tenant → seed`) re-fires
+immediately because the direction changes.
+
+**On-call decision tree** (consult before paging the tenant):
+
+| Direction         | Most likely cause                                                        | Action                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `seed → tenant`   | A tenant just added their first row to `watched_issuers`. Healthy.       | **No page.** Eyeball the issuer count in the alert payload — if it's wildly larger than expected, ping the tenant to confirm intent. |
+| `tenant → seed`   | Every `watched_issuers` row for this `source` was deleted.               | **Page.** Either (a) a tenant accidentally cleared their list (`SELECT * FROM watched_issuers WHERE source = '<source>'` should now return zero), or (b) a botched migration. The seed list will silently mask the outage — restore tenant rows or escalate. |
+| `tenant → override` / `override → *` | An admin backfill (`POST /collectors/<id>/backfill` with explicit issuers) is in flight. | **No page** unless override stays pinned across multiple ticks of the regular collector — that suggests the live `collect()` is being passed an override it shouldn't be. |
+| `seed → override` | Same as above; admin backfill on a fresh install with no tenant rows.    | **No page.**                                                                                                                         |
+
+Quick triage queries:
+
+```sql
+-- Most recent transitions for both collectors:
+SELECT collector_id,
+       metadata->>'previousSource' AS prev,
+       metadata->>'listSource'    AS now,
+       metadata->>'callSite'      AS call_site,
+       metadata->>'issuerCount'   AS issuer_count,
+       created_at
+FROM collector_audit_log
+WHERE event = 'issuer_list_source_changed'
+  AND created_at > now() - interval '24 hours'
+ORDER BY created_at DESC;
+
+-- Did a tenant just empty their list? (run after a tenant → seed flip)
+SELECT org_id, count(*) FROM watched_issuers
+WHERE source = 'sec_edgar'   -- or 'companies_house'
+GROUP BY org_id;
+```
 
 ## Environment variables
 

@@ -24,13 +24,23 @@ const {
   padCik,
   logResolvedSecIssuers,
   _resetSecIssuerSourceMemoryForTests,
+  _disableSecIssuerPersistenceForTests,
 } = await import("../src/lib/intelligence/collectors/sec-edgar");
 const {
   normaliseCompaniesHouseNumber,
   logResolvedCompaniesHouseNumbers,
   _resetCompaniesHouseSourceMemoryForTests,
+  _disableCompaniesHousePersistenceForTests,
 } = await import("../src/lib/intelligence/collectors/companies-house");
 const { logger } = await import("../src/lib/logger");
+
+// Pin this file as a pure-helper unit test: disable the best-effort
+// `collector_audit_log` writes + seed lookups so the assertions
+// below don't depend on (or contaminate) a live DB. Integration of
+// the persistence path is covered by
+// `synthesize-issuer-list-flip.test.ts`.
+_disableSecIssuerPersistenceForTests();
+_disableCompaniesHousePersistenceForTests();
 
 interface CapturedLog {
   level: "info" | "warn";
@@ -110,8 +120,8 @@ test("normaliseCompaniesHouseNumber zero-pads numeric inputs to 8 chars", () => 
 
 test("logResolvedSecIssuers emits one INFO line per tick with source + count", async () => {
   _resetSecIssuerSourceMemoryForTests();
-  const { logs } = await captureLogs(() => {
-    logResolvedSecIssuers(
+  const { logs } = await captureLogs(async () => {
+    await logResolvedSecIssuers(
       {
         source: "seed",
         issuers: [
@@ -134,12 +144,12 @@ test("logResolvedSecIssuers emits one INFO line per tick with source + count", a
 
 test("logResolvedSecIssuers emits a one-shot WARN on seed → tenant transition", async () => {
   _resetSecIssuerSourceMemoryForTests();
-  const { logs } = await captureLogs(() => {
-    logResolvedSecIssuers(
+  const { logs } = await captureLogs(async () => {
+    await logResolvedSecIssuers(
       { source: "seed", issuers: [{ cik: "0000320193", name: "Apple" }] },
       "collect",
     );
-    logResolvedSecIssuers(
+    await logResolvedSecIssuers(
       {
         source: "tenant",
         issuers: [
@@ -150,57 +160,81 @@ test("logResolvedSecIssuers emits a one-shot WARN on seed → tenant transition"
       "collect",
     );
     // Stable second tick at "tenant" — must NOT re-warn.
-    logResolvedSecIssuers(
+    await logResolvedSecIssuers(
       { source: "tenant", issuers: [{ cik: "0000320193", name: "Apple" }] },
       "collect",
     );
   });
-  const warns = logs.filter((l) => l.level === "warn");
-  assert.equal(warns.length, 1, "exactly one transition WARN expected");
-  assert.equal(warns[0]!.obj["previousSource"], "seed");
-  assert.equal(warns[0]!.obj["listSource"], "tenant");
-  assert.match(warns[0]!.msg, /seed → tenant/);
+  // Filter out the best-effort audit-write warn that fires when the
+  // placeholder DATABASE_URL refuses connections — we only care about
+  // the transition WARN here. A real prod run with a reachable DB
+  // never emits the persistence-failure warn.
+  const transitionWarns = logs.filter(
+    (l) =>
+      l.level === "warn" &&
+      typeof l.msg === "string" &&
+      l.msg.includes("issuer-list source transitioned"),
+  );
+  assert.equal(
+    transitionWarns.length,
+    1,
+    "exactly one transition WARN expected",
+  );
+  assert.equal(transitionWarns[0]!.obj["previousSource"], "seed");
+  assert.equal(transitionWarns[0]!.obj["listSource"], "tenant");
+  assert.match(transitionWarns[0]!.msg, /seed → tenant/);
   // Three INFO lines (one per tick) regardless of warn behaviour.
   assert.equal(logs.filter((l) => l.level === "info").length, 3);
 });
 
 test("logResolvedSecIssuers tracks call sites independently", async () => {
   _resetSecIssuerSourceMemoryForTests();
-  const { logs } = await captureLogs(() => {
+  const { logs } = await captureLogs(async () => {
     // collect is at seed
-    logResolvedSecIssuers({ source: "seed", issuers: [] }, "collect");
+    await logResolvedSecIssuers({ source: "seed", issuers: [] }, "collect");
     // backfill arrives at "override" — must NOT trigger a transition
     // warn for collect; backfill's own first tick has no prior state.
-    logResolvedSecIssuers(
+    await logResolvedSecIssuers(
       { source: "override", issuers: [{ cik: "0000320193", name: "Apple" }] },
       "backfill",
     );
   });
-  assert.equal(logs.filter((l) => l.level === "warn").length, 0);
+  const transitionWarns = logs.filter(
+    (l) =>
+      l.level === "warn" &&
+      typeof l.msg === "string" &&
+      l.msg.includes("issuer-list source transitioned"),
+  );
+  assert.equal(transitionWarns.length, 0);
 });
 
 test("logResolvedCompaniesHouseNumbers emits INFO + transition WARN on source change", async () => {
   _resetCompaniesHouseSourceMemoryForTests();
-  const { logs } = await captureLogs(() => {
-    logResolvedCompaniesHouseNumbers(
+  const { logs } = await captureLogs(async () => {
+    await logResolvedCompaniesHouseNumbers(
       { source: "seed", numbers: ["00006245"] },
       "collect",
     );
-    logResolvedCompaniesHouseNumbers(
+    await logResolvedCompaniesHouseNumbers(
       { source: "tenant", numbers: ["00006245", "02099500"] },
       "collect",
     );
   });
   const infos = logs.filter((l) => l.level === "info");
-  const warns = logs.filter((l) => l.level === "warn");
+  const transitionWarns = logs.filter(
+    (l) =>
+      l.level === "warn" &&
+      typeof l.msg === "string" &&
+      l.msg.includes("number-list source transitioned"),
+  );
   assert.equal(infos.length, 2);
   assert.equal(infos[0]!.obj["collectorId"], "companies-house");
   assert.equal(infos[0]!.obj["listSource"], "seed");
   assert.equal(infos[0]!.obj["numberCount"], 1);
   assert.equal(infos[1]!.obj["listSource"], "tenant");
   assert.equal(infos[1]!.obj["numberCount"], 2);
-  assert.equal(warns.length, 1);
-  assert.equal(warns[0]!.obj["previousSource"], "seed");
-  assert.equal(warns[0]!.obj["listSource"], "tenant");
-  assert.match(warns[0]!.msg, /seed → tenant/);
+  assert.equal(transitionWarns.length, 1);
+  assert.equal(transitionWarns[0]!.obj["previousSource"], "seed");
+  assert.equal(transitionWarns[0]!.obj["listSource"], "tenant");
+  assert.match(transitionWarns[0]!.msg, /seed → tenant/);
 });
