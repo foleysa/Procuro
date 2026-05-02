@@ -2858,6 +2858,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCleanupRunAccepted'
+  /system/csv-ingest/metrics:
+    get:
+      operationId: getSystemCsvIngestMetrics
+      tags:
+      - system
+      summary: Recent CSV streaming-ingest throughput + per-entity trend
+      description: 'Returns the most recent CSV streaming uploads (newest first)
+        plus per-entity 7-day rollups so the System page can chart
+        rows/sec drift over time without scraping logs. Cross-tenant
+        endpoint — gated by the platform-admin token.
+
+        '
+      parameters:
+      - in: query
+        name: windowDays
+        required: false
+        description: Trend window in days (1-30). Defaults to 7.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 7
+      - in: query
+        name: recentLimit
+        required: false
+        description: Maximum number of recent rows to return (1-200). Defaults to 25.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 25
+      responses:
+        '200':
+          description: CSV ingest metrics summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCsvIngestMetrics'
   /defense-packs:
     get:
       operationId: listDefensePacks
@@ -7797,6 +7835,112 @@ components:
             request; false when a new job was enqueued.
 
             '
+    SystemCsvIngestMetrics:
+      type: object
+      required:
+      - recent
+      - entities
+      - windowDays
+      properties:
+        windowDays:
+          type: integer
+          description: Trend window in days that the per-entity rollups span.
+        recent:
+          type: array
+          description: 'Most recent CSV streaming uploads, newest first.
+
+            '
+          items:
+            $ref: '#/components/schemas/CsvIngestRecentRun'
+        entities:
+          type: array
+          description: 'Per-entity throughput rollups across the trend window,
+            busiest pipeline first. Each entry has a `days` array of
+            length `windowDays`, oldest → newest, suitable for direct
+            sparkline rendering.
+
+            '
+          items:
+            $ref: '#/components/schemas/CsvIngestEntityTrend'
+    CsvIngestRecentRun:
+      type: object
+      required:
+      - id
+      - orgId
+      - entity
+      - rowsParsed
+      - rowsInserted
+      - durationMs
+      - bytesProcessed
+      - rowsPerSecond
+      - createdAt
+      properties:
+        id:
+          type: string
+        orgId:
+          type: string
+        entity:
+          type: string
+        rowsParsed:
+          type: integer
+        rowsInserted:
+          type: integer
+        durationMs:
+          type: integer
+        bytesProcessed:
+          type: integer
+        rowsPerSecond:
+          type: integer
+          description: 'Rows/sec computed from rowsInserted ÷ durationMs.
+
+            '
+        createdAt:
+          type: string
+          format: date-time
+    CsvIngestEntityDay:
+      type: object
+      required:
+      - day
+      - uploadCount
+      - totalRows
+      - p50RowsPerSecond
+      - p95RowsPerSecond
+      properties:
+        day:
+          type: string
+          description: ISO date (YYYY-MM-DD) for the start of the UTC day.
+        uploadCount:
+          type: integer
+        totalRows:
+          type: integer
+        p50RowsPerSecond:
+          type: integer
+        p95RowsPerSecond:
+          type: integer
+    CsvIngestEntityTrend:
+      type: object
+      required:
+      - entity
+      - uploadCount
+      - totalRows
+      - p50RowsPerSecond
+      - p95RowsPerSecond
+      - days
+      properties:
+        entity:
+          type: string
+        uploadCount:
+          type: integer
+        totalRows:
+          type: integer
+        p50RowsPerSecond:
+          type: integer
+        p95RowsPerSecond:
+          type: integer
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/CsvIngestEntityDay'
     SyncResultResponse:
       type: object
       required:

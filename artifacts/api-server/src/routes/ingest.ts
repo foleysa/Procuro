@@ -19,6 +19,7 @@ import {
 } from "../lib/adapters/mock-erp-adapter";
 import { enqueueJob } from "../lib/jobs/queue";
 import { backfillSupplierBillingCurrency } from "../lib/suppliers/backfill-billing-currency";
+import { recordCsvIngestMetric } from "../lib/csv-ingest-metrics";
 import {
   sanitizeDbErrorMessage,
   errorLogContext,
@@ -487,11 +488,19 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
     res.write(`${JSON.stringify(event)}\n`);
   };
 
+  // The streaming adapter only includes `bytesProcessed` on progress
+  // events (its terminal `StreamCsvResult` is rows + duration only),
+  // so we capture the most recent count here and forward it into the
+  // throughput-metric write below. Tracking on every progress tick —
+  // not just the throttled emit ticks — ensures the persisted count
+  // matches what the adapter actually consumed off the upload stream.
+  let lastBytesProcessed = 0;
   const onProgress: StreamCsvArgsOnProgress = ({
     rowsParsed,
     rowsInserted,
     bytesProcessed,
   }) => {
+    lastBytesProcessed = bytesProcessed;
     const now = Date.now();
     if (now - lastEmit < PROGRESS_EMIT_INTERVAL_MS) return;
     lastEmit = now;
@@ -552,6 +561,18 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
         );
       }
     }
+    // Persist a per-upload throughput sample so the System page CSV
+    // ingest panel can show real-customer rows/sec drift over time.
+    // Best-effort — `recordCsvIngestMetric` swallows its own errors so
+    // a metric write failure never poisons a successful upload.
+    await recordCsvIngestMetric({
+      orgId,
+      entity,
+      rowsParsed: result.rowsParsed,
+      rowsInserted: result.rowsInserted,
+      durationMs: result.durationMs,
+      bytesProcessed: lastBytesProcessed,
+    });
     writeEvent({ type: "result", ...result });
   } catch (err) {
     if (err instanceof CsvIngestAbortedError) {

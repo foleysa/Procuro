@@ -22,6 +22,7 @@ export * from "./funnel";
 export * from "./marketSignals";
 export * from "./jobs";
 export * from "./jobKindSettings";
+export * from "./csvIngestMetrics";
 export * from "./entityResolutionCache";
 export * from "./watchedIssuers";
 export * from "./erpConnections";

@@ -8,6 +8,7 @@ import {
   getFunnelSnapshotRetentionConfig,
   getJobRetentionConfig,
 } from "../lib/jobs/queue";
+import { getCsvIngestMetricsSummary } from "../lib/csv-ingest-metrics";
 
 const router: IRouter = Router();
 
@@ -200,6 +201,36 @@ router.post(
       status: job.status,
       reused: false,
     });
+  },
+);
+
+/**
+ * CSV ingest throughput metrics — recent runs + per-entity 7-day
+ * trend. Powers the "CSV ingest performance" panel on the System
+ * page so operators can spot rows/sec drift between deploys without
+ * waiting for the CI ceiling tests in `routes/ingest.ts` to fire.
+ *
+ * Cross-tenant by design (operators look at global throughput drift,
+ * not single-tenant numbers), so this sits behind the same
+ * platform-admin guard as the cleanup endpoints above.
+ */
+router.get(
+  "/system/csv-ingest/metrics",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const windowDaysRaw = Number(req.query["windowDays"] ?? 7);
+    const recentLimitRaw = Number(req.query["recentLimit"] ?? 25);
+    const windowDays = Number.isFinite(windowDaysRaw)
+      ? Math.max(1, Math.min(30, Math.floor(windowDaysRaw)))
+      : 7;
+    const recentLimit = Number.isFinite(recentLimitRaw)
+      ? Math.max(1, Math.min(200, Math.floor(recentLimitRaw)))
+      : 25;
+    const summary = await getCsvIngestMetricsSummary({
+      windowDays,
+      recentLimit,
+    });
+    res.json(summary);
   },
 );
 

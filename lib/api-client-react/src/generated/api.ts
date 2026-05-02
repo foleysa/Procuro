@@ -87,6 +87,7 @@ import type {
   GetIntelligenceRiskHeatmapParams,
   GetServicesSpendParams,
   GetSpendOverviewParams,
+  GetSystemCsvIngestMetricsParams,
   HealthStatus,
   IngestCsvBatchParams,
   IngestCsvStreamBodyOne,
@@ -164,6 +165,7 @@ import type {
   SyncResultResponse,
   SystemCleanupRunAccepted,
   SystemCleanupStatus,
+  SystemCsvIngestMetrics,
   SystemFunnelSnapshotCleanupStatus,
   TestErpConnectionRequest,
   TestErpConnectionResult,
@@ -8210,6 +8212,117 @@ export const useRunSystemFunnelSnapshotCleanup = <
 > => {
   return useMutation(getRunSystemFunnelSnapshotCleanupMutationOptions(options));
 };
+
+/**
+ * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Recent CSV streaming-ingest throughput + per-entity trend
+ */
+export const getGetSystemCsvIngestMetricsUrl = (
+  params?: GetSystemCsvIngestMetricsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/system/csv-ingest/metrics?${stringifiedParams}`
+    : `/api/system/csv-ingest/metrics`;
+};
+
+export const getSystemCsvIngestMetrics = async (
+  params?: GetSystemCsvIngestMetricsParams,
+  options?: RequestInit,
+): Promise<SystemCsvIngestMetrics> => {
+  return customFetch<SystemCsvIngestMetrics>(
+    getGetSystemCsvIngestMetricsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSystemCsvIngestMetricsQueryKey = (
+  params?: GetSystemCsvIngestMetricsParams,
+) => {
+  return [
+    `/api/system/csv-ingest/metrics`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSystemCsvIngestMetricsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSystemCsvIngestMetricsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemCsvIngestMetricsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>
+  > = ({ signal }) =>
+    getSystemCsvIngestMetrics(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemCsvIngestMetricsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>
+>;
+export type GetSystemCsvIngestMetricsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recent CSV streaming-ingest throughput + per-entity trend
+ */
+
+export function useGetSystemCsvIngestMetrics<
+  TData = Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSystemCsvIngestMetricsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSystemCsvIngestMetrics>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSystemCsvIngestMetricsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the most recent Defense Packs created in the tenant,

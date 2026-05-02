@@ -5954,6 +5954,81 @@ export const GetSystemFunnelSnapshotCleanupStatusResponse = zod.object({
 });
 
 /**
+ * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Recent CSV streaming-ingest throughput + per-entity trend
+ */
+export const getSystemCsvIngestMetricsQueryWindowDaysDefault = 7;
+export const getSystemCsvIngestMetricsQueryWindowDaysMax = 30;
+
+export const getSystemCsvIngestMetricsQueryRecentLimitDefault = 25;
+export const getSystemCsvIngestMetricsQueryRecentLimitMax = 200;
+
+export const GetSystemCsvIngestMetricsQueryParams = zod.object({
+  windowDays: zod.coerce
+    .number()
+    .min(1)
+    .max(getSystemCsvIngestMetricsQueryWindowDaysMax)
+    .default(getSystemCsvIngestMetricsQueryWindowDaysDefault)
+    .describe("Trend window in days (1-30). Defaults to 7."),
+  recentLimit: zod.coerce
+    .number()
+    .min(1)
+    .max(getSystemCsvIngestMetricsQueryRecentLimitMax)
+    .default(getSystemCsvIngestMetricsQueryRecentLimitDefault)
+    .describe(
+      "Maximum number of recent rows to return (1-200). Defaults to 25.",
+    ),
+});
+
+export const GetSystemCsvIngestMetricsResponse = zod.object({
+  windowDays: zod
+    .number()
+    .describe("Trend window in days that the per-entity rollups span."),
+  recent: zod
+    .array(
+      zod.object({
+        id: zod.string(),
+        orgId: zod.string(),
+        entity: zod.string(),
+        rowsParsed: zod.number(),
+        rowsInserted: zod.number(),
+        durationMs: zod.number(),
+        bytesProcessed: zod.number(),
+        rowsPerSecond: zod
+          .number()
+          .describe("Rows\/sec computed from rowsInserted ÷ durationMs.\n"),
+        createdAt: zod.coerce.date(),
+      }),
+    )
+    .describe("Most recent CSV streaming uploads, newest first.\n"),
+  entities: zod
+    .array(
+      zod.object({
+        entity: zod.string(),
+        uploadCount: zod.number(),
+        totalRows: zod.number(),
+        p50RowsPerSecond: zod.number(),
+        p95RowsPerSecond: zod.number(),
+        days: zod.array(
+          zod.object({
+            day: zod
+              .string()
+              .describe("ISO date (YYYY-MM-DD) for the start of the UTC day."),
+            uploadCount: zod.number(),
+            totalRows: zod.number(),
+            p50RowsPerSecond: zod.number(),
+            p95RowsPerSecond: zod.number(),
+          }),
+        ),
+      }),
+    )
+    .describe(
+      "Per-entity throughput rollups across the trend window, busiest pipeline first. Each entry has a `days` array of length `windowDays`, oldest → newest, suitable for direct sparkline rendering.\n",
+    ),
+});
+
+/**
  * Returns the most recent Defense Packs created in the tenant,
 newest first. Pack `sections` and `evidenceSnapshot` are
 omitted from list rows for payload size — fetch

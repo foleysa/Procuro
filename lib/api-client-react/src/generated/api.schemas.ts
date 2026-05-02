@@ -2453,6 +2453,49 @@ request; false when a new job was enqueued.
   reused: boolean;
 }
 
+export interface CsvIngestRecentRun {
+  id: string;
+  orgId: string;
+  entity: string;
+  rowsParsed: number;
+  rowsInserted: number;
+  durationMs: number;
+  bytesProcessed: number;
+  /** Rows/sec computed from rowsInserted ÷ durationMs.
+   */
+  rowsPerSecond: number;
+  createdAt: string;
+}
+
+export interface CsvIngestEntityDay {
+  /** ISO date (YYYY-MM-DD) for the start of the UTC day. */
+  day: string;
+  uploadCount: number;
+  totalRows: number;
+  p50RowsPerSecond: number;
+  p95RowsPerSecond: number;
+}
+
+export interface CsvIngestEntityTrend {
+  entity: string;
+  uploadCount: number;
+  totalRows: number;
+  p50RowsPerSecond: number;
+  p95RowsPerSecond: number;
+  days: CsvIngestEntityDay[];
+}
+
+export interface SystemCsvIngestMetrics {
+  /** Trend window in days that the per-entity rollups span. */
+  windowDays: number;
+  /** Most recent CSV streaming uploads, newest first.
+   */
+  recent: CsvIngestRecentRun[];
+  /** Per-entity throughput rollups across the trend window, busiest pipeline first. Each entry has a `days` array of length `windowDays`, oldest → newest, suitable for direct sparkline rendering.
+   */
+  entities: CsvIngestEntityTrend[];
+}
+
 export interface SyncResultResponse {
   recordsProcessed: number;
   recordsCreated: number;
@@ -4784,6 +4827,21 @@ export type GetServicesSpendParams = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
+};
+
+export type GetSystemCsvIngestMetricsParams = {
+  /**
+   * Trend window in days (1-30). Defaults to 7.
+   * @minimum 1
+   * @maximum 30
+   */
+  windowDays?: number;
+  /**
+   * Maximum number of recent rows to return (1-200). Defaults to 25.
+   * @minimum 1
+   * @maximum 200
+   */
+  recentLimit?: number;
 };
 
 export type ListDefensePacksParams = {

@@ -15,10 +15,13 @@ import {
   useRunSystemCleanup,
   useGetSystemFunnelSnapshotCleanupStatus,
   useRunSystemFunnelSnapshotCleanup,
+  useGetSystemCsvIngestMetrics,
+  getGetSystemCsvIngestMetricsQueryKey,
   ListJobsStatus,
   type Job,
   type JobKindSetting,
   type ListJobsParams,
+  type CsvIngestEntityTrend,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1159,6 +1162,8 @@ export default function System() {
         </Card>
       </div>
 
+      <CsvIngestPerformancePanel />
+
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1503,4 +1508,270 @@ export default function System() {
       </Dialog>
     </div>
   );
+}
+
+/**
+ * Per-entity CSV streaming-ingest performance panel. Reads from
+ * `/system/csv-ingest/metrics` (gated by the same platform-admin
+ * token as the cleanup cards above), shows the last 25 uploads in a
+ * table (entity, rows, duration, rows/sec) and an inline 7-day
+ * sparkline per entity so operators can spot throughput drift
+ * without scraping logs. Card structure intentionally mirrors the
+ * other System page cards for visual consistency.
+ */
+function CsvIngestPerformancePanel() {
+  const params = useMemo(
+    () => ({ windowDays: 7, recentLimit: 25 }),
+    [],
+  );
+  const { data, isLoading, isError, refetch, isFetching } =
+    useGetSystemCsvIngestMetrics(params, {
+      query: {
+        queryKey: getGetSystemCsvIngestMetricsQueryKey(params),
+        refetchInterval: 30_000,
+      },
+    });
+
+  return (
+    <Card data-testid="card-csv-ingest-performance">
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              CSV ingest performance
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Recent streaming uploads with per-entity rows/sec and a
+              7-day sparkline so throughput drift surfaces between
+              deploys.
+            </p>
+          </div>
+          <Button
+            data-testid="btn-refresh-csv-ingest-metrics"
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw
+              className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading CSV ingest
+            metrics…
+          </div>
+        )}
+        {isError && (
+          <div className="text-sm text-red-600">
+            Failed to load CSV ingest metrics. You may not have Platform
+            Admin access.
+          </div>
+        )}
+        {data && data.recent.length === 0 && data.entities.length === 0 && (
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <Activity className="w-4 h-4" />
+            No streaming CSV uploads in the last {data.windowDays} days.
+            Recent uploads will appear here once the streaming ingest
+            route processes one.
+          </div>
+        )}
+        {data && data.entities.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs uppercase text-muted-foreground">
+              Per-entity throughput · last {data.windowDays} days
+            </div>
+            <div
+              className="rounded-md border overflow-hidden"
+              data-testid="table-csv-ingest-trends"
+            >
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="text-left font-medium px-3 py-2">
+                      Entity
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Uploads
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Total rows
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Rows/s p50 / p95
+                    </th>
+                    <th className="text-left font-medium px-3 py-2 w-[180px]">
+                      7-day rows/s trend
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.entities.map((e) => (
+                    <tr
+                      key={e.entity}
+                      className="border-t"
+                      data-testid={`row-csv-ingest-trend-${e.entity}`}
+                    >
+                      <td className="px-3 py-2 font-medium">{e.entity}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {e.uploadCount.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {e.totalRows.toLocaleString()}
+                      </td>
+                      <td
+                        className="px-3 py-2 text-right tabular-nums"
+                        data-testid={`text-csv-ingest-rps-${e.entity}`}
+                      >
+                        {e.p50RowsPerSecond.toLocaleString()} /{" "}
+                        {e.p95RowsPerSecond.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2">
+                        <CsvIngestSparkline trend={e} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        {data && data.recent.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs uppercase text-muted-foreground">
+              Recent uploads · newest first
+            </div>
+            <div
+              className="rounded-md border overflow-hidden"
+              data-testid="table-csv-ingest-recent"
+            >
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="text-left font-medium px-3 py-2">
+                      When
+                    </th>
+                    <th className="text-left font-medium px-3 py-2">
+                      Entity
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Rows
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Duration
+                    </th>
+                    <th className="text-right font-medium px-3 py-2">
+                      Rows/s
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.recent.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="border-t"
+                      data-testid={`row-csv-ingest-recent-${r.id}`}
+                    >
+                      <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                        {formatDateTime(r.createdAt)}
+                      </td>
+                      <td className="px-3 py-2 font-medium">{r.entity}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {r.rowsInserted.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatDurationMs(r.durationMs)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {r.rowsPerSecond.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Inline SVG sparkline for a single entity's 7-day rows/sec p50
+ * timeseries. No external charting dep — the dataset is at most 30
+ * points so a hand-rolled SVG polyline keeps the bundle lean and
+ * matches the rest of the System page's no-chart-lib aesthetic.
+ *
+ * Empty days (no uploads) render as a flat zero baseline so the
+ * sparkline width stays comparable across entities.
+ */
+function CsvIngestSparkline({ trend }: { trend: CsvIngestEntityTrend }) {
+  const width = 160;
+  const height = 32;
+  const padding = 2;
+  const values = trend.days.map((d) => d.p50RowsPerSecond);
+  const max = Math.max(1, ...values);
+  const denom = Math.max(1, values.length - 1);
+
+  const points = values
+    .map((v, i) => {
+      const x = padding + (i / denom) * (width - padding * 2);
+      const y =
+        height - padding - (v / max) * (height - padding * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  const lastDay = trend.days[trend.days.length - 1];
+  const firstDay = trend.days[0];
+  const allZero = values.every((v) => v === 0);
+
+  return (
+    <div
+      className="flex items-center gap-2"
+      data-testid={`sparkline-csv-ingest-${trend.entity}`}
+      title={
+        allZero
+          ? "No uploads in window"
+          : `p50 ${trend.p50RowsPerSecond.toLocaleString()} rows/s · p95 ${trend.p95RowsPerSecond.toLocaleString()} rows/s · ${firstDay?.day} → ${lastDay?.day}`
+      }
+    >
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="text-primary"
+        aria-hidden
+      >
+        <polyline
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          points={points}
+        />
+      </svg>
+      <span className="text-xs text-muted-foreground tabular-nums">
+        {allZero ? "—" : `${(lastDay?.p50RowsPerSecond ?? 0).toLocaleString()} r/s`}
+      </span>
+    </div>
+  );
+}
+
+/** Compact human-friendly duration for the recent-uploads table. */
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
+  const min = Math.floor(ms / 60_000);
+  const sec = Math.round((ms % 60_000) / 1000);
+  return `${min}m ${sec}s`;
 }
