@@ -708,6 +708,88 @@ export function useGetTrustSummary<
 }
 
 /**
+ * Returns a representative `TrustSummary` for an unauthenticated
+viewer — typically a procurement reviewer running a security
+review on Procuro before a contract is signed. The numbers are
+seeded from a fixed demo tenant so sales can hand out a single
+URL during the cycle. No authentication is required and no real
+tenant data is exposed.
+
+ * @summary Public, signed-out preview of the Trust Center
+ */
+export const getGetTrustPublicSummaryUrl = () => {
+  return `/api/trust/public-summary`;
+};
+
+export const getTrustPublicSummary = async (
+  options?: RequestInit,
+): Promise<TrustSummary> => {
+  return customFetch<TrustSummary>(getGetTrustPublicSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTrustPublicSummaryQueryKey = () => {
+  return [`/api/trust/public-summary`] as const;
+};
+
+export const getGetTrustPublicSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTrustPublicSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustPublicSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTrustPublicSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getTrustPublicSummary>>
+  > = ({ signal }) => getTrustPublicSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustPublicSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTrustPublicSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTrustPublicSummary>>
+>;
+export type GetTrustPublicSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Public, signed-out preview of the Trust Center
+ */
+
+export function useGetTrustPublicSummary<
+  TData = Awaited<ReturnType<typeof getTrustPublicSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTrustPublicSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTrustPublicSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * Trailing-12-month spend rollup. Optional `segment` query narrows every aggregation in the response (byClass, byCategory, bySupplier, byBusinessUnit, concentration, …) to either the `goods` or `services` slice — defined identically to the `services` band on `/spend/by-band` so the two cards always reconcile. The `goodsVsServices` block is always returned at the org-wide totals so the segmented control can render its share pills regardless of the active segment.
  * @summary Spend overview (last 12 months)
  */

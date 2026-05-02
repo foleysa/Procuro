@@ -218,6 +218,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrustSummary'
+  /trust/public-summary:
+    get:
+      operationId: getTrustPublicSummary
+      tags:
+      - trust
+      summary: Public, signed-out preview of the Trust Center
+      description: 'Returns a representative `TrustSummary` for an unauthenticated
+
+        viewer — typically a procurement reviewer running a security
+
+        review on Procuro before a contract is signed. The numbers are
+
+        seeded from a fixed demo tenant so sales can hand out a single
+
+        URL during the cycle. No authentication is required and no real
+
+        tenant data is exposed.
+
+        '
+      responses:
+        '200':
+          description: Demo trust posture
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustSummary'
   /spend/overview:
     get:
       operationId: getSpendOverview

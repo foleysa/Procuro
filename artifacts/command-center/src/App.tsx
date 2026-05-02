@@ -52,6 +52,7 @@ import Engine from "./pages/engine";
 import TaxonomyQueue from "./pages/taxonomy-queue";
 import WhatsNew from "./pages/whats-new";
 import TrustPage from "./pages/trust";
+import TrustPublicPage from "./pages/trust-public";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
 import Alerts from "./pages/alerts";
@@ -270,8 +271,9 @@ function ClerkQueryClientCacheInvalidator() {
 }
 
 /**
- * `/trust?print=1` renders without the Layout chrome so the page is
- * suitable for printing or PDF capture by a procurement reviewer.
+ * `/trust?print=1` (and `/trust/public?print=1`) render without
+ * the Layout chrome so the page is suitable for printing or PDF
+ * capture by a procurement reviewer.
  * Reading from `window.location` here (rather than wouter's `useSearch`)
  * keeps the conditional out of the React render tree — the route
  * remounts on navigation anyway.
@@ -288,6 +290,7 @@ function AppRoutes() {
   if (isTrustPrintMode()) {
     return (
       <Switch>
+        <Route path="/trust/public" component={TrustPublicPage} />
         <Route path="/trust" component={TrustPage} />
         <Route component={NotFound} />
       </Switch>
@@ -298,6 +301,11 @@ function AppRoutes() {
       <Route path="/landing" component={Landing} />
       <Route path="/sign-in/*?" component={SignInPage} />
       <Route path="/sign-up/*?" component={SignUpPage} />
+      {/* Public, signed-out preview of the Trust Center (#167). Sits
+        * outside the Layout so a procurement reviewer can deep-link
+        * during a security questionnaire without being asked to sign
+        * in. The authenticated /trust route below is unaffected. */}
+      <Route path="/trust/public" component={TrustPublicPage} />
       <Route>
         <Layout>
           <Switch>
