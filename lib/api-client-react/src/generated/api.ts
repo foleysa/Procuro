@@ -191,6 +191,8 @@ import type {
   SupplierListResponse,
   SyncResultResponse,
   SystemCleanupRunAccepted,
+  SystemCleanupSchedule,
+  SystemCleanupScheduleUpdate,
   SystemCleanupStatus,
   SystemCsvIngestMetrics,
   SystemCsvThroughputHistory,
@@ -202,6 +204,7 @@ import type {
   TrustSummary,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
+  UpdateSystemCleanupSchedule400,
   WatchedIssuer,
   WatchedIssuerListResponse,
   Watchlist,
@@ -8626,6 +8629,177 @@ export const useRunSystemCleanup = <
   TContext
 > => {
   return useMutation(getRunSystemCleanupMutationOptions(options));
+};
+
+/**
+ * Returns the cron expression currently driving the `prune_jobs` scheduler, the in-code default, the next computed run time, and audit metadata for the most recent operator change. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Read the cron schedule driving the periodic prune_jobs run
+ */
+export const getGetSystemCleanupScheduleUrl = () => {
+  return `/api/system/cleanup/schedule`;
+};
+
+export const getSystemCleanupSchedule = async (
+  options?: RequestInit,
+): Promise<SystemCleanupSchedule> => {
+  return customFetch<SystemCleanupSchedule>(getGetSystemCleanupScheduleUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSystemCleanupScheduleQueryKey = () => {
+  return [`/api/system/cleanup/schedule`] as const;
+};
+
+export const getGetSystemCleanupScheduleQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemCleanupSchedule>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupSchedule>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemCleanupScheduleQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemCleanupSchedule>>
+  > = ({ signal }) => getSystemCleanupSchedule({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupSchedule>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemCleanupScheduleQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemCleanupSchedule>>
+>;
+export type GetSystemCleanupScheduleQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read the cron schedule driving the periodic prune_jobs run
+ */
+
+export function useGetSystemCleanupSchedule<
+  TData = Awaited<ReturnType<typeof getSystemCleanupSchedule>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemCleanupSchedule>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSystemCleanupScheduleQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Validates the supplied cron expression, persists it to `app_settings`, and reloads the in-process timer so the new cadence takes effect immediately. Returns the same shape as GET so the client can refresh from the mutation response.
+
+ * @summary Update the cron schedule for the periodic prune_jobs run
+ */
+export const getUpdateSystemCleanupScheduleUrl = () => {
+  return `/api/system/cleanup/schedule`;
+};
+
+export const updateSystemCleanupSchedule = async (
+  systemCleanupScheduleUpdate: SystemCleanupScheduleUpdate,
+  options?: RequestInit,
+): Promise<SystemCleanupSchedule> => {
+  return customFetch<SystemCleanupSchedule>(
+    getUpdateSystemCleanupScheduleUrl(),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(systemCleanupScheduleUpdate),
+    },
+  );
+};
+
+export const getUpdateSystemCleanupScheduleMutationOptions = <
+  TError = ErrorType<UpdateSystemCleanupSchedule400>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSystemCleanupSchedule>>,
+    TError,
+    { data: BodyType<SystemCleanupScheduleUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSystemCleanupSchedule>>,
+  TError,
+  { data: BodyType<SystemCleanupScheduleUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSystemCleanupSchedule"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSystemCleanupSchedule>>,
+    { data: BodyType<SystemCleanupScheduleUpdate> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateSystemCleanupSchedule(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSystemCleanupScheduleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSystemCleanupSchedule>>
+>;
+export type UpdateSystemCleanupScheduleMutationBody =
+  BodyType<SystemCleanupScheduleUpdate>;
+export type UpdateSystemCleanupScheduleMutationError =
+  ErrorType<UpdateSystemCleanupSchedule400>;
+
+/**
+ * @summary Update the cron schedule for the periodic prune_jobs run
+ */
+export const useUpdateSystemCleanupSchedule = <
+  TError = ErrorType<UpdateSystemCleanupSchedule400>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSystemCleanupSchedule>>,
+    TError,
+    { data: BodyType<SystemCleanupScheduleUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSystemCleanupSchedule>>,
+  TError,
+  { data: BodyType<SystemCleanupScheduleUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateSystemCleanupScheduleMutationOptions(options));
 };
 
 /**

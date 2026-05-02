@@ -3068,6 +3068,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCleanupRunAccepted'
+  /system/cleanup/schedule:
+    get:
+      operationId: getSystemCleanupSchedule
+      tags:
+      - system
+      summary: Read the cron schedule driving the periodic prune_jobs run
+      description: 'Returns the cron expression currently driving the
+        `prune_jobs` scheduler, the in-code default, the next computed
+        run time, and audit metadata for the most recent operator
+        change. Cross-tenant endpoint — gated by the platform-admin
+        token.
+
+        '
+      responses:
+        '200':
+          description: Job-prune schedule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCleanupSchedule'
+    put:
+      operationId: updateSystemCleanupSchedule
+      tags:
+      - system
+      summary: Update the cron schedule for the periodic prune_jobs run
+      description: 'Validates the supplied cron expression, persists it
+        to `app_settings`, and reloads the in-process timer so the
+        new cadence takes effect immediately. Returns the same shape
+        as GET so the client can refresh from the mutation response.
+
+        '
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemCleanupScheduleUpdate'
+      responses:
+        '200':
+          description: Updated job-prune schedule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCleanupSchedule'
+        '400':
+          description: Invalid cron expression
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - error
+                properties:
+                  error:
+                    type: string
   /system/cleanup/funnel-snapshots/status:
     get:
       operationId: getSystemFunnelSnapshotCleanupStatus
@@ -8555,6 +8610,73 @@ components:
                 review purposes.
 
                 '
+    SystemCleanupSchedule:
+      type: object
+      required:
+      - cron
+      - defaultCron
+      - isOverride
+      - nextRunAt
+      - lastChangedAt
+      - lastChangedBy
+      properties:
+        cron:
+          type: string
+          description: 'Active cron expression driving the periodic `prune_jobs`
+            scheduler. 5-field syntax (minute hour dom month dow).
+            Falls back to `defaultCron` when no operator override is
+            persisted.
+
+            '
+        defaultCron:
+          type: string
+          description: 'In-code default cron used when no operator override
+            exists. Surfaced so the UI can show "Default: …" next to
+            the live value.
+
+            '
+        isOverride:
+          type: boolean
+          description: 'True when `cron` comes from an operator-set row in
+            `app_settings`, false when it equals the built-in default.
+
+            '
+        nextRunAt:
+          type: string
+          format: date-time
+          description: 'Next time the pruner is scheduled to fire, computed
+            from `cron` against the server clock at request time.
+
+            '
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Wall-clock time of the most recent operator update,
+            or null when the schedule has never been overridden.
+
+            '
+        lastChangedBy:
+          type: string
+          nullable: true
+          description: 'Email of the operator who set the current value, or
+            null when the schedule has never been overridden.
+
+            '
+    SystemCleanupScheduleUpdate:
+      type: object
+      required:
+      - cron
+      properties:
+        cron:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: 'Cron expression to persist. Must be 5-field syntax
+            (minute hour dom month dow). Predefined `@hourly` /
+            `@daily` aliases are also accepted.
+
+            '
     SystemFunnelSnapshotCleanupStatus:
       type: object
       required:

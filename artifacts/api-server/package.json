@@ -23,6 +23,7 @@
     "busboy": "^1.6.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
+    "cron-parser": "^5.5.0",
     "csv-parse": "^6.2.1",
     "drizzle-orm": "catalog:",
     "express": "^5",

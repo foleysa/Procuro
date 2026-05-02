@@ -2436,6 +2436,37 @@ is already queued.
   retention: SystemCleanupStatusRetention;
 }
 
+export interface SystemCleanupSchedule {
+  /** Active cron expression driving the periodic `prune_jobs` scheduler. 5-field syntax (minute hour dom month dow). Falls back to `defaultCron` when no operator override is persisted.
+   */
+  cron: string;
+  /** In-code default cron used when no operator override exists. Surfaced so the UI can show "Default: …" next to the live value.
+   */
+  defaultCron: string;
+  /** True when `cron` comes from an operator-set row in `app_settings`, false when it equals the built-in default.
+   */
+  isOverride: boolean;
+  /** Next time the pruner is scheduled to fire, computed from `cron` against the server clock at request time.
+   */
+  nextRunAt: string;
+  /** Wall-clock time of the most recent operator update, or null when the schedule has never been overridden.
+   */
+  lastChangedAt: string | null;
+  /** Email of the operator who set the current value, or null when the schedule has never been overridden.
+   */
+  lastChangedBy: string | null;
+}
+
+export interface SystemCleanupScheduleUpdate {
+  /**
+   * Cron expression to persist. Must be 5-field syntax (minute hour dom month dow). Predefined `@hourly` / `@daily` aliases are also accepted.
+
+   * @minLength 1
+   * @maxLength 120
+   */
+  cron: string;
+}
+
 export type SystemFunnelSnapshotCleanupStatusLastJobStatus =
   (typeof SystemFunnelSnapshotCleanupStatusLastJobStatus)[keyof typeof SystemFunnelSnapshotCleanupStatusLastJobStatus];
 
@@ -5423,6 +5454,10 @@ export type GetServicesSpendParams = {
 
 export type ListWatchedIssuersParams = {
   source?: WatchedIssuerSource;
+};
+
+export type UpdateSystemCleanupSchedule400 = {
+  error: string;
 };
 
 export type GetSystemCsvIngestMetricsParams = {

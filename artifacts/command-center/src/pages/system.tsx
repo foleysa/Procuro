@@ -12,6 +12,9 @@ import {
   useUpdateJobKindSetting,
   useClearJobKindSetting,
   useGetSystemCleanupStatus,
+  useGetSystemCleanupSchedule,
+  useUpdateSystemCleanupSchedule,
+  getGetSystemCleanupScheduleQueryKey,
   useRunSystemCleanup,
   useGetSystemFunnelSnapshotCleanupStatus,
   useRunSystemFunnelSnapshotCleanup,
@@ -483,6 +486,50 @@ export default function System() {
     },
   });
 
+  // Job-prune cron schedule (#158). Pulled separately from the cleanup
+  // *status* query so the schedule card doesn't refresh on the 5s
+  // status poll while a prune is in flight (the cron only changes when
+  // an operator saves it). `cronDraft` keeps the editable input value
+  // detached from the persisted schedule so the operator can type
+  // freely without losing focus on every refetch.
+  const cleanupScheduleQueryKey = useMemo(
+    () => getGetSystemCleanupScheduleQueryKey(),
+    [],
+  );
+  const cleanupScheduleQuery = useGetSystemCleanupSchedule({
+    query: { queryKey: cleanupScheduleQueryKey },
+  });
+  const [cronDraft, setCronDraft] = useState<string>("");
+  const [cronDraftDirty, setCronDraftDirty] = useState(false);
+  useEffect(() => {
+    // Only seed the draft from the server value while the operator
+    // hasn't started editing — otherwise we'd clobber their in-progress
+    // input on background refetches.
+    if (!cronDraftDirty && cleanupScheduleQuery.data) {
+      setCronDraft(cleanupScheduleQuery.data.cron);
+    }
+  }, [cleanupScheduleQuery.data, cronDraftDirty]);
+  const updateScheduleM = useUpdateSystemCleanupSchedule({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Schedule updated",
+          description: `prune_jobs will next run at ${formatDateTime(
+            resp.nextRunAt,
+          )}.`,
+        });
+        setCronDraftDirty(false);
+        qc.invalidateQueries({ queryKey: cleanupScheduleQueryKey });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not update schedule",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
   // ─── Funnel snapshot backfill (task #188) ───────────────────────────
   // Cycles that completed before the funnel snapshot writer shipped
   // have no `funnel_snapshots` row, so the observability page is blank
@@ -863,6 +910,104 @@ export default function System() {
                   </code>{" "}
                   /{" "}
                   <code className="font-mono">JOB_RETENTION_FAILED_DAYS</code>.
+                </div>
+                <div
+                  className="border-t pt-3 space-y-2"
+                  data-testid="section-cleanup-schedule"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="cleanup-cron-input"
+                      className="text-xs uppercase text-muted-foreground"
+                    >
+                      Cron schedule
+                    </label>
+                    {cleanupScheduleQuery.data && (
+                      <span
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="text-cleanup-cron-default"
+                      >
+                        Default:{" "}
+                        <code className="font-mono">
+                          {cleanupScheduleQuery.data.defaultCron}
+                        </code>
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="cleanup-cron-input"
+                      data-testid="input-cleanup-cron"
+                      placeholder="0 */6 * * *"
+                      value={cronDraft}
+                      onChange={(e) => {
+                        setCronDraft(e.target.value);
+                        setCronDraftDirty(true);
+                      }}
+                      disabled={
+                        cleanupScheduleQuery.isLoading ||
+                        updateScheduleM.isPending
+                      }
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      data-testid="btn-save-cleanup-cron"
+                      size="sm"
+                      onClick={() =>
+                        updateScheduleM.mutate({
+                          data: { cron: cronDraft.trim() },
+                        })
+                      }
+                      disabled={
+                        updateScheduleM.isPending ||
+                        cronDraft.trim() === "" ||
+                        (!cronDraftDirty &&
+                          cleanupScheduleQuery.data?.cron ===
+                            cronDraft.trim())
+                      }
+                    >
+                      {updateScheduleM.isPending ? (
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      ) : (
+                        <Save className="w-3 h-3 mr-1" />
+                      )}
+                      Save
+                    </Button>
+                  </div>
+                  {cleanupScheduleQuery.data && (
+                    <div
+                      className="text-xs text-muted-foreground space-y-1"
+                      data-testid="text-cleanup-cron-meta"
+                    >
+                      <div>
+                        Next run at{" "}
+                        <span
+                          className="font-medium text-foreground"
+                          data-testid="text-cleanup-next-run"
+                        >
+                          {formatDateTime(
+                            cleanupScheduleQuery.data.nextRunAt,
+                          )}
+                        </span>
+                        {!cleanupScheduleQuery.data.isOverride && (
+                          <span className="ml-1">(using default)</span>
+                        )}
+                      </div>
+                      {cleanupScheduleQuery.data.isOverride &&
+                        cleanupScheduleQuery.data.lastChangedAt && (
+                          <div data-testid="text-cleanup-cron-audit">
+                            Last changed{" "}
+                            {formatDateTime(
+                              cleanupScheduleQuery.data.lastChangedAt,
+                            )}
+                            {cleanupScheduleQuery.data.lastChangedBy
+                              ? ` by ${cleanupScheduleQuery.data.lastChangedBy}`
+                              : ""}
+                            .
+                          </div>
+                        )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end">
                   <Button

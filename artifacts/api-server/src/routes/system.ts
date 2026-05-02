@@ -6,7 +6,11 @@ import {
   ensureFunnelSnapshotPruneJobScheduled,
   ensurePruneJobScheduled,
   getFunnelSnapshotRetentionConfig,
+  getJobPruneSchedule,
   getJobRetentionConfig,
+  getNextJobPruneRunAt,
+  parsePruneCron,
+  setJobPruneSchedule,
 } from "../lib/jobs/queue";
 import {
   getCsvIngestMetricsSummary,
@@ -203,6 +207,84 @@ router.post(
       jobId: job.id,
       status: job.status,
       reused: false,
+    });
+  },
+);
+
+/**
+ * Job-prune schedule — read the cron expression that drives the
+ * periodic `prune_jobs` scheduler plus the next computed run time.
+ *
+ * Returned shape includes the in-code default (see
+ * `DEFAULT_JOB_PRUNE_CRON`) and the audit metadata (`lastChangedBy`
+ * / `lastChangedAt`) so the System page can render the default
+ * alongside the operator override and surface who last touched it.
+ *
+ * Cross-tenant by design — same platform-admin guard as the rest of
+ * the cleanup endpoints.
+ */
+router.get(
+  "/system/cleanup/schedule",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    const schedule = await getJobPruneSchedule();
+    const nextRunAt = await getNextJobPruneRunAt();
+    res.json({
+      cron: schedule.cron,
+      defaultCron: schedule.defaultCron,
+      isOverride: schedule.isOverride,
+      nextRunAt: nextRunAt.toISOString(),
+      lastChangedAt: schedule.lastChangedAt
+        ? schedule.lastChangedAt.toISOString()
+        : null,
+      lastChangedBy: schedule.lastChangedBy,
+    });
+  },
+);
+
+/**
+ * Update the job-prune cron schedule. Validates the cron up-front
+ * (rejects with 400 + a human-readable message), writes it to
+ * `app_settings`, and reloads the in-process timer so the change
+ * takes effect immediately without a server restart. Returns the
+ * same shape as GET so the client can refresh its cache from the
+ * mutation response.
+ */
+router.put(
+  "/system/cleanup/schedule",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const body = (req.body ?? {}) as { cron?: unknown };
+    const cronRaw = body.cron;
+    if (typeof cronRaw !== "string") {
+      res.status(400).json({ error: "Body must include a `cron` string" });
+      return;
+    }
+    try {
+      parsePruneCron(cronRaw);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const actor = req.actorEmail ?? "system@procuro.ai";
+    const updated = await setJobPruneSchedule({
+      cron: cronRaw.trim(),
+      actorEmail: actor,
+    });
+    const nextRunAt = await getNextJobPruneRunAt();
+    req.log.info(
+      { cron: updated.cron, actor },
+      "Operator updated job_prune_schedule",
+    );
+    res.json({
+      cron: updated.cron,
+      defaultCron: updated.defaultCron,
+      isOverride: updated.isOverride,
+      nextRunAt: nextRunAt.toISOString(),
+      lastChangedAt: updated.lastChangedAt
+        ? updated.lastChangedAt.toISOString()
+        : null,
+      lastChangedBy: updated.lastChangedBy,
     });
   },
 );

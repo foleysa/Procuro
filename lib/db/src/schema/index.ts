@@ -23,6 +23,7 @@ export * from "./funnel";
 export * from "./marketSignals";
 export * from "./jobs";
 export * from "./jobKindSettings";
+export * from "./appSettings";
 export * from "./csvIngestMetrics";
 export * from "./entityResolutionCache";
 export * from "./watchedIssuers";

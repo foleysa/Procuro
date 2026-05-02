@@ -1,13 +1,17 @@
 import {
   db,
+  appSettingsTable,
+  APP_SETTING_KEY_JOB_PRUNE_SCHEDULE,
   erpConnectionsTable,
   jobsTable,
   jobKindSettingsTable,
   orgsTable,
+  type AppSettingRow,
   type JobKind,
   type JobRow,
 } from "@workspace/db";
 import { eq, and, asc, sql } from "drizzle-orm";
+import { CronExpressionParser } from "cron-parser";
 import { newId } from "../ids";
 import { logger } from "../logger";
 
@@ -652,8 +656,6 @@ export async function listJobsByOrg(
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RETENTION_SUCCEEDED_DAYS = 7;
 const DEFAULT_RETENTION_FAILED_DAYS = 30;
-const DEFAULT_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
-
 function envPositiveNumber(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -822,24 +824,253 @@ export async function ensurePruneJobScheduled(): Promise<JobRow | null> {
   return row ?? null;
 }
 
+// ─── Operator-tunable prune schedule ─────────────────────────────────────
+//
+// The prune cadence used to be a fixed `setInterval` driven by
+// `JOB_PRUNE_INTERVAL_MS`. Operators couldn't change it without a code
+// change + redeploy, which made it awkward to dial cleanup up (e.g.
+// every 6h) or down per environment.
+//
+// Now the schedule is a cron expression persisted in `app_settings`
+// under `APP_SETTING_KEY_JOB_PRUNE_SCHEDULE`. The scheduler reads it
+// at startup; calling `setJobPruneSchedule` writes the new cron and
+// then immediately reloads the in-process timer so the new cadence
+// takes effect without a restart.
+
+/**
+ * Default cron schedule for `prune_jobs`. Equivalent to "every 6
+ * hours at minute 0" (00:00, 06:00, 12:00, 18:00 UTC). Matches the
+ * old fixed 6h `setInterval` cadence so existing environments see no
+ * behaviour change on upgrade. The literal expression lives below
+ * (kept out of the JSDoc to avoid a premature comment terminator).
+ */
+export const DEFAULT_JOB_PRUNE_CRON = "0 */6 * * *";
+
+/**
+ * Cap on how far in the future we'll schedule a single timer fire.
+ * `setTimeout` is reliable up to ~24.8 days; we re-arm well before
+ * that so a multi-day cron (e.g. monthly) stays accurate.
+ */
+const MAX_TIMER_DELAY_MS = 24 * 60 * 60 * 1000; // 24h
+
+export interface JobPruneSchedule {
+  /** Cron expression currently driving the pruner. */
+  cron: string;
+  /** In-code default (returned even when no operator override exists). */
+  defaultCron: string;
+  /** True when the value comes from an operator-set `app_settings` row. */
+  isOverride: boolean;
+  /** Wall-clock time of the most recent operator update, or null. */
+  lastChangedAt: Date | null;
+  /** Email of the operator who set the current value, or null. */
+  lastChangedBy: string | null;
+}
+
+/**
+ * Validate a cron expression and return its parser if it's well-formed,
+ * otherwise throw a descriptive `Error`. We use 5-field cron (minute /
+ * hour / dom / month / dow) — the same syntax operators see in
+ * `defaultScheduleCron` on collectors and in standard crontab files.
+ */
+export function parsePruneCron(cron: string): ReturnType<
+  typeof CronExpressionParser.parse
+> {
+  const trimmed = (cron ?? "").trim();
+  if (!trimmed) {
+    throw new Error("Cron expression must not be empty");
+  }
+  if (trimmed.length > 120) {
+    throw new Error("Cron expression must be 120 characters or fewer");
+  }
+  // `cron-parser` accepts both 5-field and 6-field (with seconds). We
+  // explicitly reject 6-field so operators can't accidentally enqueue
+  // a once-a-second prune; the smallest meaningful tick is one minute.
+  const partCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (partCount !== 5 && !trimmed.startsWith("@")) {
+    throw new Error(
+      "Cron expression must have exactly 5 fields (minute hour dom month dow)",
+    );
+  }
+  try {
+    return CronExpressionParser.parse(trimmed);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid cron expression: ${msg}`);
+  }
+}
+
+interface StoredPruneScheduleValue {
+  cron: string;
+}
+
+function readStoredCron(row: AppSettingRow | undefined): string | null {
+  if (!row) return null;
+  const value = row.value as Partial<StoredPruneScheduleValue> | null;
+  const cron = value?.cron;
+  if (typeof cron !== "string" || cron.trim() === "") return null;
+  return cron.trim();
+}
+
+/**
+ * Read the configured job-prune schedule. Falls back to
+ * `DEFAULT_JOB_PRUNE_CRON` when no operator override exists OR when
+ * the stored value fails cron parsing (defensive — a malformed row
+ * should never wedge the pruner).
+ */
+export async function getJobPruneSchedule(): Promise<JobPruneSchedule> {
+  const [row] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, APP_SETTING_KEY_JOB_PRUNE_SCHEDULE));
+  const stored = readStoredCron(row);
+  let cron = DEFAULT_JOB_PRUNE_CRON;
+  let isOverride = false;
+  if (stored) {
+    try {
+      parsePruneCron(stored);
+      cron = stored;
+      isOverride = true;
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message, stored },
+        "Stored job_prune_schedule is invalid; falling back to default",
+      );
+    }
+  }
+  return {
+    cron,
+    defaultCron: DEFAULT_JOB_PRUNE_CRON,
+    isOverride,
+    lastChangedAt: row?.lastChangedAt ?? row?.updatedAt ?? null,
+    lastChangedBy: row?.lastChangedBy ?? null,
+  };
+}
+
+/**
+ * Compute the next time the pruner should fire given the current
+ * cron, anchored at `from` (defaults to now). Returns a JS `Date`.
+ */
+export async function getNextJobPruneRunAt(from?: Date): Promise<Date> {
+  const { cron } = await getJobPruneSchedule();
+  const expr = CronExpressionParser.parse(cron, {
+    currentDate: from ?? new Date(),
+  });
+  return expr.next().toDate();
+}
+
+/**
+ * Persist a new cron schedule for the job pruner and reload the
+ * in-process timer so the change takes effect immediately. Validates
+ * the cron up front; throws if invalid (the route returns 400).
+ *
+ * `actorEmail` is recorded for the audit trail so the System page can
+ * show who tuned the schedule.
+ */
+export async function setJobPruneSchedule(args: {
+  cron: string;
+  actorEmail: string | null;
+}): Promise<JobPruneSchedule> {
+  parsePruneCron(args.cron); // throws if invalid
+  const cron = args.cron.trim();
+  const now = new Date();
+  await db
+    .insert(appSettingsTable)
+    .values({
+      key: APP_SETTING_KEY_JOB_PRUNE_SCHEDULE,
+      value: { cron } satisfies StoredPruneScheduleValue,
+      lastChangedAt: now,
+      lastChangedBy: args.actorEmail,
+    })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: {
+        value: { cron } satisfies StoredPruneScheduleValue,
+        lastChangedAt: now,
+        lastChangedBy: args.actorEmail,
+      },
+    });
+  // Reload the live timer so the operator sees the new cadence apply
+  // immediately rather than only on the next process restart.
+  if (prunerStarted) {
+    armPrunerTimer();
+  }
+  logger.info(
+    { cron, actor: args.actorEmail },
+    "Updated job_prune_schedule",
+  );
+  return getJobPruneSchedule();
+}
+
 let prunerStarted = false;
-let prunerHandle: ReturnType<typeof setInterval> | null = null;
+let prunerHandle: ReturnType<typeof setTimeout> | null = null;
+
+function clearPrunerTimer(): void {
+  if (prunerHandle) {
+    clearTimeout(prunerHandle);
+    prunerHandle = null;
+  }
+}
+
+/**
+ * (Re)compute the next-run delay from the persisted cron and arm a
+ * single `setTimeout`. When it fires, enqueue a prune and re-arm.
+ * Long delays are split into ≤24h chunks so we never exceed Node's
+ * `setTimeout` upper bound (~24.8 days) when an operator picks an
+ * infrequent cron.
+ */
+function armPrunerTimer(): void {
+  clearPrunerTimer();
+  if (!prunerStarted) return;
+  void (async () => {
+    let nextAt: Date;
+    try {
+      nextAt = await getNextJobPruneRunAt();
+    } catch (err) {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to compute next prune run; retrying in 1 minute",
+      );
+      prunerHandle = setTimeout(armPrunerTimer, 60_000);
+      return;
+    }
+    const delay = Math.max(0, nextAt.getTime() - Date.now());
+    if (delay > MAX_TIMER_DELAY_MS) {
+      // Re-arm after the 24h chunk; the next call will recompute the
+      // remaining delay (and may chunk again).
+      prunerHandle = setTimeout(armPrunerTimer, MAX_TIMER_DELAY_MS);
+      return;
+    }
+    prunerHandle = setTimeout(() => {
+      ensurePruneJobScheduled()
+        .catch((err) => {
+          logger.error(
+            { err: (err as Error).message },
+            "Failed to enqueue scheduled prune_jobs",
+          );
+        })
+        .finally(() => {
+          // Re-arm even on enqueue failure so a transient DB hiccup
+          // doesn't permanently disable the pruner.
+          armPrunerTimer();
+        });
+    }, delay);
+  })();
+}
 
 /**
  * Start the periodic job-pruner scheduler. Enqueues a `prune_jobs` job
- * immediately at startup, then again on a fixed interval (default 6h,
- * overridable via `JOB_PRUNE_INTERVAL_MS`). Idempotent — calling twice
- * has no effect.
+ * immediately at startup so the first prune happens promptly after
+ * boot, then arms a cron-driven timer (default cadence is every 6
+ * hours; see `DEFAULT_JOB_PRUNE_CRON`). Operators can override the
+ * schedule from the System page via `setJobPruneSchedule`.
+ * Idempotent — calling twice has no effect.
  */
-export function startJobPruner(intervalMs?: number): void {
+export function startJobPruner(): void {
   if (prunerStarted) return;
   prunerStarted = true;
-  const ms =
-    intervalMs ??
-    envPositiveNumber("JOB_PRUNE_INTERVAL_MS", DEFAULT_PRUNE_INTERVAL_MS);
 
   // Run once at startup so the first prune happens promptly after boot
-  // even if the interval is long.
+  // even if the next cron tick is far in the future.
   void ensurePruneJobScheduled().catch((err) => {
     logger.error(
       { err: (err as Error).message },
@@ -847,19 +1078,11 @@ export function startJobPruner(intervalMs?: number): void {
     );
   });
 
-  prunerHandle = setInterval(() => {
-    ensurePruneJobScheduled().catch((err) => {
-      logger.error(
-        { err: (err as Error).message },
-        "Failed to enqueue scheduled prune_jobs",
-      );
-    });
-  }, ms);
+  armPrunerTimer();
 }
 
 export function stopJobPruner(): void {
-  if (prunerHandle) clearInterval(prunerHandle);
-  prunerHandle = null;
+  clearPrunerTimer();
   prunerStarted = false;
 }
 

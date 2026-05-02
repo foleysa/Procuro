@@ -6522,6 +6522,98 @@ export const GetSystemCleanupStatusResponse = zod.object({
 });
 
 /**
+ * Returns the cron expression currently driving the `prune_jobs` scheduler, the in-code default, the next computed run time, and audit metadata for the most recent operator change. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Read the cron schedule driving the periodic prune_jobs run
+ */
+export const GetSystemCleanupScheduleResponse = zod.object({
+  cron: zod
+    .string()
+    .describe(
+      "Active cron expression driving the periodic `prune_jobs` scheduler. 5-field syntax (minute hour dom month dow). Falls back to `defaultCron` when no operator override is persisted.\n",
+    ),
+  defaultCron: zod
+    .string()
+    .describe(
+      'In-code default cron used when no operator override exists. Surfaced so the UI can show \"Default: …\" next to the live value.\n',
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when `cron` comes from an operator-set row in `app_settings`, false when it equals the built-in default.\n",
+    ),
+  nextRunAt: zod.coerce
+    .date()
+    .describe(
+      "Next time the pruner is scheduled to fire, computed from `cron` against the server clock at request time.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Wall-clock time of the most recent operator update, or null when the schedule has never been overridden.\n",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the operator who set the current value, or null when the schedule has never been overridden.\n",
+    ),
+});
+
+/**
+ * Validates the supplied cron expression, persists it to `app_settings`, and reloads the in-process timer so the new cadence takes effect immediately. Returns the same shape as GET so the client can refresh from the mutation response.
+
+ * @summary Update the cron schedule for the periodic prune_jobs run
+ */
+export const updateSystemCleanupScheduleBodyCronMax = 120;
+
+export const UpdateSystemCleanupScheduleBody = zod.object({
+  cron: zod
+    .string()
+    .min(1)
+    .max(updateSystemCleanupScheduleBodyCronMax)
+    .describe(
+      "Cron expression to persist. Must be 5-field syntax (minute hour dom month dow). Predefined `@hourly` \/ `@daily` aliases are also accepted.\n",
+    ),
+});
+
+export const UpdateSystemCleanupScheduleResponse = zod.object({
+  cron: zod
+    .string()
+    .describe(
+      "Active cron expression driving the periodic `prune_jobs` scheduler. 5-field syntax (minute hour dom month dow). Falls back to `defaultCron` when no operator override is persisted.\n",
+    ),
+  defaultCron: zod
+    .string()
+    .describe(
+      'In-code default cron used when no operator override exists. Surfaced so the UI can show \"Default: …\" next to the live value.\n',
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when `cron` comes from an operator-set row in `app_settings`, false when it equals the built-in default.\n",
+    ),
+  nextRunAt: zod.coerce
+    .date()
+    .describe(
+      "Next time the pruner is scheduled to fire, computed from `cron` against the server clock at request time.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Wall-clock time of the most recent operator update, or null when the schedule has never been overridden.\n",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the operator who set the current value, or null when the schedule has never been overridden.\n",
+    ),
+});
+
+/**
  * Returns the most recent `prune_funnel_snapshots` row
 (regardless of status) and the configured snapshot/failure
 retention windows. Used by the System page to render a
