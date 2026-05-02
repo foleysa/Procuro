@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { maybeWarnSharedScimTokenMisuse } from "./routes/scim";
 import {
   registerCollector,
   upsertCollectorRegistration,
@@ -198,6 +199,10 @@ app.listen(port, async (err) => {
     );
     process.exit(1);
   }
+
+  // Surface SCIM_BEARER_TOKEN misconfig (multi-tenant + shared token).
+  // See SCIM.md §2 and routes/scim.ts maybeWarnSharedScimTokenMisuse.
+  await maybeWarnSharedScimTokenMisuse();
 
   startWorker(1500);
   startJobPruner();

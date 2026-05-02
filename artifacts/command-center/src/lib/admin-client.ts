@@ -70,6 +70,16 @@ export interface AdminSsoConfig {
   scimEnabled: boolean;
 }
 
+export interface AdminScimGroup {
+  id: string;
+  displayName: string;
+  externalId: string | null;
+  roleMapping: AdminUserRole | null;
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AdminTenantSettings {
   successFeePct?: number;
   baseCurrency?: string;
@@ -168,6 +178,24 @@ export const adminClient = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(cfg),
     }).then((r) => jsonOrThrow<AdminSsoConfig>(r)),
+
+  // ---- SCIM groups
+  listScimGroups: () =>
+    fetch("/api/admin/scim/groups").then((r) =>
+      jsonOrThrow<AdminScimGroup[]>(r),
+    ),
+  setScimGroupRoleMapping: (id: string, roleMapping: AdminUserRole | null) =>
+    fetch(`/api/admin/scim/groups/${id}/role-mapping`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roleMapping }),
+    }).then((r) =>
+      jsonOrThrow<{
+        id: string;
+        displayName: string;
+        roleMapping: AdminUserRole | null;
+      }>(r),
+    ),
 
   // ---- Tenant settings
   getTenantSettings: () =>

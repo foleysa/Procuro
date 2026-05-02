@@ -5,6 +5,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
 
 /**
@@ -66,7 +67,14 @@ export const userRolesTable = pgTable(
   (t) => [
     index("user_roles_org_idx").on(t.orgId),
     index("user_roles_user_idx").on(t.userId),
-    uniqueIndex("user_roles_unique_active_idx").on(t.userId, t.orgId, t.role),
+    // PARTIAL unique index: at most one ACTIVE (non-revoked) row per
+    // (user, org, role). Revoked rows are kept for audit and may
+    // coexist with an active row of the same triple — required so a
+    // user can be removed and re-added to a SCIM-mapped group
+    // without colliding on the audit-history trail.
+    uniqueIndex("user_roles_unique_active_idx")
+      .on(t.userId, t.orgId, t.role)
+      .where(sql`${t.revokedAt} IS NULL`),
   ],
 );
 

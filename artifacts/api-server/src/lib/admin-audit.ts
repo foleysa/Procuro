@@ -37,6 +37,14 @@ export const ADMIN_AUDIT_ACTIONS = [
   "tenant.settings_update",
   "scim.user_provision",
   "scim.user_deprovision",
+  "scim.user_update",
+  "scim.user_reactivate",
+  "scim.group_create",
+  "scim.group_update",
+  "scim.group_delete",
+  "scim.group_member_add",
+  "scim.group_member_remove",
+  "scim.group_role_mapping_change",
   // Onboarding wizard telemetry — emitted on every state transition
   // (start / advance / dismiss / complete) and on sample-data
   // install/remove. CS uses these to monitor wizard drop-off.

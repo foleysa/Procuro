@@ -1,6 +1,7 @@
 export * from "./orgs";
 export * from "./users";
 export * from "./userRoles";
+export * from "./scimGroups";
 export * from "./onboardingState";
 export * from "./apiKeys";
 export * from "./adminAuditLog";

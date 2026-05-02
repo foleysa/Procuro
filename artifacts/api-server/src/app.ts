@@ -51,7 +51,12 @@ app.use((req, res, next) => {
   const limit = INGEST_PATHS.some((p) => req.path.startsWith(p))
     ? INGEST_BODY_LIMIT
     : DEFAULT_BODY_LIMIT;
-  return express.json({ limit })(req, res, next);
+  // Also accept SCIM 2.0 content type — RFC 7644 §3.1 mandates
+  // `application/scim+json`. Okta and Azure AD both send it.
+  return express.json({
+    limit,
+    type: ["application/json", "application/scim+json"],
+  })(req, res, next);
 });
 app.use((req, res, next) => {
   if (req.path.startsWith(SKIP_BODY)) return next();

@@ -50,6 +50,7 @@ import {
   type AdminUserRole,
   type AdminSsoConfig,
   type AdminTenantSettings,
+  type AdminScimGroup,
 } from "@/lib/admin-client";
 
 function formatTime(s: string | null | undefined): string {
@@ -657,7 +658,130 @@ function SsoTab() {
           ) : null}
         </div>
       </CardContent>
+      {cfg.scimEnabled ? <ScimGroupsCard /> : null}
     </Card>
+  );
+}
+
+// ----- SCIM groups card (inside SSO tab) ---------------------------
+
+function ScimGroupsCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin", "scim-groups"],
+    queryFn: () => adminClient.listScimGroups(),
+  });
+
+  const setMappingM = useMutation({
+    mutationFn: ({
+      id,
+      roleMapping,
+    }: {
+      id: string;
+      roleMapping: AdminUserRole | null;
+    }) => adminClient.setScimGroupRoleMapping(id, roleMapping),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "scim-groups"] });
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      toast({ title: "Role mapping updated" });
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Could not update mapping",
+        description: String(e),
+        variant: "destructive",
+      }),
+  });
+
+  return (
+    <CardContent className="border-t pt-6 space-y-3">
+      <div>
+        <h3 className="text-base font-semibold">SCIM groups</h3>
+        <p className="text-xs text-muted-foreground">
+          Groups your IdP has pushed via SCIM. Map a group to a role and every
+          member is automatically granted that role; remove the mapping to
+          revoke it. See the{" "}
+          <a
+            href="https://github.com/procuro/procuro/blob/main/artifacts/api-server/SCIM.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+            data-testid="link-scim-runbook"
+          >
+            SCIM setup runbook
+          </a>{" "}
+          for Okta and Azure AD configuration steps.
+        </p>
+      </div>
+      {isLoading ? (
+        <div className="text-sm text-muted-foreground flex items-center">
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          Loading groups…
+        </div>
+      ) : !data || data.length === 0 ? (
+        <p className="text-sm text-muted-foreground" data-testid="text-no-scim-groups">
+          No SCIM groups pushed yet. Configure group push in your IdP and the
+          first sync will populate this list.
+        </p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Group</TableHead>
+              <TableHead>External ID</TableHead>
+              <TableHead>Members</TableHead>
+              <TableHead>Maps to role</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.map((g: AdminScimGroup) => (
+              <TableRow
+                key={g.id}
+                data-testid={`row-scim-group-${g.id}`}
+              >
+                <TableCell className="font-medium">{g.displayName}</TableCell>
+                <TableCell className="text-xs">
+                  <code>{g.externalId ?? "—"}</code>
+                </TableCell>
+                <TableCell className="text-xs">{g.memberCount}</TableCell>
+                <TableCell>
+                  <Select
+                    value={g.roleMapping ?? "__none__"}
+                    onValueChange={(v) =>
+                      setMappingM.mutate({
+                        id: g.id,
+                        roleMapping:
+                          v === "__none__" ? null : (v as AdminUserRole),
+                      })
+                    }
+                  >
+                    <SelectTrigger
+                      className="w-[170px]"
+                      data-testid={`select-scim-mapping-${g.id}`}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        — Don't grant a role —
+                      </SelectItem>
+                      {ROLE_OPTIONS.filter(
+                        (r) => r.value !== "platform_admin",
+                      ).map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </CardContent>
   );
 }
 
