@@ -334,10 +334,17 @@ function RegistryTab({ tier }: { tier: TierMode }) {
   const backfillEcbM = useBackfillEcbFxRates({
     mutation: {
       onSuccess: (resp) => {
-        toast({
-          title: "FX history backfilled",
-          description: `${resp.daysWritten} days · ${resp.signalsInserted} new, ${resp.signalsSkipped} already had · ${resp.durationMs}ms`,
-        });
+        if (resp.alreadyUpToDate) {
+          toast({
+            title: "FX history already up to date",
+            description: `Nothing new from the ECB archive · ${resp.durationMs}ms`,
+          });
+        } else {
+          toast({
+            title: "FX history backfilled",
+            description: `${resp.daysWritten} days · ${resp.signalsInserted} new, ${resp.signalsSkipped} already had · ${resp.durationMs}ms`,
+          });
+        }
         qc.invalidateQueries({ queryKey: ["listMarketSignals"] });
       },
       onError: (e: Error) =>

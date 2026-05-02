@@ -2483,6 +2483,12 @@ export const BackfillEcbFxRatesResponse = zod.object({
       "Drafts that matched an existing\n`(scope_material_code, observed_at)` row and were not re-inserted.\n",
     ),
   durationMs: zod.number(),
+  alreadyUpToDate: zod
+    .boolean()
+    .optional()
+    .describe(
+      'True when the run short-circuited because the database was already in sync with the upstream archive — either via the cheap DB pre-check (no HTTP at all) or via the HEAD-probe watermark (single HEAD, no GET). Lets the UI surface a clear \"already up to date\" indicator instead of just `signalsInserted: 0`, which is otherwise indistinguishable from \"ran the full pipeline and every row was a duplicate\".\n',
+    ),
 });
 
 /**
@@ -2511,6 +2517,12 @@ export const BackfillFredEconomicIndexResponse = zod.object({
       "Drafts that matched an existing\n`(scope_material_code, observed_at)` row and were not re-inserted.\n",
     ),
   durationMs: zod.number(),
+  alreadyUpToDate: zod
+    .boolean()
+    .optional()
+    .describe(
+      'True when the run short-circuited because the database was already in sync with the upstream archive — either via the cheap DB pre-check (no HTTP at all) or via the HEAD-probe watermark (single HEAD, no GET). Lets the UI surface a clear \"already up to date\" indicator instead of just `signalsInserted: 0`, which is otherwise indistinguishable from \"ran the full pipeline and every row was a duplicate\".\n',
+    ),
 });
 
 /**

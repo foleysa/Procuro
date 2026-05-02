@@ -28,6 +28,7 @@ import {
 } from "./collector";
 import {
   ECB_FX_RATES_COLLECTOR_ID,
+  ecbObservedAt,
   fetchEcbBackfillDraftsWithMeta,
   headEcbHistoricalFeed,
 } from "./collectors/ecb-fx-rates";
@@ -696,6 +697,16 @@ export interface BackfillResult {
   signalsInserted: number;
   signalsSkipped: number;
   durationMs: number;
+  /**
+   * True when the backfill short-circuited because the database was
+   * already in sync with the upstream archive — either via the cheap
+   * DB pre-check (no HTTP at all) or via the HEAD-probe watermark
+   * (single HEAD, no GET). Lets the API surface a clear "already up
+   * to date" indicator instead of just `signalsInserted: 0`, which
+   * the UI cannot otherwise distinguish from "ran the full pipeline
+   * and every row was a duplicate".
+   */
+  alreadyUpToDate?: boolean;
 }
 
 /**
@@ -839,9 +850,10 @@ export async function insertSignalsIdempotent(
  * a paused collector cannot be force-fed through the backfill path.
  */
 export async function runEcbFxRatesBackfill(
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; nowMs?: number } = {},
 ): Promise<BackfillResult> {
   const start = Date.now();
+  const nowMs = opts.nowMs ?? Date.now();
   const collectorId = ECB_FX_RATES_COLLECTOR_ID;
   const [reg] = await db
     .select()
@@ -862,6 +874,60 @@ export async function runEcbFxRatesBackfill(
     throw new Error(
       `Collector status is ${reg.status}; approve it before backfilling.`,
     );
+  }
+
+  // DB-only pre-check (no network): if we have a prior successful
+  // backfill that stamped a `latestArchiveDate`, AND `now` is earlier
+  // than the earliest possible time ECB could publish the next file,
+  // AND the corresponding row is still present in `market_signals`,
+  // then upstream provably has nothing new and we can declare
+  // "already up to date" without any HTTP. This is what makes a
+  // re-press of the System page's Backfill button feel instant
+  // (~10ms) instead of paying for a HEAD round-trip.
+  //
+  // Correctness: ECB publishes the historical archive at most once
+  // per business day around 16:00 CET. `nextEcbPublicationEarliestAt`
+  // returns the next weekday after `latestArchiveDate` at 13:30 UTC
+  // — a conservative buffer ahead of the earliest realistic publish
+  // time (≈14:30 UTC during DST). Until that moment, no new archive
+  // row can possibly exist upstream, so skipping is safe. After that
+  // moment we fall through to the HEAD probe to learn the truth from
+  // upstream headers.
+  if (!opts.force) {
+    const fresh = await readEcbBackfillFreshness(collectorId);
+    if (fresh) {
+      const nextPub = nextEcbPublicationEarliestAt(fresh.latestArchiveDate);
+      if (nowMs < nextPub.getTime()) {
+        const dbHasLatest = await marketSignalHasObservedAt(
+          collectorId,
+          ecbObservedAt(fresh.latestArchiveDate),
+        );
+        if (dbHasLatest) {
+          await audit(collectorId, "backfill_skipped_already_up_to_date", {
+            latestArchiveDate: fresh.latestArchiveDate,
+            archiveEtag: fresh.etag,
+            archiveLastModified: fresh.lastModified,
+            nextPublicationEarliestAt: nextPub.toISOString(),
+          });
+          logger.info(
+            {
+              collectorId,
+              latestArchiveDate: fresh.latestArchiveDate,
+              nextPublicationEarliestAt: nextPub.toISOString(),
+            },
+            "ECB FX backfill skipped: DB already has the latest archive day and upstream cannot have published yet",
+          );
+          return {
+            collectorId,
+            daysWritten: 0,
+            signalsInserted: 0,
+            signalsSkipped: 0,
+            durationMs: Date.now() - start,
+            alreadyUpToDate: true,
+          };
+        }
+      }
+    }
   }
 
   // Cheap HEAD probe: ECB's historical archive ships static cache headers,
@@ -898,6 +964,7 @@ export async function runEcbFxRatesBackfill(
             signalsInserted: 0,
             signalsSkipped: 0,
             durationMs: Date.now() - start,
+            alreadyUpToDate: true,
           };
         }
       } catch (err) {
@@ -915,6 +982,17 @@ export async function runEcbFxRatesBackfill(
     const days = new Set(
       drafts.map((d) => d.observedAt.toISOString().slice(0, 10)),
     ).size;
+    // Pull the most-recent archived day out of the parsed drafts so the
+    // next run's DB pre-check has a stable target to look up. Empty
+    // archives are impossible in practice (ECB always has 25+ years
+    // back) but we tolerate it by recording null.
+    let latestArchiveDate: string | null = null;
+    for (const d of drafts) {
+      const iso = d.observedAt.toISOString().slice(0, 10);
+      if (latestArchiveDate === null || iso > latestArchiveDate) {
+        latestArchiveDate = iso;
+      }
+    }
     const { inserted, skipped } = await insertSignalsIdempotent(reg, drafts);
     const result: BackfillResult = {
       collectorId,
@@ -923,10 +1001,11 @@ export async function runEcbFxRatesBackfill(
       signalsSkipped: skipped,
       durationMs: Date.now() - start,
     };
-    // Watermark is stamped into the success audit row; the next run's HEAD
-    // probe reads it back via `readEcbBackfillWatermark` to decide whether
-    // to short-circuit. Always written on success even when both headers
-    // are null so the audit trail is uniform.
+    // Watermark is stamped into the success audit row; the next run's
+    // pre-check reads `latestArchiveDate` to decide whether the DB is
+    // still in sync, and the next HEAD probe reads `archiveLastModified`
+    // / `archiveEtag` as its watermark. Always written on success even
+    // when fields are null so the audit trail is uniform.
     await audit(collectorId, "backfill_succeeded", {
       days,
       inserted,
@@ -934,9 +1013,10 @@ export async function runEcbFxRatesBackfill(
       drafts: drafts.length,
       archiveLastModified: lastModified,
       archiveEtag: etag,
+      latestArchiveDate,
     });
     logger.info(
-      { collectorId, days, inserted, skipped, lastModified, etag },
+      { collectorId, days, inserted, skipped, lastModified, etag, latestArchiveDate },
       "ECB FX backfill completed",
     );
     return result;
@@ -946,6 +1026,7 @@ export async function runEcbFxRatesBackfill(
     throw e;
   }
 }
+
 
 /**
  * Look up the most recent successful ECB backfill audit row and return
@@ -985,6 +1066,106 @@ async function readEcbBackfillWatermark(
       ? (meta["archiveLastModified"] as string)
       : null;
   return { etag, lastModified };
+}
+
+/**
+ * Look up the most recent successful ECB backfill audit row and return
+ * the stamped `latestArchiveDate` plus the cache headers we recorded
+ * for it. The DB pre-check uses these to decide whether it can skip
+ * the network entirely.
+ *
+ * Returns `null` when no prior success exists, when the prior row
+ * predates the `latestArchiveDate` field (older runs before this
+ * feature shipped), or when the stamped date is unparseable. In every
+ * case the caller falls through to the HEAD path so we never silently
+ * skip on missing state.
+ */
+async function readEcbBackfillFreshness(
+  collectorId: string,
+): Promise<
+  | {
+      latestArchiveDate: string;
+      etag: string | null;
+      lastModified: string | null;
+    }
+  | null
+> {
+  const [row] = await db
+    .select()
+    .from(collectorAuditLogTable)
+    .where(
+      and(
+        eq(collectorAuditLogTable.collectorId, collectorId),
+        eq(collectorAuditLogTable.event, "backfill_succeeded"),
+      ),
+    )
+    .orderBy(desc(collectorAuditLogTable.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  const latestArchiveDate =
+    typeof meta["latestArchiveDate"] === "string"
+      ? (meta["latestArchiveDate"] as string)
+      : null;
+  if (!latestArchiveDate || !/^\d{4}-\d{2}-\d{2}$/.test(latestArchiveDate)) {
+    return null;
+  }
+  const etag =
+    typeof meta["archiveEtag"] === "string"
+      ? (meta["archiveEtag"] as string)
+      : null;
+  const lastModified =
+    typeof meta["archiveLastModified"] === "string"
+      ? (meta["archiveLastModified"] as string)
+      : null;
+  return { latestArchiveDate, etag, lastModified };
+}
+
+/**
+ * Existence probe against `market_signals` for one collector + one
+ * `observed_at`. Targets the natural-key unique index so the planner
+ * resolves it as a single index lookup regardless of how many rows the
+ * table holds — well under the ~1ms budget the pre-check needs.
+ */
+async function marketSignalHasObservedAt(
+  collectorId: string,
+  observedAt: Date,
+): Promise<boolean> {
+  const [hit] = await db
+    .select({ id: marketSignalsTable.id })
+    .from(marketSignalsTable)
+    .where(
+      and(
+        eq(marketSignalsTable.collectorId, collectorId),
+        eq(marketSignalsTable.observedAt, observedAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(hit);
+}
+
+/**
+ * Compute the earliest possible UTC instant at which ECB could publish
+ * the next historical archive update, given the most recently archived
+ * business day.
+ *
+ * ECB publishes the EUR foreign-exchange reference rates once per
+ * business day around 16:00 CET (≈14:30–15:00 UTC depending on DST).
+ * The historical archive file (`eurofxref-hist.xml`) is updated at the
+ * same cadence with the new day appended. We return the next weekday
+ * after `latestArchiveDate` at **13:30 UTC** — a conservative buffer
+ * ahead of the earliest realistic publish time. Until that instant,
+ * upstream provably cannot have published anything new, and the DB
+ * pre-check can safely skip without touching the network. After that
+ * instant we fall through to the HEAD probe.
+ */
+function nextEcbPublicationEarliestAt(latestArchiveDate: string): Date {
+  const d = new Date(`${latestArchiveDate}T00:00:00Z`);
+  do {
+    d.setUTCDate(d.getUTCDate() + 1);
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  d.setUTCHours(13, 30, 0, 0);
+  return d;
 }
 
 /**

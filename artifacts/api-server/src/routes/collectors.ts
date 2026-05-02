@@ -404,6 +404,7 @@ router.post(
         signalsInserted: result.signalsInserted,
         signalsSkipped: result.signalsSkipped,
         durationMs: result.durationMs,
+        ...(result.alreadyUpToDate ? { alreadyUpToDate: true } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

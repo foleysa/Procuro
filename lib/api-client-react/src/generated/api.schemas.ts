@@ -1148,6 +1148,9 @@ export interface CollectorBackfillResult {
  */
   signalsSkipped: number;
   durationMs: number;
+  /** True when the run short-circuited because the database was already in sync with the upstream archive — either via the cheap DB pre-check (no HTTP at all) or via the HEAD-probe watermark (single HEAD, no GET). Lets the UI surface a clear "already up to date" indicator instead of just `signalsInserted: 0`, which is otherwise indistinguishable from "ran the full pipeline and every row was a duplicate".
+   */
+  alreadyUpToDate?: boolean;
 }
 
 export type ContractStatus =

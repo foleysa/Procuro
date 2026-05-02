@@ -153,8 +153,13 @@ export function parseEcbHistoricalFeed(xml: string): EcbFeed[] {
  * The feed gives us a date but not a publication clock time, so we anchor
  * `observedAt` to 15:00 UTC of the published date for stable downstream
  * deduplication.
+ *
+ * Exported so the runtime's DB pre-check can resolve the same canonical
+ * `observed_at` shape when it asks "is this archive day already in
+ * `market_signals`?" — keeping the anchor in one place avoids drift
+ * between the writer and the reader.
  */
-function ecbObservedAt(date: string): Date {
+export function ecbObservedAt(date: string): Date {
   return new Date(`${date}T15:00:00Z`);
 }
 
