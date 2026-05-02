@@ -5931,6 +5931,12 @@ components:
           type: string
           nullable: true
           maxLength: 1000
+        billingCurrency:
+          type: string
+          nullable: true
+          maxLength: 3
+          description: ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`. `null` clears
+            the override.
     StatementOfWork:
       type: object
       description: 'A Statement of Work — a child agreement under a master services

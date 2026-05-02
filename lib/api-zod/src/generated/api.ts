@@ -4837,6 +4837,8 @@ export const patchContractBodyInternalNotesMax = 5000;
 
 export const patchContractBodyRenewalTargetActionMax = 1000;
 
+export const patchContractBodyBillingCurrencyMax = 3;
+
 export const PatchContractBody = zod
   .object({
     owner: zod.string().max(patchContractBodyOwnerMax).nullish(),
@@ -4849,6 +4851,13 @@ export const PatchContractBody = zod
       .string()
       .max(patchContractBodyRenewalTargetActionMax)
       .nullish(),
+    billingCurrency: zod
+      .string()
+      .max(patchContractBodyBillingCurrencyMax)
+      .nullish()
+      .describe(
+        "ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`. `null` clears the override.",
+      ),
   })
   .describe(
     "Partial update for the operator-controlled fields on a contract.\nEvery property is optional. Sending `null` for a nullable field\nclears it; omitting a field leaves the stored value unchanged.\n",

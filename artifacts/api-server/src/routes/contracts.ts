@@ -98,6 +98,31 @@ export const patchContractBodySchema = z.object({
       if (v === null) return null;
       return new Date(v);
     }),
+  // Mirrors the supplier PATCH semantics: a 3-letter ISO 4217 code,
+  // uppercased, or `null` to clear (which means "fall back to the
+  // supplier's billing currency / org base"). Loose shape check —
+  // we don't validate against the full ISO list so the operator
+  // isn't blocked on rare/legacy codes the FX-exposure analyzer
+  // simply won't find a rate for.
+  billingCurrency: z
+    .union([z.string().max(3), z.null()])
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      if (v === null) return null;
+      const trimmed = v.trim().toUpperCase();
+      if (trimmed.length === 0) return null;
+      if (!/^[A-Z]{3}$/.test(trimmed)) {
+        throw new z.ZodError([
+          {
+            code: z.ZodIssueCode.custom,
+            path: ["billingCurrency"],
+            message: "Expected a 3-letter ISO 4217 currency code",
+          },
+        ]);
+      }
+      return trimmed;
+    }),
 });
 
 export type PatchContractBody = z.infer<typeof patchContractBodySchema>;
@@ -633,6 +658,17 @@ router.patch("/contracts/:id", tenantMiddleware, async (req, res) => {
         newValue: incoming,
       });
     }
+  }
+  if (
+    body.billingCurrency !== undefined &&
+    body.billingCurrency !== current.billingCurrency
+  ) {
+    updates.billingCurrency = body.billingCurrency;
+    changes.push({
+      field: "billingCurrency",
+      oldValue: current.billingCurrency,
+      newValue: body.billingCurrency,
+    });
   }
 
   if (changes.length > 0) {

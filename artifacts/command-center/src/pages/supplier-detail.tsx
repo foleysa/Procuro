@@ -67,6 +67,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { CurrencySelect } from "@/components/currency-select";
+import { isValidCurrencyShape } from "@/lib/currencies";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -530,19 +532,15 @@ function ProfileEditCard(props: {
         <div className="grid sm:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="billing-currency">Billing currency</Label>
-            <Input
-              id="billing-currency"
-              value={billingCurrency}
-              onChange={(e) =>
-                setBillingCurrency(e.target.value.toUpperCase().slice(0, 3))
-              }
-              placeholder="e.g. USD"
-              maxLength={3}
-              className="font-mono uppercase"
-              data-testid="input-billing-currency"
+            <CurrencySelect
+              value={billingCurrency || null}
+              onChange={(v) => setBillingCurrency(v ?? "")}
+              placeholder="Select currency…"
+              triggerClassName="font-mono uppercase"
+              testIdPrefix="select-billing-currency"
             />
             <p className="text-xs text-muted-foreground">
-              ISO-4217. Leave blank to inherit org base currency.
+              ISO-4217. Pick (none) to inherit the org base currency.
             </p>
           </div>
           <div className="space-y-1.5">
@@ -1280,8 +1278,8 @@ export function BillingCurrencyCard({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = draft.trim();
-    if (!/^[A-Za-z]{3}$/.test(trimmed)) {
-      setErrMsg("Enter a 3-letter ISO 4217 currency code, e.g. EUR.");
+    if (!isValidCurrencyShape(trimmed)) {
+      setErrMsg("Pick a currency from the list (or enter a 3-letter ISO 4217 code).");
       return;
     }
     setErrMsg(null);
@@ -1342,22 +1340,20 @@ export function BillingCurrencyCard({
           className="flex flex-wrap items-end gap-2"
           data-testid="form-billing-override"
         >
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 min-w-[14rem]">
             <label
               className="text-xs text-muted-foreground"
               htmlFor="billing-currency-override-input"
             >
-              Override (3-letter ISO)
+              Override
             </label>
-            <Input
-              id="billing-currency-override-input"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value.toUpperCase())}
-              placeholder="EUR"
-              maxLength={3}
-              className="w-28 font-mono uppercase"
-              data-testid="input-billing-currency-override"
+            <CurrencySelect
+              value={draft || null}
+              onChange={(v) => setDraft(v ?? "")}
+              placeholder="Pick a currency…"
+              allowClear={false}
               disabled={mutation.isPending}
+              testIdPrefix="select-billing-currency-override"
             />
           </div>
           <Button

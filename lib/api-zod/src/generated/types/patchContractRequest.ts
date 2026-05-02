@@ -26,4 +26,9 @@ export interface PatchContractRequest {
   renewalTargetDate?: Date | null;
   /** @maxLength 1000 */
   renewalTargetAction?: string | null;
+  /**
+   * ISO 4217 currency code, e.g. `USD`, `EUR`, `JPY`. `null` clears the override.
+   * @maxLength 3
+   */
+  billingCurrency?: string | null;
 }

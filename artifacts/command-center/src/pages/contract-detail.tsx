@@ -59,6 +59,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { CurrencySelect } from "@/components/currency-select";
 import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDate, formatDateTime, leverLabel } from "@/lib/format";
 import { FxTrendChart } from "@/components/fx-trend-chart";
@@ -100,6 +101,7 @@ export default function ContractDetail() {
   const [notes, setNotes] = useState("");
   const [targetAction, setTargetAction] = useState("");
   const [targetDate, setTargetDate] = useState("");
+  const [billingCurrency, setBillingCurrency] = useState<string | null>(null);
 
   useEffect(() => {
     if (!contract) return;
@@ -111,6 +113,7 @@ export default function ContractDetail() {
         ? contract.renewalTargetDate.slice(0, 10)
         : "",
     );
+    setBillingCurrency(contract.billingCurrency ?? null);
   }, [contract]);
 
   // All hooks must run on every render (rules-of-hooks). The contract
@@ -158,11 +161,13 @@ export default function ContractDetail() {
     );
   }
 
+  const currentBillingCurrency = contract.billingCurrency ?? null;
   const dirty =
     (owner.trim() || null) !== (contract.owner ?? null) ||
     (notes || null) !== (contract.internalNotes ?? null) ||
     (targetAction.trim() || null) !== (contract.renewalTargetAction ?? null) ||
-    isoDateChanged(targetDate, contract.renewalTargetDate ?? null);
+    isoDateChanged(targetDate, contract.renewalTargetDate ?? null) ||
+    billingCurrency !== currentBillingCurrency;
 
   const onSave = () => {
     const data: {
@@ -170,6 +175,7 @@ export default function ContractDetail() {
       internalNotes?: string | null;
       renewalTargetAction?: string | null;
       renewalTargetDate?: string | null;
+      billingCurrency?: string | null;
     } = {};
     if ((owner.trim() || null) !== (contract.owner ?? null)) {
       data.owner = owner.trim() || null;
@@ -184,6 +190,9 @@ export default function ContractDetail() {
       data.renewalTargetDate = targetDate
         ? new Date(`${targetDate}T00:00:00Z`).toISOString()
         : null;
+    }
+    if (billingCurrency !== currentBillingCurrency) {
+      data.billingCurrency = billingCurrency;
     }
     if (Object.keys(data).length === 0) return;
     patchM.mutate({ id, data });
@@ -296,6 +305,20 @@ export default function ContractDetail() {
               placeholder="e.g. Renegotiate at 5% reduction"
               maxLength={1000}
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="contract-billing-currency">Billing currency</Label>
+            <CurrencySelect
+              value={billingCurrency}
+              onChange={setBillingCurrency}
+              placeholder="Select currency…"
+              triggerClassName="font-mono uppercase"
+              testIdPrefix="select-contract-billing-currency"
+            />
+            <p className="text-xs text-muted-foreground">
+              ISO-4217. Drives the FX-exposure pair on this contract. Pick (none)
+              to inherit the supplier's currency.
+            </p>
           </div>
           <div className="space-y-1 md:col-span-2">
             <Label htmlFor="internal-notes">Internal notes</Label>
