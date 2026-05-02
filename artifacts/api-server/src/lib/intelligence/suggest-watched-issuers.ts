@@ -76,6 +76,14 @@ export interface ReferenceLookups {
     name: string,
     apiKey: string | undefined,
   ): Promise<CompaniesHouseSearchHit[] | null>;
+  /**
+   * Resolve an LEI to a SEC CIK via EDGAR's LEI browse endpoint.
+   * Returns a 10-digit padded CIK string, or `null` when EDGAR has no
+   * registrant for that LEI. Used to surface GLEIF-only matches (parent
+   * holdcos / ADR issuers whose legal name doesn't match SEC's ticker
+   * index) as confirmable sec_edgar suggestions.
+   */
+  secCikByLei(lei: string): Promise<string | null>;
 }
 
 export interface SecTickerRecord {
@@ -312,6 +320,92 @@ function dropUnactionable(
   return rows.filter((r) => r.identifier.length > 0);
 }
 
+/**
+ * Second-chance enrichment for GLEIF stubs that didn't pair up with a
+ * SEC ticker hit (the common case for parent holdcos and ADR issuers
+ * whose legal name doesn't match SEC's ticker index).  For each
+ * remaining identifier-less GLEIF suggestion, hit SEC's LEI→CIK browse
+ * endpoint; if EDGAR has a registrant for that LEI, materialise the
+ * suggestion into a confirmable sec_edgar row carrying both the CIK
+ * and the LEI.
+ *
+ * Per-supplier de-duping prevents emitting a second SEC row when the
+ * ticker index already produced one for the same CIK (and we just
+ * attached the LEI in `mergeLeiIntoSecSuggestions`).
+ *
+ * Failures are caught per-LEI so one upstream blip can't poison the
+ * whole batch — the stub is simply dropped by `dropUnactionable`.
+ */
+async function resolveGleifLeisToCiks(
+  rows: WatchedIssuerSuggestion[],
+  lookup: (lei: string) => Promise<string | null>,
+): Promise<WatchedIssuerSuggestion[]> {
+  const stubs = rows.filter(
+    (r) => r.via === "gleif" && r.identifier === "" && !!r.lei,
+  );
+  if (stubs.length === 0) return rows;
+
+  // Track CIKs already covered per supplier so we don't shadow a
+  // ticker-index hit with a duplicate row from the LEI cross-reference.
+  const ciksPerSupplier = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (r.source === "sec_edgar" && r.identifier.length > 0) {
+      let set = ciksPerSupplier.get(r.supplierUid);
+      if (!set) {
+        set = new Set();
+        ciksPerSupplier.set(r.supplierUid, set);
+      }
+      set.add(r.identifier);
+    }
+  }
+
+  // One lookup per unique LEI — multiple suppliers can match the same
+  // GLEIF row (e.g. tenant has both "Apple" and "Apple Sales Intl").
+  const uniqueLeis = Array.from(new Set(stubs.map((s) => s.lei!)));
+  const leiToCik = new Map<string, string | null>();
+  for (const lei of uniqueLeis) {
+    try {
+      leiToCik.set(lei, await lookup(lei));
+    } catch (err) {
+      logger.warn(
+        { lei, err: (err as Error).message },
+        "watched-issuer suggestions: SEC LEI→CIK lookup failed",
+      );
+      leiToCik.set(lei, null);
+    }
+  }
+
+  const additions: WatchedIssuerSuggestion[] = [];
+  for (const stub of stubs) {
+    const cik = leiToCik.get(stub.lei!);
+    if (!cik) continue;
+    let set = ciksPerSupplier.get(stub.supplierUid);
+    if (!set) {
+      set = new Set();
+      ciksPerSupplier.set(stub.supplierUid, set);
+    }
+    if (set.has(cik)) continue;
+    set.add(cik);
+    additions.push({
+      key: `${stub.supplierUid}:sec_edgar:${cik}`,
+      supplierUid: stub.supplierUid,
+      supplierName: stub.supplierName,
+      source: "sec_edgar",
+      identifier: cik,
+      name: stub.name,
+      lei: stub.lei,
+      confidence: stub.confidence,
+      matchReason:
+        stub.confidence >= CONFIDENCE_EXACT
+          ? "exact name match in GLEIF; CIK resolved via SEC LEI cross-reference"
+          : "name overlap in GLEIF; CIK resolved via SEC LEI cross-reference",
+      via: "gleif",
+    });
+  }
+
+  return [...rows, ...additions];
+}
+
 // ---------------------------------------------------------------------------
 // Top-level: per-supplier orchestration
 // ---------------------------------------------------------------------------
@@ -369,7 +463,11 @@ export async function suggestForSupplier(
   }
 
   const merged = mergeLeiIntoSecSuggestions(candidates);
-  const actionable = dropUnactionable(merged);
+  const enriched = await resolveGleifLeisToCiks(
+    merged,
+    opts.lookups.secCikByLei,
+  );
+  const actionable = dropUnactionable(enriched);
   return rankSuggestions(actionable);
 }
 
@@ -509,11 +607,78 @@ export async function fetchCompaniesHouseSearch(
   return out;
 }
 
-/** Default lookups used by the route — wraps the three live functions. */
+/**
+ * SEC LEI→CIK lookup. EDGAR's `browse-edgar` endpoint accepts an `LEI`
+ * filter and returns an Atom feed whose entry URLs embed the matched
+ * registrant's CIK.  We pull the first `CIK=<digits>` we see — when LEI
+ * matches an EDGAR registrant the feed has exactly one entry, and the
+ * filter URL itself does NOT contain a CIK so the regex can't be
+ * confused by it.
+ *
+ * Cached forever per process: LEI→CIK is a stable mapping (an LEI
+ * either points at a SEC registrant or it doesn't), so the first
+ * suggestion request that touches a given LEI pays the network cost
+ * and every subsequent supplier with the same parent holdco is free.
+ *
+ * Returns `null` when EDGAR has no registrant for that LEI (HTTP 404
+ * or feed with zero entries).
+ */
+const leiToCikCache = new Map<string, string | null>();
+
+export async function fetchSecCikByLei(lei: string): Promise<string | null> {
+  const clean = lei.trim().toUpperCase();
+  if (!clean) return null;
+  if (leiToCikCache.has(clean)) return leiToCikCache.get(clean) ?? null;
+
+  const url = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&LEI=${encodeURIComponent(
+    clean,
+  )}&owner=include&count=10&output=atom`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": buildSecUserAgent(),
+      Accept: "application/atom+xml,application/xml,text/xml,*/*",
+    },
+  });
+  if (res.status === 404) {
+    leiToCikCache.set(clean, null);
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(`SEC LEI lookup HTTP ${res.status}`);
+  }
+  const body = await res.text();
+  // EDGAR sometimes returns the search page (200) with no <entry> when
+  // the LEI is unknown — guard explicitly so we don't fall through to
+  // a CIK-bearing link in unrelated chrome.
+  if (!/<entry\b/i.test(body)) {
+    leiToCikCache.set(clean, null);
+    return null;
+  }
+  const match = body.match(/CIK=(\d{1,10})/);
+  if (!match) {
+    leiToCikCache.set(clean, null);
+    return null;
+  }
+  const cik = padCik(match[1]!);
+  if (cik === "0000000000") {
+    leiToCikCache.set(clean, null);
+    return null;
+  }
+  leiToCikCache.set(clean, cik);
+  return cik;
+}
+
+/** Test seam — clear the LEI→CIK cache so cases can pin behaviour. */
+export function _resetSecLeiCacheForTests(): void {
+  leiToCikCache.clear();
+}
+
+/** Default lookups used by the route — wraps the four live functions. */
 export const defaultReferenceLookups: ReferenceLookups = {
   secTickerIndex: fetchSecTickerIndex,
   gleifByName: fetchGleifByName,
   companiesHouseSearch: fetchCompaniesHouseSearch,
+  secCikByLei: fetchSecCikByLei,
 };
 
 // Tenant-wide orchestration.

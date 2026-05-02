@@ -40,6 +40,8 @@ import {
   rankSuggestions,
   suggestForSupplier,
   suggestForTenant,
+  fetchSecCikByLei,
+  _resetSecLeiCacheForTests,
   CONFIDENCE_EXACT,
   CONFIDENCE_STRONG,
   CONFIDENCE_WEAK,
@@ -50,6 +52,16 @@ import {
   setSuggestLookupsForTests,
   resetSuggestLookupsForTests,
 } from "../src/routes/watched-issuers";
+
+// LEIs used by the LEI→CIK cross-reference tests. Pinned at module
+// scope so the stub and the assertions can't drift apart.
+const APPLE_LEI = "HWUPKR0MPOU8FGXBT394";
+const APPLE_CIK = "0000320193";
+// A US-jurisdiction LEI that has a CIK in EDGAR but whose legal name
+// does NOT appear in SEC's ticker index (the "ADR / parent holdco"
+// case the cross-reference is designed to recover).
+const HOLDCO_LEI = "HOLDCO000000000000XX";
+const HOLDCO_CIK = "0000999999";
 
 const RUN_ID = `task130-${Date.now()}-${process.pid}`;
 
@@ -126,6 +138,167 @@ test("rankSuggestions caps per-source and per-supplier", () => {
 });
 
 // ---------------------------------------------------------------------------
+// fetchSecCikByLei — parses EDGAR atom feed, handles miss cases, caches
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the minimal EDGAR atom-feed shape the parser depends on: an
+ * <entry> wrapping a link whose href contains `CIK=<digits>`. Real
+ * EDGAR responses also have title/updated/etc., but the parser only
+ * cares about <entry> presence and the first CIK= token.
+ */
+function fakeEdgarAtomWithCik(cik: string): string {
+  return [
+    '<?xml version="1.0" encoding="ISO-8859-1" ?>',
+    '<feed xmlns="http://www.w3.org/2005/Atom">',
+    "  <title>EDGAR Filing Search Results</title>",
+    "  <entry>",
+    `    <link rel="alternate" type="text/html" href="/cgi-bin/browse-edgar?action=getcompany&amp;CIK=${cik}&amp;type=&amp;dateb=&amp;owner=include&amp;count=10"/>`,
+    "  </entry>",
+    "</feed>",
+  ].join("\n");
+}
+
+/** EDGAR's "no match" page: a feed with zero <entry> elements. */
+function fakeEdgarAtomNoEntries(): string {
+  return [
+    '<?xml version="1.0" encoding="ISO-8859-1" ?>',
+    '<feed xmlns="http://www.w3.org/2005/Atom">',
+    "  <title>EDGAR Filing Search Results</title>",
+    "</feed>",
+  ].join("\n");
+}
+
+/**
+ * Wrap the global `fetch` for one test, asserting the URL contains the
+ * expected LEI and returning a canned response. Returns a counter so
+ * the test can assert how many times fetch was actually invoked
+ * (cache hit vs miss).
+ */
+function withFetchStub<T>(
+  responder: (url: string) => { status: number; body: string },
+  fn: (callCount: () => number) => Promise<T>,
+): Promise<T> {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    calls++;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as { url: string }).url;
+    const r = responder(url);
+    return new Response(r.body, { status: r.status });
+  }) as typeof fetch;
+  return fn(() => calls).finally(() => {
+    globalThis.fetch = original;
+  });
+}
+
+test("fetchSecCikByLei parses CIK from EDGAR atom feed and pads to 10 digits", async () => {
+  _resetSecLeiCacheForTests();
+  await withFetchStub(
+    (url) => {
+      // Sanity: the request must include the LEI in the query string.
+      assert.match(url, /LEI=HWUPKR0MPOU8FGXBT394/);
+      // EDGAR returns the unpadded CIK in the link href; the parser
+      // is responsible for padCik().
+      return { status: 200, body: fakeEdgarAtomWithCik("320193") };
+    },
+    async () => {
+      const cik = await fetchSecCikByLei("HWUPKR0MPOU8FGXBT394");
+      assert.equal(cik, "0000320193");
+    },
+  );
+});
+
+test("fetchSecCikByLei normalises lowercase LEI input (cache key + URL upper-case)", async () => {
+  _resetSecLeiCacheForTests();
+  await withFetchStub(
+    (url) => {
+      assert.match(url, /LEI=HWUPKR0MPOU8FGXBT394/);
+      return { status: 200, body: fakeEdgarAtomWithCik("0000320193") };
+    },
+    async () => {
+      const cik = await fetchSecCikByLei("hwupkr0mpou8fgxbt394");
+      assert.equal(cik, "0000320193");
+    },
+  );
+});
+
+test("fetchSecCikByLei returns null for HTTP 404 (LEI unknown to EDGAR)", async () => {
+  _resetSecLeiCacheForTests();
+  await withFetchStub(
+    () => ({ status: 404, body: "Not Found" }),
+    async () => {
+      const cik = await fetchSecCikByLei("UNKNOWN0000000000000");
+      assert.equal(cik, null);
+    },
+  );
+});
+
+test("fetchSecCikByLei returns null when the feed has zero <entry> elements", async () => {
+  _resetSecLeiCacheForTests();
+  await withFetchStub(
+    () => ({ status: 200, body: fakeEdgarAtomNoEntries() }),
+    async () => {
+      const cik = await fetchSecCikByLei("EMPTY00000000000000X");
+      assert.equal(cik, null);
+    },
+  );
+});
+
+test("fetchSecCikByLei throws on non-404 upstream errors so the engine can log them", async () => {
+  _resetSecLeiCacheForTests();
+  await withFetchStub(
+    () => ({ status: 503, body: "Service Unavailable" }),
+    async () => {
+      await assert.rejects(
+        fetchSecCikByLei("ANYLEI00000000000000"),
+        /HTTP 503/,
+      );
+    },
+  );
+});
+
+test("fetchSecCikByLei caches positive AND negative results per LEI", async () => {
+  _resetSecLeiCacheForTests();
+  // Positive: hit + cache hit.
+  await withFetchStub(
+    () => ({ status: 200, body: fakeEdgarAtomWithCik("789019") }),
+    async (callCount) => {
+      const a = await fetchSecCikByLei("INR2EJN1ERAN0W5ZP974");
+      const b = await fetchSecCikByLei("INR2EJN1ERAN0W5ZP974");
+      assert.equal(a, "0000789019");
+      assert.equal(b, "0000789019");
+      assert.equal(
+        callCount(),
+        1,
+        "second lookup must be served from cache, not re-fetched",
+      );
+    },
+  );
+  // Negative: a 404 result should also be cached so we don't keep
+  // hammering EDGAR for an LEI we already know it doesn't have.
+  await withFetchStub(
+    () => ({ status: 404, body: "Not Found" }),
+    async (callCount) => {
+      const a = await fetchSecCikByLei("MISSING000000000000X");
+      const b = await fetchSecCikByLei("MISSING000000000000X");
+      assert.equal(a, null);
+      assert.equal(b, null);
+      assert.equal(
+        callCount(),
+        1,
+        "negative lookup must also be cached to spare EDGAR's rate budget",
+      );
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Per-supplier orchestration with stubbed lookups
 // ---------------------------------------------------------------------------
 
@@ -141,9 +314,23 @@ const STUB_LOOKUPS: ReferenceLookups = {
     if (/apple/i.test(name)) {
       return [
         {
-          lei: "HWUPKR0MPOU8FGXBT394",
+          lei: APPLE_LEI,
           legalName: "Apple Inc.",
           jurisdiction: "US-CA",
+          legalAddressCountry: "US",
+          headquartersCountry: "US",
+        },
+      ];
+    }
+    if (/holdco/i.test(name)) {
+      // GLEIF returns a US-jurisdiction parent holdco match whose
+      // legal name does NOT appear in the SEC ticker index — exactly
+      // the case the LEI→CIK cross-reference is meant to recover.
+      return [
+        {
+          lei: HOLDCO_LEI,
+          legalName: "Holdco Industries Inc.",
+          jurisdiction: "US-DE",
           legalAddressCountry: "US",
           headquartersCountry: "US",
         },
@@ -186,6 +373,11 @@ const STUB_LOOKUPS: ReferenceLookups = {
     }
     return [];
   },
+  async secCikByLei(lei) {
+    if (lei === APPLE_LEI) return APPLE_CIK;
+    if (lei === HOLDCO_LEI) return HOLDCO_CIK;
+    return null;
+  },
 };
 
 test("suggestForSupplier — US supplier → SEC suggestion with LEI merged from GLEIF", async () => {
@@ -194,12 +386,110 @@ test("suggestForSupplier — US supplier → SEC suggestion with LEI merged from
     { lookups: STUB_LOOKUPS },
   );
   // Expect at least one SEC suggestion with the CIK and the LEI from GLEIF merged in.
-  const sec = out.find((s) => s.source === "sec_edgar" && s.identifier === "0000320193");
+  const sec = out.find(
+    (s) => s.source === "sec_edgar" && s.identifier === APPLE_CIK,
+  );
   assert.ok(sec, `expected SEC suggestion for Apple, got ${JSON.stringify(out)}`);
   assert.equal(sec!.confidence, CONFIDENCE_EXACT);
-  assert.equal(sec!.lei, "HWUPKR0MPOU8FGXBT394");
+  assert.equal(sec!.lei, APPLE_LEI);
   assert.equal(sec!.ticker, "AAPL");
   assert.equal(sec!.supplierUid, "sup_apple");
+  // Apple is in the SEC ticker index, so even though the LEI cross-
+  // reference would resolve to the same CIK, the engine must emit
+  // exactly ONE Apple row — the ticker hit with the LEI merged in.
+  const allApple = out.filter(
+    (s) => s.source === "sec_edgar" && s.identifier === APPLE_CIK,
+  );
+  assert.equal(
+    allApple.length,
+    1,
+    `expected exactly one Apple SEC row after LEI cross-reference, got ${JSON.stringify(allApple)}`,
+  );
+});
+
+test("suggestForSupplier — GLEIF-only US match resolved to SEC CIK via LEI cross-reference", async () => {
+  // The "Holdco Industries" name is NOT in SEC's ticker index, so
+  // pre-cross-reference there'd be zero confirmable suggestions.
+  // GLEIF returns an LEI for the US-jurisdiction parent, which the
+  // LEI→CIK lookup converts into a confirmable sec_edgar row.
+  const out = await suggestForSupplier(
+    { id: "sup_holdco", name: "Holdco Industries", countryCode: "US" },
+    { lookups: STUB_LOOKUPS },
+  );
+  const sec = out.find(
+    (s) => s.source === "sec_edgar" && s.identifier === HOLDCO_CIK,
+  );
+  assert.ok(
+    sec,
+    `expected GLEIF→LEI→CIK suggestion for Holdco, got ${JSON.stringify(out)}`,
+  );
+  assert.equal(sec!.lei, HOLDCO_LEI);
+  assert.equal(sec!.via, "gleif");
+  assert.equal(sec!.name, "Holdco Industries Inc.");
+  assert.equal(sec!.supplierUid, "sup_holdco");
+  // Score is carried over from the GLEIF name match, not invented.
+  assert.ok(sec!.confidence >= CONFIDENCE_WEAK);
+  // Reason cites the LEI cross-reference so an operator can tell at
+  // a glance that this row didn't come from the ticker index.
+  assert.match(sec!.matchReason, /SEC LEI cross-reference/);
+});
+
+test("suggestForSupplier — LEI without an EDGAR registrant produces no SEC suggestion", async () => {
+  // Stub returns a non-US, non-UK GLEIF hit whose LEI isn't in EDGAR.
+  // The engine must NOT fabricate a CIK — the row is simply dropped.
+  const lookups: ReferenceLookups = {
+    ...STUB_LOOKUPS,
+    async gleifByName(name) {
+      if (/orphan/i.test(name)) {
+        return [
+          {
+            lei: "ORPHAN0000000000000X",
+            legalName: "Orphan Holdings AG",
+            jurisdiction: "DE",
+            legalAddressCountry: "DE",
+            headquartersCountry: "DE",
+          },
+        ];
+      }
+      return [];
+    },
+    async secCikByLei() {
+      // EDGAR knows nothing about this LEI.
+      return null;
+    },
+  };
+  const out = await suggestForSupplier(
+    // No country code on the supplier so the GLEIF row passes the
+    // "US-or-supplier-US" filter and reaches the LEI lookup stage.
+    { id: "sup_orphan", name: "Orphan Holdings", countryCode: null },
+    { lookups },
+  );
+  assert.equal(
+    out.length,
+    0,
+    `unmatched LEI must not synthesize a SEC suggestion, got ${JSON.stringify(out)}`,
+  );
+});
+
+test("suggestForSupplier — LEI cross-reference failure is non-fatal (caught per-LEI)", async () => {
+  // One GLEIF hit, but the SEC LEI lookup blows up.  The supplier
+  // should still get the other suggestions back (here: none, but the
+  // call must not throw).
+  const lookups: ReferenceLookups = {
+    ...STUB_LOOKUPS,
+    async secCikByLei() {
+      throw new Error("SEC LEI lookup HTTP 503");
+    },
+  };
+  const out = await suggestForSupplier(
+    { id: "sup_holdco_err", name: "Holdco Industries", countryCode: "US" },
+    { lookups },
+  );
+  assert.equal(
+    out.length,
+    0,
+    `transient LEI lookup failure must not produce a half-formed suggestion, got ${JSON.stringify(out)}`,
+  );
 });
 
 test("suggestForSupplier — UK supplier with API key → Companies House suggestion", async () => {
