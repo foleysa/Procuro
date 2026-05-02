@@ -51,6 +51,35 @@ let orgB: string;
 let supA: string;
 let catA: string;
 const cycleIds: string[] = [];
+// Per-test orgs created by `setupCalibrationOrg()` — tracked so the
+// `after()` teardown can drop them. Each calibration test gets its own
+// org so `computeCalibration(orgId)` only sees the rows that test
+// seeded; without this, sibling tests leak realized decisions into the
+// `_all` rollup (n=36 instead of 24, n=57 instead of 0). The fix is
+// test isolation rather than narrowing the production query, since the
+// production behavior of "all realized rows for the org" is correct.
+const dynamicOrgIds: string[] = [];
+
+async function setupCalibrationOrg(): Promise<{
+  orgId: string;
+  supId: string;
+}> {
+  const orgId = newId("org");
+  const supId = newId("sup");
+  await db
+    .insert(orgsTable)
+    .values({ id: orgId, name: `${RUN} cal`, slug: `${RUN}-${orgId.slice(-6)}` });
+  await db.insert(suppliersTable).values({
+    id: supId,
+    orgId,
+    name: `${RUN} sup ${orgId.slice(-6)}`,
+    normalizedName: `${RUN} sup ${orgId.slice(-6)}`,
+    sourceSystem: "csv",
+    sourceExternalId: `${RUN}-sup-${orgId.slice(-6)}`,
+  });
+  dynamicOrgIds.push(orgId);
+  return { orgId, supId };
+}
 
 // Stub lever shaped like the real ones — used to feed cohortKey + result
 // into the snapshot writer without having to set up the full pipeline.
@@ -323,15 +352,17 @@ describe("OODA funnel substrate", () => {
   it("computes calibration verdicts when n >= 10 and gates otherwise", async () => {
     // Seed 12 realized decisions: prior multiplier 0.5 (rescaled) sits
     // closer to truth than raw, so verdict should be 'helping'.
-    const calCycle = await insertCycle(orgA, 3);
+    // Fresh org per calibration test — see `setupCalibrationOrg`.
+    const { orgId, supId } = await setupCalibrationOrg();
+    const calCycle = await insertCycle(orgId, 3);
     const opps: OpportunityRow[] = [];
     for (let i = 0; i < 12; i++) {
       const o = await persistOpp({
-        orgId: orgA,
+        orgId,
         cycleId: calCycle,
         raw: 1000,
         rescaleMultiplier: 0.5,
-        supplierId: supA,
+        supplierId: supId,
         categoryCode: "CAL",
         decisionEvent: "realize",
         realizedRatio: 1.0, // realized matches rescaled exactly -> rescaled MAE = 0
@@ -340,7 +371,7 @@ describe("OODA funnel substrate", () => {
       opps.push(o);
     }
     const r = await captureFunnelSnapshot({
-      orgId: orgA,
+      orgId,
       cycleId: calCycle,
       cycleGeneration: 3,
       leverResults: [
@@ -388,27 +419,29 @@ describe("OODA funnel substrate", () => {
       // Seed two distinct categories on the same lever and realize 12
       // decisions in each — `_all` rollup must aggregate both buckets,
       // and per-bucket metrics must coexist alongside the rollup.
-      const cycle = await insertCycle(orgA, 100);
+      // Fresh org per calibration test — see `setupCalibrationOrg`.
+      const { orgId, supId } = await setupCalibrationOrg();
+      const cycle = await insertCycle(orgId, 100);
       const catB = newId("cat");
       const catC = newId("cat");
       await db.insert(categoriesTable).values([
         {
           id: catB,
-          orgId: orgA,
-          code: `${RUN}-CAT-B`,
+          orgId,
+          code: `${RUN}-CAT-B-${orgId.slice(-6)}`,
           name: "Test cat B",
           class: "service",
           sourceSystem: "csv",
-          sourceExternalId: `${RUN}-catB`,
+          sourceExternalId: `${RUN}-catB-${orgId.slice(-6)}`,
         },
         {
           id: catC,
-          orgId: orgA,
-          code: `${RUN}-CAT-C`,
+          orgId,
+          code: `${RUN}-CAT-C-${orgId.slice(-6)}`,
           name: "Test cat C",
           class: "service",
           sourceSystem: "csv",
-          sourceExternalId: `${RUN}-catC`,
+          sourceExternalId: `${RUN}-catC-${orgId.slice(-6)}`,
         },
       ]);
       const opps: OpportunityRow[] = [];
@@ -417,13 +450,13 @@ describe("OODA funnel substrate", () => {
       for (let i = 0; i < 12; i++) {
         opps.push(
           await persistOpp({
-            orgId: orgA,
+            orgId,
             cycleId: cycle,
             raw: 1000,
             rescaleMultiplier: 0.5,
-            supplierId: supA,
+            supplierId: supId,
             categoryId: catB,
-            categoryCode: `${RUN}-CAT-B`,
+            categoryCode: `${RUN}-CAT-B-${orgId.slice(-6)}`,
             decisionEvent: "realize",
             realizedRatio: 1.0,
             decisionAge: 5,
@@ -439,13 +472,13 @@ describe("OODA funnel substrate", () => {
       for (let i = 0; i < 12; i++) {
         opps.push(
           await persistOpp({
-            orgId: orgA,
+            orgId,
             cycleId: cycle,
             raw: 1000,
             rescaleMultiplier: 0.5,
-            supplierId: supA,
+            supplierId: supId,
             categoryId: catC,
-            categoryCode: `${RUN}-CAT-C`,
+            categoryCode: `${RUN}-CAT-C-${orgId.slice(-6)}`,
             decisionEvent: "realize",
             realizedRatio: 3.0, // realized = rescaled × 3 = $1500
             decisionAge: 5,
@@ -453,7 +486,7 @@ describe("OODA funnel substrate", () => {
         );
       }
       const r = await captureFunnelSnapshot({
-        orgId: orgA,
+        orgId,
         cycleId: cycle,
         cycleGeneration: 100,
         leverResults: [
@@ -490,8 +523,8 @@ describe("OODA funnel substrate", () => {
       >;
       // Per-bucket entries exist with the canonical key shape.
       const lever = stubLever.leverId;
-      const catBKey30 = `${lever}:${RUN}-CAT-B:30d`;
-      const catCKey30 = `${lever}:${RUN}-CAT-C:30d`;
+      const catBKey30 = `${lever}:${RUN}-CAT-B-${orgId.slice(-6)}:30d`;
+      const catCKey30 = `${lever}:${RUN}-CAT-C-${orgId.slice(-6)}:30d`;
       const allKey30 = `${lever}:_all:30d`;
       assert.ok(cal[catBKey30], `missing bucket ${catBKey30}`);
       assert.ok(cal[catCKey30], `missing bucket ${catCKey30}`);
@@ -518,27 +551,29 @@ describe("OODA funnel substrate", () => {
   it(
     "applies n >= 10 gating per (lever, category) bucket independently",
     async () => {
-      const cycle = await insertCycle(orgA, 101);
+      // Fresh org per calibration test — see `setupCalibrationOrg`.
+      const { orgId, supId } = await setupCalibrationOrg();
+      const cycle = await insertCycle(orgId, 101);
       const catSmall = newId("cat");
       const catBig = newId("cat");
       await db.insert(categoriesTable).values([
         {
           id: catSmall,
-          orgId: orgA,
-          code: `${RUN}-CAT-SMALL`,
+          orgId,
+          code: `${RUN}-CAT-SMALL-${orgId.slice(-6)}`,
           name: "Small cat",
           class: "service",
           sourceSystem: "csv",
-          sourceExternalId: `${RUN}-catSmall`,
+          sourceExternalId: `${RUN}-catSmall-${orgId.slice(-6)}`,
         },
         {
           id: catBig,
-          orgId: orgA,
-          code: `${RUN}-CAT-BIG`,
+          orgId,
+          code: `${RUN}-CAT-BIG-${orgId.slice(-6)}`,
           name: "Big cat",
           class: "service",
           sourceSystem: "csv",
-          sourceExternalId: `${RUN}-catBig`,
+          sourceExternalId: `${RUN}-catBig-${orgId.slice(-6)}`,
         },
       ]);
       const opps: OpportunityRow[] = [];
@@ -547,13 +582,13 @@ describe("OODA funnel substrate", () => {
       for (let i = 0; i < 9; i++) {
         opps.push(
           await persistOpp({
-            orgId: orgA,
+            orgId,
             cycleId: cycle,
             raw: 1000,
             rescaleMultiplier: 0.5,
-            supplierId: supA,
+            supplierId: supId,
             categoryId: catSmall,
-            categoryCode: `${RUN}-CAT-SMALL`,
+            categoryCode: `${RUN}-CAT-SMALL-${orgId.slice(-6)}`,
             decisionEvent: "realize",
             realizedRatio: 1.0,
             decisionAge: 5,
@@ -564,13 +599,13 @@ describe("OODA funnel substrate", () => {
       for (let i = 0; i < 12; i++) {
         opps.push(
           await persistOpp({
-            orgId: orgA,
+            orgId,
             cycleId: cycle,
             raw: 1000,
             rescaleMultiplier: 0.5,
-            supplierId: supA,
+            supplierId: supId,
             categoryId: catBig,
-            categoryCode: `${RUN}-CAT-BIG`,
+            categoryCode: `${RUN}-CAT-BIG-${orgId.slice(-6)}`,
             decisionEvent: "realize",
             realizedRatio: 1.0,
             decisionAge: 5,
@@ -578,7 +613,7 @@ describe("OODA funnel substrate", () => {
         );
       }
       const r = await captureFunnelSnapshot({
-        orgId: orgA,
+        orgId,
         cycleId: cycle,
         cycleGeneration: 101,
         leverResults: [
@@ -605,8 +640,8 @@ describe("OODA funnel substrate", () => {
         { n: number; verdict: string }
       >;
       const lever = stubLever.leverId;
-      const small = cal[`${lever}:${RUN}-CAT-SMALL:30d`];
-      const big = cal[`${lever}:${RUN}-CAT-BIG:30d`];
+      const small = cal[`${lever}:${RUN}-CAT-SMALL-${orgId.slice(-6)}:30d`];
+      const big = cal[`${lever}:${RUN}-CAT-BIG-${orgId.slice(-6)}:30d`];
       assert.ok(small, "small bucket missing");
       assert.ok(big, "big bucket missing");
       assert.equal(small!.n, 9);
@@ -619,29 +654,37 @@ describe("OODA funnel substrate", () => {
   it(
     "excludes mappedVia='unmapped_default' from per-(category, lever) buckets AND the `_all` rollup",
     async () => {
-      const cycle = await insertCycle(orgA, 102);
+      // Fresh org per calibration test — see `setupCalibrationOrg`.
+      // With a fresh org, the only realized rows in scope are the 12
+      // unmapped_default ones we seed here, so a correct exclusion
+      // filter produces NEITHER a per-bucket entry NOR an `_all`
+      // rollup. Asserting both at once in this test is the regression
+      // guard the task plan asks for: if the filter ever drifts so it
+      // applies to one dimension but not the other, this test breaks.
+      const { orgId, supId } = await setupCalibrationOrg();
+      const cycle = await insertCycle(orgId, 102);
       const cat = newId("cat");
       await db.insert(categoriesTable).values({
         id: cat,
-        orgId: orgA,
-        code: `${RUN}-CAT-EXCL`,
+        orgId,
+        code: `${RUN}-CAT-EXCL-${orgId.slice(-6)}`,
         name: "Excl cat",
         class: "service",
         sourceSystem: "csv",
-        sourceExternalId: `${RUN}-catExcl`,
+        sourceExternalId: `${RUN}-catExcl-${orgId.slice(-6)}`,
       });
       const opps: OpportunityRow[] = [];
       // 12 realized rows but every one is `unmapped_default` — must
       // not surface in either dimension.
       for (let i = 0; i < 12; i++) {
         const o = await persistOpp({
-          orgId: orgA,
+          orgId,
           cycleId: cycle,
           raw: 1000,
           rescaleMultiplier: 0.5,
-          supplierId: supA,
+          supplierId: supId,
           categoryId: cat,
-          categoryCode: `${RUN}-CAT-EXCL`,
+          categoryCode: `${RUN}-CAT-EXCL-${orgId.slice(-6)}`,
           decisionEvent: "realize",
           realizedRatio: 1.0,
           decisionAge: 5,
@@ -655,7 +698,7 @@ describe("OODA funnel substrate", () => {
          WHERE cycle_id = ${cycle}
       `);
       const r = await captureFunnelSnapshot({
-        orgId: orgA,
+        orgId,
         cycleId: cycle,
         cycleGeneration: 102,
         leverResults: [
@@ -684,37 +727,31 @@ describe("OODA funnel substrate", () => {
       const lever = stubLever.leverId;
       const matching = Object.entries(cal).filter(
         ([, v]) =>
-          v.leverId === lever && v.categoryCode === `${RUN}-CAT-EXCL`,
+          v.leverId === lever &&
+          v.categoryCode === `${RUN}-CAT-EXCL-${orgId.slice(-6)}`,
       );
       assert.equal(
         matching.length,
         0,
         "unmapped_default rows must not produce a per-(cat,lever) bucket",
       );
-      // The `_all` rollup for this lever in this snapshot should also
-      // not include the excluded sample (i.e. no `_all` row exists for
-      // this lever in this cycle since these 12 were the only realized
-      // decisions in the relevant window).
+      // The `_all` rollup must ALSO exclude the unmapped_default rows.
+      // With a fresh per-test org (`setupCalibrationOrg`) there are no
+      // other realized decisions in scope for this lever, so a
+      // correctly-applied filter produces no `_all` rollup at all.
+      // This catches a class of regression where the exclusion filter
+      // is applied to per-(lever, category) buckets but not to the
+      // per-lever `_all` aggregation (or vice versa) — the original
+      // production bug shape this test was added for.
       const rollup = Object.entries(cal).filter(
         ([k, v]) =>
           v.leverId === lever && v.categoryCode === "_all" && k.endsWith(":30d"),
       );
-      // The same 24-day window may include realizations from earlier
-      // cycles. We can't assert "no rollup at all", but we CAN assert
-      // that the 12 unmapped rows we just inserted didn't bump the
-      // sample size. Earlier "computes calibration verdicts" test
-      // seeded 12 'helping' rows with categoryId=null, so the rollup
-      // for this lever should still be exactly those 12.
-      assert.ok(rollup.length <= 1);
-      if (rollup[0]) {
-        const r0 = rollup[0][1] as unknown as { n: number };
-        // Should be ≤12 (only the prior 'helping' fixture). If the
-        // exclusion filter were broken, we'd see 24.
-        assert.ok(
-          r0.n <= 12,
-          `unmapped_default contaminated rollup: n=${r0.n}`,
-        );
-      }
+      assert.equal(
+        rollup.length,
+        0,
+        `unmapped_default contaminated rollup: ${JSON.stringify(rollup)}`,
+      );
     },
   );
 
@@ -887,6 +924,12 @@ describe("OODA funnel substrate", () => {
     // prefix below.
     if (orgA) await safe(db.delete(orgsTable).where(eq(orgsTable.id, orgA)));
     if (orgB) await safe(db.delete(orgsTable).where(eq(orgsTable.id, orgB)));
+    // Per-test orgs created via `setupCalibrationOrg`. Cascade FKs from
+    // `orgs` clean up snapshots, opportunities, decisions, suppliers,
+    // and categories that belong to each org.
+    for (const id of dynamicOrgIds) {
+      await safe(db.delete(orgsTable).where(eq(orgsTable.id, id)));
+    }
     await safe(
       db
         .delete(suppliersTable)
