@@ -214,7 +214,7 @@ router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings
 });
 
 // Clear an override and revert to the in-code default (#96).
-router.delete("/jobs/settings/:kind", tenantMiddleware, async (req, res) => {
+router.delete("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const kind = String(req.params.kind ?? "") as JobKind;
   if (!configurableKindSet.has(kind)) {
