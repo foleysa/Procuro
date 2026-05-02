@@ -35,6 +35,7 @@ import type { AdminUserRole } from "@/lib/admin-client";
 import { Button } from "@/components/ui/button";
 import { MigrationBanner } from "./migration-banner";
 import { FailedJobsBanner } from "./failed-jobs-banner";
+import { GlobalSupplierSearch } from "./global-supplier-search";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -201,6 +202,9 @@ export function Layout({ children }: LayoutProps) {
             Command Center
           </span>
           <div className="flex items-center gap-4">
+            <Show when="signed-in">
+              <GlobalSupplierSearch />
+            </Show>
             <Link
               href="/landing"
               className="text-xs text-muted-foreground hover:text-foreground"
