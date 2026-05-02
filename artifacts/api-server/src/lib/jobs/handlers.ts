@@ -3,16 +3,21 @@ import {
   alertsTable,
   alertEventsTable,
   contractsTable,
+  defensePacksTable,
   erpConnectionsTable,
   erpSyncRunsTable,
+  marketSignalsTable,
   orgsTable,
   type AlertChannelRow,
   type AlertRow,
+  type DefensePackEvidenceSnapshotItem,
+  type DefensePackStaleSignalDrift,
+  type DefensePackStaleness,
   type ErpEntityCounts,
   type ErpWatermarks,
   type JobRow,
 } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 
 import { runAnalysisCycle } from "../ooda/cycle";
 import { emailChannelAdapter } from "../alerts/channels";
@@ -1170,4 +1175,233 @@ export async function runRoutingHealthCheckHandler(
     );
   }
   return report as unknown as Record<string, unknown>;
+}
+
+// =====================================================================
+// Defense Pack staleness scan (task #178)
+// =====================================================================
+//
+// Walks every `ready` Defense Pack and, for each frozen
+// `evidence_snapshot` row, looks up the most recent matching
+// `market_signals` row (by collectorId + signalType + scope keys, in
+// the pack's tenant scope or NULL for platform-wide signals) and
+// computes a per-signal pct change against the cited value. The
+// pack-level `stale` flag flips when the median absolute pct change
+// across all comparable snapshot rows exceeds the configured
+// threshold (default 5%, overridable via `DEFENSE_PACK_STALE_THRESHOLD`).
+//
+// The pack itself is intentionally never mutated — defensibility
+// requires the cited evidence stay frozen — only the staleness
+// columns flip. If a previously-stale pack drops back below the
+// threshold (the live signals reverted), the scan clears the flag so
+// the UI doesn't keep nagging.
+
+const DEFAULT_DEFENSE_PACK_STALE_THRESHOLD = 0.05;
+
+function readStalenessThreshold(): number {
+  const raw = process.env["DEFENSE_PACK_STALE_THRESHOLD"];
+  if (!raw) return DEFAULT_DEFENSE_PACK_STALE_THRESHOLD;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DEFENSE_PACK_STALE_THRESHOLD;
+  return n;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1]! + sorted[mid]!) / 2
+    : sorted[mid]!;
+}
+
+function scopeEqOrNull(
+  column:
+    | typeof marketSignalsTable.scopeMaterialCode
+    | typeof marketSignalsTable.scopeCategoryCode
+    | typeof marketSignalsTable.scopeSupplierName
+    | typeof marketSignalsTable.scopeLaneKey
+    | typeof marketSignalsTable.scopeSku,
+  value: string | null | undefined,
+) {
+  // The snapshot only persists the scope keys that were actually set
+  // on the live signal at generation time. To re-find that signal we
+  // mirror the natural-key shape: a present scope value must equal
+  // the live column; an absent (null/undefined) scope value must
+  // match `IS NULL` so we don't accidentally pick up a more-specific
+  // sibling row.
+  return value == null || value === ""
+    ? isNull(column)
+    : eq(column, value);
+}
+
+export async function runDefensePackStalenessScanHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const threshold = readStalenessThreshold();
+  const now = new Date();
+
+  // Only `ready` packs have a meaningful evidence_snapshot to compare;
+  // `generating`, `failed`, and `insufficient_evidence` packs are
+  // excluded by definition.
+  const packs = await db
+    .select({
+      id: defensePacksTable.id,
+      orgId: defensePacksTable.orgId,
+      stale: defensePacksTable.stale,
+      evidenceSnapshot: defensePacksTable.evidenceSnapshot,
+    })
+    .from(defensePacksTable)
+    .where(eq(defensePacksTable.status, "ready"));
+
+  let packsScanned = 0;
+  let packsFlippedStale = 0;
+  let packsCleared = 0;
+  let packsSkippedNoEvidence = 0;
+  let packsSkippedNoLiveData = 0;
+  const errors: Array<{ packId: string; error: string }> = [];
+
+  for (const pack of packs) {
+    packsScanned += 1;
+    try {
+      const snapshot: DefensePackEvidenceSnapshotItem[] =
+        pack.evidenceSnapshot ?? [];
+      if (snapshot.length === 0) {
+        packsSkippedNoEvidence += 1;
+        continue;
+      }
+
+      const absDrifts: number[] = [];
+      const exceedingDrifts: DefensePackStaleSignalDrift[] = [];
+
+      for (const snapItem of snapshot) {
+        const cited = Number(snapItem.value);
+        if (!Number.isFinite(cited) || cited === 0) continue;
+
+        const scope = snapItem.scope ?? {};
+        const [latest] = await db
+          .select({
+            value: marketSignalsTable.value,
+            observedAt: marketSignalsTable.observedAt,
+          })
+          .from(marketSignalsTable)
+          .where(
+            and(
+              eq(marketSignalsTable.collectorId, snapItem.collectorId),
+              eq(
+                marketSignalsTable.signalType,
+                snapItem.signalType as never,
+              ),
+              // Platform-wide signals (orgId IS NULL) are usable by any
+              // tenant, so they're equally valid live comparators.
+              or(
+                eq(marketSignalsTable.orgId, pack.orgId),
+                isNull(marketSignalsTable.orgId),
+              ),
+              scopeEqOrNull(
+                marketSignalsTable.scopeMaterialCode,
+                scope.materialCode,
+              ),
+              scopeEqOrNull(
+                marketSignalsTable.scopeCategoryCode,
+                scope.categoryCode,
+              ),
+              scopeEqOrNull(
+                marketSignalsTable.scopeSupplierName,
+                scope.supplierName,
+              ),
+              scopeEqOrNull(
+                marketSignalsTable.scopeLaneKey,
+                scope.laneKey,
+              ),
+              scopeEqOrNull(marketSignalsTable.scopeSku, scope.sku),
+            ),
+          )
+          .orderBy(desc(marketSignalsTable.observedAt))
+          .limit(1);
+
+        if (!latest) continue;
+
+        const current = Number(latest.value);
+        if (!Number.isFinite(current)) continue;
+
+        const pctChange = (current - cited) / Math.abs(cited);
+        const absDrift = Math.abs(pctChange);
+        absDrifts.push(absDrift);
+
+        if (absDrift > threshold) {
+          exceedingDrifts.push({
+            signalId: snapItem.signalId,
+            collectorId: snapItem.collectorId,
+            signalType: snapItem.signalType,
+            citedValue: cited,
+            currentValue: current,
+            pctChange,
+            currentObservedAt: latest.observedAt.toISOString(),
+          });
+        }
+      }
+
+      if (absDrifts.length === 0) {
+        packsSkippedNoLiveData += 1;
+        continue;
+      }
+
+      const medianAbs = median(absDrifts);
+      const isStale = medianAbs > threshold;
+
+      if (isStale) {
+        const reason: DefensePackStaleness = {
+          threshold,
+          detectedAt: now.toISOString(),
+          medianAbsDriftPct: medianAbs,
+          comparedSignalCount: absDrifts.length,
+          drifts: exceedingDrifts,
+        };
+        await db
+          .update(defensePacksTable)
+          .set({
+            stale: true,
+            // Preserve the original "stale since" timestamp on
+            // re-evaluation so the UI can show "stale for 3 days"
+            // instead of resetting every nightly run.
+            staleSinceAt: sql`COALESCE(${defensePacksTable.staleSinceAt}, ${now})`,
+            stalenessReason: reason,
+          })
+          .where(eq(defensePacksTable.id, pack.id));
+        if (!pack.stale) packsFlippedStale += 1;
+      } else if (pack.stale) {
+        // Live signals reverted back inside the threshold; clear the
+        // flag so the "Regenerate" CTA goes away on its own.
+        await db
+          .update(defensePacksTable)
+          .set({
+            stale: false,
+            staleSinceAt: null,
+            stalenessReason: null,
+          })
+          .where(eq(defensePacksTable.id, pack.id));
+        packsCleared += 1;
+      }
+    } catch (err) {
+      errors.push({
+        packId: pack.id,
+        error: (err as Error).message,
+      });
+      logger.error(
+        { packId: pack.id, err: (err as Error).message },
+        "defensePackStalenessScan.pack.failed",
+      );
+    }
+  }
+
+  return {
+    threshold,
+    packsScanned,
+    packsFlippedStale,
+    packsCleared,
+    packsSkippedNoEvidence,
+    packsSkippedNoLiveData,
+    errors,
+  };
 }

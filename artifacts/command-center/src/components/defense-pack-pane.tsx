@@ -48,6 +48,7 @@ import {
   FileText,
   Link2,
   Loader2,
+  RotateCcw,
   Shield,
   Sparkles,
   ThumbsDown,
@@ -79,7 +80,17 @@ export function DefensePackPane() {
             toast({ title: "Defense Pack generated", description: id });
           }}
         />
-        <RecentPacksCard activeId={activeId} onSelect={setActiveId} />
+        <RecentPacksCard
+          activeId={activeId}
+          onSelect={setActiveId}
+          onRegenerated={(id) => {
+            setActiveId(id);
+            toast({
+              title: "Defense Pack regenerated",
+              description: id,
+            });
+          }}
+        />
       </div>
       <div>
         {activeId ? (
@@ -333,9 +344,11 @@ function BuilderCard({ onCreated }: { onCreated: (id: string) => void }) {
 function RecentPacksCard({
   activeId,
   onSelect,
+  onRegenerated,
 }: {
   activeId: string | null;
   onSelect: (id: string) => void;
+  onRegenerated: (id: string) => void;
 }) {
   const { data, isLoading } = useListDefensePacks({ limit: 25 });
   const items = data?.items ?? [];
@@ -357,6 +370,7 @@ function RecentPacksCard({
             pack={it}
             active={it.id === activeId}
             onSelect={() => onSelect(it.id)}
+            onRegenerated={onRegenerated}
           />
         ))}
       </CardContent>
@@ -368,32 +382,139 @@ function RecentRow({
   pack,
   active,
   onSelect,
+  onRegenerated,
 }: {
   pack: DefensePackSummary;
   active: boolean;
   onSelect: () => void;
+  onRegenerated: (id: string) => void;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const regenerate = useCreateDefensePack({
+    mutation: {
+      onSuccess: async (newPack) => {
+        await queryClient.invalidateQueries({
+          queryKey: getListDefensePacksQueryKey(),
+        });
+        onRegenerated(newPack.id);
+      },
+      onError: (err: Error) => {
+        toast({
+          title: "Regeneration failed",
+          description: err.message,
+          variant: "destructive",
+        });
+      },
+    },
+  });
+  const onRegenerate = (e: React.MouseEvent) => {
+    // The whole row is a button, so the inner CTA must stop the click
+    // from also selecting the (about-to-be-replaced) pack.
+    e.stopPropagation();
+    regenerate.mutate({
+      data: {
+        target: pack.target,
+        position: pack.position,
+        length: pack.length,
+      },
+    });
+  };
+
+  // Format the median drift the scan persisted into a tooltip-friendly
+  // signed percentage so the buyer knows how much the live signals
+  // moved without opening the diagnostic blob.
+  const reason = pack.stalenessReason;
+  const driftPctLabel =
+    reason && Number.isFinite(reason.medianAbsDriftPct)
+      ? `${(reason.medianAbsDriftPct * 100).toFixed(1)}%`
+      : null;
+
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       data-testid={`row-defense-pack-${pack.id}`}
-      className={`w-full text-left rounded-md border px-3 py-2 hover:bg-muted/40 transition-colors ${
+      className={`w-full rounded-md border transition-colors ${
         active ? "border-primary/60 bg-muted/30" : "border-transparent"
-      }`}
+      } ${pack.stale ? "border-amber-300 bg-amber-50/60" : ""}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm font-medium truncate">
-          {pack.target.supplierName}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left px-3 py-2 hover:bg-muted/40 rounded-md"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium truncate">
+            {pack.target.supplierName}
+          </div>
+          <div className="flex items-center gap-1">
+            {pack.stale && (
+              <HoverCard>
+                <HoverCardTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] text-amber-700 border-amber-400 cursor-help"
+                    data-testid={`badge-defense-stale-${pack.id}`}
+                  >
+                    <AlertTriangle className="w-3 h-3 mr-1" />
+                    Stale
+                  </Badge>
+                </HoverCardTrigger>
+                <HoverCardContent className="text-xs w-72">
+                  <div className="font-medium mb-1">
+                    Cited evidence has drifted
+                  </div>
+                  {driftPctLabel ? (
+                    <p className="text-muted-foreground">
+                      Median cited value moved {driftPctLabel} since this pack
+                      was generated
+                      {reason
+                        ? ` (threshold ${(reason.threshold * 100).toFixed(0)}%, ${reason.drifts.length} of ${reason.comparedSignalCount} signal${reason.comparedSignalCount === 1 ? "" : "s"} exceeded it).`
+                        : "."}
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      Underlying market signals have moved beyond the
+                      drift threshold.
+                    </p>
+                  )}
+                  {pack.staleSinceAt && (
+                    <p className="text-muted-foreground mt-1">
+                      Flagged stale since {formatDateTime(pack.staleSinceAt)}.
+                    </p>
+                  )}
+                </HoverCardContent>
+              </HoverCard>
+            )}
+            <StatusPill status={pack.status} />
+          </div>
         </div>
-        <StatusPill status={pack.status} />
-      </div>
-      <div className="text-[11px] text-muted-foreground flex items-center gap-2">
-        <span>{POSITION_LABELS[pack.position as DefensePackPosition]}</span>
-        <span>·</span>
-        <span>{formatDateTime(pack.createdAt)}</span>
-      </div>
-    </button>
+        <div className="text-[11px] text-muted-foreground flex items-center gap-2">
+          <span>{POSITION_LABELS[pack.position as DefensePackPosition]}</span>
+          <span>·</span>
+          <span>{formatDateTime(pack.createdAt)}</span>
+        </div>
+      </button>
+      {pack.stale && (
+        <div className="px-3 pb-2 -mt-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px] border-amber-400 text-amber-800 hover:bg-amber-100"
+            onClick={onRegenerate}
+            disabled={regenerate.isPending}
+            data-testid={`button-defense-regenerate-${pack.id}`}
+          >
+            {regenerate.isPending ? (
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            ) : (
+              <RotateCcw className="w-3 h-3 mr-1" />
+            )}
+            Regenerate
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 

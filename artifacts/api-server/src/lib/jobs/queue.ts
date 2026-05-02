@@ -78,6 +78,9 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // raises `operational_job_failed` on the next tick instead of waiting
   // for the retry budget to drain.
   routing_health_check: 1,
+  // Defense Pack staleness scan is internal DB work (no upstream
+  // calls); same retry budget as the other system pruners.
+  defense_pack_staleness_scan: 3,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */
@@ -1582,6 +1585,102 @@ export function stopRoutingHealthScheduler(): void {
   if (routingHealthHandle) clearInterval(routingHealthHandle);
   routingHealthHandle = null;
   routingHealthStarted = false;
+}
+
+// ─── Defense Pack staleness scheduler (task #178) ─────────────────────
+//
+// Mirrors the routing-health pattern: an advisory-lock-protected
+// "ensure exactly one pending/running staleness scan" helper, plus a
+// process-local interval that fires once a day. The scan is
+// system-scoped (no `org_id`); the handler walks every tenant and
+// every `ready` Defense Pack, comparing each frozen
+// `evidence_snapshot` row against the current `market_signals` for
+// the same signal stream and flipping the pack-level `stale` flag
+// when median absolute drift exceeds the configured threshold
+// (default 5%, overridable via `DEFENSE_PACK_STALE_THRESHOLD`).
+//
+// The scan never mutates the memo itself — defensibility requires
+// the cited evidence stay frozen — so it is safe to retry. Failed
+// runs surface via `synthesize_operational_alerts` like every other
+// system job.
+
+const DEFENSE_PACK_STALENESS_LOCK_KEY = 0x44505353; // "DPSS"
+const DEFAULT_DEFENSE_PACK_STALENESS_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+export async function ensureDefensePackStalenessScanScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${DEFENSE_PACK_STALENESS_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'defense_pack_staleness_scan'
+        AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'defense_pack_staleness_scan', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let defensePackStalenessStarted = false;
+let defensePackStalenessHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the nightly Defense Pack staleness scheduler. Enqueues a
+ * `defense_pack_staleness_scan` job at boot, then again on a fixed
+ * interval (default 24h, overridable via
+ * `DEFENSE_PACK_STALENESS_SCAN_INTERVAL_MS`). Idempotent — calling
+ * twice has no effect.
+ */
+export function startDefensePackStalenessScheduler(intervalMs?: number): void {
+  if (defensePackStalenessStarted) return;
+  defensePackStalenessStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "DEFENSE_PACK_STALENESS_SCAN_INTERVAL_MS",
+      DEFAULT_DEFENSE_PACK_STALENESS_INTERVAL_MS,
+    );
+
+  void ensureDefensePackStalenessScanScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial defense_pack_staleness_scan",
+    );
+  });
+
+  defensePackStalenessHandle = setInterval(() => {
+    ensureDefensePackStalenessScanScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled defense_pack_staleness_scan",
+      );
+    });
+  }, ms);
+}
+
+export function stopDefensePackStalenessScheduler(): void {
+  if (defensePackStalenessHandle) clearInterval(defensePackStalenessHandle);
+  defensePackStalenessHandle = null;
+  defensePackStalenessStarted = false;
 }
 
 /**

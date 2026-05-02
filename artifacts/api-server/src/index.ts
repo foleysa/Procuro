@@ -30,6 +30,7 @@ import {
   startAnalysisCycleScheduler,
   startExpireStaleOpportunitiesScheduler,
   startRoutingHealthScheduler,
+  startDefensePackStalenessScheduler,
   startErpSyncScheduler,
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
@@ -48,6 +49,7 @@ import {
   runRenewalAlertScanHandler,
   synthesizeOperationalAlertsHandler,
   runRoutingHealthCheckHandler,
+  runDefensePackStalenessScanHandler,
 } from "./lib/jobs/handlers";
 import { registerErpConnector } from "./lib/connectors/erp-connector";
 import { coupaConnector } from "./lib/connectors/coupa/adapter";
@@ -169,6 +171,10 @@ registerJobHandler(
   expireStaleOpportunitiesHandler,
 );
 registerJobHandler("routing_health_check", runRoutingHealthCheckHandler);
+registerJobHandler(
+  "defense_pack_staleness_scan",
+  runDefensePackStalenessScanHandler,
+);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -238,6 +244,7 @@ app.listen(port, async (err) => {
   startOperationalSynthScheduler();
   startExpireStaleOpportunitiesScheduler();
   startRoutingHealthScheduler();
+  startDefensePackStalenessScheduler();
   startErpSyncScheduler();
   logger.info(
     { port },

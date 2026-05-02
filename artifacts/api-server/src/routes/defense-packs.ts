@@ -95,6 +95,9 @@ interface DefensePackSummaryDto {
   createdAt: string;
   verifiedClaimCount: number;
   evidencePoolSize: number;
+  stale: boolean;
+  staleSinceAt: string | null;
+  stalenessReason: DefensePackRow["stalenessReason"];
 }
 
 function toSummary(row: DefensePackRow): DefensePackSummaryDto {
@@ -122,6 +125,9 @@ function toSummary(row: DefensePackRow): DefensePackSummaryDto {
     createdAt: row.createdAt.toISOString(),
     verifiedClaimCount: verified,
     evidencePoolSize: row.evidenceSnapshot.length,
+    stale: row.stale,
+    staleSinceAt: row.staleSinceAt ? row.staleSinceAt.toISOString() : null,
+    stalenessReason: row.stalenessReason ?? null,
   };
 }
 

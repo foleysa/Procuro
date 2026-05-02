@@ -37,6 +37,12 @@ export const jobKindValues = [
   // so the pending-approvals queue stops growing forever.
   "expire_stale_opportunities",
   "routing_health_check",
+  // Nightly scan that compares each ready Defense Pack's frozen
+  // `evidence_snapshot` against the current `market_signals` and flips
+  // the per-pack `stale` flag when median cited drift exceeds the
+  // configured threshold. The pack itself is never mutated; only the
+  // staleness columns flip so the UI can surface a "Regenerate" CTA.
+  "defense_pack_staleness_scan",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 

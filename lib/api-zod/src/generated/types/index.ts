@@ -186,6 +186,8 @@ export * from "./defensePackOutcomeUsed";
 export * from "./defensePackPosition";
 export * from "./defensePackSection";
 export * from "./defensePackSectionKey";
+export * from "./defensePackStaleness";
+export * from "./defensePackStaleSignalDrift";
 export * from "./defensePackStatus";
 export * from "./defensePackSummary";
 export * from "./defensePackTarget";

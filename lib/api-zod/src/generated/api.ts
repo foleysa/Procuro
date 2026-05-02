@@ -7178,6 +7178,44 @@ export const ListDefensePacksResponse = zod.object({
         createdAt: zod.coerce.date(),
         verifiedClaimCount: zod.number().optional(),
         evidencePoolSize: zod.number().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            'True when the nightly defense_pack_staleness_scan has detected that the median absolute drift between the pack\'s frozen evidence_snapshot and the current market_signals exceeds the configured threshold (default 5%). The memo itself is never mutated; the UI surfaces this flag with a \"Regenerate\" CTA so the buyer recomputes before walking back into a negotiation. ',
+          ),
+        staleSinceAt: zod.coerce
+          .date()
+          .nullish()
+          .describe(
+            "First time this pack was flagged stale; cleared when the buyer regenerates. ",
+          ),
+        stalenessReason: zod
+          .object({
+            threshold: zod.number(),
+            detectedAt: zod.coerce.date(),
+            medianAbsDriftPct: zod.number(),
+            comparedSignalCount: zod.number(),
+            drifts: zod.array(
+              zod.object({
+                signalId: zod.string(),
+                collectorId: zod.string(),
+                signalType: zod.string(),
+                citedValue: zod.number(),
+                currentValue: zod.number(),
+                pctChange: zod
+                  .number()
+                  .describe(
+                    "Signed decimal change `(current - cited) \/ |cited|`. E.g. `0.07` means the live signal is 7% above what the memo cited. ",
+                  ),
+                currentObservedAt: zod.coerce.date(),
+              }),
+            ),
+          })
+          .nullish()
+          .describe(
+            "Diagnostic blob explaining why the pack was flagged: the threshold used, the per-signal drifts that exceeded it, the median drift across the snapshot, and when the scan ran. ",
+          ),
       })
       .describe(
         "Listing-row view of a Defense Pack. Sections + evidenceSnapshot\nare excluded for payload size.\n",
@@ -7312,6 +7350,44 @@ export const GetDefensePackResponse = zod
     createdAt: zod.coerce.date(),
     verifiedClaimCount: zod.number().optional(),
     evidencePoolSize: zod.number().optional(),
+    stale: zod
+      .boolean()
+      .optional()
+      .describe(
+        'True when the nightly defense_pack_staleness_scan has detected that the median absolute drift between the pack\'s frozen evidence_snapshot and the current market_signals exceeds the configured threshold (default 5%). The memo itself is never mutated; the UI surfaces this flag with a \"Regenerate\" CTA so the buyer recomputes before walking back into a negotiation. ',
+      ),
+    staleSinceAt: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        "First time this pack was flagged stale; cleared when the buyer regenerates. ",
+      ),
+    stalenessReason: zod
+      .object({
+        threshold: zod.number(),
+        detectedAt: zod.coerce.date(),
+        medianAbsDriftPct: zod.number(),
+        comparedSignalCount: zod.number(),
+        drifts: zod.array(
+          zod.object({
+            signalId: zod.string(),
+            collectorId: zod.string(),
+            signalType: zod.string(),
+            citedValue: zod.number(),
+            currentValue: zod.number(),
+            pctChange: zod
+              .number()
+              .describe(
+                "Signed decimal change `(current - cited) \/ |cited|`. E.g. `0.07` means the live signal is 7% above what the memo cited. ",
+              ),
+            currentObservedAt: zod.coerce.date(),
+          }),
+        ),
+      })
+      .nullish()
+      .describe(
+        "Diagnostic blob explaining why the pack was flagged: the threshold used, the per-signal drifts that exceeded it, the median drift across the snapshot, and when the scan ran. ",
+      ),
   })
   .describe(
     "Listing-row view of a Defense Pack. Sections + evidenceSnapshot\nare excluded for payload size.\n",

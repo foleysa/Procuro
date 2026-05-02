@@ -13,6 +13,7 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 import type { DefensePackLength } from "./defensePackLength";
 import type { DefensePackPosition } from "./defensePackPosition";
+import type { DefensePackStaleness } from "./defensePackStaleness";
 import type { DefensePackStatus } from "./defensePackStatus";
 import type { DefensePackTarget } from "./defensePackTarget";
 import type { DisclosurePolicy } from "./disclosurePolicy";
@@ -41,4 +42,10 @@ export interface DefensePackSummary {
   createdAt: Date;
   verifiedClaimCount?: number;
   evidencePoolSize?: number;
+  /** True when the nightly defense_pack_staleness_scan has detected that the median absolute drift between the pack's frozen evidence_snapshot and the current market_signals exceeds the configured threshold (default 5%). The memo itself is never mutated; the UI surfaces this flag with a "Regenerate" CTA so the buyer recomputes before walking back into a negotiation.  */
+  stale?: boolean;
+  /** First time this pack was flagged stale; cleared when the buyer regenerates.  */
+  staleSinceAt?: Date | null;
+  /** Diagnostic blob explaining why the pack was flagged: the threshold used, the per-signal drifts that exceeded it, the median drift across the snapshot, and when the scan ran.  */
+  stalenessReason?: DefensePackStaleness | null;
 }

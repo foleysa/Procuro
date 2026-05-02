@@ -3937,6 +3937,25 @@ export interface DefensePackEvidenceSnapshotItem {
   posture: string;
 }
 
+export interface DefensePackStaleSignalDrift {
+  signalId: string;
+  collectorId: string;
+  signalType: string;
+  citedValue: number;
+  currentValue: number;
+  /** Signed decimal change `(current - cited) / |cited|`. E.g. `0.07` means the live signal is 7% above what the memo cited.  */
+  pctChange: number;
+  currentObservedAt: string;
+}
+
+export interface DefensePackStaleness {
+  threshold: number;
+  detectedAt: string;
+  medianAbsDriftPct: number;
+  comparedSignalCount: number;
+  drifts: DefensePackStaleSignalDrift[];
+}
+
 /**
  * Listing-row view of a Defense Pack. Sections + evidenceSnapshot
 are excluded for payload size.
@@ -3961,6 +3980,12 @@ export interface DefensePackSummary {
   createdAt: string;
   verifiedClaimCount?: number;
   evidencePoolSize?: number;
+  /** True when the nightly defense_pack_staleness_scan has detected that the median absolute drift between the pack's frozen evidence_snapshot and the current market_signals exceeds the configured threshold (default 5%). The memo itself is never mutated; the UI surfaces this flag with a "Regenerate" CTA so the buyer recomputes before walking back into a negotiation.  */
+  stale?: boolean;
+  /** First time this pack was flagged stale; cleared when the buyer regenerates.  */
+  staleSinceAt?: string | null;
+  /** Diagnostic blob explaining why the pack was flagged: the threshold used, the per-signal drifts that exceeded it, the median drift across the snapshot, and when the scan ran.  */
+  stalenessReason?: DefensePackStaleness | null;
 }
 
 export type DefensePack = DefensePackSummary & {

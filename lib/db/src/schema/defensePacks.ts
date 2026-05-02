@@ -6,6 +6,7 @@ import {
   index,
   integer,
   numeric,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { orgsTable } from "./orgs";
 
@@ -187,13 +188,78 @@ export const defensePacksTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+
+    /**
+     * Set to true by the nightly `defense_pack_staleness_scan` when the
+     * median absolute drift between this pack's frozen
+     * `evidence_snapshot` values and the current `market_signals` for
+     * the same signal stream exceeds the configured threshold (default
+     * 5%). The pack itself is intentionally NOT mutated — defensibility
+     * requires the memo stay frozen — but the UI surfaces the flag with
+     * a "Regenerate" CTA so the buyer knows to recompute before walking
+     * back into a negotiation.
+     */
+    stale: boolean("stale").notNull().default(false),
+    /** First time this pack was flagged stale (cleared on regenerate). */
+    staleSinceAt: timestamp("stale_since_at", { withTimezone: true }),
+    /**
+     * Diagnostic blob explaining why the pack was flagged: the
+     * threshold used, the per-signal drifts that exceeded it, the
+     * median drift across the whole snapshot, and when the scan ran.
+     * Surfaced verbatim under the recent-packs row's tooltip so an
+     * operator can answer "why is this stale?" without digging
+     * through logs.
+     */
+    stalenessReason: jsonb("staleness_reason").$type<DefensePackStaleness>(),
   },
   (t) => [
     index("defense_packs_org_idx").on(t.orgId),
     index("defense_packs_org_created_idx").on(t.orgId, t.createdAt),
     index("defense_packs_status_idx").on(t.status),
+    index("defense_packs_stale_idx").on(t.stale),
   ],
 );
+
+/**
+ * Per-signal drift detected by the staleness scan.
+ */
+export interface DefensePackStaleSignalDrift {
+  /** signalId from the frozen snapshot row. */
+  signalId: string;
+  collectorId: string;
+  signalType: string;
+  /** Value persisted in the snapshot at generation time. */
+  citedValue: number;
+  /** Most recent matching `market_signals.value` at scan time. */
+  currentValue: number;
+  /**
+   * Signed percentage change as a decimal: `(current - cited) / |cited|`.
+   * E.g. `0.07` means the live market index has risen 7% above what
+   * the memo cited. Used both to threshold the staleness flag and to
+   * render direction in the UI.
+   */
+  pctChange: number;
+  /** ISO timestamp of the live market_signals row that was compared. */
+  currentObservedAt: string;
+}
+
+/**
+ * Diagnostic surfaced on `defense_packs.stalenessReason`. Captures the
+ * snapshot of *why* a pack was flagged so operators don't have to
+ * cross-reference logs to explain a "Regenerate" badge to a buyer.
+ */
+export interface DefensePackStaleness {
+  /** Drift threshold that tripped the flag, as a decimal (0.05 = 5%). */
+  threshold: number;
+  /** When the staleness scan made this determination. */
+  detectedAt: string;
+  /** Median absolute pctChange across all comparable snapshot rows. */
+  medianAbsDriftPct: number;
+  /** How many snapshot rows we were able to compare against live data. */
+  comparedSignalCount: number;
+  /** Per-signal drifts that individually exceeded the threshold. */
+  drifts: DefensePackStaleSignalDrift[];
+}
 
 export type DefensePackRow = typeof defensePacksTable.$inferSelect;
 export type InsertDefensePackRow = typeof defensePacksTable.$inferInsert;
