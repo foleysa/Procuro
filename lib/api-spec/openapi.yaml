@@ -1317,8 +1317,9 @@ paths:
       summary: Per-collector cost & throughput estimate.
       description: "Returns per-collector cost & throughput for the lookback window,\nchoosing the best available source in this priority order:\n  1. `billing` — real dollars from the GCP Cloud Billing\
         \ export\n     (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery\n     query/analysis cost from Cloud Storage cost; per-collector\n     attribution by `bytes_raw` share. Daily cache.\n\
-        \  2. `bigquery` — on-demand-pricing estimate from\n     `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.\n  3. `proxy` — audit-log throughput proxy (rows pulled, runs in\n    \
-        \ window) used when GCP isn't configured or the BQ query fails.\nThe response always carries a `source` discriminator so the UI can\nbadge the row honestly.\n"
+        \  2. `information_schema` — real per-job billed bytes pulled from\n     `INFORMATION_SCHEMA.JOBS_BY_PROJECT`, attributed via the\n     `collector_id` job label. On-demand pricing maths only ($5/TB).\n\
+        \     Daily cache.\n  3. `bigquery` — on-demand-pricing estimate from\n     `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.\n  4. `proxy` — audit-log throughput proxy (rows pulled, runs in\n\
+        \     window) used when GCP isn't configured or the BQ queries fail.\nThe response always carries a `source` discriminator and each entry\ncarries a `costBasis` (`real` | `estimate`) so the UI can badge the\nrow honestly.\n"
       parameters:
       - $ref: '#/components/parameters/OrgIdHeader'
       - in: query
@@ -1346,6 +1347,7 @@ paths:
                     - proxy
                     - bigquery
                     - billing
+                    - information_schema
                   lookbackHours:
                     type: integer
                   entries:
@@ -8957,6 +8959,17 @@ components:
           description: 'Cloud Storage cost in USD for the lookback window. Populated
 
             only when `source=billing`; null otherwise.
+
+            '
+        costBasis:
+          type: string
+          enum:
+          - real
+          - estimate
+          description: 'Whether this row''s `estimateUsd` is a real billed figure
+            (`billing`, `information_schema`) or a derived estimate (`bigquery`,
+            `proxy`). Lets the UI badge each row honestly without inferring from
+            the top-level `source`.
 
             '
         notes:

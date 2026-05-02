@@ -19,4 +19,5 @@ export const GetCollectorCost200Source = {
   proxy: "proxy",
   bigquery: "bigquery",
   billing: "billing",
+  information_schema: "information_schema",
 } as const;

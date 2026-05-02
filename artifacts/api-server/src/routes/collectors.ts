@@ -13,6 +13,7 @@ import {
 import {
   getCollectorCostsFromBq,
   getCollectorCostsFromBilling,
+  getCollectorCostsFromInformationSchema,
 } from "@workspace/intelligence";
 import {
   and,
@@ -1336,15 +1337,22 @@ router.get(
     const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
     const ids = listRegisteredCollectorIds();
 
-    // Cost source priority:
+    // Cost source priority (best → worst). Each tier annotates entries
+    // with `costBasis: "real" | "estimate"` so the UI can badge each
+    // figure honestly without operators having to remember which
+    // `source` value implies real dollars.
     //   1. `billing` — real dollars from the GCP Cloud Billing export
     //      (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
     //      query/analysis cost from Cloud Storage cost and attributes
     //      project totals proportionally to each collector's bytes_raw.
-    //   2. `bigquery` — the on-demand-pricing estimate computed from
+    //   2. `information_schema` — real per-job billed bytes pulled from
+    //      `INFORMATION_SCHEMA.JOBS_BY_PROJECT`, attributed via the
+    //      `collector_id` label that `mergeMarketSignals` stamps on
+    //      every job. On-demand pricing maths only ($5/TB).
+    //   3. `bigquery` — the on-demand-pricing *estimate* computed from
     //      `collector_runs.bytes_raw × $5 / 1 TB`. No storage cost.
-    //   3. `proxy` — Postgres-audit-log throughput proxy used when GCP
-    //      isn't configured or the BQ query fails.
+    //   4. `proxy` — Postgres-audit-log throughput proxy used when GCP
+    //      isn't configured or the BQ queries above all fail.
     let billingRows: Awaited<
       ReturnType<typeof getCollectorCostsFromBilling>
     > = null;
@@ -1356,7 +1364,7 @@ router.get(
     } catch (err) {
       req.log?.warn(
         { err: (err as Error).message },
-        "GCP Billing cost read failed; falling back to BigQuery estimate",
+        "GCP Billing cost read failed; falling back to INFORMATION_SCHEMA",
       );
       billingRows = null;
     }
@@ -1375,6 +1383,7 @@ router.get(
             estimateUsd: r?.estimateUsd ?? 0,
             queryUsd: r?.queryUsd ?? 0,
             storageUsd: r?.storageUsd ?? 0,
+            costBasis: "real" as const,
             notes:
               "Real billing dollars from the GCP Cloud Billing export (cached 24h). " +
               "Splits BigQuery query cost + Cloud Storage cost; per-collector " +
@@ -1383,6 +1392,57 @@ router.get(
         })
         .sort((a, b) => b.estimateUsd - a.estimateUsd);
       res.json({ source: "billing" as const, lookbackHours, entries });
+      return;
+    }
+
+    // INFORMATION_SCHEMA.JOBS_BY_PROJECT path: real billed bytes per
+    // collector job. Returns `null` if the BigQuery client isn't
+    // available or the SA can't read `bigquery.jobs.listAll`. We
+    // suppress empty results — without a single labelled job in the
+    // window there is nothing real to show, and the operator is
+    // better served by the bytes_raw estimate than by an all-zero row.
+    let infoSchemaRows: Awaited<
+      ReturnType<typeof getCollectorCostsFromInformationSchema>
+    > = null;
+    try {
+      infoSchemaRows = await getCollectorCostsFromInformationSchema({
+        lookbackHours,
+        collectorIds: ids,
+      });
+    } catch (err) {
+      req.log?.warn(
+        { err: (err as Error).message },
+        "INFORMATION_SCHEMA cost read failed; falling back to bytes_raw estimate",
+      );
+      infoSchemaRows = null;
+    }
+
+    if (infoSchemaRows && infoSchemaRows.length > 0) {
+      const byId = new Map(infoSchemaRows.map((r) => [r.collectorId, r]));
+      const entries = ids
+        .map((id) => {
+          const reg = getCollector(id)!;
+          const r = byId.get(id);
+          return {
+            collectorId: id,
+            name: reg.name,
+            runs: r?.runs ?? 0,
+            rowsWritten: r?.rowsWritten ?? 0,
+            estimateUsd: r?.estimateUsd ?? 0,
+            costBasis: "real" as const,
+            notes:
+              "Real per-job billed bytes from BigQuery `INFORMATION_SCHEMA.JOBS_BY_PROJECT` " +
+              "× $5/TB on-demand pricing (cached 24h). Attribution via the " +
+              "`collector_id` job label. Set `GCP_BILLING_EXPORT_TABLE` for " +
+              "all-in dollar figures including storage.",
+          };
+        })
+        .sort((a, b) => b.estimateUsd - a.estimateUsd);
+      res.json({
+        source: "information_schema" as const,
+        lookbackHours,
+        entries,
+      });
       return;
     }
 
@@ -1412,9 +1472,12 @@ router.get(
             runs: r?.runs ?? 0,
             rowsWritten: r?.rowsWritten ?? 0,
             estimateUsd: r?.estimateUsd ?? 0,
+            costBasis: "estimate" as const,
             notes:
               "On-demand-pricing estimate from `collector_runs.bytes_raw × $5/TB` " +
-              "(cached 24h). Set `GCP_BILLING_EXPORT_TABLE` for real billing dollars.",
+              "(cached 24h). Switches to real per-job cost automatically once any " +
+              "collector job has run with the `collector_id` label in the window, " +
+              "or to billing dollars when `GCP_BILLING_EXPORT_TABLE` is set.",
           };
         })
         .sort((a, b) => b.estimateUsd - a.estimateUsd);
@@ -1461,6 +1524,7 @@ router.get(
           runs,
           rowsWritten,
           estimateUsd,
+          costBasis: "estimate" as const,
           notes:
             "Proxy estimate from audit-log throughput (BigQuery cost read unavailable).",
         };

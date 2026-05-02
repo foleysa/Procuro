@@ -1350,20 +1350,55 @@ function CostTab({ tier }: { tier: TierMode }) {
     [data, tier, tierByCollector],
   );
 
-  const isBq = data?.source === "bigquery";
+  // Source / basis label — kept in one place so the header badge and
+  // the explainer paragraph never drift. The four sources collapse
+  // into two operator-facing concepts: "Real" (billed dollars) vs
+  // "Estimate" (derived from our own bookkeeping). The exact source
+  // is shown as a sub-line so finance can audit which path paid out.
+  const source = data?.source ?? "proxy";
+  const sourceMeta: Record<
+    string,
+    { label: string; basis: "real" | "estimate"; explainer: string }
+  > = {
+    billing: {
+      label: "GCP Billing export",
+      basis: "real",
+      explainer:
+        "Real billed dollars from the GCP Cloud Billing export (cached 24h). Splits BigQuery query cost from Cloud Storage cost; per-collector attribution by bytes_raw share.",
+    },
+    information_schema: {
+      label: "BigQuery INFORMATION_SCHEMA",
+      basis: "real",
+      explainer:
+        "Real per-job billed bytes from BigQuery INFORMATION_SCHEMA.JOBS_BY_PROJECT × $5/TB on-demand pricing (cached 24h). Attribution via the collector_id job label. Set GCP_BILLING_EXPORT_TABLE for all-in dollar figures including storage.",
+    },
+    bigquery: {
+      label: "BigQuery bytes_raw estimate",
+      basis: "estimate",
+      explainer:
+        "On-demand-pricing estimate from collector_runs.bytes_raw × $5/TB (cached 24h). Switches to real per-job cost automatically once any collector job runs with the collector_id label, or to billing dollars when GCP_BILLING_EXPORT_TABLE is set.",
+    },
+    proxy: {
+      label: "Audit-log proxy",
+      basis: "estimate",
+      explainer:
+        "BigQuery cost read unavailable — falling back to an audit-log throughput proxy. Once the warehouse is configured, this tab automatically switches to real numbers.",
+    },
+  };
+  const meta = sourceMeta[source] ?? sourceMeta["proxy"]!;
+  const headerBasis = meta.basis === "real" ? "Real" : "Estimated";
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <span>
-            Cost &amp; throughput {isBq ? "(BigQuery)" : "(proxy estimate)"}
-          </span>
+          <span>Cost &amp; throughput</span>
           <Badge
-            variant="outline"
+            variant={meta.basis === "real" ? "default" : "outline"}
             className="font-normal"
             data-testid="cost-source-badge"
           >
-            {isBq ? "Live BigQuery" : "Proxy"}
+            {headerBasis} · {meta.label}
           </Badge>
         </CardTitle>
       </CardHeader>
@@ -1373,41 +1408,56 @@ function CostTab({ tier }: { tier: TierMode }) {
             <Loader2 className="w-4 h-4 animate-spin" /> Loading…
           </div>
         )}
-        <p className="text-xs text-muted-foreground mb-3">
-          {isBq
-            ? "Real BigQuery cost numbers from `collector_runs` (cached 24h, estimated at $5 / TB scanned bytes)."
-            : "BigQuery cost read unavailable — falling back to an audit-log throughput proxy. Once the warehouse is configured, this tab automatically switches to live numbers."}
-        </p>
+        <p className="text-xs text-muted-foreground mb-3">{meta.explainer}</p>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-muted-foreground uppercase tracking-wide">
               <th className="py-2">Collector</th>
               <th className="py-2 text-right">Runs</th>
               <th className="py-2 text-right">Rows written</th>
-              <th className="py-2 text-right">Estimate (USD)</th>
+              <th className="py-2 text-right">USD</th>
+              <th className="py-2 text-right">Basis</th>
             </tr>
           </thead>
           <tbody>
-            {entries.map((e) => (
-              <tr
-                key={e.collectorId}
-                data-testid={`cost-${e.collectorId}`}
-                className="border-t"
-              >
-                <td className="py-2">{e.name}</td>
-                <td className="py-2 text-right tabular-nums">{e.runs}</td>
-                <td className="py-2 text-right tabular-nums">
-                  {e.rowsWritten}
-                </td>
-                <td className="py-2 text-right tabular-nums">
-                  ${e.estimateUsd.toFixed(4)}
-                </td>
-              </tr>
-            ))}
+            {entries.map((e) => {
+              // Per-row basis: the API stamps each entry with `costBasis`.
+              // Older deployments may not have the field yet, so fall
+              // back to the source-derived default rather than crashing.
+              const rowBasis: "real" | "estimate" =
+                e.costBasis === "real" || e.costBasis === "estimate"
+                  ? e.costBasis
+                  : meta.basis;
+              return (
+                <tr
+                  key={e.collectorId}
+                  data-testid={`cost-${e.collectorId}`}
+                  className="border-t"
+                >
+                  <td className="py-2">{e.name}</td>
+                  <td className="py-2 text-right tabular-nums">{e.runs}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {e.rowsWritten}
+                  </td>
+                  <td className="py-2 text-right tabular-nums">
+                    ${e.estimateUsd.toFixed(4)}
+                  </td>
+                  <td className="py-2 text-right">
+                    <Badge
+                      variant={rowBasis === "real" ? "default" : "outline"}
+                      className="font-normal"
+                      data-testid={`cost-basis-${e.collectorId}`}
+                    >
+                      {rowBasis === "real" ? "Real" : "Estimate"}
+                    </Badge>
+                  </td>
+                </tr>
+              );
+            })}
             {!isLoading && entries.length === 0 && (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="py-4 text-sm text-muted-foreground text-center"
                 >
                   No cost rows match the current tier filter.

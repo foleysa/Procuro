@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { CollectorCostEntryCostBasis } from "./collectorCostEntryCostBasis";
 
 export interface CollectorCostEntry {
   collectorId: string;
@@ -26,5 +27,8 @@ Populated only when `source=billing`; null otherwise.
 only when `source=billing`; null otherwise.
  */
   storageUsd?: number | null;
+  /** Whether this row's `estimateUsd` is a real billed figure (`billing`, `information_schema`) or a derived estimate (`bigquery`, `proxy`). Lets the UI badge each row honestly without inferring from the top-level `source`.
+   */
+  costBasis?: CollectorCostEntryCostBasis;
   notes?: string | null;
 }

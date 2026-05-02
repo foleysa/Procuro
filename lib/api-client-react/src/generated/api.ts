@@ -4014,12 +4014,17 @@ choosing the best available source in this priority order:
      (set `GCP_BILLING_EXPORT_TABLE` to enable). Splits BigQuery
      query/analysis cost from Cloud Storage cost; per-collector
      attribution by `bytes_raw` share. Daily cache.
-  2. `bigquery` — on-demand-pricing estimate from
+  2. `information_schema` — real per-job billed bytes pulled from
+     `INFORMATION_SCHEMA.JOBS_BY_PROJECT`, attributed via the
+     `collector_id` job label. On-demand pricing maths only ($5/TB).
+     Daily cache.
+  3. `bigquery` — on-demand-pricing estimate from
      `collector_runs.bytes_raw × $5/TB`. No storage cost. Daily cache.
-  3. `proxy` — audit-log throughput proxy (rows pulled, runs in
-     window) used when GCP isn't configured or the BQ query fails.
-The response always carries a `source` discriminator so the UI can
-badge the row honestly.
+  4. `proxy` — audit-log throughput proxy (rows pulled, runs in
+     window) used when GCP isn't configured or the BQ queries fail.
+The response always carries a `source` discriminator and each entry
+carries a `costBasis` (`real` | `estimate`) so the UI can badge the
+row honestly.
 
  * @summary Per-collector cost & throughput estimate.
  */

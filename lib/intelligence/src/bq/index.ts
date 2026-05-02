@@ -35,6 +35,14 @@ export interface BigQueryClientLike {
     types?: Record<string, string | string[]>;
     maximumBytesBilled?: string;
     location?: string;
+    /**
+     * Job labels propagated to the BigQuery job metadata. Used so the
+     * `INFORMATION_SCHEMA.JOBS_BY_PROJECT` view can attribute billed
+     * bytes back to the originating collector — this is what makes
+     * the real-cost path in the Cost tab work in production. Keys
+     * must match BigQuery's label-key rules (lowercase, [-_a-z0-9]).
+     */
+    labels?: Record<string, string>;
   }): Promise<[unknown[]]>;
 }
 
@@ -351,19 +359,43 @@ WHERE NOT EXISTS (
 )
 `;
 
+  // Tag both statements with the originating collector_id so the
+  // `INFORMATION_SCHEMA.JOBS_BY_PROJECT` view can attribute billed
+  // bytes back to a single collector (the Cost tab's real-cost
+  // path). All rows in a batch come from the same collector run, so
+  // the first row's id is canonical.
+  const collectorLabel = sanitizeBqLabelValue(rows[0]?.collectorId ?? "");
+  const labels: Record<string, string> | undefined = collectorLabel
+    ? { collector_id: collectorLabel, job_kind: "merge_market_signals" }
+    : undefined;
   await bq.query({
     query: closeStmt,
     params: { rows: payload },
     maximumBytesBilled: String(cfg.maxBytesBilled),
     location: cfg.bqLocation,
+    ...(labels ? { labels } : {}),
   });
   await bq.query({
     query: insertStmt,
     params: { rows: payload },
     maximumBytesBilled: String(cfg.maxBytesBilled),
     location: cfg.bqLocation,
+    ...(labels ? { labels } : {}),
   });
   return { merged: rows.length };
+}
+
+/**
+ * BigQuery label values must be lowercase, ≤63 chars, and contain only
+ * `[a-z0-9_-]`. Collector ids today already conform, but we sanitise
+ * defensively so a future id with `.` or capitals doesn't make the
+ * job submission fail.
+ */
+function sanitizeBqLabelValue(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .slice(0, 63);
 }
 
 export interface CollectorRunRecord {
@@ -502,6 +534,131 @@ export async function getCollectorCostsFromBq(args: {
 export function __clearCollectorCostCacheForTests(): void {
   costCache.clear();
   billingCostCache.clear();
+  informationSchemaCostCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// INFORMATION_SCHEMA.JOBS_BY_PROJECT — real per-job billed bytes.
+//
+// Unlike `getCollectorCostsFromBq` (which derives an *estimate* from the
+// `bytes_raw` we wrote to the `collector_runs` audit table), this helper
+// reads BigQuery's own job history and returns the exact billed bytes
+// per query job. Per-collector attribution comes from a `collector_id`
+// label that `mergeMarketSignals` sets on every job it submits — jobs
+// without that label are excluded so we don't double-count work that
+// wasn't ours.
+//
+// On-demand pricing is `total_bytes_billed * $5 / 1 TB`; flat-rate
+// reservations bill differently and INFORMATION_SCHEMA still reports
+// `total_bytes_billed = 0` for them, in which case this helper returns
+// zero cost and the operator should fall back to the Billing export.
+//
+// Returns `null` when:
+//   - intelligence isn't configured, or
+//   - the BigQuery client isn't available, or
+//   - the query against INFORMATION_SCHEMA fails (eg the caller's SA
+//     lacks `bigquery.jobs.listAll`).
+// Callers must treat `null` as "real-cost data unavailable" and fall
+// back to the bytes_raw estimate or the Postgres-audit-log proxy.
+// ---------------------------------------------------------------------------
+
+interface InformationSchemaCacheEntry {
+  fetchedAt: number;
+  rows: CollectorCostRow[];
+}
+const informationSchemaCostCache = new Map<
+  string,
+  InformationSchemaCacheEntry
+>();
+/** Daily cache — INFORMATION_SCHEMA is cheap but not free to query. */
+const INFORMATION_SCHEMA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function getCollectorCostsFromInformationSchema(args: {
+  lookbackHours: number;
+  collectorIds: string[];
+  /** Override cache TTL, primarily for tests. Defaults to 24h. */
+  cacheTtlMs?: number;
+}): Promise<CollectorCostRow[] | null> {
+  const cfg = resolveIntelligenceConfig();
+  if (!cfg) return null;
+  if (args.collectorIds.length === 0) return [];
+
+  // Sanitise to the same shape `mergeMarketSignals` writes so the join
+  // below actually matches in production.
+  const sortedIds = [...args.collectorIds].sort();
+  const labelIds = sortedIds.map((id) => sanitizeBqLabelValue(id));
+  const ttl = args.cacheTtlMs ?? INFORMATION_SCHEMA_CACHE_TTL_MS;
+  const key = `${args.lookbackHours}|${sortedIds.join(",")}|${cfg.bqLocation}`;
+  const cached = informationSchemaCostCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < ttl) return cached.rows;
+
+  const bq = await getBigQueryClient();
+  if (!bq) return null;
+
+  try {
+    // INFORMATION_SCHEMA is region-scoped and requires a `region-<id>`
+    // dataset prefix when queried via the standard SQL surface. The
+    // configured `bqLocation` (eg "US", "EU", "us-central1") drives
+    // both the prefix and the `location` hint on the job itself.
+    const region = cfg.bqLocation.toLowerCase();
+    const sql = `
+      SELECT
+        (SELECT value FROM UNNEST(labels)
+          WHERE key = 'collector_id') AS collector_id,
+        COUNT(*)                       AS jobs,
+        IFNULL(SUM(total_bytes_billed), 0) AS bytes_billed
+      FROM \`${cfg.projectId}.region-${region}.INFORMATION_SCHEMA.JOBS_BY_PROJECT\`
+      WHERE creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(),
+                                            INTERVAL @hours HOUR)
+        AND state = 'DONE'
+        AND error_result IS NULL
+        AND EXISTS (
+          SELECT 1 FROM UNNEST(labels) l
+          WHERE l.key = 'collector_id' AND l.value IN UNNEST(@labelIds)
+        )
+      GROUP BY collector_id
+    `;
+    const [rowsRaw] = await bq.query({
+      query: sql,
+      params: { hours: args.lookbackHours, labelIds },
+      types: { hours: "INT64", labelIds: ["STRING"] },
+      maximumBytesBilled: String(cfg.maxBytesBilled),
+      location: cfg.bqLocation,
+      // Tag the meta-query itself so it shows up under a stable label
+      // and doesn't pollute per-collector attribution if someone
+      // re-runs this query repeatedly.
+      labels: { job_kind: "cost_information_schema_read" },
+    });
+
+    // Map sanitised label values back to the original collector ids the
+    // caller asked for — otherwise an id like "BLS-Economic" would
+    // come back as "bls-economic" and the workbench could not match it.
+    const labelToOriginal = new Map<string, string>();
+    for (const id of sortedIds) {
+      labelToOriginal.set(sanitizeBqLabelValue(id), id);
+    }
+    const rows: CollectorCostRow[] = (
+      rowsRaw as Array<Record<string, unknown>>
+    ).map((r) => {
+      const labelId = String(r["collector_id"] ?? "");
+      const bytes = Number(r["bytes_billed"] ?? 0);
+      const estimate = (bytes / 1e12) * BQ_USD_PER_TB;
+      return {
+        collectorId: labelToOriginal.get(labelId) ?? labelId,
+        runs: Number(r["jobs"] ?? 0),
+        // `rowsWritten` isn't surfaced by INFORMATION_SCHEMA — leave it
+        // at zero so the UI doesn't fabricate a count. Operators who
+        // need rows-written should look at the Catalog tab.
+        rowsWritten: 0,
+        bytesRaw: bytes,
+        estimateUsd: Number(estimate.toFixed(6)),
+      };
+    });
+    informationSchemaCostCache.set(key, { fetchedAt: Date.now(), rows });
+    return rows;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,7 @@ export * from "./collectorCatalogEntryPostureClass";
 export * from "./collectorCatalogEntryScopeKindsItem";
 export * from "./collectorCatalogEntryStatus";
 export * from "./collectorCostEntry";
+export * from "./collectorCostEntryCostBasis";
 export * from "./collectorCoverageMatrix";
 export * from "./collectorCoverageMatrixMaterialsItem";
 export * from "./collectorCoverageMatrixRowsItem";

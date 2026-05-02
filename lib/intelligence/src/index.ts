@@ -19,6 +19,7 @@ export {
   recordCollectorRun,
   getCollectorCostsFromBq,
   getCollectorCostsFromBilling,
+  getCollectorCostsFromInformationSchema,
   __setRecordCollectorRunOverrideForTests,
   __clearCollectorCostCacheForTests,
   type BqMarketSignalRow,

@@ -3156,6 +3156,18 @@ that material in the lookback window.
   rows: CollectorCoverageMatrixRowsItem[];
 }
 
+/**
+ * Whether this row's `estimateUsd` is a real billed figure (`billing`, `information_schema`) or a derived estimate (`bigquery`, `proxy`). Lets the UI badge each row honestly without inferring from the top-level `source`.
+
+ */
+export type CollectorCostEntryCostBasis =
+  (typeof CollectorCostEntryCostBasis)[keyof typeof CollectorCostEntryCostBasis];
+
+export const CollectorCostEntryCostBasis = {
+  real: "real",
+  estimate: "estimate",
+} as const;
+
 export interface CollectorCostEntry {
   collectorId: string;
   name: string;
@@ -3170,6 +3182,9 @@ Populated only when `source=billing`; null otherwise.
 only when `source=billing`; null otherwise.
  */
   storageUsd?: number | null;
+  /** Whether this row's `estimateUsd` is a real billed figure (`billing`, `information_schema`) or a derived estimate (`bigquery`, `proxy`). Lets the UI badge each row honestly without inferring from the top-level `source`.
+   */
+  costBasis?: CollectorCostEntryCostBasis;
   notes?: string | null;
 }
 
@@ -4524,6 +4539,7 @@ export const GetCollectorCost200Source = {
   proxy: "proxy",
   bigquery: "bigquery",
   billing: "billing",
+  information_schema: "information_schema",
 } as const;
 
 export type GetCollectorCost200 = {
