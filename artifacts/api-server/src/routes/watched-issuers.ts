@@ -65,6 +65,22 @@ const AddWatchedIssuerSchema = z.object({
 });
 
 /**
+ * Bulk-import payload. Same shape as the single-row request but with
+ * an optional `line` so the server can echo the source CSV line number
+ * back in per-row error reports.
+ */
+const BulkAddRowSchema = AddWatchedIssuerSchema.extend({
+  line: z.number().int().min(1).optional(),
+});
+
+const BulkAddRequestSchema = z.object({
+  // Cap matches the OpenAPI `maxItems`; keeps any single bulk POST
+  // bounded so a tenant can't blow the express body limit or the
+  // single-statement supplier-lookup query.
+  items: z.array(BulkAddRowSchema).min(1).max(1000),
+});
+
+/**
  * Return the canonical identifier for this source.  Centralised so the
  * uniqueness index can't be tricked by "320193" vs "0000320193".
  */
@@ -267,6 +283,192 @@ router.post("/watched-issuers", tenantMiddleware, async (req, res) => {
     notes: row!.notes,
     createdAt: row!.createdAt,
     createdBy: row!.createdBy,
+  });
+});
+
+/**
+ * POST /watched-issuers/bulk
+ *
+ * Per-row bulk import.  Each row is normalised + shape-checked with the
+ * same helpers POST /watched-issuers uses, so the rules can never drift
+ * out of sync between the single-row and bulk paths.  Rows are attempted
+ * independently and the response always includes a per-row outcome
+ * (`created` / `skipped` / `error`) keyed by the caller-supplied `line`
+ * so the UI can render "Row 7: …" style feedback.
+ *
+ * We deliberately return 200 even when every row failed — the request
+ * itself was well-formed, the body was well-typed, and the per-row
+ * report is the actual deliverable.  Only top-level shape problems
+ * (Zod parse, missing items array) bubble up as 400.
+ */
+router.post("/watched-issuers/bulk", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+  const parsed = BulkAddRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res
+      .status(400)
+      .json({ error: "Invalid bulk request", details: parsed.error.issues });
+    return;
+  }
+  const items = parsed.data.items;
+
+  // Pre-load valid supplierUids for this tenant in a single query so we
+  // don't issue one supplier lookup per row.  Bulk imports of 50+ rows
+  // would otherwise serialise into 50+ round trips just for ownership
+  // checks.
+  const requestedSupplierUids = Array.from(
+    new Set(
+      items
+        .map((r) => r.supplierUid)
+        .filter((s): s is string => typeof s === "string" && s.length > 0),
+    ),
+  );
+  const validSupplierUids = new Set<string>();
+  if (requestedSupplierUids.length > 0) {
+    const supplierRows = await db
+      .select({ id: suppliersTable.id })
+      .from(suppliersTable)
+      .where(
+        and(
+          eq(suppliersTable.orgId, orgId),
+          inArray(suppliersTable.id, requestedSupplierUids),
+        ),
+      );
+    for (const s of supplierRows) validSupplierUids.add(s.id);
+  }
+
+  // Pre-load existing (source, identifier) pairs once so duplicate
+  // detection is O(1) per row instead of one SELECT per row.  We still
+  // catch the unique-violation race below so a concurrent bulk import
+  // can't slip a duplicate past us.
+  const existingRows = await db
+    .select({
+      source: watchedIssuersTable.source,
+      identifier: watchedIssuersTable.identifier,
+    })
+    .from(watchedIssuersTable)
+    .where(eq(watchedIssuersTable.orgId, orgId));
+  const existing = new Set(
+    existingRows.map((r) => `${r.source}:${r.identifier}`),
+  );
+
+  type ResultStatus = "created" | "skipped" | "error";
+  type ResultItem = {
+    line: number;
+    status: ResultStatus;
+    id?: string | null;
+    source?: WatchedIssuerSource | null;
+    identifier?: string | null;
+    name?: string | null;
+    error?: string | null;
+  };
+
+  const results: ResultItem[] = [];
+  let createdCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+
+  // Process rows sequentially so the in-memory `existing` set picks up
+  // newly-created rows within the same batch (e.g. user pastes the same
+  // identifier twice in one CSV — first wins, second skipped).
+  for (let i = 0; i < items.length; i += 1) {
+    const row = items[i]!;
+    const line = row.line ?? i + 1;
+    const baseResult: ResultItem = {
+      line,
+      status: "error",
+      source: row.source,
+      name: row.name,
+    };
+
+    const identifier = normaliseIdentifier(row.source, row.identifier);
+    if (!identifier) {
+      errorCount += 1;
+      results.push({
+        ...baseResult,
+        error: "identifier resolved to empty after normalisation",
+      });
+      continue;
+    }
+    const shapeError = validateIdentifierShape(row.source, identifier);
+    if (shapeError) {
+      errorCount += 1;
+      results.push({ ...baseResult, identifier, error: shapeError });
+      continue;
+    }
+
+    if (row.supplierUid && !validSupplierUids.has(row.supplierUid)) {
+      errorCount += 1;
+      results.push({
+        ...baseResult,
+        identifier,
+        error: "supplierUid does not belong to the active tenant",
+      });
+      continue;
+    }
+
+    const key = `${row.source}:${identifier}`;
+    if (existing.has(key)) {
+      skippedCount += 1;
+      results.push({
+        ...baseResult,
+        status: "skipped",
+        identifier,
+        error: "Already on this tenant's watch list",
+      });
+      continue;
+    }
+
+    const id = newId("wi");
+    try {
+      const [inserted] = await db
+        .insert(watchedIssuersTable)
+        .values({
+          id,
+          orgId,
+          source: row.source,
+          identifier,
+          name: row.name,
+          lei: row.lei ?? null,
+          ticker: row.ticker ?? null,
+          supplierUid: row.supplierUid ?? null,
+          notes: row.notes ?? null,
+          createdBy: req.actorEmail ?? null,
+        })
+        .returning({ id: watchedIssuersTable.id });
+      existing.add(key);
+      createdCount += 1;
+      results.push({
+        ...baseResult,
+        status: "created",
+        id: inserted!.id,
+        identifier,
+      });
+    } catch (err) {
+      // A concurrent insert (or a duplicate key snuck past the in-memory
+      // `existing` set because of an in-flight transaction elsewhere)
+      // shows up as the unique-index violation. Treat it like a skip
+      // rather than a fatal error so the rest of the batch continues.
+      if (isUniqueViolation(err)) {
+        skippedCount += 1;
+        results.push({
+          ...baseResult,
+          status: "skipped",
+          identifier,
+          error: "Already on this tenant's watch list",
+        });
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  res.json({
+    totalRows: items.length,
+    createdCount,
+    skippedCount,
+    errorCount,
+    results,
   });
 });
 

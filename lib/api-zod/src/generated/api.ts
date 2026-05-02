@@ -6343,6 +6343,127 @@ export const AddWatchedIssuerBody = zod.object({
 });
 
 /**
+ * Accepts an array of rows (typically parsed from a CSV by the client) and validates each row using the same normaliser and identifier-shape checks as `POST /watched-issuers`. Each row is attempted independently — successful rows are inserted and rows that fail validation, refer to a missing supplierUid, or duplicate an existing identifier are reported back per-row so the admin can fix them and re-submit.
+Always returns 200 with a per-row result list (even if every row failed) so the caller can render structured per-line feedback. The top-level counts make it easy to show a summary toast.
+
+ * @summary Bulk-import a list of companies onto the tenant's watch list
+ */
+export const BulkAddWatchedIssuersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const bulkAddWatchedIssuersBodyItemsItemIdentifierMax = 40;
+
+export const bulkAddWatchedIssuersBodyItemsItemNameMax = 200;
+
+export const bulkAddWatchedIssuersBodyItemsItemLeiMax = 40;
+
+export const bulkAddWatchedIssuersBodyItemsItemTickerMax = 20;
+
+export const bulkAddWatchedIssuersBodyItemsItemSupplierUidMax = 80;
+
+export const bulkAddWatchedIssuersBodyItemsItemNotesMax = 2000;
+
+export const bulkAddWatchedIssuersBodyItemsMax = 1000;
+
+export const BulkAddWatchedIssuersBody = zod.object({
+  items: zod
+    .array(
+      zod
+        .object({
+          line: zod
+            .number()
+            .min(1)
+            .optional()
+            .describe(
+              '1-based source line number (e.g. CSV row position including the header). Echoed back unchanged in the result so the client can show \"Row 7: …\" style errors.\n',
+            ),
+          source: zod
+            .enum(["sec_edgar", "companies_house"])
+            .describe(
+              "Upstream feed for this watched-issuer row.\n- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)\n- `companies_house`  — UK Companies House (identifier = company number)\n",
+            ),
+          identifier: zod
+            .string()
+            .min(1)
+            .max(bulkAddWatchedIssuersBodyItemsItemIdentifierMax),
+          name: zod
+            .string()
+            .min(1)
+            .max(bulkAddWatchedIssuersBodyItemsItemNameMax),
+          lei: zod
+            .string()
+            .min(1)
+            .max(bulkAddWatchedIssuersBodyItemsItemLeiMax)
+            .optional(),
+          ticker: zod
+            .string()
+            .min(1)
+            .max(bulkAddWatchedIssuersBodyItemsItemTickerMax)
+            .optional(),
+          supplierUid: zod
+            .string()
+            .min(1)
+            .max(bulkAddWatchedIssuersBodyItemsItemSupplierUidMax)
+            .optional(),
+          notes: zod
+            .string()
+            .max(bulkAddWatchedIssuersBodyItemsItemNotesMax)
+            .optional(),
+        })
+        .describe(
+          "One row of a bulk-import payload. Same shape as `AddWatchedIssuerRequest` but with an optional `line` field so the server can echo the source CSV line number back in per-row error reports.\n",
+        ),
+    )
+    .min(1)
+    .max(bulkAddWatchedIssuersBodyItemsMax),
+});
+
+export const BulkAddWatchedIssuersResponse = zod.object({
+  totalRows: zod.number(),
+  createdCount: zod.number(),
+  skippedCount: zod.number(),
+  errorCount: zod.number(),
+  results: zod.array(
+    zod.object({
+      line: zod
+        .number()
+        .describe(
+          '1-based line number echoed from the request, so the client can render \"Row N: …\" without tracking indices.\n',
+        ),
+      status: zod
+        .enum(["created", "skipped", "error"])
+        .describe(
+          "Per-row outcome.\n- `created` — the row was inserted; `id` is set.\n- `skipped` — the (source, identifier) was already on this tenant's watch list.\n- `error`  — the row failed validation (bad shape, unknown supplierUid, missing fields). `error` carries the message.\n",
+        ),
+      id: zod.string().nullish().describe('Set when `status === \"created\"`.'),
+      source: zod
+        .enum(["sec_edgar", "companies_house"])
+        .describe(
+          "Upstream feed for this watched-issuer row.\n- `sec_edgar`        — SEC EDGAR (US issuers, identifier = CIK)\n- `companies_house`  — UK Companies House (identifier = company number)\n",
+        )
+        .nullish(),
+      identifier: zod
+        .string()
+        .nullish()
+        .describe(
+          "Normalised identifier (zero-padded CIK or Companies House number). Set when the row got far enough through validation for the normaliser to run.\n",
+        ),
+      name: zod.string().nullish(),
+      error: zod
+        .string()
+        .nullish()
+        .describe('Human-readable error when `status === \"error\"`.'),
+    }),
+  ),
+});
+
+/**
  * @summary Remove a watched issuer from the tenant's list
  */
 export const RemoveWatchedIssuerParams = zod.object({

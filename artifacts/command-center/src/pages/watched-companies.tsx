@@ -15,16 +15,21 @@
  * default list, so admins know the curation is opt-in, not required.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Papa from "papaparse";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListWatchedIssuers,
   useAddWatchedIssuer,
   useRemoveWatchedIssuer,
+  useBulkAddWatchedIssuers,
   useListSuppliers,
   getListWatchedIssuersQueryKey,
   type WatchedIssuer,
   type WatchedIssuerSource,
+  type BulkAddWatchedIssuerRow,
+  type BulkAddWatchedIssuerResultItem,
+  type BulkAddWatchedIssuersResponse,
 } from "@workspace/api-client-react";
 import {
   Card,
@@ -78,6 +83,11 @@ import {
   Trash2,
   Building2,
   Landmark,
+  Upload,
+  AlertCircle,
+  CheckCircle2,
+  SkipForward,
+  Copy,
 } from "lucide-react";
 
 type SourceMeta = {
@@ -115,6 +125,7 @@ const SOURCES: ReadonlyArray<SourceMeta> = [
 export default function WatchedCompanies() {
   const [tab, setTab] = useState<WatchedIssuerSource>("sec_edgar");
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<WatchedIssuer | null>(
     null,
   );
@@ -138,13 +149,23 @@ export default function WatchedCompanies() {
             filings for one company so we can attach them to your suppliers.
           </p>
         </div>
-        <Button
-          data-testid="button-add-watched"
-          onClick={() => setAddOpen(true)}
-        >
-          <Plus className="w-4 h-4 mr-1" />
-          Add company
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            data-testid="button-import-csv"
+            onClick={() => setImportOpen(true)}
+          >
+            <Upload className="w-4 h-4 mr-1" />
+            Import CSV
+          </Button>
+          <Button
+            data-testid="button-add-watched"
+            onClick={() => setAddOpen(true)}
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Add company
+          </Button>
+        </div>
       </div>
 
       <Tabs
@@ -185,6 +206,15 @@ export default function WatchedCompanies() {
         onAdded={(source) => {
           setTab(source);
           setAddOpen(false);
+        }}
+      />
+
+      <ImportCsvDialog
+        open={importOpen}
+        defaultSource={activeMeta.value}
+        onOpenChange={setImportOpen}
+        onImported={(source) => {
+          if (source) setTab(source);
         }}
       />
 
@@ -689,5 +719,507 @@ function extractErrorMessage(e: Error): string {
     /* not JSON — fall through */
   }
   return msg;
+}
+
+/**
+ * Columns we accept in the upload. `source`, `identifier`, and `name` are
+ * required; everything else is forwarded as-is to the bulk endpoint where
+ * the existing zod schema enforces length and shape.
+ */
+const CSV_COLUMNS = [
+  "source",
+  "identifier",
+  "name",
+  "supplierUid",
+  "ticker",
+  "lei",
+  "notes",
+] as const;
+
+const REQUIRED_CSV_COLUMNS: ReadonlyArray<(typeof CSV_COLUMNS)[number]> = [
+  "source",
+  "identifier",
+  "name",
+];
+
+const CSV_EXAMPLE = `source,identifier,name,supplierUid,ticker,lei,notes
+sec_edgar,320193,Apple Inc.,,AAPL,HWUPKR0MPOU8FGXBT394,Watch quarterly 10-Qs
+sec_edgar,789019,Microsoft Corp.,sup_msft,MSFT,,
+companies_house,02099887,BP P.L.C.,,,,
+companies_house,SC123456,Example Scottish Co.,,,,`;
+
+type ParsedCsvRow = {
+  /** 1-based source line in the CSV file (header counts as line 1). */
+  line: number;
+  data: Record<string, string>;
+};
+
+type CsvParseError = {
+  line: number;
+  message: string;
+};
+
+type CsvParseResult = {
+  rows: BulkAddWatchedIssuerRow[];
+  errors: CsvParseError[];
+  totalRows: number;
+};
+
+/**
+ * Validate one parsed CSV row against the bulk-import contract. Returns
+ * either a `BulkAddWatchedIssuerRow` ready to ship, or an error message.
+ *
+ * We deliberately keep the client-side checks coarse — the server is
+ * still the source of truth (it normalises CIKs, runs shape checks,
+ * looks up suppliers). The frontend is just here to catch the obvious
+ * "you forgot the source column" / "we don't recognise sec_edgar_us"
+ * problems before sending.
+ */
+function rowToBulkPayload(
+  raw: ParsedCsvRow,
+): { ok: true; row: BulkAddWatchedIssuerRow } | { ok: false; message: string } {
+  const data = raw.data;
+  for (const col of REQUIRED_CSV_COLUMNS) {
+    const v = data[col]?.trim();
+    if (!v) {
+      return { ok: false, message: `Missing required column "${col}"` };
+    }
+  }
+  const source = data["source"]!.trim();
+  if (source !== "sec_edgar" && source !== "companies_house") {
+    return {
+      ok: false,
+      message: `Unknown source "${source}". Expected "sec_edgar" or "companies_house".`,
+    };
+  }
+  const optional = (col: string): string | undefined => {
+    const v = data[col]?.trim();
+    return v && v.length > 0 ? v : undefined;
+  };
+  const row: BulkAddWatchedIssuerRow = {
+    line: raw.line,
+    source: source as WatchedIssuerSource,
+    identifier: data["identifier"]!.trim(),
+    name: data["name"]!.trim(),
+  };
+  const supplierUid = optional("supplierUid");
+  if (supplierUid) row.supplierUid = supplierUid;
+  const ticker = optional("ticker");
+  if (ticker) row.ticker = ticker;
+  const lei = optional("lei");
+  if (lei) row.lei = lei;
+  const notes = optional("notes");
+  if (notes) row.notes = notes;
+  return { ok: true, row };
+}
+
+/**
+ * Parse the file with papaparse, then map each data row through
+ * `rowToBulkPayload`. We keep the line numbers honest so the per-row
+ * error report (both client- and server-side) lines up with what the
+ * admin sees in their spreadsheet.
+ */
+function parseCsv(text: string): CsvParseResult {
+  const result = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    skipEmptyLines: "greedy",
+    transformHeader: (h) => h.trim(),
+  });
+
+  const errors: CsvParseError[] = [];
+  for (const e of result.errors) {
+    // PapaParse rows are 0-based and exclude the header row, so add 2
+    // to land on the 1-based file line the admin sees.
+    const line = typeof e.row === "number" ? e.row + 2 : 1;
+    errors.push({ line, message: e.message });
+  }
+
+  const headerFields = result.meta.fields ?? [];
+  const missingHeaders = REQUIRED_CSV_COLUMNS.filter(
+    (c) => !headerFields.includes(c),
+  );
+  if (missingHeaders.length > 0) {
+    errors.push({
+      line: 1,
+      message: `CSV is missing required column(s): ${missingHeaders.join(", ")}. Expected header row with at least: ${REQUIRED_CSV_COLUMNS.join(",")}`,
+    });
+    return { rows: [], errors, totalRows: 0 };
+  }
+
+  const rows: BulkAddWatchedIssuerRow[] = [];
+  result.data.forEach((data, i) => {
+    const line = i + 2; // +1 for 1-indexed, +1 for header row
+    const parsed = rowToBulkPayload({ line, data });
+    if (parsed.ok) {
+      rows.push(parsed.row);
+    } else {
+      errors.push({ line, message: parsed.message });
+    }
+  });
+
+  return { rows, errors, totalRows: result.data.length };
+}
+
+function ImportCsvDialog({
+  open,
+  defaultSource,
+  onOpenChange,
+  onImported,
+}: {
+  open: boolean;
+  defaultSource: WatchedIssuerSource;
+  onOpenChange: (open: boolean) => void;
+  onImported: (source: WatchedIssuerSource | null) => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [parsedRows, setParsedRows] = useState<BulkAddWatchedIssuerRow[]>([]);
+  const [parseErrors, setParseErrors] = useState<CsvParseError[]>([]);
+  const [response, setResponse] =
+    useState<BulkAddWatchedIssuersResponse | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+
+  // Reset every piece of dialog state whenever the dialog closes —
+  // re-opening should give the admin a fresh slate, not a stale
+  // success report from the previous import.
+  const reset = () => {
+    setFileName(null);
+    setParsedRows([]);
+    setParseErrors([]);
+    setResponse(null);
+    setReadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) reset();
+    onOpenChange(next);
+  };
+
+  // The bulk endpoint returns 200 with per-row results even when every
+  // row failed (so we can render a proper report) — `onSuccess` is
+  // therefore the right hook for ALL outcomes, and we only ever hit
+  // `onError` for genuine 4xx/5xx (e.g. body too large).
+  const bulkM = useBulkAddWatchedIssuers({
+    mutation: {
+      onSuccess: (data) => {
+        setResponse(data);
+        // Refresh both the per-source tabs and the all-sources list so
+        // the new rows show up immediately when the admin closes the
+        // dialog.
+        qc.invalidateQueries({ queryKey: ["/api/watched-issuers"] });
+        qc.invalidateQueries({ queryKey: getListWatchedIssuersQueryKey() });
+        if (data.createdCount > 0) {
+          toast({
+            title: `Imported ${data.createdCount} ${
+              data.createdCount === 1 ? "company" : "companies"
+            }`,
+            description:
+              data.errorCount > 0 || data.skippedCount > 0
+                ? `${data.skippedCount} skipped, ${data.errorCount} failed — see the report below.`
+                : "All rows added to your watch list.",
+          });
+          // Switch to the tab that received rows so the admin sees the
+          // newly imported entries. If both sources got rows, prefer the
+          // first created row's source.
+          const created = data.results.find((r) => r.status === "created");
+          onImported(
+            (created?.source as WatchedIssuerSource | undefined) ?? null,
+          );
+        } else {
+          toast({
+            title: "Nothing imported",
+            description: `${data.skippedCount} skipped, ${data.errorCount} failed — see the report below.`,
+            variant: "destructive",
+          });
+        }
+      },
+      onError: (e: Error) => {
+        toast({
+          title: "Import failed",
+          description: extractErrorMessage(e),
+          variant: "destructive",
+        });
+      },
+    },
+  });
+
+  const handleFileSelect = async (file: File) => {
+    setReadError(null);
+    setResponse(null);
+    setFileName(file.name);
+    try {
+      const text = await file.text();
+      const parsed = parseCsv(text);
+      setParsedRows(parsed.rows);
+      setParseErrors(parsed.errors);
+    } catch (err) {
+      setParsedRows([]);
+      setParseErrors([]);
+      setReadError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleSubmit = () => {
+    if (parsedRows.length === 0) return;
+    bulkM.mutate({ data: { items: parsedRows } });
+  };
+
+  const handleCopyExample = async () => {
+    try {
+      await navigator.clipboard.writeText(CSV_EXAMPLE);
+      toast({ title: "Example copied to clipboard" });
+    } catch {
+      toast({
+        title: "Could not copy",
+        description: "Your browser blocked clipboard access.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const canSubmit = parsedRows.length > 0 && !bulkM.isPending && !response;
+
+  // Combined error list for the "fix me" panel — includes both
+  // client-side parse errors and server-side per-row errors. Server
+  // results win when both are present (server has more context).
+  const serverErrors = useMemo<BulkAddWatchedIssuerResultItem[]>(
+    () =>
+      (response?.results ?? []).filter(
+        (r) => r.status === "error" || r.status === "skipped",
+      ),
+    [response],
+  );
+
+  // Hint the admin which source the active tab is on without forcing
+  // them to use it — every CSV row carries its own `source` column.
+  const sourceLabel =
+    SOURCES.find((s) => s.value === defaultSource)?.label ?? defaultSource;
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-3xl max-h-[90vh] overflow-y-auto"
+        data-testid="dialog-import-csv"
+      >
+        <DialogHeader>
+          <DialogTitle>Import companies from CSV</DialogTitle>
+          <DialogDescription>
+            Upload a CSV with one company per row. Each row's{" "}
+            <code className="text-xs">source</code> column controls which
+            collector picks it up — you can mix SEC EDGAR and Companies
+            House rows in a single file. Currently viewing{" "}
+            <strong>{sourceLabel}</strong>.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Example panel — always visible so admins can grab the
+              header row without a docs page. */}
+          <div className="rounded-md border bg-muted/40 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold uppercase text-muted-foreground">
+                Example (copy-paste into your spreadsheet)
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCopyExample}
+                data-testid="button-copy-example"
+              >
+                <Copy className="w-3.5 h-3.5 mr-1" />
+                Copy
+              </Button>
+            </div>
+            <pre
+              data-testid="text-csv-example"
+              className="text-[11px] font-mono whitespace-pre-wrap leading-snug overflow-x-auto"
+            >
+              {CSV_EXAMPLE}
+            </pre>
+            <p className="text-xs text-muted-foreground mt-2">
+              Required columns: <code>source</code>, <code>identifier</code>,{" "}
+              <code>name</code>. Optional:{" "}
+              <code>supplierUid, ticker, lei, notes</code>. <code>source</code>{" "}
+              must be either <code>sec_edgar</code> or{" "}
+              <code>companies_house</code>.
+            </p>
+          </div>
+
+          {/* File picker */}
+          <div className="space-y-1.5">
+            <Label htmlFor="csv-file">CSV file</Label>
+            <Input
+              id="csv-file"
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              data-testid="input-csv-file"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleFileSelect(f);
+              }}
+              disabled={bulkM.isPending}
+            />
+            {fileName ? (
+              <p className="text-xs text-muted-foreground">
+                Selected: <span className="font-mono">{fileName}</span>
+                {parsedRows.length > 0 ? (
+                  <>
+                    {" "}
+                    — {parsedRows.length} valid{" "}
+                    {parsedRows.length === 1 ? "row" : "rows"} ready to import
+                    {parseErrors.length > 0 ? (
+                      <>
+                        {", "}
+                        <span className="text-amber-600 dark:text-amber-400">
+                          {parseErrors.length} parse{" "}
+                          {parseErrors.length === 1 ? "error" : "errors"}
+                        </span>
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+            {readError ? (
+              <p
+                data-testid="text-read-error"
+                className="text-xs text-red-600 dark:text-red-400"
+              >
+                Could not read file: {readError}
+              </p>
+            ) : null}
+          </div>
+
+          {/* Pre-flight client-side parse errors */}
+          {parseErrors.length > 0 ? (
+            <div
+              data-testid="panel-parse-errors"
+              className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3"
+            >
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
+                <AlertCircle className="w-4 h-4" />
+                {parseErrors.length}{" "}
+                {parseErrors.length === 1 ? "row" : "rows"} skipped before
+                upload
+              </div>
+              <ul className="text-xs space-y-1 max-h-40 overflow-y-auto">
+                {parseErrors.map((e, idx) => (
+                  <li
+                    key={`${e.line}-${idx}`}
+                    className="font-mono"
+                    data-testid={`parse-error-${e.line}`}
+                  >
+                    <span className="text-amber-700 dark:text-amber-400">
+                      Line {e.line}:
+                    </span>{" "}
+                    {e.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {/* Server-side per-row report */}
+          {response ? (
+            <div
+              data-testid="panel-import-results"
+              className="rounded-md border p-3 space-y-3"
+            >
+              <div className="flex items-center gap-3 text-sm">
+                <Badge
+                  variant="outline"
+                  className="text-green-700 dark:text-green-400"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                  {response.createdCount} created
+                </Badge>
+                <Badge variant="outline" className="text-muted-foreground">
+                  <SkipForward className="w-3.5 h-3.5 mr-1" />
+                  {response.skippedCount} skipped
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className="text-red-700 dark:text-red-400"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                  {response.errorCount} failed
+                </Badge>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {response.totalRows} total
+                </span>
+              </div>
+              {serverErrors.length > 0 ? (
+                <div className="border-t pt-2">
+                  <p className="text-xs font-medium mb-1">
+                    Rows that need your attention:
+                  </p>
+                  <ul className="text-xs space-y-1 max-h-60 overflow-y-auto">
+                    {serverErrors.map((r, idx) => (
+                      <li
+                        key={`${r.line}-${idx}`}
+                        className="font-mono"
+                        data-testid={`result-error-${r.line}`}
+                      >
+                        <span
+                          className={
+                            r.status === "skipped"
+                              ? "text-muted-foreground"
+                              : "text-red-700 dark:text-red-400"
+                          }
+                        >
+                          Line {r.line} ({r.status}):
+                        </span>{" "}
+                        {r.identifier ? (
+                          <span className="text-muted-foreground">
+                            [{r.identifier}]{" "}
+                          </span>
+                        ) : null}
+                        {r.error ?? "(no detail)"}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={bulkM.isPending}
+            data-testid="button-import-close"
+          >
+            {response ? "Close" : "Cancel"}
+          </Button>
+          {!response ? (
+            <Button
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              data-testid="button-import-submit"
+            >
+              {bulkM.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Importing…
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-1" />
+                  Import {parsedRows.length}{" "}
+                  {parsedRows.length === 1 ? "row" : "rows"}
+                </>
+              )}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 

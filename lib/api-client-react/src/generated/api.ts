@@ -54,6 +54,8 @@ import type {
   BroadcastCollectorPosturePreview,
   BroadcastCollectorPostureRequest,
   BroadcastCollectorPostureResult,
+  BulkAddWatchedIssuersRequest,
+  BulkAddWatchedIssuersResponse,
   BulkApproveOpportunitiesRequest,
   BulkOpportunityActionResult,
   BulkRejectOpportunitiesRequest,
@@ -8280,6 +8282,99 @@ export const useAddWatchedIssuer = <
   TContext
 > => {
   return useMutation(getAddWatchedIssuerMutationOptions(options));
+};
+
+/**
+ * Accepts an array of rows (typically parsed from a CSV by the client) and validates each row using the same normaliser and identifier-shape checks as `POST /watched-issuers`. Each row is attempted independently — successful rows are inserted and rows that fail validation, refer to a missing supplierUid, or duplicate an existing identifier are reported back per-row so the admin can fix them and re-submit.
+Always returns 200 with a per-row result list (even if every row failed) so the caller can render structured per-line feedback. The top-level counts make it easy to show a summary toast.
+
+ * @summary Bulk-import a list of companies onto the tenant's watch list
+ */
+export const getBulkAddWatchedIssuersUrl = () => {
+  return `/api/watched-issuers/bulk`;
+};
+
+export const bulkAddWatchedIssuers = async (
+  bulkAddWatchedIssuersRequest: BulkAddWatchedIssuersRequest,
+  options?: RequestInit,
+): Promise<BulkAddWatchedIssuersResponse> => {
+  return customFetch<BulkAddWatchedIssuersResponse>(
+    getBulkAddWatchedIssuersUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(bulkAddWatchedIssuersRequest),
+    },
+  );
+};
+
+export const getBulkAddWatchedIssuersMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkAddWatchedIssuers>>,
+    TError,
+    { data: BodyType<BulkAddWatchedIssuersRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkAddWatchedIssuers>>,
+  TError,
+  { data: BodyType<BulkAddWatchedIssuersRequest> },
+  TContext
+> => {
+  const mutationKey = ["bulkAddWatchedIssuers"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkAddWatchedIssuers>>,
+    { data: BodyType<BulkAddWatchedIssuersRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkAddWatchedIssuers(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkAddWatchedIssuersMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkAddWatchedIssuers>>
+>;
+export type BulkAddWatchedIssuersMutationBody =
+  BodyType<BulkAddWatchedIssuersRequest>;
+export type BulkAddWatchedIssuersMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Bulk-import a list of companies onto the tenant's watch list
+ */
+export const useBulkAddWatchedIssuers = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkAddWatchedIssuers>>,
+    TError,
+    { data: BodyType<BulkAddWatchedIssuersRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkAddWatchedIssuers>>,
+  TError,
+  { data: BodyType<BulkAddWatchedIssuersRequest> },
+  TContext
+> => {
+  return useMutation(getBulkAddWatchedIssuersMutationOptions(options));
 };
 
 /**

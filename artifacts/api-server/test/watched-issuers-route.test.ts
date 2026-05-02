@@ -383,6 +383,150 @@ test("POST /watched-issuers rejects malformed identifiers per source", async () 
   });
 });
 
+test("POST /watched-issuers/bulk validates each row and returns per-row results", async () => {
+  // Strip prior rows from this run so the duplicate detection assertion
+  // below can be deterministic.
+  await db
+    .delete(watchedIssuersTable)
+    .where(like(watchedIssuersTable.notes, `%${RUN_ID}%`));
+
+  await withServer(async (base) => {
+    // Pre-seed one row so we can assert the duplicate-skip path. Use the
+    // single-row endpoint so the seed shares the same normalisation
+    // semantics as the bulk endpoint we're about to exercise.
+    const seed = await postJson(base, "/api/watched-issuers", orgA, {
+      source: "sec_edgar",
+      identifier: "320193",
+      name: `Apple seed ${RUN_ID}`,
+      notes: `created by ${RUN_ID}`,
+    });
+    assert.equal(seed.status, 201, seed.body);
+
+    const bulk = await postJson(base, "/api/watched-issuers/bulk", orgA, {
+      items: [
+        // Line 2 — created (CIK normalisation makes 0000789019).
+        {
+          line: 2,
+          source: "sec_edgar",
+          identifier: "789019",
+          name: `Microsoft bulk ${RUN_ID}`,
+          ticker: "MSFT",
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 3 — created (Companies House zero-pad).
+        {
+          line: 3,
+          source: "companies_house",
+          identifier: "6245",
+          name: `BP bulk ${RUN_ID}`,
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 4 — skipped (duplicate of the seed Apple row).
+        {
+          line: 4,
+          source: "sec_edgar",
+          identifier: "0000320193",
+          name: `Apple dup ${RUN_ID}`,
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 5 — error (non-numeric CIK fails shape check).
+        {
+          line: 5,
+          source: "sec_edgar",
+          identifier: "not-a-cik",
+          name: `Bogus bulk ${RUN_ID}`,
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 6 — error (Companies House: single-letter prefix).
+        {
+          line: 6,
+          source: "companies_house",
+          identifier: "X1234567",
+          name: `Bogus CH bulk ${RUN_ID}`,
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 7 — error (supplierUid points at a supplier this tenant
+        // doesn't own — `sup_does_not_exist` will never match).
+        {
+          line: 7,
+          source: "sec_edgar",
+          identifier: "1018724",
+          name: `Amazon bulk ${RUN_ID}`,
+          supplierUid: "sup_does_not_exist",
+          notes: `created by ${RUN_ID}`,
+        },
+        // Line 8 — skipped (duplicate WITHIN the same batch — second
+        // occurrence of Microsoft loses to line 2).
+        {
+          line: 8,
+          source: "sec_edgar",
+          identifier: "789019",
+          name: `Microsoft dup-in-batch ${RUN_ID}`,
+          notes: `created by ${RUN_ID}`,
+        },
+      ],
+    });
+
+    assert.equal(bulk.status, 200, bulk.body);
+    const body = JSON.parse(bulk.body) as {
+      totalRows: number;
+      createdCount: number;
+      skippedCount: number;
+      errorCount: number;
+      results: Array<{
+        line: number;
+        status: "created" | "skipped" | "error";
+        identifier?: string;
+        error?: string;
+        id?: string;
+      }>;
+    };
+
+    assert.equal(body.totalRows, 7);
+    assert.equal(body.createdCount, 2, JSON.stringify(body, null, 2));
+    assert.equal(body.skippedCount, 2, JSON.stringify(body, null, 2));
+    assert.equal(body.errorCount, 3, JSON.stringify(body, null, 2));
+
+    const byLine = new Map(body.results.map((r) => [r.line, r]));
+    assert.equal(byLine.get(2)?.status, "created");
+    assert.equal(byLine.get(2)?.identifier, "0000789019");
+    assert.ok(byLine.get(2)?.id);
+    assert.equal(byLine.get(3)?.status, "created");
+    assert.equal(byLine.get(3)?.identifier, "00006245");
+    assert.equal(byLine.get(4)?.status, "skipped");
+    assert.match(byLine.get(5)?.error ?? "", /CIK/);
+    assert.match(byLine.get(6)?.error ?? "", /Companies House/);
+    assert.match(byLine.get(7)?.error ?? "", /supplierUid/);
+    assert.equal(byLine.get(8)?.status, "skipped");
+
+    // The created Microsoft row should be visible in the tenant's list.
+    const list = await getJson(base, "/api/watched-issuers", orgA);
+    assert.equal(list.status, 200);
+    const items = (JSON.parse(list.body) as { items: Array<{ identifier: string }> }).items;
+    const ids = items.map((i) => i.identifier);
+    assert.ok(ids.includes("0000789019"));
+    assert.ok(ids.includes("00006245"));
+  });
+});
+
+test("POST /watched-issuers/bulk rejects malformed top-level body with 400", async () => {
+  await withServer(async (base) => {
+    // Not an object.
+    const r1 = await postJson(base, "/api/watched-issuers/bulk", orgA, []);
+    assert.equal(r1.status, 400, r1.body);
+    // Empty items array (zod min(1)).
+    const r2 = await postJson(base, "/api/watched-issuers/bulk", orgA, {
+      items: [],
+    });
+    assert.equal(r2.status, 400, r2.body);
+    // Row missing required `name` field — zod parse failure.
+    const r3 = await postJson(base, "/api/watched-issuers/bulk", orgA, {
+      items: [{ source: "sec_edgar", identifier: "320193" }],
+    });
+    assert.equal(r3.status, 400, r3.body);
+  });
+});
+
 test("DELETE /watched-issuers/:id only removes rows the tenant owns", async () => {
   await withServer(async (base) => {
     // Add one for tenant A.

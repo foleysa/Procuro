@@ -3637,6 +3637,95 @@ the active tenant; the server returns 400 otherwise.
 }
 
 /**
+ * One row of a bulk-import payload. Same shape as `AddWatchedIssuerRequest` but with an optional `line` field so the server can echo the source CSV line number back in per-row error reports.
+
+ */
+export interface BulkAddWatchedIssuerRow {
+  /**
+   * 1-based source line number (e.g. CSV row position including the header). Echoed back unchanged in the result so the client can show "Row 7: …" style errors.
+
+   * @minimum 1
+   */
+  line?: number;
+  source: WatchedIssuerSource;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  identifier: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  lei?: string;
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  ticker?: string;
+  /**
+   * @minLength 1
+   * @maxLength 80
+   */
+  supplierUid?: string;
+  /** @maxLength 2000 */
+  notes?: string;
+}
+
+export interface BulkAddWatchedIssuersRequest {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  items: BulkAddWatchedIssuerRow[];
+}
+
+/**
+ * Per-row outcome.
+- `created` — the row was inserted; `id` is set.
+- `skipped` — the (source, identifier) was already on this tenant's watch list.
+- `error`  — the row failed validation (bad shape, unknown supplierUid, missing fields). `error` carries the message.
+
+ */
+export type BulkAddWatchedIssuerResultStatus =
+  (typeof BulkAddWatchedIssuerResultStatus)[keyof typeof BulkAddWatchedIssuerResultStatus];
+
+export const BulkAddWatchedIssuerResultStatus = {
+  created: "created",
+  skipped: "skipped",
+  error: "error",
+} as const;
+
+export interface BulkAddWatchedIssuerResultItem {
+  /** 1-based line number echoed from the request, so the client can render "Row N: …" without tracking indices.
+   */
+  line: number;
+  status: BulkAddWatchedIssuerResultStatus;
+  /** Set when `status === "created"`. */
+  id?: string | null;
+  source?: WatchedIssuerSource | null;
+  /** Normalised identifier (zero-padded CIK or Companies House number). Set when the row got far enough through validation for the normaliser to run.
+   */
+  identifier?: string | null;
+  name?: string | null;
+  /** Human-readable error when `status === "error"`. */
+  error?: string | null;
+}
+
+export interface BulkAddWatchedIssuersResponse {
+  totalRows: number;
+  createdCount: number;
+  skippedCount: number;
+  errorCount: number;
+  results: BulkAddWatchedIssuerResultItem[];
+}
+
+/**
  * What the Defense Pack is defending or attacking. At least one
 of `contractId+lineItem`, `categoryCode`, or `materialCode`
 must be provided so the evidence pool can be scoped beyond

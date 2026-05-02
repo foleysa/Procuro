@@ -2969,6 +2969,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /watched-issuers/bulk:
+    post:
+      operationId: bulkAddWatchedIssuers
+      tags:
+      - watched-issuers
+      summary: Bulk-import a list of companies onto the tenant's watch list
+      description: 'Accepts an array of rows (typically parsed from a CSV by the
+        client) and validates each row using the same normaliser and
+        identifier-shape checks as `POST /watched-issuers`. Each row is
+        attempted independently — successful rows are inserted and
+        rows that fail validation, refer to a missing supplierUid, or
+        duplicate an existing identifier are reported back per-row so
+        the admin can fix them and re-submit.
+
+        Always returns 200 with a per-row result list (even if every
+        row failed) so the caller can render structured per-line
+        feedback. The top-level counts make it easy to show a
+        summary toast.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkAddWatchedIssuersRequest'
+      responses:
+        '200':
+          description: Per-row import results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkAddWatchedIssuersResponse'
+        '400':
+          description: The request itself is malformed (e.g. items missing or too large)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /watched-issuers/{id}:
     delete:
       operationId: removeWatchedIssuer
@@ -10291,6 +10332,138 @@ components:
         notes:
           type: string
           maxLength: 2000
+    BulkAddWatchedIssuerRow:
+      type: object
+      required:
+      - source
+      - identifier
+      - name
+      description: 'One row of a bulk-import payload. Same shape as
+        `AddWatchedIssuerRequest` but with an optional `line` field so the
+        server can echo the source CSV line number back in per-row error
+        reports.
+
+        '
+      properties:
+        line:
+          type: integer
+          minimum: 1
+          description: '1-based source line number (e.g. CSV row position
+            including the header). Echoed back unchanged in the result so
+            the client can show "Row 7: …" style errors.
+
+            '
+        source:
+          $ref: '#/components/schemas/WatchedIssuerSource'
+        identifier:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        lei:
+          type: string
+          minLength: 1
+          maxLength: 40
+        ticker:
+          type: string
+          minLength: 1
+          maxLength: 20
+        supplierUid:
+          type: string
+          minLength: 1
+          maxLength: 80
+        notes:
+          type: string
+          maxLength: 2000
+    BulkAddWatchedIssuersRequest:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/BulkAddWatchedIssuerRow'
+    BulkAddWatchedIssuerResultStatus:
+      type: string
+      enum:
+      - created
+      - skipped
+      - error
+      description: 'Per-row outcome.
+
+        - `created` — the row was inserted; `id` is set.
+
+        - `skipped` — the (source, identifier) was already on this
+          tenant''s watch list.
+
+        - `error`  — the row failed validation (bad shape, unknown
+          supplierUid, missing fields). `error` carries the message.
+
+        '
+    BulkAddWatchedIssuerResultItem:
+      type: object
+      required:
+      - line
+      - status
+      properties:
+        line:
+          type: integer
+          description: '1-based line number echoed from the request, so the
+            client can render "Row N: …" without tracking indices.
+
+            '
+        status:
+          $ref: '#/components/schemas/BulkAddWatchedIssuerResultStatus'
+        id:
+          type: string
+          nullable: true
+          description: Set when `status === "created"`.
+        source:
+          allOf:
+          - $ref: '#/components/schemas/WatchedIssuerSource'
+          nullable: true
+        identifier:
+          type: string
+          nullable: true
+          description: 'Normalised identifier (zero-padded CIK or Companies
+            House number). Set when the row got far enough through
+            validation for the normaliser to run.
+
+            '
+        name:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+          description: Human-readable error when `status === "error"`.
+    BulkAddWatchedIssuersResponse:
+      type: object
+      required:
+      - totalRows
+      - createdCount
+      - skippedCount
+      - errorCount
+      - results
+      properties:
+        totalRows:
+          type: integer
+        createdCount:
+          type: integer
+        skippedCount:
+          type: integer
+        errorCount:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkAddWatchedIssuerResultItem'
     DefensePackTarget:
       type: object
       required:
