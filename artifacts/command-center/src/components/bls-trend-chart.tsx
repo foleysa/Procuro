@@ -22,6 +22,11 @@ import {
   SeriesDeltaCallouts,
   type SeriesDeltaInput,
 } from "./series-delta-callouts";
+import {
+  TrendWindowPicker,
+  trendWindowToMs,
+  type TrendWindow,
+} from "./trend-window-picker";
 
 type ChartMode = "indexed" | "absolute";
 
@@ -69,7 +74,6 @@ const PAIR_COLORS = [
 ];
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const TWO_YEARS_MS = 2 * 365 * ONE_DAY_MS;
 
 /**
  * The BLS Economic Index collector that emits these signals. Used to
@@ -108,13 +112,17 @@ export function BlsTrendChart({
     () => new Set(series.slice(0, 4).map((s) => s.label)),
   );
   const [mode, setMode] = useState<ChartMode>("indexed");
-
   // BLS sub-series are released monthly (PPI commodity) or quarterly
-  // (ECI). Two years gives the chart enough rhythm without spamming
-  // tick marks; the underlying collector keeps even more history.
+  // (ECI). Default to 1y so the chart has enough rhythm without
+  // spamming tick marks; operators can widen to 5y for a longer view
+  // or narrow to 90d/30d to focus on a recent move.
+  const [dateWindow, setDateWindow] = useState<TrendWindow>("1y");
+
+  // Pull one query per series anchored to the currently selected
+  // date window.
   const observedAfter = useMemo(
-    () => new Date(Date.now() - TWO_YEARS_MS).toISOString(),
-    [],
+    () => new Date(Date.now() - trendWindowToMs(dateWindow)).toISOString(),
+    [dateWindow],
   );
 
   // One query per series. The BLS collector emits one signal per
@@ -188,12 +196,12 @@ export function BlsTrendChart({
     const visible = deltas
       .map((d) => (d.firstAt ? new Date(d.firstAt).getTime() : null))
       .filter((v): v is number => v !== null);
-    if (visible.length === 0) return "2y";
+    if (visible.length === 0) return dateWindow;
     const earliest = Math.min(...visible);
     const days = Math.round((Date.now() - earliest) / ONE_DAY_MS);
     if (days >= 365) return `${(days / 365).toFixed(1)}y`;
     return `${days}d`;
-  }, [deltas]);
+  }, [deltas, dateWindow]);
 
   const toggle = (label: string) => {
     setActiveKeys((prev) => {
@@ -220,32 +228,40 @@ export function BlsTrendChart({
               <p className="text-sm text-muted-foreground mt-1">{description}</p>
             )}
           </div>
-          <div
-            className="inline-flex rounded-md border p-0.5 shrink-0"
-            role="group"
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "indexed" ? "default" : "ghost"}
-              onClick={() => setMode("indexed")}
-              data-testid="bls-mode-indexed"
-              className="h-7 text-xs"
-              title="Rebase each series to 100 at the start of the visible window so trend shapes can be compared on a single axis."
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            <TrendWindowPicker
+              value={dateWindow}
+              onChange={setDateWindow}
+              testIdPrefix="bls-trend"
+            />
+            <div
+              className="inline-flex rounded-md border p-0.5"
+              role="group"
+              aria-label="Display mode"
             >
-              Indexed
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "absolute" ? "default" : "ghost"}
-              onClick={() => setMode("absolute")}
-              data-testid="bls-mode-absolute"
-              className="h-7 text-xs"
-              title="Show raw BLS index values (1982=100 for PPI commodity series)."
-            >
-              Absolute
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "indexed" ? "default" : "ghost"}
+                onClick={() => setMode("indexed")}
+                data-testid="bls-mode-indexed"
+                className="h-7 text-xs"
+                title="Rebase each series to 100 at the start of the visible window so trend shapes can be compared on a single axis."
+              >
+                Indexed
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "absolute" ? "default" : "ghost"}
+                onClick={() => setMode("absolute")}
+                data-testid="bls-mode-absolute"
+                className="h-7 text-xs"
+                title="Show raw BLS index values (1982=100 for PPI commodity series)."
+              >
+                Absolute
+              </Button>
+            </div>
           </div>
         </div>
       </CardHeader>

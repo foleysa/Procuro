@@ -25,6 +25,11 @@ import {
 } from "lucide-react";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  TrendWindowPicker,
+  trendWindowToMs,
+  type TrendWindow,
+} from "./trend-window-picker";
 
 type ChartMode = "indexed" | "absolute";
 
@@ -65,7 +70,6 @@ const PAIR_COLORS = [
 ];
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const FIVE_YEARS_MS = 5 * 365 * ONE_DAY_MS;
 
 type ChartPoint = { observedAtMs: number } & Record<string, number>;
 
@@ -101,12 +105,16 @@ export function FxTrendChart({
   // can be compared on a single readable axis. Users who care about the
   // raw rate can flip to "Absolute".
   const [mode, setMode] = useState<ChartMode>("indexed");
+  // Default to 5y so the chart matches the ECB historical-archive
+  // backfill window on first load. Operators can narrow it via the
+  // window picker to ask "what changed in the last 30/90 days?".
+  const [dateWindow, setDateWindow] = useState<TrendWindow>("5y");
 
-  // Pull one chart-friendly time-series per pair. Ranged five years back so
-  // the chart matches the ECB historical-archive backfill window.
+  // Pull one chart-friendly time-series per pair, anchored to the
+  // currently selected date window.
   const observedAfter = useMemo(
-    () => new Date(Date.now() - FIVE_YEARS_MS).toISOString(),
-    [],
+    () => new Date(Date.now() - trendWindowToMs(dateWindow)).toISOString(),
+    [dateWindow],
   );
 
   // Fire one query per pair via `useQueries` so the hook count stays stable
@@ -226,12 +234,12 @@ export function FxTrendChart({
       .filter((s) => activePairs.has(s.pair) && s.firstAt)
       .map((s) => new Date(s.firstAt!).getTime())
       .filter((v) => Number.isFinite(v));
-    if (visible.length === 0) return "5y";
+    if (visible.length === 0) return dateWindow;
     const earliest = Math.min(...visible);
     const days = Math.round((Date.now() - earliest) / ONE_DAY_MS);
     if (days >= 365) return `${(days / 365).toFixed(1)}y`;
     return `${days}d`;
-  }, [pairStats, activePairs]);
+  }, [pairStats, activePairs, dateWindow]);
 
   const formatPct = (pct: number) => {
     const sign = pct > 0 ? "+" : "";
@@ -264,29 +272,40 @@ export function FxTrendChart({
               <p className="text-sm text-muted-foreground mt-1">{description}</p>
             )}
           </div>
-          <div className="inline-flex rounded-md border p-0.5 shrink-0" role="group">
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "indexed" ? "default" : "ghost"}
-              onClick={() => setMode("indexed")}
-              data-testid="fx-mode-indexed"
-              className="h-7 text-xs"
-              title="Rebase each pair to 100 at the start of the visible window so trend shapes can be compared on a single axis."
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            <TrendWindowPicker
+              value={dateWindow}
+              onChange={setDateWindow}
+              testIdPrefix="fx-trend"
+            />
+            <div
+              className="inline-flex rounded-md border p-0.5"
+              role="group"
+              aria-label="Display mode"
             >
-              Indexed
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === "absolute" ? "default" : "ghost"}
-              onClick={() => setMode("absolute")}
-              data-testid="fx-mode-absolute"
-              className="h-7 text-xs"
-              title="Show raw FX rates."
-            >
-              Absolute
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "indexed" ? "default" : "ghost"}
+                onClick={() => setMode("indexed")}
+                data-testid="fx-mode-indexed"
+                className="h-7 text-xs"
+                title="Rebase each pair to 100 at the start of the visible window so trend shapes can be compared on a single axis."
+              >
+                Indexed
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "absolute" ? "default" : "ghost"}
+                onClick={() => setMode("absolute")}
+                data-testid="fx-mode-absolute"
+                className="h-7 text-xs"
+                title="Show raw FX rates."
+              >
+                Absolute
+              </Button>
+            </div>
           </div>
         </div>
       </CardHeader>
