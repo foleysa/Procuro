@@ -134,10 +134,68 @@ function normalizeScope(v: string | undefined | null): string | null {
  * (PK, future constraints), which is too forgiving. Targeting the index
  * by name keeps the semantics tight and obvious.
  */
-async function insertSignalsWithDedupe(
+/**
+ * Stringify the natural-key tuple the same way Postgres compares it
+ * via the unique index (NULL/empty are equivalent through `COALESCE`).
+ * The `\x00` separator is a byte that can never appear inside any of
+ * the participating text columns, so collisions across distinct
+ * tuples are impossible.
+ */
+function naturalKeyDigest(r: {
+  collectorId: string;
+  signalType: string;
+  scopeCategoryCode?: string | null | undefined;
+  scopeSku?: string | null | undefined;
+  scopeMaterialCode?: string | null | undefined;
+  scopeSupplierName?: string | null | undefined;
+  scopeLaneKey?: string | null | undefined;
+  scopeRegionCode?: string | null | undefined;
+  observedAt: Date | string;
+}): string {
+  const ts =
+    r.observedAt instanceof Date
+      ? r.observedAt.toISOString()
+      : new Date(r.observedAt).toISOString();
+  return [
+    r.collectorId,
+    r.signalType,
+    r.scopeCategoryCode ?? "",
+    r.scopeSku ?? "",
+    r.scopeMaterialCode ?? "",
+    r.scopeSupplierName ?? "",
+    r.scopeLaneKey ?? "",
+    r.scopeRegionCode ?? "",
+    ts,
+  ].join("\x00");
+}
+
+/**
+ * Exported for tests. Runtime callers use this through `runCollector`,
+ * but the contract — namely the `persistedIds` map that resolves a
+ * candidate id to whatever ultimately owns the natural key — is
+ * critical enough to merit direct test coverage.
+ */
+export async function insertSignalsWithDedupe(
   rows: Array<typeof marketSignalsTable.$inferInsert>,
-): Promise<{ inserted: number; duplicates: number }> {
-  if (rows.length === 0) return { inserted: 0, duplicates: 0 };
+): Promise<{
+  inserted: number;
+  duplicates: number;
+  /**
+   * Map from the candidate `id` we generated for an input row to the
+   * `market_signals.id` that ultimately *owns* that natural key after
+   * the INSERT. For freshly-inserted rows the two are equal. For rows
+   * that hit `ON CONFLICT DO NOTHING`, the candidate `id` was never
+   * persisted — the existing row's id is the canonical one. Callers
+   * that cross-link to `market_signals.id` (e.g. alert fan-out, Task
+   * #161) MUST use this map and never `rows[i].id` directly, because
+   * the candidate id will not exist in the database for the conflict
+   * case.
+   */
+  persistedIds: Map<string, string>;
+}> {
+  if (rows.length === 0) {
+    return { inserted: 0, duplicates: 0, persistedIds: new Map() };
+  }
 
   const valuesClause = sql.join(
     rows.map(
@@ -178,7 +236,107 @@ async function insertSignalsWithDedupe(
   `);
 
   const inserted = result.rows.length;
-  return { inserted, duplicates: rows.length - inserted };
+  const insertedIds = new Set(result.rows.map((r) => r.id));
+  const persistedIds = new Map<string, string>();
+  const conflictRows: typeof rows = [];
+  for (const r of rows) {
+    if (typeof r.id !== "string") continue;
+    if (insertedIds.has(r.id)) {
+      // Inserted: the candidate id we provided IS the persisted id.
+      persistedIds.set(r.id, r.id);
+    } else {
+      // Skipped by ON CONFLICT DO NOTHING — the natural key already
+      // owns a row whose id we still need to look up.
+      conflictRows.push(r);
+    }
+  }
+
+  if (conflictRows.length > 0) {
+    // Single batched OR-of-ANDs lookup. Conflicts are the rare path
+    // (re-runs of an idempotent collector); the common path is all
+    // inserts and skips this query entirely. We mirror the unique
+    // index's `COALESCE(col, '')` normalization on BOTH sides so the
+    // lookup matches the same equivalence classes the index uses —
+    // `IS NOT DISTINCT FROM` would only match NULL↔NULL, missing
+    // legacy rows that store `''` for an "absent" scope column where
+    // a new row stores SQL NULL (or vice versa). Both shapes COALESCE
+    // to the same empty-string sentinel and therefore collide in the
+    // index, so we must collapse them to the same value here too or
+    // the conflict-row lookup will silently miss those rows and the
+    // alert fan-out will lose its `marketSignalId` link.
+    const conditions = conflictRows.map(
+      (r) => sql`(
+        collector_id = ${r.collectorId}
+        AND signal_type = ${r.signalType}
+        AND COALESCE(scope_category_code, '') = COALESCE(${r.scopeCategoryCode ?? null}, '')
+        AND COALESCE(scope_sku, '') = COALESCE(${r.scopeSku ?? null}, '')
+        AND COALESCE(scope_material_code, '') = COALESCE(${r.scopeMaterialCode ?? null}, '')
+        AND COALESCE(scope_supplier_name, '') = COALESCE(${r.scopeSupplierName ?? null}, '')
+        AND COALESCE(scope_lane_key, '') = COALESCE(${r.scopeLaneKey ?? null}, '')
+        AND COALESCE(scope_region_code, '') = COALESCE(${r.scopeRegionCode ?? null}, '')
+        AND observed_at = ${r.observedAt}
+      )`,
+    );
+    const lookup = await db.execute<{
+      id: string;
+      collector_id: string;
+      signal_type: string;
+      scope_category_code: string | null;
+      scope_sku: string | null;
+      scope_material_code: string | null;
+      scope_supplier_name: string | null;
+      scope_lane_key: string | null;
+      scope_region_code: string | null;
+      observed_at: Date | string;
+    }>(sql`
+      SELECT id, collector_id, signal_type,
+             scope_category_code, scope_sku, scope_material_code,
+             scope_supplier_name, scope_lane_key, scope_region_code,
+             observed_at
+        FROM ${marketSignalsTable}
+       WHERE ${sql.join(conditions, sql` OR `)}
+    `);
+    const byKey = new Map<string, string>();
+    for (const row of lookup.rows) {
+      byKey.set(
+        naturalKeyDigest({
+          collectorId: row.collector_id,
+          signalType: row.signal_type,
+          scopeCategoryCode: row.scope_category_code,
+          scopeSku: row.scope_sku,
+          scopeMaterialCode: row.scope_material_code,
+          scopeSupplierName: row.scope_supplier_name,
+          scopeLaneKey: row.scope_lane_key,
+          scopeRegionCode: row.scope_region_code,
+          observedAt: row.observed_at,
+        }),
+        row.id,
+      );
+    }
+    for (const r of conflictRows) {
+      if (typeof r.id !== "string") continue;
+      const persisted = byKey.get(
+        naturalKeyDigest({
+          collectorId: r.collectorId,
+          signalType: r.signalType,
+          scopeCategoryCode: r.scopeCategoryCode,
+          scopeSku: r.scopeSku,
+          scopeMaterialCode: r.scopeMaterialCode,
+          scopeSupplierName: r.scopeSupplierName,
+          scopeLaneKey: r.scopeLaneKey,
+          scopeRegionCode: r.scopeRegionCode,
+          observedAt: r.observedAt as Date | string,
+        }),
+      );
+      if (persisted) persistedIds.set(r.id, persisted);
+    }
+  }
+
+  return {
+    inserted,
+    duplicates: rows.length - inserted,
+    persistedIds,
+  };
 }
 
 const registry = new Map<string, IntelligenceCollector>();
@@ -541,7 +699,8 @@ export async function runCollector(
           ? { ...(d.metadata ?? {}), entityUid: d.entityUid }
           : (d.metadata ?? {}),
     }));
-    const { inserted, duplicates } = await insertSignalsWithDedupe(rows);
+    const { inserted, duplicates, persistedIds } =
+      await insertSignalsWithDedupe(rows);
 
     // Post-insert hook: collectors that maintain external cache state
     // (ETag / Last-Modified watermarks persisted as `cache_watermark`
@@ -656,7 +815,7 @@ export async function runCollector(
     try {
       await fanOutCollectorAlerts({
         collector: reg,
-        drafts: validDrafts.map((d) => ({
+        drafts: validDrafts.map((d, idx) => ({
           signalType: d.signalType,
           scopeSupplierName: d.scopeSupplierName ?? null,
           entityUid: d.entityUid ?? null,
@@ -666,6 +825,22 @@ export async function runCollector(
           metadata: d.metadata ?? null,
           value: d.value,
           unit: d.unit,
+          // Pass the persisted `market_signals.id` so the alert
+          // payload can cross-link back to the same row in the Fusion
+          // war-room event stream (Task #161). `validDrafts` and
+          // `rows` are zip-aligned by construction at line 517 — but
+          // `rows[idx].id` is a *candidate* id we generated locally,
+          // not necessarily what landed in the table: when the
+          // natural-key index says "duplicate", `ON CONFLICT DO
+          // NOTHING` keeps the existing row and our candidate id is
+          // never persisted. `persistedIds` resolves the candidate id
+          // to whatever the table actually owns (insert OR conflict),
+          // so the alert payload always points at a row that exists.
+          // If for some reason the lookup didn't find a hit (e.g. a
+          // race where the conflict row was deleted between the
+          // INSERT and the follow-up SELECT), we leave it null rather
+          // than fabricate a dangling reference.
+          marketSignalId: persistedIds.get(rows[idx]!.id ?? "") ?? null,
         })),
       });
     } catch (e) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearch } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { parseFilters, firstFilterValue } from "@/lib/url-filters";
 import {
@@ -52,6 +52,8 @@ import {
   ArrowUpRight,
   History,
   Send,
+  Siren,
+  X,
 } from "lucide-react";
 
 const POLL_MS = 15_000;
@@ -100,6 +102,14 @@ export default function Alerts() {
   // would consume the full Set instead). Initial-state-only — manual
   // filter changes do not write back to the URL, by design (we don't
   // want bookmark drift).
+  //
+  // #161: the war-room cross-link adds a fourth key,
+  // `marketSignalId`, that scopes the inbox to alerts triggered by a
+  // single Fusion event. Unlike severity/state/source it has no
+  // matching dropdown — it's always sticky for the lifetime of the
+  // mounted page (so the user can keep flipping severity/state while
+  // staying scoped to that event), and a banner offers a one-click
+  // "clear" that drops the filter without rewriting the URL.
   const search = useSearch();
   const initial = useMemo(() => {
     const f = parseFilters(search);
@@ -118,6 +128,11 @@ export default function Alerts() {
     ]);
     const sev = firstFilterValue(f, "severity", "all");
     const st = firstFilterValue(f, "state", "open");
+    const eventId = firstFilterValue(f, "marketSignalId", "");
+    // Mirror the server-side prefix guard so a malformed deep-link
+    // never gets passed to the API as a filter (which would silently
+    // return zero rows and confuse the operator).
+    const isValidSignalId = /^sig_[A-Za-z0-9_-]{1,64}$/.test(eventId);
     return {
       severity: validSeverity.has(sev as AlertSeverity)
         ? (sev as AlertSeverity)
@@ -125,6 +140,7 @@ export default function Alerts() {
       state: validState.has(st as AlertState)
         ? (st as AlertState)
         : ("open" as const),
+      marketSignalId: isValidSignalId ? eventId : null,
     };
     // Initial state captured once; subsequent URL edits don't reflow
     // local state (intentional — same as opportunities.tsx).
@@ -136,6 +152,9 @@ export default function Alerts() {
   );
   const [state, setState] = useState<"all" | AlertState>(initial.state);
   const [source, setSource] = useState<"all" | AlertSource>("all");
+  const [marketSignalId, setMarketSignalId] = useState<string | null>(
+    initial.marketSignalId,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const params: ListAlertsParams = useMemo(() => {
@@ -143,8 +162,9 @@ export default function Alerts() {
     if (severity !== "all") p.severity = severity;
     if (state !== "all") p.state = state;
     if (source !== "all") p.source = source;
+    if (marketSignalId) p.marketSignalId = marketSignalId;
     return p;
-  }, [severity, state, source]);
+  }, [severity, state, source, marketSignalId]);
 
   const alertsQ = useListAlerts(params, {
     query: {
@@ -243,6 +263,45 @@ export default function Alerts() {
           tone={snoozed > 0 ? "muted" : "muted"}
         />
       </div>
+
+      {marketSignalId && (
+        <Card
+          className="border-primary/30 bg-primary/5"
+          data-testid="banner-event-filter"
+        >
+          <CardContent className="py-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+            <span className="flex items-center gap-2 min-w-0">
+              <Siren className="w-4 h-4 text-primary shrink-0" />
+              <span className="truncate">
+                Filtered to alerts triggered by stream event{" "}
+                <span className="font-mono text-foreground">
+                  {marketSignalId}
+                </span>
+              </span>
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link
+                href={`/fusion?tab=events&eventId=${encodeURIComponent(
+                  marketSignalId,
+                )}`}
+                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                data-testid="link-open-event-in-war-room"
+              >
+                Open in War Room <ArrowUpRight className="w-3 h-3" />
+              </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setMarketSignalId(null)}
+                data-testid="button-clear-event-filter"
+              >
+                <X className="w-3 h-3 mr-1" /> Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 gap-3 flex-wrap">
@@ -509,6 +568,22 @@ function AlertDetailDialog({
     },
   });
 
+  // #161: alerts produced by the collector fan-out stamp
+  // `payload.marketSignalId` (and the array form `payload.marketSignalIds`)
+  // with the originating Fusion war-room event id. Surface the link
+  // so an analyst triaging an alert can pivot back to the raw stream
+  // event in one click. We accept either shape — array first because
+  // a future multi-source alert composer may set only the array.
+  const relatedEventIds = useMemo<string[]>(() => {
+    const p = (alert?.payload ?? {}) as Record<string, unknown>;
+    const arr = p["marketSignalIds"];
+    if (Array.isArray(arr)) {
+      return arr.filter((v): v is string => typeof v === "string");
+    }
+    const single = p["marketSignalId"];
+    return typeof single === "string" ? [single] : [];
+  }, [alert?.payload]);
+
   return (
     <Dialog open={Boolean(alert)} onOpenChange={(v) => !v && onClose()}>
       <DialogContent
@@ -550,6 +625,35 @@ function AlertDetailDialog({
                 />
               )}
             </div>
+
+            {relatedEventIds.length > 0 && (
+              <section data-testid="section-related-events">
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+                  <Siren className="w-3.5 h-3.5" /> Related stream event
+                  {relatedEventIds.length === 1 ? "" : "s"}
+                </h3>
+                <ul className="space-y-1.5">
+                  {relatedEventIds.map((evtId) => (
+                    <li
+                      key={evtId}
+                      className="text-xs flex items-center justify-between gap-2 border rounded p-2"
+                      data-testid={`related-event-${evtId}`}
+                    >
+                      <span className="font-mono truncate">{evtId}</span>
+                      <Link
+                        href={`/fusion?tab=events&eventId=${encodeURIComponent(
+                          evtId,
+                        )}`}
+                        className="text-primary hover:underline inline-flex items-center gap-1 shrink-0"
+                        data-testid={`link-event-${evtId}`}
+                      >
+                        Open in War Room <ArrowUpRight className="w-3 h-3" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             {alert.payload && Object.keys(alert.payload).length > 0 && (
               <details className="text-xs">

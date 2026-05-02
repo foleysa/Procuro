@@ -239,6 +239,9 @@ router.get("/alerts", tenantMiddleware, async (req, res) => {
   const severityFilter = req.query["severity"] as string | undefined;
   const sourceFilter = req.query["source"] as string | undefined;
   const supplierIdFilter = req.query["supplierId"] as string | undefined;
+  const marketSignalIdFilter = req.query["marketSignalId"] as
+    | string
+    | undefined;
 
   const conditions = [eq(alertsTable.orgId, orgId)];
   if (stateFilter && stateEnum.safeParse(stateFilter).success) {
@@ -254,6 +257,23 @@ router.get("/alerts", tenantMiddleware, async (req, res) => {
   }
   if (supplierIdFilter) {
     conditions.push(eq(alertsTable.supplierId, supplierIdFilter));
+  }
+  // Cross-link with the Fusion war-room event stream (Task #161). Each
+  // alert minted by collector fan-out stamps the originating
+  // `market_signals.id` into `payload.marketSignalId` (and the array
+  // form `payload.marketSignalIds`). We accept either shape so a
+  // future multi-signal alert composer can fan multiple events into
+  // one alert and still be discoverable from the war-room side. The
+  // `id` prefix check defends against accidental SQL injection via the
+  // query string — every signal id is a `sig_…` cuid.
+  if (
+    marketSignalIdFilter &&
+    /^sig_[A-Za-z0-9_-]{1,64}$/.test(marketSignalIdFilter)
+  ) {
+    conditions.push(
+      sql`(${alertsTable.payload} ->> 'marketSignalId' = ${marketSignalIdFilter}
+           OR ${alertsTable.payload} -> 'marketSignalIds' ? ${marketSignalIdFilter})`,
+    );
   }
 
   const rows = await db

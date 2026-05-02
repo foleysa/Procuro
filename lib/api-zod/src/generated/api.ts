@@ -6941,6 +6941,12 @@ export const ListAlertsQueryParams = zod.object({
     ])
     .optional(),
   supplierId: zod.coerce.string().optional(),
+  marketSignalId: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Cross-link from the Fusion war-room event stream (Task #161). Filters\nalerts whose `payload.marketSignalId` matches, or whose\n`payload.marketSignalIds` array contains, the given\n`market_signals.id` (the same id surfaced by `GET \/intelligence\/events`).\nPair with `state` \/ `severity` to scope the result set.\n",
+    ),
   limit: zod.coerce
     .number()
     .min(1)

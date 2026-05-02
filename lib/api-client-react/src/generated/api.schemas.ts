@@ -5374,6 +5374,15 @@ export type ListAlertsParams = {
   source?: AlertSource;
   supplierId?: string;
   /**
+ * Cross-link from the Fusion war-room event stream (Task #161). Filters
+alerts whose `payload.marketSignalId` matches, or whose
+`payload.marketSignalIds` array contains, the given
+`market_signals.id` (the same id surfaced by `GET /intelligence/events`).
+Pair with `state` / `severity` to scope the result set.
+
+ */
+  marketSignalId?: string;
+  /**
    * @minimum 1
    * @maximum 200
    */

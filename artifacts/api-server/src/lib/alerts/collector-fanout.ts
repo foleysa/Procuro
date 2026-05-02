@@ -40,6 +40,12 @@ import { logger } from "../logger";
  * Subset of `MarketSignalDraft` we depend on. Re-declared locally so
  * this module doesn't have to import the runtime's draft type and
  * thereby create a circular dependency.
+ *
+ * `marketSignalId` is the persisted `market_signals.id` of the row this
+ * draft was inserted as (when known). Stamped into `payload.marketSignalId`
+ * so the alert can cross-link to the same row in the Fusion war-room
+ * event stream (`GET /intelligence/events`, Task #161). Optional because
+ * not every fan-out caller emits a war-room-eligible signal.
  */
 export interface CollectorFanoutDraft {
   signalType: string;
@@ -50,6 +56,7 @@ export interface CollectorFanoutDraft {
   metadata?: Record<string, unknown> | null | undefined;
   value: number | string;
   unit: string;
+  marketSignalId?: string | null | undefined;
 }
 
 /**
@@ -200,6 +207,21 @@ async function fanOutOne(
         value: draft.value,
         unit: draft.unit,
         ...(draft.metadata ?? {}),
+        // Cross-link to the Fusion war-room event stream (Task #161).
+        // The persisted `market_signals.id` is the same id the war room
+        // uses; surfacing it here lets the alert detail view deep-link
+        // back to the originating event, and lets the war room query
+        // alerts triggered by a given event via
+        // `GET /alerts?marketSignalId=<id>` (a `payload->>marketSignalId`
+        // JSONB filter). `marketSignalIds` is an array form so future
+        // multi-signal alerts can fan multiple events into one row
+        // without breaking the existing single-id readers.
+        ...(draft.marketSignalId
+          ? {
+              marketSignalId: draft.marketSignalId,
+              marketSignalIds: [draft.marketSignalId],
+            }
+          : {}),
         sources: [
           {
             kind: "collector",

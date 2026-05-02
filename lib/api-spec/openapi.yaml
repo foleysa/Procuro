@@ -3322,6 +3322,16 @@ paths:
         schema:
           type: string
       - in: query
+        name: marketSignalId
+        description: |
+          Cross-link from the Fusion war-room event stream (Task #161). Filters
+          alerts whose `payload.marketSignalId` matches, or whose
+          `payload.marketSignalIds` array contains, the given
+          `market_signals.id` (the same id surfaced by `GET /intelligence/events`).
+          Pair with `state` / `severity` to scope the result set.
+        schema:
+          type: string
+      - in: query
         name: limit
         schema:
           type: integer

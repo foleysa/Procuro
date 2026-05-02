@@ -7,11 +7,13 @@ import {
   useListIntelligenceEvents,
   useGetIntelligenceCoverageGaps,
   useListSuppliers,
+  useListAlerts,
   getListIntelligenceSignalsQueryKey,
   getGetIntelligenceEntity360QueryKey,
   getGetIntelligenceRiskHeatmapQueryKey,
   getListIntelligenceEventsQueryKey,
   getGetIntelligenceCoverageGapsQueryKey,
+  getListAlertsQueryKey,
   type IntelligenceSignal,
   type IntelligenceRiskScore,
   type IntelligenceRiskHeatmapCell,
@@ -19,6 +21,8 @@ import {
   type IntelligenceEvent,
   type IntelligenceEventImpactPathItem,
   type IntelligenceCoverageGap,
+  type Alert,
+  type ListAlertsParams,
 } from "@workspace/api-client-react";
 import {
   Card,
@@ -52,6 +56,8 @@ import { cn } from "@/lib/utils";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpRight,
+  Bell,
   Building2,
   CirclePause,
   CirclePlay,
@@ -65,6 +71,7 @@ import {
   Sparkles,
   Shield,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { DefensePackPane } from "@/components/defense-pack-pane";
 import { BlsTrendChart } from "@/components/bls-trend-chart";
@@ -134,6 +141,15 @@ export default function Fusion() {
     () => new URLSearchParams(search).get("cycleId"),
     [search],
   );
+  // #161 cross-link: `/fusion?tab=events&eventId=<sig_…>` lands the
+  // user on the war room with a specific event highlighted and the
+  // row scrolled into view. We validate the prefix here so a
+  // malformed deep-link can't poison the highlight state. Only
+  // `sig_*` ids are valid market_signals ids.
+  const focusedEventId = useMemo(() => {
+    const raw = new URLSearchParams(search).get("eventId");
+    return raw && /^sig_[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : null;
+  }, [search]);
   // If the URL switches tab while the page is mounted (in-app
   // navigation back to /fusion?tab=events) keep the visible pane in
   // sync with it.
@@ -145,6 +161,13 @@ export default function Fusion() {
   useEffect(() => {
     if (cycleId) setTab("events");
   }, [cycleId]);
+  // #161: same auto-pivot for `?eventId=<sig_…>` deep-links from the
+  // alerts inbox. We don't `setTab` inside the same effect as
+  // `cycleId` because the two are independent triggers and combining
+  // them would re-pivot whenever either changed.
+  useEffect(() => {
+    if (focusedEventId) setTab("events");
+  }, [focusedEventId]);
   // Same for `?entity=` deep-links from Supplier 360 et al.
   useEffect(() => {
     if (initialEntityRef) setTab("entity");
@@ -244,7 +267,11 @@ export default function Fusion() {
         </TabsContent>
         <TabsContent value="events" className="mt-4">
           {tab === "events" && (
-            <EventStreamPane cycleId={cycleId} onOpenEntity={openEntity} />
+            <EventStreamPane
+              cycleId={cycleId}
+              focusedEventId={focusedEventId}
+              onOpenEntity={openEntity}
+            />
           )}
         </TabsContent>
         <TabsContent value="coverage" className="mt-4">
@@ -1272,9 +1299,11 @@ function EmptyCell() {
 
 function EventStreamPane({
   cycleId,
+  focusedEventId,
   onOpenEntity,
 }: {
   cycleId: string | null;
+  focusedEventId: string | null;
   onOpenEntity: (ref: string) => void;
 }) {
   const policy = usePolicy();
@@ -1303,6 +1332,48 @@ function EventStreamPane({
     });
   const items = data?.items ?? [];
 
+  // #161 cross-link: fetch the most recent alerts (any state) once so
+  // each event row can show "triggered N alert(s)" without an N+1
+  // round-trip per row. The alert payloads carry `marketSignalId` (or
+  // the array form `marketSignalIds`); we build a `Map<eventId,
+  // Alert[]>` and the EventRow looks itself up by `event.id`. We pull
+  // 200 — same cap as the events list — which comfortably covers the
+  // war-room window in steady state. If an event sits outside the
+  // alerts cap (very busy tenant) the row simply shows no badge,
+  // which fails closed.
+  const alertsParams = useMemo<ListAlertsParams>(
+    () => ({ limit: 200 }),
+    [],
+  );
+  const alertsQ = useListAlerts(alertsParams, {
+    query: {
+      queryKey: getListAlertsQueryKey(alertsParams),
+      refetchInterval: WAR_ROOM_POLL_MS,
+      refetchOnWindowFocus: true,
+    },
+  });
+  const alertsByEventId = useMemo<Map<string, Alert[]>>(() => {
+    const m = new Map<string, Alert[]>();
+    for (const a of alertsQ.data?.items ?? []) {
+      const p = (a.payload ?? {}) as Record<string, unknown>;
+      const ids: string[] = [];
+      const arr = p["marketSignalIds"];
+      if (Array.isArray(arr)) {
+        for (const v of arr) if (typeof v === "string") ids.push(v);
+      }
+      const single = p["marketSignalId"];
+      if (typeof single === "string" && !ids.includes(single)) {
+        ids.push(single);
+      }
+      for (const id of ids) {
+        const list = m.get(id);
+        if (list) list.push(a);
+        else m.set(id, [a]);
+      }
+    }
+    return m;
+  }, [alertsQ.data]);
+
   // ---- NEW-badge tracking ---------------------------------------------
   // `seenIds` records every event id we have ever rendered in this
   // mounted session. The first batch is silently absorbed (no NEW
@@ -1323,6 +1394,37 @@ function EventStreamPane({
     seenIdsRef.current = null;
     setNewSince(new Map());
   }, [cycleId]);
+
+  // #161: when an `?eventId=…` deep-link lands, scroll the matching
+  // row into view and pulse it briefly. We watch `items` rather than
+  // the URL because the row only exists in the DOM after the events
+  // payload arrives — a one-shot effect against `focusedEventId`
+  // alone would fire before the row was mounted. The DOM lookup uses
+  // the existing `event-row-${id}` testid hook so we don't have to
+  // wire up refs into every row.
+  const focusedSatisfiedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusedEventId) {
+      focusedSatisfiedRef.current = null;
+      return;
+    }
+    if (focusedSatisfiedRef.current === focusedEventId) return;
+    if (!items.some((e) => e.id === focusedEventId)) return;
+    // Defer to the next frame so the just-rendered row is measurable.
+    const handle = requestAnimationFrame(() => {
+      const el = document.querySelector(
+        `[data-testid="event-row-${focusedEventId}"]`,
+      );
+      if (el && "scrollIntoView" in el) {
+        (el as HTMLElement).scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      }
+      focusedSatisfiedRef.current = focusedEventId;
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [focusedEventId, items]);
 
   useEffect(() => {
     if (!data) return;
@@ -1397,6 +1499,13 @@ function EventStreamPane({
     ? new Date(dataUpdatedAt).toLocaleTimeString()
     : null;
 
+  // Once data has arrived, decide whether the focused event is even
+  // present in the current war-room window. If not, surface that
+  // gracefully in the banner — sending the operator on a hunt for a
+  // row that isn't there is worse than telling them outright.
+  const focusedEventInWindow =
+    focusedEventId !== null && items.some((e) => e.id === focusedEventId);
+
   return (
     <div className="space-y-4">
       {cycleId && (
@@ -1413,6 +1522,42 @@ function EventStreamPane({
               data-testid="link-clear-cycle"
             >
               Clear cycle filter →
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+      {focusedEventId && (
+        <Card
+          className="border-primary/30 bg-primary/5"
+          data-testid="card-event-focus-banner"
+        >
+          <CardContent className="py-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+            <span className="flex items-center gap-2 min-w-0">
+              <Bell className="w-4 h-4 text-primary shrink-0" />
+              <span className="truncate">
+                Highlighting stream event{" "}
+                <span className="font-mono text-foreground">
+                  {focusedEventId}
+                </span>{" "}
+                {isLoading
+                  ? "— loading events…"
+                  : focusedEventInWindow
+                    ? "— scrolled into view below."
+                    : `— not found in the current ${
+                        cycleId ? "cycle window" : "72h window"
+                      }.`}
+              </span>
+            </span>
+            <Link
+              href={
+                cycleId
+                  ? `/fusion?tab=events&cycleId=${encodeURIComponent(cycleId)}`
+                  : "/fusion?tab=events"
+              }
+              className="text-xs text-primary hover:underline inline-flex items-center gap-1 shrink-0"
+              data-testid="link-clear-event-focus"
+            >
+              <X className="w-3 h-3" /> Clear focus
             </Link>
           </CardContent>
         </Card>
@@ -1515,6 +1660,8 @@ function EventStreamPane({
                   policy={policy}
                   onOpenEntity={onOpenEntity}
                   isNew={newSince.has(e.id)}
+                  isFocused={e.id === focusedEventId}
+                  triggeredAlerts={alertsByEventId.get(e.id) ?? []}
                 />
               ))}
             </ul>
@@ -1530,11 +1677,23 @@ function EventRow({
   policy,
   onOpenEntity,
   isNew = false,
+  isFocused = false,
+  triggeredAlerts = [],
 }: {
   event: IntelligenceEvent;
   policy: ReturnType<typeof usePolicy>;
   onOpenEntity: (ref: string) => void;
   isNew?: boolean;
+  // #161: when set, the row is the target of a `?eventId=…` deep-link
+  // from the alerts inbox. We outline it and pulse a "Focused" chip
+  // so the operator can immediately spot the event the alert pointed
+  // at. Independent of `isNew` because the two have different
+  // semantics — `isNew` = arrived since mount, `isFocused` = the URL
+  // names this event.
+  isFocused?: boolean;
+  // #161: alerts whose payload references this event id. Pre-resolved
+  // by the parent pane so we don't fan out an N+1 of per-row fetches.
+  triggeredAlerts?: Alert[];
 }) {
   const sev = event.severity ?? null;
   const sevTone =
@@ -1545,15 +1704,26 @@ function EventRow({
           ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
           : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
       : "bg-muted text-muted-foreground border-border";
+  // The set of distinct alert states across the triggered alerts —
+  // shown in the badge title so an operator hovering the chip can
+  // tell at a glance whether they've all been triaged or some are
+  // still open.
+  const triggeredOpenCount = triggeredAlerts.reduce(
+    (n, a) => (a.state === "open" ? n + 1 : n),
+    0,
+  );
   return (
     <li
       className={cn(
         "border rounded-md p-3 space-y-1 transition-colors",
         isNew &&
           "border-primary/50 bg-primary/5 animate-in fade-in slide-in-from-top-2 duration-500",
+        isFocused &&
+          "ring-2 ring-primary/60 border-primary/60 bg-primary/5",
       )}
       data-testid={`event-row-${event.id}`}
       data-new={isNew ? "true" : "false"}
+      data-focused={isFocused ? "true" : "false"}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="font-medium truncate flex items-center gap-2">
@@ -1566,11 +1736,44 @@ function EventRow({
               New
             </span>
           )}
+          {isFocused && (
+            <span
+              className="rounded border border-primary/60 bg-primary/10 text-primary px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+              data-testid={`event-row-focused-${event.id}`}
+              aria-label="Focused via deep-link"
+            >
+              Focus
+            </span>
+          )}
           <span className="truncate">
             {event.title ?? event.signalType}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {triggeredAlerts.length > 0 && (
+            <Link
+              href={`/alerts?filter=marketSignalId:${encodeURIComponent(
+                event.id,
+              )}`}
+              className={cn(
+                "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:underline",
+                triggeredOpenCount > 0
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "border-border bg-muted/40 text-muted-foreground",
+              )}
+              title={
+                triggeredOpenCount > 0
+                  ? `${triggeredOpenCount} open of ${triggeredAlerts.length} triggered`
+                  : `${triggeredAlerts.length} triggered (all triaged)`
+              }
+              data-testid={`event-row-alerts-${event.id}`}
+            >
+              <Bell className="w-3 h-3" />
+              {triggeredAlerts.length}
+              {triggeredOpenCount > 0 ? ` · ${triggeredOpenCount} open` : ""}
+              <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          )}
           {event.country && (
             <Badge variant="outline" className="text-[10px]">
               {event.country}
