@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/empty";
 import NotFound from "@/pages/not-found";
 
+import { ErrorBoundary } from "./components/error-boundary";
 import { Layout } from "./components/layout";
 import Landing from "./pages/landing";
 import Dashboard from "./pages/dashboard";
@@ -323,7 +324,8 @@ function AppRoutes() {
       <Route path="/trust/public" component={TrustPublicPage} />
       <Route>
         <Layout>
-          <Switch>
+          <RouteBoundary>
+            <Switch>
             <Route path="/" component={Dashboard} />
             {/* #269: Today and Dashboard merged into one unified
               * landing surface at `/`. Both legacy URLs redirect so
@@ -396,10 +398,26 @@ function AppRoutes() {
               </AdminGuard>
             </Route>
             <Route component={NotFound} />
-          </Switch>
+            </Switch>
+          </RouteBoundary>
         </Layout>
       </Route>
     </Switch>
+  );
+}
+
+/**
+ * Per-route ErrorBoundary keyed on the active location so a navigation
+ * away from a crashing page implicitly clears the fallback. Wraps the
+ * whole `<Switch>` so a thrown render error in any page renders an
+ * inline retry surface instead of blanking the chrome.
+ */
+function RouteBoundary({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  return (
+    <ErrorBoundary scope="this page" resetKey={location}>
+      {children}
+    </ErrorBoundary>
   );
 }
 

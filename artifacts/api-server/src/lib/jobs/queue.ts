@@ -597,6 +597,8 @@ export async function processOnce(): Promise<boolean> {
         {
           jobId: job.id,
           kind: job.kind,
+          tenantId: job.orgId ?? null,
+          errorClass: e.name,
           attempt: job.attempts,
           maxAttempts: budget,
           retryInMs: delay,
@@ -606,10 +608,17 @@ export async function processOnce(): Promise<boolean> {
         "Job failed transiently; scheduled for retry",
       );
     } else {
+      // Terminal failure log line. Stable shape — tenantId, jobKind,
+      // jobId, attempt, errorClass — so log filtering by any of those
+      // dimensions is easy. Documented in HARDENING.md as the
+      // canonical "this job will not run again" event.
       logger.error(
         {
+          event: "job_terminal_failure",
           jobId: job.id,
-          kind: job.kind,
+          jobKind: job.kind,
+          tenantId: job.orgId ?? null,
+          errorClass: e.name,
           attempt: job.attempts,
           maxAttempts: budget,
           unrecoverable: isUnrecoverable(e),

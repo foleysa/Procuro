@@ -27,6 +27,20 @@ app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 app.use(
   pinoHttp({
     logger,
+    // Honour an inbound `x-request-id` (so callers can correlate across
+    // services) and otherwise let pino-http generate one. Echoing it
+    // back on the response makes the id visible in the browser
+    // network tab and the canonical "everything that happened for
+    // request X" lookup documented in HARDENING.md.
+    genReqId(req, res) {
+      const inbound = req.headers["x-request-id"];
+      const id =
+        typeof inbound === "string" && inbound.trim() !== ""
+          ? inbound
+          : `req_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
+      res.setHeader("x-request-id", id);
+      return id;
+    },
     serializers: {
       req(req) {
         return {

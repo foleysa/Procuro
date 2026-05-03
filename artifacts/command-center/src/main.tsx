@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import App from "./App";
+import { ErrorBoundary } from "./components/error-boundary";
 import "./index.css";
 
 // Forward the active tenant on every same-origin /api/* request. We must
@@ -90,9 +91,11 @@ function Bootstrap() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <ErrorBoundary scope="Atlas Procure">
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
