@@ -59,7 +59,9 @@ import {
 import { eq } from "drizzle-orm";
 import {
   __setBigQueryClientForTests,
+  __setRecordCollectorRunOverrideForTests,
   type BigQueryClientLike,
+  type CollectorRunRecord,
 } from "@workspace/intelligence/bq";
 import { __setStorageClientForTests } from "@workspace/intelligence/gcs";
 import {
@@ -259,8 +261,20 @@ test("runCollector lands raw payload to GCS and threads its gs:// pointer into t
 
   const saves: CapturedSave[] = [];
   const bqCapture: BqCapture = { queries: [] };
+  // Capture every `recordCollectorRun` call the runtime makes for this
+  // run. The runtime is supposed to thread the *same* gs:// pointer it
+  // used in the per-row MERGE into the per-run audit row, so operators
+  // investigating a run can jump straight to the upstream bytes from
+  // `collector_runs.raw_payload_pointer`. A regression that drops or
+  // changes that pointer would silently orphan the audit trail; this
+  // test fails loudly if it happens.
+  const recordedRuns: CollectorRunRecord[] = [];
   __setBigQueryClientForTests(makeFakeBigQuery(bqCapture));
   __setStorageClientForTests(makeFakeStorage(saves));
+  __setRecordCollectorRunOverrideForTests(async (run) => {
+    recordedRuns.push(run);
+    return true;
+  });
 
   registerCollector(makeCollector(draftsRef));
   await upsertCollectorRegistration({
@@ -290,6 +304,7 @@ test("runCollector lands raw payload to GCS and threads its gs:// pointer into t
     }
     __setBigQueryClientForTests(null);
     __setStorageClientForTests(null);
+    __setRecordCollectorRunOverrideForTests(null);
     await pool.end().catch(() => {});
   });
 
@@ -403,4 +418,65 @@ test("runCollector lands raw payload to GCS and threads its gs:// pointer into t
   assert.ok(bqRowB, "BQ payload contains the Beta Industries row");
   assert.equal(bqRowA!["source_run_id"], bqRowB!["source_run_id"]);
   assert.equal(bqRowA!["collector_id"], TEST_COLLECTOR_ID);
+
+  // ---------------------------------------------------------------
+  // collector_runs audit-log assertions — the second half of the
+  // raw_payload_pointer contract.
+  // ---------------------------------------------------------------
+  // Operators investigating "did this run actually land its payload?"
+  // query the `collector_runs` table, not the per-row `market_signals`
+  // batch. The runtime is supposed to thread the *same* gs:// pointer
+  // it stamped on every signal row into `recordCollectorRun(...)`. A
+  // refactor that stops passing it (or passes a different / empty
+  // value) would silently orphan the audit trail — the per-signal
+  // MERGE would still look right, but `collector_runs` would no
+  // longer point at the bytes the run actually parsed.
+  assert.equal(
+    recordedRuns.length,
+    1,
+    "runtime called recordCollectorRun exactly once for the run",
+  );
+  const recordedRun = recordedRuns[0]!;
+  assert.equal(
+    recordedRun.collectorId,
+    TEST_COLLECTOR_ID,
+    "audit row is attributed to the collector under test",
+  );
+  assert.equal(
+    recordedRun.runId,
+    bqRowA!["source_run_id"],
+    "audit row's runId matches the source_run_id stamped on every market_signals row — same physical run",
+  );
+  assert.equal(
+    recordedRun.status,
+    "succeeded",
+    "audit row marks the run as succeeded",
+  );
+  assert.equal(
+    recordedRun.rawPayloadPointer,
+    expectedPointer,
+    `collector_runs.raw_payload_pointer must equal "${expectedPointer}" (got ${JSON.stringify(recordedRun.rawPayloadPointer)}); this is the per-run audit pointer operators rely on to reach the upstream bytes`,
+  );
+  // Sibling-field guard: catches a regression that swaps the per-run
+  // pointer for an empty string, "TODO", or a placeholder that
+  // happens to type-check as `string`.
+  assert.equal(
+    typeof recordedRun.rawPayloadPointer,
+    "string",
+    "collector_runs.raw_payload_pointer must be a string, not null/undefined",
+  );
+  assert.ok(
+    String(recordedRun.rawPayloadPointer).startsWith(`gs://${BUCKET}/`),
+    "collector_runs.raw_payload_pointer must be a fully-qualified gs:// URL in the configured bucket",
+  );
+  // The per-row pointer (in the BQ MERGE payload) and the per-run
+  // pointer (in the audit row) must be identical references to the
+  // same blob. A divergence here means the runtime is computing the
+  // pointer twice with different inputs — exactly the silent-orphan
+  // scenario this test exists to prevent.
+  assert.equal(
+    recordedRun.rawPayloadPointer,
+    rowsPayload[0]!["raw_payload_pointer"],
+    "per-run audit pointer and per-signal MERGE pointer must reference the same blob",
+  );
 });
