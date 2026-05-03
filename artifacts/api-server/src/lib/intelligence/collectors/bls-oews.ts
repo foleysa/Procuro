@@ -460,7 +460,13 @@ export const blsOewsCollector: IntelligenceCollector<typeof oewsSignalSchema> =
     posture: "public-api",
     sourceUrl: "https://www.bls.gov/oes/",
     defaultRateLimitRpm: 10,
-    defaultScheduleCron: "30 13 * * *",
+    // OEWS publishes once per year for the prior May reference period
+    // (initial release in late March/early April, with revisions through
+    // the spring). We tick at 13:30 UTC on the 1st of April, May, June,
+    // and July so the annual refresh is captured no matter when BLS
+    // publishes within that window, while leaving the rest of the year
+    // idle to preserve the BLS API daily quota.
+    defaultScheduleCron: "30 13 1 4-7 *",
     postureClass: "public_api",
     disclosureTier: "T1",
     jurisdiction: "US",
