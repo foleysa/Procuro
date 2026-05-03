@@ -1,0 +1,212 @@
+just learned discussed, and mapped out.1:33 AMClaude responded: ROUTE: He wants the Replit handoff brief — translating the canonical procurement framework and three-tier dashboard architecture we just built into something R…ROUTE: He wants the Replit handoff brief — translating the canonical procurement framework and three-tier dashboard architecture we just built into something Replit Agent can execute. Active corrections in force: lead with money, use canonical S2P terminology (now codified), build structures not clever prompts. No client deliverable; this is a Replit Power-mode brief. Compressed pipeline.
+RESEARCH: What Replit Agent needs to do this well:
+
+A clear goal stated first
+The current state (what exists)
+The target state (what should exist)
+Concrete data model changes (new fields, new tables, mappings)
+Layout specification, top to bottom
+Copy/labels exact (no invented terms)
+What NOT to change
+Acceptance criteria so he knows when it's done
+
+Replit Power mode handles multi-component restructuring well but needs explicit instructions. Vague briefs produce vague results. The brief should be paste-ready.
+THINK: Two ways to hand this off:
+
+One mega-prompt — comprehensive but Replit may try to do everything at once and produce a tangle.
+Sequenced prompts — one per architectural change, in dependency order, so each one is verifiable before the next.
+
+Sequenced is better. Reasons: (a) Replit Power mode bills per checkpoint and a single mega-prompt can run away ($79 single-prompt horror stories from the search earlier), (b) John can verify after each prompt and adjust, (c) failures are isolated.
+Order of operations (dependency-driven):
+
+Data model first — add savings type tagging, canonical stage names, DOA tiers. Nothing else can be built until the data has the right shape.
+Glossary/labels — lock terminology platform-wide via tooltips and sub-labels so the rebuild uses canonical names.
+Top tier (outcomes) — three-number money headline with savings type tags.
+Middle tier 2a (Sourcing Plays in Flight) — new component, new view.
+Middle tier 2b (Stage-Gate Bottlenecks) — replaces Live Queue.
+Middle tier 2c (Methods and Tools) — new component.
+Middle tier 2d (DOA SLA tracking) — new component.
+Bottom tier (System Health) — demote existing tiles to a status strip.
+Wire alerts — engine-stalled detection logic.
+Acceptance test — full walkthrough criteria.
+
+Also: he should know which prompts are Power-mode and which can be Economy or Lite to control cost. The framing "TTPs to close pipeline" he used means he understands this is operating-model engineering, not visual polish — Power mode for the structural ones.
+PLAN:
+
+Frame the handoff philosophy (sequenced, not mega-prompt; verify between steps).
+Pre-flight checklist (what Replit needs from him before starting).
+Ten sequenced prompts, paste-ready, with mode noted on each.
+Acceptance criteria.
+What to watch out for.
+
+BUILD/SHIP:
+The cleanest way to hand this to Replit is not as one giant prompt — that's how you burn $200 in checkpoints and end up with a tangle. Break it into a sequence, verify after each step, and use the right mode per task. Power mode where structure changes; Economy where you're just relabeling; Lite for copy fixes.
+Here's the full handoff package.
+
+Pre-flight: what Replit needs to see first
+Before you start prompting, paste this context block into the Agent chat once. Replit will refer back to it across the session and it stops you having to re-explain the framework every prompt.
+
+Context for this build session. I'm restructuring the Command Center dashboard around a three-tier architecture and canonical Source-to-Pay (S2P) procurement vocabulary. Use these definitions throughout — do not invent new terms.
+Three-tier architecture:
+
+Tier 1 (top): OUTCOMES. Three numbers — Realized Savings, Identified Pipeline, Gap to Goal. Money headline.
+Tier 2 (middle): THE WORK. Four sub-layers — (2a) Sourcing Plays in Flight, (2b) Stage-Gate Bottlenecks, (2c) Methods and Tools, (2d) DOA Approval SLAs.
+Tier 3 (bottom): SYSTEM HEALTH. Demoted to a green/yellow/red status strip — collectors, signals, jobs, precision.
+
+Canonical S2P stage names (replace platform-internal labels with these):
+
+Proposed → Identified (Identified Savings)
+Approved → Awarded (Negotiated Savings)
+Executing → In Implementation (split into Contracting / Implementation; Implemented Savings)
+Realized → Realized (Realized Savings, Finance-validated)
+Rejected → Closed — No Action
+
+Savings type tagging: Every dollar value in the system must be tagged with one of: Identified | Negotiated | Implemented | Realized. And cross-tagged with: Hard | Cost Avoidance | Soft.
+Glossary lock: Use ISM/CIPS/CAPS Research vocabulary throughout. Standard terms include: Source-to-Pay (S2P), Source-to-Contract (S2C), Procure-to-Pay (P2P), Spend Cube, Should-Cost Model, Three-Way Match, Delegation of Authority (DOA), Maverick Spend, Contract Leakage, TCO, Sourcing Event, RFx.
+Do not change: the data ingestion layer, the recommendation engine, the refresh cadence, the Trust Center link, or the Run cycle / Refresh controls.
+Acknowledge this context and wait for the first prompt.
+
+
+The ten sequenced prompts
+Run them in order. Verify after each. Mode is noted on each one.
+Prompt 1 — Data model for savings types and canonical stages
+Mode: Power
+
+Update the data model so every opportunity record has two new required fields:
+
+savings_type — enum: Identified | Negotiated | Implemented | Realized
+savings_classification — enum: Hard | Cost Avoidance | Soft
+
+Also add a canonical_stage field that maps the existing internal stage to one of: Identified | Awarded | In Contracting | In Implementation | Realized | Closed-No Action.
+Backfill existing records: opportunities currently labeled "Proposed" → canonical_stage = Identified, savings_type = Identified. "Approved" → Awarded and Negotiated. "Executing" → In Implementation and Implemented. "Realized" → Realized and Realized. "Rejected" → Closed-No Action. Default savings_classification to Hard for backfill; flag for review.
+Show me the migration plan before running it.
+
+Prompt 2 — DOA tier model
+Mode: Power
+
+Add a Delegation of Authority (DOA) tier model. Each opportunity should be assigned a doa_tier based on award value:
+
+<$250K → Tier 1 (Category Manager, 48 hr SLA)
+$250K–$1M → Tier 2 (Procurement Director, 5 day SLA)
+$1M–$5M → Tier 3 (VP Procurement, 7 day SLA)
+>$5M → Tier 4 (CPO + CFO joint, 10 day SLA)
+
+Add a time_in_current_stage field calculated dynamically. Add a boolean breaching_doa_sla flag based on tier SLA vs time_in_current_stage when stage = Identified (awaiting award).
+These thresholds should be configurable in a settings file, not hardcoded.
+
+Prompt 3 — Glossary tooltips on existing labels
+Mode: Economy
+
+Without changing any existing UI labels yet, add hover tooltips to every stage label in the Pipeline component. Tooltip text:
+
+"Proposed" → "Identified Opportunity — analytically surfaced, pre-supplier engagement. Savings type: Identified."
+"Approved" → "Awarded — supplier selected and terms agreed. Savings type: Negotiated."
+"Executing" → "In Implementation — contract being signed and rolled out. Savings type: Implemented."
+"Realized" → "Realized — Finance-validated against baseline. Savings type: Realized."
+"Rejected" → "Closed — No Action. Evaluated and declined; reason code required."
+
+
+Prompt 4 — Tier 1: Outcomes header
+Mode: Power
+
+Replace the current top KPI row with a three-tile OUTCOMES header. Use these exact labels and formats:
+
+Realized Savings — $8.3M (large, hero) — subtitle: "Finance-validated, Hard Savings, period-to-date"
+Identified Pipeline — $584.4M — subtitle: "205 open opportunities · $490.9M addressable across 770 suppliers"
+Gap to Goal — calculated as (Capture Rate Target × Acted-On Spend) − Realized Savings. Today: $347M short of 60% target ($355M). Subtitle: "Capture Rate: 1% actual vs 60% target"
+
+Move the existing "Capture Rate" tile content into the Gap to Goal subtitle. Realized Savings tile must be the largest of the three. Each tile shows the savings type tag in small caps under the dollar value.
+
+Prompt 5 — Tier 2a: Sourcing Plays in Flight
+Mode: Power
+
+Build a new component called SourcingPlaysInFlight. It's a table view showing every opportunity currently in Awarded or In Implementation stages, grouped by lever.
+Columns: Lever | Sourcing Strategy | Stage | $ at Stake | Savings Type | Owner
+The "Sourcing Strategy" field is a new categorical attribute on each opportunity. For now, populate it from a controlled vocabulary:
+
+Competitive RFP
+Single-to-Dual Source
+Should-Cost Challenge
+Tiered Pricing Audit / Rebate Claim
+Invoice-to-Contract Reconciliation
+Catalog Enforcement
+Negotiated Renewal
+
+If the strategy is unset, show "Unclassified" and flag for category manager review. Place this component directly below the Outcomes header.
+
+Prompt 6 — Tier 2b: Stage-Gate Bottlenecks
+Mode: Power
+
+Replace the existing "Live queue" component with a new StageGateBottlenecks component. It's a table showing where opportunities are stuck between stages.
+Rows (one per gate transition):
+
+Identified → Awarded
+Awarded → In Contracting
+In Contracting → In Implementation
+In Implementation → Realized
+
+Columns: Gate | Count | $ Stuck | Avg Cycle Time | Owner of Gate | DOA SLA Breaches
+Highlight any row where DOA SLA Breaches > 0 with the existing warning color. The Identified → Awarded row is currently the hot row — make sure it renders correctly with 102 count, $215.5M, 11-day average, and DOA breach count.
+
+Prompt 7 — Tier 2c: Methods and Tools registry
+Mode: Economy
+
+Build a MethodsAndTools component — a static reference table that shows which sourcing strategies are mapped to which methods and tools, plus a maturity flag.
+Columns: Sourcing Strategy | Method | Tool/System | Maturity (Proven | Emerging | First-Run)
+Hardcode the initial registry from this list:
+
+Competitive RFP / Kraljic-segmented RFx + weighted scoring / Coupa Sourcing or Ariba / Proven
+Single-to-Dual Source / Switching cost analysis + supplier risk scoring / Supplier Intelligence module / Proven
+Should-Cost Challenge / Bottom-up cost model + index validation / Internal SCM + market index data / Emerging
+Tiered Pricing Audit / Volume aggregation + back-pricing claim / CLM / Proven
+Invoice-to-Contract Reconciliation / Three-way match + variance flag / AP system + CLM / Proven
+Catalog Enforcement / Buying channel routing + P-card controls / e-procurement / Emerging
+Negotiated Renewal / Index-linked re-pricing + Both-Win negotiation / CLM / Proven
+
+Make this editable later by an admin, but no edit UI for now.
+
+Prompt 8 — Tier 2d: DOA SLA tracking
+Mode: Power
+
+Build a DOAApprovalQueue component showing approval workload by tier.
+Columns: DOA Tier | Approver Role | SLA | In Queue | Breaching SLA | $ at Stake
+Rows are the four DOA tiers from prompt 2. The "Breaching SLA" cell should be clickable, opening a filtered view of just those opportunities. Sort tiers ascending by dollar threshold so smallest-value approvals show first.
+
+Prompt 9 — Tier 3: System Health status strip
+Mode: Economy
+
+Demote the existing diagnostic tiles (Cycle P50, Recommendation Precision, Signals 24h, Collector Coverage, Data Pulse) into a single horizontal status strip at the bottom of the dashboard.
+Strip should show: Engine: 🟢 / 🟡 / 🔴 with a one-line summary. Click expands the strip into the current detailed tiles in a collapsible drawer.
+Status logic:
+
+🟢 Green: Signals 24h > 50% of trailing 7-day avg AND Failed Jobs = 0 AND Collectors stale ≤ 1
+🟡 Yellow: any one of the above thresholds breached
+🔴 Red: Signals 24h = 0 OR Failed Jobs > 0 OR jobs queued > 5 with 0 running for >1h
+
+Today the system should render 🔴 Red with summary "Engine intake stalled — 0 signals in 24h, 10 jobs queued, 1 stale collector."
+
+Prompt 10 — Wire engine-stalled alert to Critical Alerts tile
+Mode: Power
+
+The Critical Alerts tile currently shows 0 because nothing is wired to fire alerts. Add an alert rule:
+Engine Stalled fires when the Tier 3 status logic returns 🔴 Red. The alert should:
+
+Increment the Critical Alerts counter
+Show as a high-severity entry with text: "Engine intake has stopped — investigate collectors and job queue"
+Include a one-click CTA "Open Engine Telemetry" that opens the Tier 3 drawer
+
+The 0 in Critical Alerts today is misleading — this rule will correct it.
+
+
+Acceptance criteria — how you know it's done
+After all ten prompts, verify the dashboard reads top-to-bottom in this order, with these specific elements:
+
+Outcomes row — three tiles: Realized Savings ($8.3M, Hard, Realized), Identified Pipeline ($584.4M, Identified), Gap to Goal ($347M short).
+Sourcing Plays in Flight — table grouped by lever, every play tagged with strategy and stage.
+Stage-Gate Bottlenecks — table with the Identified→Awarded row showing 102 / $215.5M / 11 days / DOA breaches highlighted.
+DOA Approval Queue — four tiers with SLA breach counts.
+Methods and Tools — reference table, maturity flagged.
+System Health strip — currently red, expandable to detailed telemetry.
+Critical Alerts tile — now shows 1 (Engine Stalled), not 0.
+Every dollar figure on the screen carries a savings-type tag (Identified / Negotiated / Implemented / Realized).
+Every stage label has a tooltip mapping to canonical S2P vocabulary.
