@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Link } from "wouter";
 import {
   Card,
@@ -7,9 +7,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ArrowRight, Layers } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ArrowRight, Layers, Loader2 } from "lucide-react";
 import { formatUsd, leverLabel } from "@/lib/format";
-import type { Opportunity } from "@workspace/api-client-react";
+import {
+  OpportunitySourcingStrategy,
+  getListOpportunitiesQueryKey,
+  usePatchOpportunityClassification,
+  type Opportunity,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
 interface SourcingPlaysInFlightProps {
   approvedItems: Opportunity[];
@@ -96,6 +110,83 @@ const ACTIVE_CANONICAL_STAGES = new Set([
   "In Contracting",
   "In Implementation",
 ]);
+
+const SOURCING_STRATEGY_OPTIONS = Object.values(
+  OpportunitySourcingStrategy,
+).filter((v) => v !== "Unclassified");
+
+function SourcingStrategyCell({ row }: { row: PlayRow }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const classifyM = usePatchOpportunityClassification({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "Sourcing strategy updated" });
+        qc.invalidateQueries({ queryKey: getListOpportunitiesQueryKey() });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Update failed",
+          description: String(e),
+          variant: "destructive",
+        }),
+      onSettled: () => setPendingId(null),
+    },
+  });
+
+  if (!row.isUnclassified) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {row.sourcingStrategy ?? "—"}
+      </span>
+    );
+  }
+
+  const isPending = classifyM.isPending && pendingId === row.id;
+
+  return (
+    <div className="inline-flex items-center gap-1">
+      <Select
+        disabled={isPending}
+        onValueChange={(value) => {
+          setPendingId(row.id);
+          classifyM.mutate({
+            id: row.id,
+            data: {
+              sourcingStrategy:
+                value as (typeof SOURCING_STRATEGY_OPTIONS)[number],
+            },
+          });
+        }}
+      >
+        <SelectTrigger
+          className="h-7 w-[180px] text-xs border-amber-300 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800/60"
+          data-testid={`select-sourcing-strategy-${row.id}`}
+        >
+          <SelectValue placeholder="Classify…" />
+        </SelectTrigger>
+        <SelectContent>
+          {SOURCING_STRATEGY_OPTIONS.map((opt) => (
+            <SelectItem
+              key={opt}
+              value={opt}
+              data-testid={`option-sourcing-strategy-${opt}`}
+            >
+              {opt}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {isPending && (
+        <Loader2
+          className="w-3 h-3 animate-spin text-muted-foreground"
+          data-testid={`spinner-sourcing-strategy-${row.id}`}
+        />
+      )}
+    </div>
+  );
+}
 
 export function SourcingPlaysInFlight({
   approvedItems,
@@ -253,7 +344,7 @@ export function SourcingPlaysInFlight({
                           </Link>
                         </td>
                         <td className="py-2 pr-3 align-middle text-xs text-muted-foreground">
-                          {r.sourcingStrategy ?? "Unclassified"}
+                          <SourcingStrategyCell row={r} />
                         </td>
                         <td className="py-2 pr-3 align-middle">
                           {stageBadge(r.canonicalStage)}
