@@ -31,6 +31,7 @@ import {
 } from "@workspace/db";
 import { and, eq, inArray, like } from "drizzle-orm";
 import app from "../src/app";
+import { withAuditBypass } from "../src/lib/audit-immutability";
 
 const RUN = `t122r-${randomUUID().slice(0, 8)}`;
 const ORG_ID = `org-${RUN}`;
@@ -122,9 +123,11 @@ describe("onboarding routes — state machine + audit telemetry", () => {
       }
     };
     await safe(
-      db
-        .delete(adminAuditLogTable)
-        .where(eq(adminAuditLogTable.orgId, ORG_ID)),
+      withAuditBypass((client) =>
+        client.query("DELETE FROM admin_audit_log WHERE org_id = $1", [
+          ORG_ID,
+        ]),
+      ),
     );
     await safe(
       db

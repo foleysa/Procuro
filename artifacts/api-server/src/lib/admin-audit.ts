@@ -94,5 +94,10 @@ export const ADMIN_AUDIT_ACTIONS = [
   // mappings persist tenant-wide (or globally for platform admins) so
   // every resolve event must land in the audit log.
   "taxonomy.synonym_resolve",
+  // Audit-log tamper-evidence — emitted whenever someone attempts a
+  // PATCH or DELETE against /api/admin/audit/:id. The endpoint always
+  // refuses the mutation (audit log is append-only); this row is the
+  // observable evidence that the probe happened. UAT v2 D-19.
+  "audit.mutation_attempt_blocked",
 ] as const;
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

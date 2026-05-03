@@ -25,6 +25,7 @@ import { and, eq } from "drizzle-orm";
 import app from "../src/app";
 import { generateToken } from "../src/lib/auth";
 import { newId } from "../src/lib/ids";
+import { withAuditBypass } from "../src/lib/audit-immutability";
 
 async function pickOrgId(): Promise<string> {
   const [row] = await db.select({ id: orgsTable.id }).from(orgsTable).limit(1);
@@ -172,12 +173,10 @@ test("issue / rotate / revoke an API key emits audit log rows", async () => {
     .where(
       and(eq(apiKeysTable.orgId, orgId), eq(apiKeysTable.label, "test-issued-key")),
     );
-  await db
-    .delete(adminAuditLogTable)
-    .where(
-      and(
-        eq(adminAuditLogTable.orgId, orgId),
-        eq(adminAuditLogTable.targetLabel, "test-issued-key"),
-      ),
-    );
+  await withAuditBypass((client) =>
+    client.query(
+      `DELETE FROM admin_audit_log WHERE org_id = $1 AND target_label = $2`,
+      [orgId, "test-issued-key"],
+    ),
+  );
 });

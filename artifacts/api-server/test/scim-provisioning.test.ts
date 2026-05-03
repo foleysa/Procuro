@@ -39,6 +39,7 @@ import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import app from "../src/app";
 import { generateToken } from "../src/lib/auth";
 import { newId } from "../src/lib/ids";
+import { withAuditBypass } from "../src/lib/audit-immutability";
 
 const RUN = `scim-${randomUUID().slice(0, 8)}`;
 
@@ -145,14 +146,12 @@ async function cleanup(orgId: string, label: string): Promise<void> {
   await db
     .delete(apiKeysTable)
     .where(and(eq(apiKeysTable.orgId, orgId), eq(apiKeysTable.label, label)));
-  await db
-    .delete(adminAuditLogTable)
-    .where(
-      and(
-        eq(adminAuditLogTable.orgId, orgId),
-        like(adminAuditLogTable.targetLabel, `%${RUN}%`),
-      ),
-    );
+  await withAuditBypass((client) =>
+    client.query(
+      `DELETE FROM admin_audit_log WHERE org_id = $1 AND target_label LIKE $2`,
+      [orgId, `%${RUN}%`],
+    ),
+  );
 }
 
 test("ServiceProviderConfig advertises filter + patch and rejects analyst tokens", async () => {

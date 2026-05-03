@@ -2,7 +2,8 @@ import { Router, type IRouter } from "express";
 import { db, adminAuditLogTable } from "@workspace/db";
 import { and, eq, desc, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, resolveRbacContext } from "../lib/rbac";
+import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -129,6 +130,86 @@ router.get(
       .where(eq(adminAuditLogTable.orgId, orgId))
       .groupBy(adminAuditLogTable.action);
     res.json(rows.map((r) => ({ action: r.action, count: Number(r.cnt) })));
+  },
+);
+
+/**
+ * Tamper-evident append-only enforcement for the admin audit log.
+ *
+ * UAT v2 §3 (D-19) requires that PATCH / DELETE on /api/admin/audit/:id
+ * MUST return 403 *and* generate a new audit row recording the failed
+ * attempt. The point is observability: a probe of the audit surface
+ * leaves a trail an auditor can see, instead of being silently dropped
+ * as a 404.
+ *
+ * The DB-level trigger installed by `bootstrapAuditLogImmutability`
+ * is the second line of defense — even a direct SQL UPDATE/DELETE by
+ * the app role is rejected by Postgres.
+ */
+async function recordMutationAttempt(
+  req: import("express").Request,
+  verb: "PATCH" | "DELETE",
+  targetId: string,
+): Promise<void> {
+  const orgId = requireOrgId(req);
+  let actor = req.actorEmail ?? "unknown@procuro.ai";
+  let roles: string[] = [];
+  try {
+    const ctx = await resolveRbacContext(req);
+    actor = ctx.email || actor;
+    roles = ctx.roles;
+  } catch {
+    // RBAC context resolution failed — still record the attempt with
+    // whatever actor info the tenant middleware attached.
+  }
+  await writeAdminAudit({
+    orgId,
+    actor,
+    action: "audit.mutation_attempt_blocked",
+    targetId,
+    targetLabel: `${verb} /api/admin/audit/${targetId}`,
+    metadata: {
+      verb,
+      path: req.originalUrl,
+      authMode: req.authMode ?? null,
+      roles,
+      ip: req.ip ?? null,
+      userAgent: req.get("user-agent") ?? null,
+    },
+  });
+}
+
+const APPEND_ONLY_BODY = {
+  error: "Forbidden",
+  reason: "audit_log_append_only",
+  message:
+    "The admin audit log is append-only. PATCH and DELETE are not " +
+    "permitted; this attempt has been recorded as a new audit row.",
+} as const;
+
+router.patch(
+  "/admin/audit/:id",
+  tenantMiddleware,
+  async (req, res, next) => {
+    try {
+      await recordMutationAttempt(req, "PATCH", String(req.params["id"]));
+      res.status(403).json(APPEND_ONLY_BODY);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  "/admin/audit/:id",
+  tenantMiddleware,
+  async (req, res, next) => {
+    try {
+      await recordMutationAttempt(req, "DELETE", String(req.params["id"]));
+      res.status(403).json(APPEND_ONLY_BODY);
+    } catch (err) {
+      next(err);
+    }
   },
 );
 

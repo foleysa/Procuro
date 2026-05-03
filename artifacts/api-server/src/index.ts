@@ -74,6 +74,7 @@ import {
   bootstrapCategoryLeverMappings,
   bootstrapTrigramSuggestions,
 } from "./lib/intelligence/routing";
+import { bootstrapAuditLogImmutability } from "./lib/audit-immutability";
 import { ensureWarehouseSchema } from "@workspace/intelligence";
 
 const rawPort = process.env["PORT"];
@@ -235,6 +236,8 @@ app.listen(port, async (err) => {
   // lib/intelligence/routing/materialized-view.ts.
   try {
     await bootstrapCategoryLeverMappings();
+    // Audit log append-only DB triggers (UAT v2 D-21).
+    await bootstrapAuditLogImmutability();
     // Layer D suggestions need pg_trgm + the GIN index on
     // synonym_registry.normalized to be in place before the admin
     // queue endpoint serves its first request.

@@ -34,6 +34,7 @@ import { and, eq, gte } from "drizzle-orm";
 import app from "../src/app";
 import { generateToken } from "../src/lib/auth";
 import { newId } from "../src/lib/ids";
+import { withAuditBypass } from "../src/lib/audit-immutability";
 
 interface Handle {
   port: number;
@@ -167,15 +168,13 @@ test("/trust/summary writes a trust.view audit row, deduped per actor inside 5 m
   } finally {
     await handle.close();
     // Clean up so reruns of the test don't accumulate fixtures.
-    await db
-      .delete(adminAuditLogTable)
-      .where(
-        and(
-          eq(adminAuditLogTable.orgId, orgId),
-          eq(adminAuditLogTable.action, "trust.view"),
-          gte(adminAuditLogTable.createdAt, start),
-        ),
-      );
+    await withAuditBypass((client) =>
+      client.query(
+        `DELETE FROM admin_audit_log
+           WHERE org_id = $1 AND action = 'trust.view' AND created_at >= $2`,
+        [orgId, start],
+      ),
+    );
   }
 });
 
@@ -191,14 +190,12 @@ test("/admin/trust-engagement aggregates the last 30 days, scoped to the active 
   // Wipe any existing trust.view rows for both tenants so prior
   // runs (or the dedupe test above) cannot pollute the counts.
   for (const id of [a, b]) {
-    await db
-      .delete(adminAuditLogTable)
-      .where(
-        and(
-          eq(adminAuditLogTable.orgId, id),
-          eq(adminAuditLogTable.action, "trust.view"),
-        ),
-      );
+    await withAuditBypass((client) =>
+      client.query(
+        `DELETE FROM admin_audit_log WHERE org_id = $1 AND action = 'trust.view'`,
+        [id],
+      ),
+    );
   }
 
   // Seed three rows directly: two distinct actors inside the 30-day
@@ -321,18 +318,11 @@ test("/admin/trust-engagement aggregates the last 30 days, scoped to the active 
     );
   } finally {
     await handle.close();
-    await db
-      .delete(adminAuditLogTable)
-      .where(eq(adminAuditLogTable.id, seedIds[0]!));
-    await db
-      .delete(adminAuditLogTable)
-      .where(eq(adminAuditLogTable.id, seedIds[1]!));
-    await db
-      .delete(adminAuditLogTable)
-      .where(eq(adminAuditLogTable.id, seedIds[2]!));
-    await db
-      .delete(adminAuditLogTable)
-      .where(eq(adminAuditLogTable.id, seedIds[3]!));
+    await withAuditBypass((client) =>
+      client.query(`DELETE FROM admin_audit_log WHERE id = ANY($1::text[])`, [
+        seedIds,
+      ]),
+    );
   }
 });
 
@@ -342,14 +332,12 @@ test("/admin/trust-engagement reports zeroes for a tenant with no views", async 
   // clean slate. Other tests in this file clean up after themselves;
   // belt-and-braces here makes the assertion deterministic regardless
   // of test ordering.
-  await db
-    .delete(adminAuditLogTable)
-    .where(
-      and(
-        eq(adminAuditLogTable.orgId, a),
-        eq(adminAuditLogTable.action, "trust.view"),
-      ),
-    );
+  await withAuditBypass((client) =>
+    client.query(
+      `DELETE FROM admin_audit_log WHERE org_id = $1 AND action = 'trust.view'`,
+      [a],
+    ),
+  );
 
   const token = await issueKey(a, "auditor", "trust-engagement-empty");
   const handle = await startServer();
