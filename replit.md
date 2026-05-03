@@ -58,7 +58,8 @@ Top-level page `FSA Operating` (`3554a7a5-85e9-80ff-9875-f3bab7730935`) contains
   - `Project State Ledger` — `3554a7a5-85e9-80f8-a512-f1c23036d511`
   - `Stale File Index` — `3554a7a5-85e9-80d4-bb2e-e96a50fd60f2`
   - `Lawyer Conditions` — `3554a7a5-85e9-80d3-96d2-c62800b27034`
-- `2. Procuro Tasks` — `3554a7a5-85e9-80fe-ba14-ffea48fc1110` — **update on task open/close** (currently a plain page, not yet a Notion database)
+- `2. Procuro Tasks` — `3554a7a5-85e9-80fe-ba14-ffea48fc1110`
+  - Inline database **`Tasks`** — `3554a7a5-85e9-81d9-b46a-e39096c7e3d7`. **Open a row at task start, update Status/Closed/Commit at end.** Schema: `Task #` (title, e.g. `#242`), `Title` (rich_text), `Status` (select: Idea / Active / Blocked / Closed), `Gate` (select: Gate 1–7 / N/A), `Priority` (select: Critical / High / Normal / Low), `Opened` (date), `Closed` (date), `Summary` (rich_text), `Commit` (rich_text). Find an existing row by querying with a `Task #` equals filter before creating a new one.
 - `3. Content Pipeline` — `3554a7a5-85e9-80e5-b791-fc293c3214b5`
 - `4. Pipeline (CRM)` — `3554a7a5-85e9-8039-ba93-db876b0aeedc`
 - `5. Strategic Docs` — `3554a7a5-85e9-800f-a5d7-e45ddb7c1c67`
