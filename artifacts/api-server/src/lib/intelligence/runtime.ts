@@ -78,6 +78,11 @@ import {
   USGS_MINERALS,
   fetchUsgsMineralBackfillDrafts,
 } from "./collectors/usgs-mineral";
+import {
+  EUROSTAT_ECONOMIC_INDEX_COLLECTOR_ID,
+  EUROSTAT_SERIES,
+  fetchEurostatBackfillDrafts,
+} from "./collectors/eurostat-economic-index";
 
 /**
  * Inference target matching the unique *index* defined in
@@ -1860,6 +1865,54 @@ export async function runUsgsMineralBackfill(
       return {
         drafts,
         extraSucceededMeta: { failedMinerals: failedMinerals.length },
+      };
+    },
+  });
+}
+
+/**
+ * Backfill the Eurostat economic index collector. Replays
+ * 5 years of HICP / PPI history for the curated EU series and
+ * inserts only the (series × period) rows that aren't already in
+ * `market_signals` — so re-runs are safe no-ops. Throws if every
+ * curated series fails so the audit log records `backfill_failed`
+ * instead of "succeeded with 0 inserts".
+ */
+export async function runEurostatEconomicIndexBackfill(
+  opts: {
+    force?: boolean;
+    sinceMonthly?: string;
+    sinceQuarterly?: string;
+  } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: EUROSTAT_ECONOMIC_INDEX_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: {
+      sinceMonthly: opts.sinceMonthly ?? null,
+      sinceQuarterly: opts.sinceQuarterly ?? null,
+    },
+    fetchDrafts: async () => {
+      const { drafts, failedSeries } = await fetchEurostatBackfillDrafts({
+        ...(opts.sinceMonthly !== undefined
+          ? { sinceMonthly: opts.sinceMonthly }
+          : {}),
+        ...(opts.sinceQuarterly !== undefined
+          ? { sinceQuarterly: opts.sinceQuarterly }
+          : {}),
+      });
+      if (drafts.length === 0 && failedSeries.length === EUROSTAT_SERIES.length) {
+        const sample = failedSeries
+          .slice(0, 3)
+          .map((f) => f.error)
+          .join("; ");
+        throw new Error(
+          `Eurostat backfill: all ${EUROSTAT_SERIES.length} series failed. Sample errors: ${sample}`,
+        );
+      }
+      return {
+        drafts,
+        extraSucceededMeta: { failedSeries: failedSeries.length },
       };
     },
   });

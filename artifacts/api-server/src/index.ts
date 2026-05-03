@@ -11,6 +11,7 @@ import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-e
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
 import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
 import { usdaNassEconomicIndexCollector } from "./lib/intelligence/collectors/usda-nass-economic-index";
+import { eurostatEconomicIndexCollector } from "./lib/intelligence/collectors/eurostat-economic-index";
 import { blsEconomicIndexCollector } from "./lib/intelligence/collectors/bls-economic-index";
 import { blsOewsCollector } from "./lib/intelligence/collectors/bls-oews";
 import { secEdgarCollector } from "./lib/intelligence/collectors/sec-edgar";
@@ -103,6 +104,8 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   // set of agricultural commodities (corn/wheat/soybeans, dairy,
   // beef/pork/poultry, cotton). Task #244.
   usdaNassEconomicIndexCollector,
+  // Eurostat HICP + PPI (EU). Task #243.
+  eurostatEconomicIndexCollector,
   blsEconomicIndexCollector,
   // BLS OEWS — annual, region-aware occupational wage benchmarks
   // anchoring services-band rate-card negotiations (Task #215).

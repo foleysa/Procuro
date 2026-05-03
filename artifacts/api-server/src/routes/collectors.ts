@@ -53,6 +53,7 @@ import {
   runEpaEchoBackfill,
   runOshaInspectionsBackfill,
   runUsgsMineralBackfill,
+  runEurostatEconomicIndexBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
@@ -65,6 +66,7 @@ import { USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/colle
 import { EPA_ECHO_COLLECTOR_ID } from "../lib/intelligence/collectors/epa-echo";
 import { OSHA_COLLECTOR_ID } from "../lib/intelligence/collectors/osha-inspections";
 import { USGS_MINERAL_COLLECTOR_ID } from "../lib/intelligence/collectors/usgs-mineral";
+import { EUROSTAT_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/eurostat-economic-index";
 import { getWorkbenchMeta } from "../lib/intelligence/workbench-meta";
 import {
   buildLineageGraph,
@@ -655,6 +657,28 @@ mountBackfillRoute(
   USGS_MINERAL_COLLECTOR_ID,
   runUsgsMineralBackfill,
   (req) => UsgsMineralBackfillSchema.parse(req.body) ?? {},
+);
+
+const EurostatBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    // Eurostat time-period strings: "YYYY-MM" (monthly) and "YYYY-QN" (quarterly).
+    sinceMonthly: z
+      .string()
+      .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+      .optional(),
+    sinceQuarterly: z
+      .string()
+      .regex(/^\d{4}-Q[1-4]$/)
+      .optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/eurostat-economic-index/backfill",
+  EUROSTAT_ECONOMIC_INDEX_COLLECTOR_ID,
+  runEurostatEconomicIndexBackfill,
+  (req) => EurostatBackfillSchema.parse(req.body) ?? {},
 );
 
 /**

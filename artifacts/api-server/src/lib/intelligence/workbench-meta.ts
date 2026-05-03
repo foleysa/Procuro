@@ -105,6 +105,28 @@ const WORKBENCH_META: Record<string, CollectorWorkbenchMeta> = {
       "Negotiation: supplier price-increase pushback",
     ],
   },
+  "eurostat-economic-index": {
+    flagEmoji: "🇪🇺",
+    tosUrl:
+      "https://ec.europa.eu/eurostat/about-us/policies/copyright",
+    licenseNote:
+      "Eurostat dissemination API. Free re-use with source acknowledgement (© European Union, 1995–today).",
+    logoUrl:
+      "https://ec.europa.eu/eurostat/o/eurostat-theme/images/logo/logo--es.svg",
+    piiClassification: "none",
+    killCriteria:
+      "Eurostat dissemination API deprecation, schema drift in JSON-stat 2.0 response, or sustained 5xx >24h.",
+    outputSignalTypes: ["economic_index"],
+    scopeKinds: ["category"],
+    cadenceLabel: "Monthly (HICP / industrial PPI) + quarterly (services PPI)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_material_ppi_trend", "mart_cpi_subindex_trend"],
+    downstreamConsumers: [
+      "spot_vs_contract lever (EU categories)",
+      "Fusion: EU HICP / PPI pane",
+      "Negotiation: euro-area inflation pass-through",
+    ],
+  },
   "ecb-fx-rates": {
     flagEmoji: "🇪🇺",
     tosUrl:
