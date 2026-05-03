@@ -412,6 +412,7 @@ export * from "./sowChangeOrderStatus";
 export * from "./sowDetail";
 export * from "./sowDetailBillingModel";
 export * from "./sowDetailBurn";
+export * from "./sowDetailBurnByResourceItem";
 export * from "./sowDetailBurnWeeklyItem";
 export * from "./sowLinkedOpportunity";
 export * from "./sowListResponse";

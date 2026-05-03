@@ -11,6 +11,7 @@ must supply it. All list endpoints return only rows owned by that org.
 
  * OpenAPI spec version: 0.1.0
  */
+import type { SowDetailBurnByResourceItem } from "./sowDetailBurnByResourceItem";
 import type { SowDetailBurnWeeklyItem } from "./sowDetailBurnWeeklyItem";
 
 /**
@@ -31,4 +32,6 @@ export type SowDetailBurn = {
   avgWeeklyBurnUsd: number;
   /** Per-week time-entry burn series (last 26 weeks). The chart anchors every bar to ISO Monday so it lines up regardless of when individual entries were logged. */
   weekly: SowDetailBurnWeeklyItem[];
+  /** Per-resource time-entry rollup over the last 365 days, sorted by billed amount desc. Surfaces who is burning the most hours against this SOW so operators can spot top contributors and outliers. */
+  byResource?: SowDetailBurnByResourceItem[];
 };

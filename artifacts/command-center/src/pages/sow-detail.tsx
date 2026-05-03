@@ -115,6 +115,7 @@ export default function SowDetailPage() {
   const burnedPctNte = data.burn?.burnedPct ?? (nteUsd > 0 ? burnedUsd / nteUsd : 0);
   const avgWeeklyBurnUsd = data.burn?.avgWeeklyBurnUsd ?? 0;
   const weekly = data.burn?.weekly ?? [];
+  const byResource = data.burn?.byResource ?? [];
   const billingModelLabel = data.billingModel
     ? (BILLING_MODEL_LABEL[data.billingModel] ?? data.billingModel)
     : null;
@@ -485,6 +486,67 @@ export default function SowDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {byResource.length > 0 && (
+        <Card data-testid="card-sow-by-resource">
+          <CardHeader>
+            <CardTitle>Time entries by resource</CardTitle>
+            <CardDescription>
+              Per-person hours and dollars billed against this SOW over the
+              last 12 months. Sorted by amount — top contributors first.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground border-b">
+                <tr>
+                  <th className="text-left p-3">Resource</th>
+                  <th className="text-left p-3">Role</th>
+                  <th className="text-right p-3">Hours</th>
+                  <th className="text-right p-3">Avg rate</th>
+                  <th className="text-right p-3">Amount</th>
+                  <th className="text-right p-3">Entries</th>
+                  <th className="text-right p-3">Last entry</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byResource.map((r) => (
+                  <tr
+                    key={r.resource}
+                    className="border-b last:border-b-0"
+                    data-testid={`by-resource-${r.resource}`}
+                  >
+                    <td className="p-3 font-medium">{r.resource}</td>
+                    <td className="p-3 text-muted-foreground">
+                      <div>{r.role ?? "—"}</div>
+                      {r.seniority && (
+                        <div className="text-xs capitalize">{r.seniority}</div>
+                      )}
+                    </td>
+                    <td className="p-3 text-right tabular-nums">
+                      {r.hoursBilled.toFixed(1)}
+                    </td>
+                    <td className="p-3 text-right tabular-nums">
+                      {r.avgBillRateUsd != null
+                        ? formatUsd(r.avgBillRateUsd)
+                        : "—"}
+                    </td>
+                    <td className="p-3 text-right tabular-nums font-semibold">
+                      {formatUsd(r.amountUsd, { compact: true })}
+                    </td>
+                    <td className="p-3 text-right tabular-nums text-xs text-muted-foreground">
+                      {r.entryCount.toLocaleString()}
+                    </td>
+                    <td className="p-3 text-right tabular-nums text-xs text-muted-foreground">
+                      {formatDate(r.lastWorkDate)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

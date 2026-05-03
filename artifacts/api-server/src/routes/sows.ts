@@ -309,7 +309,7 @@ router.get("/sows/:id", tenantMiddleware, async (req, res) => {
     return;
   }
 
-  const [milestones, changeOrders, linkedOppRows, weeklyBurnRows] = await Promise.all([
+  const [milestones, changeOrders, linkedOppRows, weeklyBurnRows, byResourceRows] = await Promise.all([
     db
       .select()
       .from(sowMilestonesTable)
@@ -370,6 +370,33 @@ router.get("/sows/:id", tenantMiddleware, async (req, res) => {
         AND work_date >= NOW() - INTERVAL '26 weeks'
       GROUP BY DATE_TRUNC('week', work_date)
       ORDER BY DATE_TRUNC('week', work_date) ASC
+    `),
+    // Per-resource rollup over the trailing 365 days. Sorted by
+    // billed amount desc so the heaviest contributors land on top.
+    // Role/seniority pick the most recent values seen for the
+    // resource, which is good enough to colour the row even when a
+    // person rolled across roles inside the window.
+    db.execute(sql`
+      SELECT
+        resource,
+        (ARRAY_AGG(role ORDER BY work_date DESC) FILTER (WHERE role IS NOT NULL))[1] AS role,
+        (ARRAY_AGG(seniority ORDER BY work_date DESC) FILTER (WHERE seniority IS NOT NULL))[1] AS seniority,
+        COALESCE(SUM(hours::numeric), 0)::text AS hours_billed,
+        COALESCE(SUM(amount_usd::numeric), 0)::text AS amount_usd,
+        COUNT(*) AS entry_count,
+        CASE
+          WHEN SUM(hours::numeric) > 0
+            THEN (SUM(amount_usd::numeric) / SUM(hours::numeric))::text
+          ELSE NULL
+        END AS avg_bill_rate_usd,
+        MAX(work_date)::date AS last_work_date
+      FROM time_entries
+      WHERE org_id = ${orgId}
+        AND sow_id = ${id}
+        AND work_date >= NOW() - INTERVAL '365 days'
+      GROUP BY resource
+      ORDER BY SUM(amount_usd::numeric) DESC NULLS LAST, resource ASC
+      LIMIT 50
     `),
   ]);
 
@@ -435,6 +462,34 @@ router.get("/sows/:id", tenantMiddleware, async (req, res) => {
       ? Math.round((remainingUsd / trailingAvgWeeklyUsd) * 7)
       : null;
 
+  // Per-resource rollup. Mirrors the weekly series but bucketed by
+  // person rather than time, capped at 50 to keep the table on screen.
+  type ByResourceRowRaw = {
+    resource: string;
+    role: string | null;
+    seniority: string | null;
+    hours_billed: string;
+    amount_usd: string;
+    entry_count: string;
+    avg_bill_rate_usd: string | null;
+    last_work_date: Date | string | null;
+  };
+  const byResource = (byResourceRows.rows as ByResourceRowRaw[]).map((r) => ({
+    resource: r.resource,
+    role: r.role,
+    seniority: r.seniority,
+    hoursBilled: Number(r.hours_billed),
+    amountUsd: Number(r.amount_usd),
+    entryCount: Number(r.entry_count),
+    avgBillRateUsd: r.avg_bill_rate_usd === null ? null : Number(r.avg_bill_rate_usd),
+    lastWorkDate:
+      r.last_work_date === null
+        ? null
+        : r.last_work_date instanceof Date
+          ? r.last_work_date.toISOString().slice(0, 10)
+          : String(r.last_work_date).slice(0, 10),
+  }));
+
   const burn = {
     committedUsd,
     nteUsd,
@@ -445,6 +500,7 @@ router.get("/sows/:id", tenantMiddleware, async (req, res) => {
     runwayDays,
     avgWeeklyBurnUsd: trailingAvgWeeklyUsd,
     weekly: weeklyBurn,
+    byResource,
   };
 
   const linkedOpportunities = (

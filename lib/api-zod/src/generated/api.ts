@@ -6224,6 +6224,23 @@ export const GetSowResponse = zod
             .describe(
               "Per-week time-entry burn series (last 26 weeks). The chart anchors every bar to ISO Monday so it lines up regardless of when individual entries were logged.",
             ),
+          byResource: zod
+            .array(
+              zod.object({
+                resource: zod.string(),
+                role: zod.string().nullish(),
+                seniority: zod.string().nullish(),
+                hoursBilled: zod.number(),
+                amountUsd: zod.number(),
+                entryCount: zod.number(),
+                avgBillRateUsd: zod.number().nullish(),
+                lastWorkDate: zod.coerce.date().nullish(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Per-resource time-entry rollup over the last 365 days, sorted by billed amount desc. Surfaces who is burning the most hours against this SOW so operators can spot top contributors and outliers.",
+            ),
         })
         .describe(
           "Snapshot of how this SOW is burning through committed budget plus a 26-week weekly burn series sourced from `time_entries`. `committedUsd` and `nteUsd` are the SOW ceiling (synonyms surfaced for clarity); `earnedUsd` sums accepted\/invoiced\/paid milestones; `burnedUsd` sums actual time-entry spend (the chart's y-axis); `invoicedUsd` sums invoiced\/paid milestones only. `runwayDays` is the NTE-anchored projection — remaining capacity divided by the trailing 4-week average burn rate, expressed in days. `weekly` is the per-week series the FE renders as a stacked-area chart against the NTE ceiling.",
@@ -9394,7 +9411,7 @@ export const GetTodayFeedResponse = zod.object({
       payload: zod
         .record(zod.string(), zod.unknown())
         .describe(
-          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (RT-83 primary number: proposed\n  opportunities that are EITHER fresh (created in the last\n  24h) OR aging past the soft deadline (still pending and\n  older than 7 days) — i.e. the operator's morning queue),\n  and optionally `oldestAgeMs` (oldest pending row).\n",
+          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (RT-83 primary number: proposed\n  opportunities that are EITHER fresh (created in the last\n  24h) OR aging past the soft deadline (still pending and\n  older than 7 days) — i.e. the operator's morning queue),\n  and optionally `oldestAgeMs` (oldest pending row).\n\* `funnel.conversion_deltas` — each entry in `transitions[]`\n  optionally carries a `significance` flag (#211) classifying\n  the rate change as `meaningful`, `noisy` (denominator below\n  the significance floor in either cycle, so a +\/- pp swing\n  is within normal variance), or `insufficient` (one cycle\n  had a 0 denominator so there's no baseline to compare\n  against). Entries also carry `currentDenominator` \/\n  `prevDenominator` so the UI can annotate the sample size.\n  The field is additive — older clients that ignore it keep\n  rendering the row at full saturation.\n",
         ),
       occurredAt: zod.coerce
         .date()
@@ -9484,7 +9501,7 @@ export const GetOperationsHealthResponse = zod.object({
       payload: zod
         .record(zod.string(), zod.unknown())
         .describe(
-          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (RT-83 primary number: proposed\n  opportunities that are EITHER fresh (created in the last\n  24h) OR aging past the soft deadline (still pending and\n  older than 7 days) — i.e. the operator's morning queue),\n  and optionally `oldestAgeMs` (oldest pending row).\n",
+          "Source-specific payload. Shape is documented per `kind` in\nthe design doc; unknown keys are tolerated.\n\n#209 enrichments (additive, all optional — clients capability-gate):\n\n\* `alerts.summary` — `openTotal`, `openCriticalOrHigh`, and\n  optionally `topAlert: { id, title, severity, ageMs }` when\n  there is at least one open alert.\n\* `opportunities.proposed` — `count`, `top` (raw rows), and\n  optionally `topOpportunity: { id, title, leverId,\n  projectedSavingsUsd }`.\n\* `jobs.failed` — `count`, `recent` (raw rows), and\n  optionally `topFailed: { kind, ageMs }` when count > 0;\n  optionally `lastSuccessfulCycle: { generation,\n  completedAt, ageMs }` when count == 0 (or in addition).\n\* `approvals.pending` — `pending` (total backlog),\n  `needsActionToday` (RT-83 primary number: proposed\n  opportunities that are EITHER fresh (created in the last\n  24h) OR aging past the soft deadline (still pending and\n  older than 7 days) — i.e. the operator's morning queue),\n  and optionally `oldestAgeMs` (oldest pending row).\n\* `funnel.conversion_deltas` — each entry in `transitions[]`\n  optionally carries a `significance` flag (#211) classifying\n  the rate change as `meaningful`, `noisy` (denominator below\n  the significance floor in either cycle, so a +\/- pp swing\n  is within normal variance), or `insufficient` (one cycle\n  had a 0 denominator so there's no baseline to compare\n  against). Entries also carry `currentDenominator` \/\n  `prevDenominator` so the UI can annotate the sample size.\n  The field is additive — older clients that ignore it keep\n  rendering the row at full saturation.\n",
         ),
       occurredAt: zod.coerce
         .date()

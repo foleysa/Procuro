@@ -1543,6 +1543,17 @@ export type SowDetailBurnWeeklyItem = {
   cumulativeUsd: number;
 };
 
+export type SowDetailBurnByResourceItem = {
+  resource: string;
+  role?: string | null;
+  seniority?: string | null;
+  hoursBilled: number;
+  amountUsd: number;
+  entryCount: number;
+  avgBillRateUsd?: number | null;
+  lastWorkDate?: string | null;
+};
+
 /**
  * Snapshot of how this SOW is burning through committed budget plus a 26-week weekly burn series sourced from `time_entries`. `committedUsd` and `nteUsd` are the SOW ceiling (synonyms surfaced for clarity); `earnedUsd` sums accepted/invoiced/paid milestones; `burnedUsd` sums actual time-entry spend (the chart's y-axis); `invoicedUsd` sums invoiced/paid milestones only. `runwayDays` is the NTE-anchored projection — remaining capacity divided by the trailing 4-week average burn rate, expressed in days. `weekly` is the per-week series the FE renders as a stacked-area chart against the NTE ceiling.
  */
@@ -1561,6 +1572,8 @@ export type SowDetailBurn = {
   avgWeeklyBurnUsd: number;
   /** Per-week time-entry burn series (last 26 weeks). The chart anchors every bar to ISO Monday so it lines up regardless of when individual entries were logged. */
   weekly: SowDetailBurnWeeklyItem[];
+  /** Per-resource time-entry rollup over the last 365 days, sorted by billed amount desc. Surfaces who is burning the most hours against this SOW so operators can spot top contributors and outliers. */
+  byResource?: SowDetailBurnByResourceItem[];
 };
 
 export type SowDetail = StatementOfWork & {
@@ -4904,6 +4917,16 @@ the design doc; unknown keys are tolerated.
   24h) OR aging past the soft deadline (still pending and
   older than 7 days) — i.e. the operator's morning queue),
   and optionally `oldestAgeMs` (oldest pending row).
+* `funnel.conversion_deltas` — each entry in `transitions[]`
+  optionally carries a `significance` flag (#211) classifying
+  the rate change as `meaningful`, `noisy` (denominator below
+  the significance floor in either cycle, so a +/- pp swing
+  is within normal variance), or `insufficient` (one cycle
+  had a 0 denominator so there's no baseline to compare
+  against). Entries also carry `currentDenominator` /
+  `prevDenominator` so the UI can annotate the sample size.
+  The field is additive — older clients that ignore it keep
+  rendering the row at full saturation.
 
  */
 export type TodayFeedItemPayload = { [key: string]: unknown };
@@ -4952,6 +4975,16 @@ the design doc; unknown keys are tolerated.
   24h) OR aging past the soft deadline (still pending and
   older than 7 days) — i.e. the operator's morning queue),
   and optionally `oldestAgeMs` (oldest pending row).
+* `funnel.conversion_deltas` — each entry in `transitions[]`
+  optionally carries a `significance` flag (#211) classifying
+  the rate change as `meaningful`, `noisy` (denominator below
+  the significance floor in either cycle, so a +/- pp swing
+  is within normal variance), or `insufficient` (one cycle
+  had a 0 denominator so there's no baseline to compare
+  against). Entries also carry `currentDenominator` /
+  `prevDenominator` so the UI can annotate the sample size.
+  The field is additive — older clients that ignore it keep
+  rendering the row at full saturation.
  */
   payload: TodayFeedItemPayload;
   /** When the underlying event happened (or now() for synthesized rollups). */

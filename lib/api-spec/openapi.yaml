@@ -7736,6 +7736,41 @@ components:
                       type: number
                     cumulativeUsd:
                       type: number
+              byResource:
+                type: array
+                description: 'Per-resource time-entry rollup over the last
+                  365 days, sorted by billed amount desc. Surfaces who
+                  is burning the most hours against this SOW so
+                  operators can spot top contributors and outliers.'
+                items:
+                  type: object
+                  required:
+                  - resource
+                  - hoursBilled
+                  - amountUsd
+                  - entryCount
+                  properties:
+                    resource:
+                      type: string
+                    role:
+                      type: string
+                      nullable: true
+                    seniority:
+                      type: string
+                      nullable: true
+                    hoursBilled:
+                      type: number
+                    amountUsd:
+                      type: number
+                    entryCount:
+                      type: integer
+                    avgBillRateUsd:
+                      type: number
+                      nullable: true
+                    lastWorkDate:
+                      type: string
+                      format: date
+                      nullable: true
           linkedOpportunities:
             type: array
             description: |

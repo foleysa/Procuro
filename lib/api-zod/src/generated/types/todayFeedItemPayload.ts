@@ -34,6 +34,16 @@ the design doc; unknown keys are tolerated.
   24h) OR aging past the soft deadline (still pending and
   older than 7 days) — i.e. the operator's morning queue),
   and optionally `oldestAgeMs` (oldest pending row).
+* `funnel.conversion_deltas` — each entry in `transitions[]`
+  optionally carries a `significance` flag (#211) classifying
+  the rate change as `meaningful`, `noisy` (denominator below
+  the significance floor in either cycle, so a +/- pp swing
+  is within normal variance), or `insufficient` (one cycle
+  had a 0 denominator so there's no baseline to compare
+  against). Entries also carry `currentDenominator` /
+  `prevDenominator` so the UI can annotate the sample size.
+  The field is additive — older clients that ignore it keep
+  rendering the row at full saturation.
 
  */
 export type TodayFeedItemPayload = { [key: string]: unknown };
