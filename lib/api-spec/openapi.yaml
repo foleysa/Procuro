@@ -5103,6 +5103,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /admin/data-integrity/latest:
+    get:
+      operationId: listDataIntegrityLatest
+      tags:
+      - admin
+      summary: Latest result per data-integrity assertion
+      description: 'Returns the most recent `data_integrity_audit_log` row for each
+        of the eleven reconciliation assertions. Powers the admin
+        dashboard surface that summarises pass/fail state, family,
+        message, and (for failures) the structured `actual` vs
+        `expected` payload.
+
+        '
+      responses:
+        '200':
+          description: One row per assertion, freshest first per assertion
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DataIntegrityResult'
+  /admin/data-integrity/trend:
+    get:
+      operationId: getDataIntegrityTrend
+      tags:
+      - admin
+      summary: Per-assertion pass/fail history for sparkline rendering
+      description: 'Returns each assertion''s run-by-run pass/fail series within a
+        trailing window so the admin dashboard can render a sparkline
+        of repeated failures.
+
+        '
+      parameters:
+      - in: query
+        name: hours
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 168
+          default: 24
+        description: Trailing window in hours. Capped at 168 (one week).
+      responses:
+        '200':
+          description: Per-assertion run series, oldest-first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataIntegrityTrend'
   /admin/audit-log:
     get:
       operationId: listAdminAuditLog
@@ -14421,6 +14470,80 @@ components:
             predecessor key.
 
             '
+    DataIntegrityResult:
+      type: object
+      required:
+      - id
+      - assertionName
+      - family
+      - passed
+      - actual
+      - expected
+      - message
+      - triggeredBy
+      - runAt
+      properties:
+        id:
+          type: string
+        assertionName:
+          type: string
+        family:
+          type: string
+          enum: [aggregate, savings_type, stage_history, gating]
+        passed:
+          type: boolean
+        actual:
+          type: object
+          additionalProperties: true
+        expected:
+          type: string
+        message:
+          type: string
+        triggeredBy:
+          type: string
+          enum: [scheduled, post_migration, manual]
+        runAt:
+          type: string
+          format: date-time
+    DataIntegrityTrendPoint:
+      type: object
+      required:
+      - runAt
+      - passed
+      properties:
+        runAt:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+    DataIntegrityTrendAssertion:
+      type: object
+      required:
+      - assertionName
+      - family
+      - points
+      properties:
+        assertionName:
+          type: string
+        family:
+          type: string
+          enum: [aggregate, savings_type, stage_history, gating]
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataIntegrityTrendPoint'
+    DataIntegrityTrend:
+      type: object
+      required:
+      - windowHours
+      - assertions
+      properties:
+        windowHours:
+          type: integer
+        assertions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataIntegrityTrendAssertion'
     AdminAuditLogEntry:
       type: object
       required:

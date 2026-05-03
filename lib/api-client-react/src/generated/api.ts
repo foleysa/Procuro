@@ -90,6 +90,8 @@ import type {
   CsvIngestRequest,
   Cycle,
   CycleDetail,
+  DataIntegrityResult,
+  DataIntegrityTrend,
   DeadLetterJobs,
   DefensePack,
   DefensePackListResponse,
@@ -113,6 +115,7 @@ import type {
   GetCollectorCostParams,
   GetCollectorCostTimeseries200,
   GetCollectorCostTimeseriesParams,
+  GetDataIntegrityTrendParams,
   GetIntelligenceCoverageGapsParams,
   GetIntelligenceRiskHeatmapParams,
   GetServicesSpendParams,
@@ -15871,6 +15874,189 @@ export const useRotateAdminApiKey = <
 > => {
   return useMutation(getRotateAdminApiKeyMutationOptions(options));
 };
+
+/**
+ * Returns the most recent `data_integrity_audit_log` row for each of the eleven reconciliation assertions. Powers the admin dashboard surface that summarises pass/fail state, family, message, and (for failures) the structured `actual` vs `expected` payload.
+
+ * @summary Latest result per data-integrity assertion
+ */
+export const getListDataIntegrityLatestUrl = () => {
+  return `/api/admin/data-integrity/latest`;
+};
+
+export const listDataIntegrityLatest = async (
+  options?: RequestInit,
+): Promise<DataIntegrityResult[]> => {
+  return customFetch<DataIntegrityResult[]>(getListDataIntegrityLatestUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDataIntegrityLatestQueryKey = () => {
+  return [`/api/admin/data-integrity/latest`] as const;
+};
+
+export const getListDataIntegrityLatestQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDataIntegrityLatest>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDataIntegrityLatest>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListDataIntegrityLatestQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDataIntegrityLatest>>
+  > = ({ signal }) => listDataIntegrityLatest({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDataIntegrityLatest>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDataIntegrityLatestQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDataIntegrityLatest>>
+>;
+export type ListDataIntegrityLatestQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Latest result per data-integrity assertion
+ */
+
+export function useListDataIntegrityLatest<
+  TData = Awaited<ReturnType<typeof listDataIntegrityLatest>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDataIntegrityLatest>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDataIntegrityLatestQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns each assertion's run-by-run pass/fail series within a trailing window so the admin dashboard can render a sparkline of repeated failures.
+
+ * @summary Per-assertion pass/fail history for sparkline rendering
+ */
+export const getGetDataIntegrityTrendUrl = (
+  params?: GetDataIntegrityTrendParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/data-integrity/trend?${stringifiedParams}`
+    : `/api/admin/data-integrity/trend`;
+};
+
+export const getDataIntegrityTrend = async (
+  params?: GetDataIntegrityTrendParams,
+  options?: RequestInit,
+): Promise<DataIntegrityTrend> => {
+  return customFetch<DataIntegrityTrend>(getGetDataIntegrityTrendUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDataIntegrityTrendQueryKey = (
+  params?: GetDataIntegrityTrendParams,
+) => {
+  return [
+    `/api/admin/data-integrity/trend`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDataIntegrityTrendQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDataIntegrityTrend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDataIntegrityTrendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDataIntegrityTrend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDataIntegrityTrendQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDataIntegrityTrend>>
+  > = ({ signal }) =>
+    getDataIntegrityTrend(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDataIntegrityTrend>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDataIntegrityTrendQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDataIntegrityTrend>>
+>;
+export type GetDataIntegrityTrendQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-assertion pass/fail history for sparkline rendering
+ */
+
+export function useGetDataIntegrityTrend<
+  TData = Awaited<ReturnType<typeof getDataIntegrityTrend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDataIntegrityTrendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDataIntegrityTrend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDataIntegrityTrendQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Append-only record of every admin / RBAC mutation. Newest first,

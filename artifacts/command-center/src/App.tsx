@@ -48,6 +48,7 @@ import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
 import WatchedUsSuppliers from "./pages/watched-us-suppliers";
 import Admin from "./pages/admin";
+import AdminDataIntegrity from "./pages/admin-data-integrity";
 import Operations from "./pages/operations";
 import Engine from "./pages/engine";
 import TaxonomyQueue from "./pages/taxonomy-queue";
@@ -164,6 +165,11 @@ const ADMIN_PAGE_BLURBS: Record<
     name: "Operations",
     what:
       "Operations is the admin view of pipeline health — collector runs, ingest queues, and system status across the workspace.",
+  },
+  "/admin/data-integrity": {
+    name: "Data integrity checks",
+    what:
+      "Data integrity checks shows the latest run of the eleven reconciliation assertions plus a sparkline of recent pass/fail history.",
   },
   "/admin": {
     name: "Admin",
@@ -392,6 +398,11 @@ function AppRoutes() {
             <Route path="/trust" component={TrustPage} />
             <Route path="/settings" component={Settings} />
             <Route path="/onboarding" component={OnboardingPage} />
+            <Route path="/admin/data-integrity">
+              <AdminGuard>
+                <AdminDataIntegrity />
+              </AdminGuard>
+            </Route>
             <Route path="/admin">
               <AdminGuard>
                 <Admin />

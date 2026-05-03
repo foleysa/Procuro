@@ -126,6 +126,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/trust", label: "Trust Center", icon: Shield },
       { href: "/settings", label: "Settings", icon: Settings, minRole: "org_admin" },
       { href: "/admin", label: "Org Admin", icon: ShieldCheck, minRole: "org_admin" },
+      { href: "/admin/data-integrity", label: "Data Integrity", icon: ShieldCheck, minRole: "platform_admin" },
     ],
   },
 ];

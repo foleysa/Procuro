@@ -5753,6 +5753,65 @@ predecessor key.
   rotatedFromId?: string;
 }
 
+export type DataIntegrityResultFamily =
+  (typeof DataIntegrityResultFamily)[keyof typeof DataIntegrityResultFamily];
+
+export const DataIntegrityResultFamily = {
+  aggregate: "aggregate",
+  savings_type: "savings_type",
+  stage_history: "stage_history",
+  gating: "gating",
+} as const;
+
+export type DataIntegrityResultActual = { [key: string]: unknown };
+
+export type DataIntegrityResultTriggeredBy =
+  (typeof DataIntegrityResultTriggeredBy)[keyof typeof DataIntegrityResultTriggeredBy];
+
+export const DataIntegrityResultTriggeredBy = {
+  scheduled: "scheduled",
+  post_migration: "post_migration",
+  manual: "manual",
+} as const;
+
+export interface DataIntegrityResult {
+  id: string;
+  assertionName: string;
+  family: DataIntegrityResultFamily;
+  passed: boolean;
+  actual: DataIntegrityResultActual;
+  expected: string;
+  message: string;
+  triggeredBy: DataIntegrityResultTriggeredBy;
+  runAt: string;
+}
+
+export interface DataIntegrityTrendPoint {
+  runAt: string;
+  passed: boolean;
+}
+
+export type DataIntegrityTrendAssertionFamily =
+  (typeof DataIntegrityTrendAssertionFamily)[keyof typeof DataIntegrityTrendAssertionFamily];
+
+export const DataIntegrityTrendAssertionFamily = {
+  aggregate: "aggregate",
+  savings_type: "savings_type",
+  stage_history: "stage_history",
+  gating: "gating",
+} as const;
+
+export interface DataIntegrityTrendAssertion {
+  assertionName: string;
+  family: DataIntegrityTrendAssertionFamily;
+  points: DataIntegrityTrendPoint[];
+}
+
+export interface DataIntegrityTrend {
+  windowHours: number;
+  assertions: DataIntegrityTrendAssertion[];
+}
+
 export type AdminAuditLogEntryMetadata = { [key: string]: unknown };
 
 export interface AdminAuditLogEntry {
@@ -6620,6 +6679,15 @@ Pair with `state` / `severity` to scope the result set.
 
 export type ListAlertSubscriptionsParams = {
   userId?: string;
+};
+
+export type GetDataIntegrityTrendParams = {
+  /**
+   * Trailing window in hours. Capped at 168 (one week).
+   * @minimum 1
+   * @maximum 168
+   */
+  hours?: number;
 };
 
 export type ListAdminAuditLogParams = {

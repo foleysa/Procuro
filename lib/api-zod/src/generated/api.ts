@@ -11650,6 +11650,64 @@ export const RotateAdminApiKeyHeader = zod.object({
 });
 
 /**
+ * Returns the most recent `data_integrity_audit_log` row for each of the eleven reconciliation assertions. Powers the admin dashboard surface that summarises pass/fail state, family, message, and (for failures) the structured `actual` vs `expected` payload.
+
+ * @summary Latest result per data-integrity assertion
+ */
+export const ListDataIntegrityLatestResponseItem = zod.object({
+  id: zod.string(),
+  assertionName: zod.string(),
+  family: zod.enum(["aggregate", "savings_type", "stage_history", "gating"]),
+  passed: zod.boolean(),
+  actual: zod.record(zod.string(), zod.unknown()),
+  expected: zod.string(),
+  message: zod.string(),
+  triggeredBy: zod.enum(["scheduled", "post_migration", "manual"]),
+  runAt: zod.coerce.date(),
+});
+export const ListDataIntegrityLatestResponse = zod.array(
+  ListDataIntegrityLatestResponseItem,
+);
+
+/**
+ * Returns each assertion's run-by-run pass/fail series within a trailing window so the admin dashboard can render a sparkline of repeated failures.
+
+ * @summary Per-assertion pass/fail history for sparkline rendering
+ */
+export const getDataIntegrityTrendQueryHoursDefault = 24;
+export const getDataIntegrityTrendQueryHoursMax = 168;
+
+export const GetDataIntegrityTrendQueryParams = zod.object({
+  hours: zod.coerce
+    .number()
+    .min(1)
+    .max(getDataIntegrityTrendQueryHoursMax)
+    .default(getDataIntegrityTrendQueryHoursDefault)
+    .describe("Trailing window in hours. Capped at 168 (one week)."),
+});
+
+export const GetDataIntegrityTrendResponse = zod.object({
+  windowHours: zod.number(),
+  assertions: zod.array(
+    zod.object({
+      assertionName: zod.string(),
+      family: zod.enum([
+        "aggregate",
+        "savings_type",
+        "stage_history",
+        "gating",
+      ]),
+      points: zod.array(
+        zod.object({
+          runAt: zod.coerce.date(),
+          passed: zod.boolean(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
  * Append-only record of every admin / RBAC mutation. Newest first,
 capped at 200. Filterable by actor, action, and target id.
 
