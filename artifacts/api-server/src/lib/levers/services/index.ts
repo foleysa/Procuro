@@ -1,12 +1,14 @@
 /**
- * Tier-5 Services-band lever analyzers (task #216).
+ * Tier-5 Services-band lever analyzers (tasks #216, #242).
  *
- * Four levers route to the Services band per the bands seed
+ * Six levers route to the Services band per the bands seed
  * (`lib/db/seeds/taxonomy.sql`):
  *   - `services_rate_card_benchmark`  (also dual-banded to Concentrated rank 2)
  *   - `scope_management`
  *   - `hours_audit`
  *   - `sow_to_msa_conversion`         (also dual-banded to Concentrated rank 2)
+ *   - `outcome_based_contract`        (#242)
+ *   - `unbundling_rebundling`         (#242)
  */
 
 import type { LeverAnalyzer } from "../types";
@@ -14,12 +16,16 @@ import { servicesRateCardBenchmarkLever } from "./rate-card-benchmark";
 import { scopeManagementLever } from "./scope-management";
 import { hoursAuditLever } from "./hours-audit";
 import { sowToMsaConversionLever } from "./sow-to-msa-conversion";
+import { outcomeBasedContractLever } from "./outcome-based-contract";
+import { unbundlingRebundlingLever } from "./unbundling-rebundling";
 
 export {
   servicesRateCardBenchmarkLever,
   scopeManagementLever,
   hoursAuditLever,
   sowToMsaConversionLever,
+  outcomeBasedContractLever,
+  unbundlingRebundlingLever,
 };
 
 export const SERVICES_LEVERS: LeverAnalyzer[] = [
@@ -27,4 +33,6 @@ export const SERVICES_LEVERS: LeverAnalyzer[] = [
   scopeManagementLever,
   hoursAuditLever,
   sowToMsaConversionLever,
+  outcomeBasedContractLever,
+  unbundlingRebundlingLever,
 ];
