@@ -28,6 +28,7 @@ import {
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import { InvalidRequestError, NotFoundError, ConflictError } from "../lib/api-errors";
 

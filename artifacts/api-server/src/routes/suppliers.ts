@@ -15,6 +15,7 @@ import { and, eq, ilike, gt, asc, desc, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { resolveEntity, type ResolvedEntity } from "@workspace/intelligence";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import { NotFoundError, InvalidRequestError, UnauthorizedError } from "../lib/api-errors";
 import { readRenewalAlertDays } from "../lib/contract-settings";

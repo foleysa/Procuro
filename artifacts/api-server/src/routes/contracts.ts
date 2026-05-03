@@ -16,6 +16,7 @@ import {
 import { and, asc, count, desc, eq, ilike, or, sql, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import { NotFoundError } from "../lib/api-errors";
 import {

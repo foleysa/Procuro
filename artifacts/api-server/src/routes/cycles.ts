@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 import { requirePermission } from "../lib/rbac";
 import { ApiError, NotFoundError } from "../lib/api-errors";
 import { ensureOrgAnalysisCycleScheduled } from "../lib/jobs/queue";
