@@ -36,6 +36,13 @@ import {
   leversInFragmentedFallback,
 } from "../intelligence/routing";
 import { captureFunnelSnapshot } from "./funnel";
+import {
+  getTierAutoApplySettings,
+  loadCategoryLeverScales,
+  makeScaleMapKey,
+  processTierUpdates,
+  type CategoryLeverScaleMap,
+} from "./tier-auto-apply";
 
 export interface RunCycleResult {
   cycleId: string;
@@ -146,11 +153,13 @@ export async function runAnalysisCycle(args: {
     // → drafts → persisted opportunities along the actual lever lineage
     // instead of guessing post-hoc from opportunity rows.
     const leverResults: Array<{ lever: LeverAnalyzer; result: AnalyzeResult }> = [];
-    const drafts: {
-      lever: LeverAnalyzer;
-      draft: OpportunityDraft;
-      rank: number;
-    }[] = [];
+    // First pass: run every analyzer and keep the post-exclusion
+    // drafts unranked. We hold off on the rank computation until we
+    // have the per-(category, lever) scale overrides loaded — those
+    // depend on canonical category codes (`categoryMetaById`), and
+    // resolving them requires the union of all categoryIds across
+    // analyzers so it can't fold into the per-lever loop.
+    const rawDrafts: { lever: LeverAnalyzer; draft: OpportunityDraft }[] = [];
     for (const lever of ALL_LEVERS) {
       await checkpoint();
       const rawResult = await lever.analyze({ orgId, cycleId });
@@ -167,15 +176,83 @@ export async function runAnalysisCycle(args: {
         ) {
           continue;
         }
-        const prior = priors[d.leverId];
-        const projected = d.rawProjectedSavingsUsd * prior.projectionMultiplier;
-        const confidence = prior.confidenceWeight;
-        drafts.push({
-          lever,
-          draft: d,
-          rank: projected * confidence,
-        });
+        rawDrafts.push({ lever, draft: d });
       }
+    }
+
+    // Resolve category meta for every draft up front so both the
+    // per-(category, lever) scale lookup AND the downstream band
+    // applicability gate share one batched read instead of two.
+    const categoryIds = Array.from(
+      new Set(
+        rawDrafts
+          .map((d) => d.draft.categoryId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    const categoryMetaById = new Map<
+      string,
+      { code: string; name: string }
+    >();
+    if (categoryIds.length > 0) {
+      const cats = await db
+        .select({
+          id: categoriesTable.id,
+          code: categoriesTable.code,
+          name: categoriesTable.name,
+        })
+        .from(categoriesTable)
+        .where(
+          and(
+            eq(categoriesTable.orgId, orgId),
+            inArray(categoriesTable.id, categoryIds),
+          ),
+        );
+      for (const c of cats) {
+        categoryMetaById.set(c.id, { code: c.code, name: c.name });
+      }
+    }
+
+    // Per-(category, lever) prior scale overrides (task #229). Only
+    // mode == "auto" actually wires the override map into Decide;
+    // advisory mode uses the empty map so suggestions surface in
+    // admin UIs but never mutate scoring. Reading the toggle here
+    // (vs gating only the post-snapshot writeback) ensures the two
+    // halves of the loop — Decide-time apply and post-snapshot
+    // hysteresis — are consistent within a cycle.
+    const tierAutoApplyMode = (await getTierAutoApplySettings()).mode;
+    const priorScaleOverrides: CategoryLeverScaleMap =
+      tierAutoApplyMode === "auto"
+        ? await loadCategoryLeverScales(orgId)
+        : new Map();
+    const lookupScale = (
+      categoryId: string | null | undefined,
+      leverId: LeverId,
+    ): { projection: number; confidence: number } => {
+      if (!categoryId) return { projection: 1, confidence: 1 };
+      const code = categoryMetaById.get(categoryId)?.code;
+      if (!code) return { projection: 1, confidence: 1 };
+      const hit = priorScaleOverrides.get(makeScaleMapKey(code, leverId));
+      if (!hit) return { projection: 1, confidence: 1 };
+      return { projection: hit.projection, confidence: hit.confidence };
+    };
+
+    // Second pass: compute the rank now that priors AND per-(cat,
+    // lever) overrides are both in hand.
+    const drafts: {
+      lever: LeverAnalyzer;
+      draft: OpportunityDraft;
+      rank: number;
+    }[] = [];
+    for (const { lever, draft: d } of rawDrafts) {
+      const prior = priors[d.leverId];
+      const scale = lookupScale(d.categoryId, d.leverId);
+      const projected =
+        d.rawProjectedSavingsUsd *
+        prior.projectionMultiplier *
+        scale.projection;
+      const confidence = prior.confidenceWeight * scale.confidence;
+      drafts.push({ lever, draft: d, rank: projected * confidence });
     }
     drafts.sort((a, b) => b.rank - a.rank);
 
@@ -219,47 +296,10 @@ export async function runAnalysisCycle(args: {
     // (each row binds ~18 parameters → 200 × 18 = 3,600, well under
     // the 65,535 limit).
     const OPPORTUNITY_INSERT_CHUNK_SIZE = 200;
-    // Pre-resolve canonical category codes + tenant-supplied names for
-    // every draft that has a categoryId so we only do one batched read
-    // instead of N round trips. The `code` feeds routing provenance
-    // (`mappedVia`); the `name` is stamped onto the opportunity as
-    // `source_tenant_category_string` so a later Layer-C resolution
-    // can audit-flag the historical row (Task #213).
-    const categoryIds = Array.from(
-      new Set(
-        drafts
-          .map((d) => d.draft.categoryId)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    );
-    // Single map carrying canonical code + tenant-supplied display
-    // name per category. The `code` feeds routing provenance
-    // (`mappedVia`); the `name` is stamped onto each opportunity as
-    // `source_tenant_category_string` so the Layer C resolution audit
-    // (queue.ts) can flag historical opps that originated from a
-    // since-resolved tenant string.
-    const categoryMetaById = new Map<
-      string,
-      { code: string; name: string }
-    >();
-    if (categoryIds.length > 0) {
-      const cats = await db
-        .select({
-          id: categoriesTable.id,
-          code: categoriesTable.code,
-          name: categoriesTable.name,
-        })
-        .from(categoriesTable)
-        .where(
-          and(
-            eq(categoriesTable.orgId, orgId),
-            inArray(categoriesTable.id, categoryIds),
-          ),
-        );
-      for (const c of cats) {
-        categoryMetaById.set(c.id, { code: c.code, name: c.name });
-      }
-    }
+    // (categoryMetaById is resolved up front in the Decide pre-pass —
+    // see the per-(category, lever) scale lookup above. The same map
+    // feeds the band applicability gate below and the prepared-row
+    // builder further down.)
 
     // Category × band × lever applicability gate (task #213).
     //
@@ -358,7 +398,14 @@ export async function runAnalysisCycle(args: {
     for (const { lever, draft } of filteredDrafts) {
       await checkpoint();
       const prior = priors[draft.leverId];
-      const projected = draft.rawProjectedSavingsUsd * prior.projectionMultiplier;
+      // Per-(category, lever) tier override (task #229). Layered on
+      // top of the per-lever prior so a Tier C/D bucket suppresses
+      // both projected savings and confidence for *this* (cat, lever)
+      // pair without affecting the same lever's other categories.
+      const scale = lookupScale(draft.categoryId, draft.leverId);
+      const effectiveProjMult = prior.projectionMultiplier * scale.projection;
+      const effectiveConfidence = prior.confidenceWeight * scale.confidence;
+      const projected = draft.rawProjectedSavingsUsd * effectiveProjMult;
       const tier = ALL_LEVERS.find((l) => l.leverId === draft.leverId)!.tier;
       // Routing provenance (task #213). Drafts without a category fall
       // back to the Fragmented band — tagged `unmapped_default` so
@@ -382,6 +429,11 @@ export async function runAnalysisCycle(args: {
         __priorApplied: {
           projectionMultiplier: prior.projectionMultiplier,
           confidenceWeight: prior.confidenceWeight,
+          // Per-(category, lever) tier scale, when one applied.
+          // Omitted (left as 1.0/1.0) when no override row exists or
+          // tier-auto-apply is in advisory mode.
+          tierScaleProjection: scale.projection,
+          tierScaleConfidence: scale.confidence,
         },
       };
       prepared.push({
@@ -395,7 +447,7 @@ export async function runAnalysisCycle(args: {
         categoryId: draft.categoryId ?? null,
         rawProjectedSavingsUsd: draft.rawProjectedSavingsUsd.toFixed(2),
         projectedSavingsUsd: projected.toFixed(2),
-        confidence: prior.confidenceWeight.toFixed(4),
+        confidence: effectiveConfidence.toFixed(4),
         inputs: inputsPayload,
         signalKey,
         mappedVia,
@@ -584,7 +636,7 @@ export async function runAnalysisCycle(args: {
     // marked completed. This is wrapped internally — a snapshot bug
     // must NEVER fail the cycle (the value of the snapshot is purely
     // observational; degrading it shouldn't degrade tenant analysis).
-    await captureFunnelSnapshot({
+    const snapshotResult = await captureFunnelSnapshot({
       orgId,
       cycleId,
       cycleGeneration: generation,
@@ -594,6 +646,60 @@ export async function runAnalysisCycle(args: {
       refreshedOpps: refreshed,
       priorDeltas,
     });
+
+    // Tier auto-apply post-snapshot processing (task #229). Runs
+    // only when the operator opted in (`mode === "auto"`) AND the
+    // snapshot actually persisted (a snapshot bug must not silently
+    // mutate priors). Iterates the (categoryCode, leverId) pairs
+    // touched by *post-band* drafts so we don't react to drafts that
+    // were going to be filtered anyway. Errors here are logged but
+    // don't fail the cycle — the cycle's primary output (persisted
+    // opportunities) is already committed at this point.
+    if (
+      tierAutoApplyMode === "auto" &&
+      snapshotResult.snapshotId &&
+      !snapshotResult.failed
+    ) {
+      try {
+        const pairs: Array<{ categoryCode: string; leverId: LeverId }> = [];
+        for (const { draft } of filteredDrafts) {
+          if (!draft.categoryId) continue;
+          const code = categoryMetaById.get(draft.categoryId)?.code;
+          if (!code) continue;
+          pairs.push({ categoryCode: code, leverId: draft.leverId });
+        }
+        const tierResult = await processTierUpdates({
+          orgId,
+          cycleGeneration: generation,
+          snapshotId: snapshotResult.snapshotId,
+          pairs,
+        });
+        if (
+          tierResult.changes.length > 0 ||
+          tierResult.pendingAdvances > 0 ||
+          tierResult.reaffirmations > 0
+        ) {
+          logger.info(
+            {
+              orgId,
+              cycleId,
+              generation,
+              tierChanges: tierResult.changes.length,
+              tierPendingAdvances: tierResult.pendingAdvances,
+              tierReaffirmations: tierResult.reaffirmations,
+              tierSkippedInsufficient: tierResult.skippedInsufficient,
+              tierProcessed: tierResult.processed,
+            },
+            "Tier auto-apply processed snapshot",
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { err, orgId, cycleId },
+          "Tier auto-apply processing failed (non-fatal)",
+        );
+      }
+    }
 
     return {
       cycleId,

@@ -42,6 +42,12 @@ import {
   captureFunnelSnapshot,
   funnelSnapshotFailuresCounter,
 } from "../lib/ooda/funnel";
+import {
+  getTierAutoApplySettings,
+  setTierAutoApplyMode,
+  DEFAULT_TIER_AUTO_APPLY_MODE,
+  type TierAutoApplyMode,
+} from "../lib/ooda/tier-auto-apply";
 import { requirePlatformAdmin } from "../lib/platform-admin";
 import { ALL_LEVERS } from "../lib/levers";
 import { toAnalyzeResult } from "../lib/levers/types";
@@ -791,6 +797,64 @@ router.get(
       window,
     });
     return res.json(result);
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Tier auto-apply toggle (task #229)
+//
+// Cross-tenant `app_settings` knob controlling whether the OODA cycle
+// is allowed to mutate per-(category, lever) prior scales from
+// snapshot tier suggestions. `advisory` (default) → suggestions only
+// surface in admin UI, no priors change. `auto` → cycle's
+// post-snapshot step runs the hysteresis machine and applies
+// promotions/demotions, with a `calibration_change` annotation per
+// flip. Platform-admin gated since it's cross-tenant by design.
+// ─────────────────────────────────────────────────────────────────────
+
+router.get(
+  "/admin/funnel/tier-auto-apply",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    const s = await getTierAutoApplySettings();
+    res.json({
+      mode: s.mode,
+      defaultMode: DEFAULT_TIER_AUTO_APPLY_MODE,
+      isOverride: s.isOverride,
+      lastChangedAt: s.lastChangedAt ? s.lastChangedAt.toISOString() : null,
+      lastChangedBy: s.lastChangedBy,
+    });
+  },
+);
+
+router.put(
+  "/admin/funnel/tier-auto-apply",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const body = (req.body ?? {}) as { mode?: unknown };
+    const raw = body.mode;
+    if (raw !== "advisory" && raw !== "auto") {
+      res.status(400).json({
+        error: 'Body must include `mode` of "advisory" or "auto"',
+      });
+      return;
+    }
+    const mode = raw as TierAutoApplyMode;
+    const actor = req.actorEmail ?? "system@procuro.ai";
+    const updated = await setTierAutoApplyMode({ mode, actorEmail: actor });
+    req.log.info(
+      { mode: updated.mode, actor },
+      "Operator updated tier_auto_apply",
+    );
+    res.json({
+      mode: updated.mode,
+      defaultMode: DEFAULT_TIER_AUTO_APPLY_MODE,
+      isOverride: updated.isOverride,
+      lastChangedAt: updated.lastChangedAt
+        ? updated.lastChangedAt.toISOString()
+        : null,
+      lastChangedBy: updated.lastChangedBy,
+    });
   },
 );
 

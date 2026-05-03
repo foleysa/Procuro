@@ -58,3 +58,17 @@ export const APP_SETTING_KEY_JOB_PRUNE_SCHEDULE = "job_prune_schedule" as const;
  */
 export const APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION =
   "funnel_snapshot_retention" as const;
+
+/**
+ * Stable key for the auto-apply toggle on per-(category, lever) tier
+ * suggestions (task #229). Stored value shape:
+ *   `{ mode: "advisory" | "auto" }`
+ * In `auto` mode each cycle reads the latest snapshot's tier
+ * suggestion for every (category, lever) it touches, runs the
+ * hysteresis state machine in `category_lever_prior_scales`, and
+ * applies the resulting projection/confidence multiplier to that
+ * (category, lever)'s prior on the next decide. In `advisory` mode
+ * the suggestions surface in the admin UI but no priors are
+ * adjusted. Default: `advisory` (opt-in).
+ */
+export const APP_SETTING_KEY_TIER_AUTO_APPLY = "tier_auto_apply" as const;

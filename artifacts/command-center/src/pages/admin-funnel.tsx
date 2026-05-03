@@ -576,6 +576,8 @@ function SnapshotDetailPanel({ id }: { id: string }) {
 
       <TierMatrixCard />
 
+      <TierAutoApplyCard />
+
       <Card data-testid="card-annotations">
         <CardHeader>
           <CardTitle>Annotations</CardTitle>
@@ -956,6 +958,107 @@ function TierDriverDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface TierAutoApplyResp {
+  mode: "advisory" | "auto";
+  defaultMode: "advisory" | "auto";
+  isOverride: boolean;
+  lastChangedAt: string | null;
+  lastChangedBy: string | null;
+}
+
+function TierAutoApplyCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery({
+    queryKey: ["funnel", "tier-auto-apply"],
+    queryFn: () =>
+      fetchJson<TierAutoApplyResp>("/api/admin/funnel/tier-auto-apply"),
+  });
+  const setMode = useMutation({
+    mutationFn: (mode: "advisory" | "auto") =>
+      fetchJson<TierAutoApplyResp>("/api/admin/funnel/tier-auto-apply", {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: (next) => {
+      qc.setQueryData(["funnel", "tier-auto-apply"], next);
+      toast({
+        title:
+          next.mode === "auto"
+            ? "Tier auto-apply enabled"
+            : "Tier auto-apply set to advisory",
+      });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Failed to update tier auto-apply",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+    },
+  });
+  return (
+    <Card data-testid="card-tier-auto-apply">
+      <CardHeader>
+        <CardTitle>Tier auto-apply</CardTitle>
+        <CardDescription>
+          Auto-update per-(category, lever) prior strengths from the
+          tier matrix. <strong>Advisory</strong> only surfaces tier
+          suggestions in the matrix above. <strong>Auto</strong> lets
+          the OODA cycle suppress priors for Tier C/D cells (and
+          re-enable them when a category climbs back to Tier A/B),
+          with a 2-cycle hysteresis so a single bad cycle can't flip
+          a stable bucket.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && <div>Loading…</div>}
+        {data && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <Badge
+                variant={data.mode === "auto" ? "default" : "secondary"}
+                data-testid="badge-tier-auto-apply-mode"
+              >
+                {data.mode === "auto" ? "Auto" : "Advisory"}
+              </Badge>
+              <Button
+                size="sm"
+                variant={data.mode === "auto" ? "outline" : "default"}
+                onClick={() =>
+                  setMode.mutate(data.mode === "auto" ? "advisory" : "auto")
+                }
+                disabled={setMode.isPending}
+                data-testid={
+                  data.mode === "auto"
+                    ? "button-tier-auto-apply-disable"
+                    : "button-tier-auto-apply-enable"
+                }
+              >
+                {data.mode === "auto"
+                  ? "Switch to advisory"
+                  : "Enable auto-apply"}
+              </Button>
+              {!data.isOverride && (
+                <span className="text-xs text-muted-foreground">
+                  default ({data.defaultMode})
+                </span>
+              )}
+            </div>
+            {data.lastChangedBy && (
+              <div className="text-xs text-muted-foreground">
+                Last changed by{" "}
+                <span className="font-mono">{data.lastChangedBy}</span>
+                {data.lastChangedAt && <> at {fmtTime(data.lastChangedAt)}</>}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
