@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { LeverId } from "./leverId";
+import type { ListOpportunitiesCanonicalStage } from "./listOpportunitiesCanonicalStage";
 import type { ListOpportunitiesSnoozed } from "./listOpportunitiesSnoozed";
 import type { ListOpportunitiesStatus } from "./listOpportunitiesStatus";
 
@@ -41,5 +42,9 @@ ignores the snooze column entirely.
    * @maximum 200
    */
   limit?: number;
+  /**
+   * Filter by S2P canonical stage. Accepts any value from the canonicalStage enum including `Under Re-evaluation`.
+   */
+  canonicalStage?: ListOpportunitiesCanonicalStage;
   cursor?: string;
 };

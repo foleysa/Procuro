@@ -18,6 +18,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,6 +55,7 @@ import {
   History,
   Pencil,
   AlertTriangle,
+  GitBranch,
 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
@@ -182,9 +184,49 @@ export default function OpportunityDetail() {
         <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-2xl font-bold">{opp.title}</h1>
           <StatusBadge status={status} />
+          {opp.canonicalStage && (
+            <Badge variant="outline" data-testid="badge-canonical-stage">
+              {opp.canonicalStage}
+            </Badge>
+          )}
+          {opp.savingsType && (
+            <Badge variant="secondary" data-testid="badge-savings-type">
+              {opp.savingsType}
+            </Badge>
+          )}
+          {opp.doaTier && (
+            <Badge
+              variant="outline"
+              className="font-mono"
+              data-testid="badge-doa-tier"
+              title={`Delegation of Authority Tier ${opp.doaTier}`}
+            >
+              DOA T{opp.doaTier}
+            </Badge>
+          )}
+          {(opp.breachingSla || opp.breachingDoaSla) && (
+            <Badge
+              variant="destructive"
+              className="gap-1"
+              data-testid="badge-sla-breach"
+              title={
+                opp.breachingDoaSla
+                  ? "Exceeds DOA-tier identification SLA"
+                  : `Exceeds gate SLA of ${opp.slaHours}h for current stage`
+              }
+            >
+              <AlertTriangle className="w-3 h-3" />
+              SLA breach
+            </Badge>
+          )}
         </div>
         <p className="text-muted-foreground mt-1">
           {leverLabel(opp.leverId)} · Tier {opp.tier} · cycle {opp.cycleId.slice(-8)}
+          {opp.timeInCurrentStageHours != null && opp.canonicalStage && (
+            <span className="ml-2 text-xs">
+              · {Math.round(opp.timeInCurrentStageHours)}h in {opp.canonicalStage}
+            </span>
+          )}
         </p>
       </div>
 
@@ -254,6 +296,51 @@ export default function OpportunityDetail() {
         <CardContent className="text-sm whitespace-pre-line">{opp.recommendedAction}</CardContent>
       </Card>
 
+      {(opp.sourcingStrategy || opp.baselineMethod || opp.baselineValue != null || opp.baselineSource) && (
+        <Card data-testid="card-s2p-details">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4" />
+              Procurement details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-3">
+            {opp.sourcingStrategy && (
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground min-w-[140px]">Sourcing strategy</span>
+                <Badge variant="secondary" data-testid="text-sourcing-strategy">
+                  {opp.sourcingStrategy}
+                </Badge>
+              </div>
+            )}
+            {opp.baselineMethod && (
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground min-w-[140px]">Baseline method</span>
+                <Badge variant="outline" data-testid="text-baseline-method">
+                  {opp.baselineMethod}
+                </Badge>
+              </div>
+            )}
+            {opp.baselineValue != null && (
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground min-w-[140px]">Baseline value</span>
+                <span className="tabular-nums font-mono" data-testid="text-baseline-value">
+                  {opp.baselineValue.toLocaleString()}
+                </span>
+              </div>
+            )}
+            {opp.baselineSource && (
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground min-w-[140px]">Baseline source</span>
+                <span className="text-xs text-muted-foreground italic" data-testid="text-baseline-source">
+                  {opp.baselineSource}
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {opp.supplierName && (
         <div className="text-sm text-muted-foreground">
           <strong>Supplier:</strong> {opp.supplierName}
@@ -285,6 +372,55 @@ export default function OpportunityDetail() {
         onSave={(data) => classifyM.mutate({ id, data })}
         isPending={classifyM.isPending}
       />
+
+      {(opp.stageHistory?.length ?? 0) > 0 && (
+        <Card data-testid="card-stage-history">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4" />
+              Stage transition history
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm">
+            <ol className="space-y-2" data-testid="list-stage-history">
+              {opp.stageHistory!.map((s, i) => (
+                <li
+                  key={s.id}
+                  className="flex items-start gap-3 border-l-2 pl-3 py-1"
+                  data-testid={`stage-transition-${i}`}
+                >
+                  <div className="w-4 h-4 mt-0.5 rounded-full bg-primary/20 border-2 border-primary flex-shrink-0" />
+                  <div className="flex-1">
+                    <div className="font-medium flex items-center gap-2 flex-wrap">
+                      {s.fromStage ? (
+                        <>
+                          <span className="text-muted-foreground">{s.fromStage}</span>
+                          <span className="text-muted-foreground">→</span>
+                        </>
+                      ) : null}
+                      <span>{s.toStage}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground tabular-nums">
+                      {formatDateTime(s.transitionedAt)}
+                      {s.transitionedByUserId && (
+                        <span> · by {s.transitionedByUserId}</span>
+                      )}
+                      {s.transitionReason && s.transitionReason !== "BACKFILL" && (
+                        <span> · {s.transitionReason}</span>
+                      )}
+                    </div>
+                    {s.notes && (
+                      <div className="text-xs italic mt-0.5 text-muted-foreground">
+                        "{s.notes}"
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
+      )}
 
       {decisions.length > 0 && (
         <Card data-testid="card-decision-history">

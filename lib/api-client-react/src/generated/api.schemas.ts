@@ -1045,6 +1045,20 @@ terminal stages that have no defined SLA upper bound.
   slaHours?: number | null;
 }
 
+export interface OpportunityStageHistoryEntry {
+  id: string;
+  /** Stage the opportunity transitioned FROM. Null for the initial seed row. */
+  fromStage?: string | null;
+  /** Stage the opportunity transitioned TO. */
+  toStage: string;
+  transitionedAt: string;
+  /** Email/ID of the actor who triggered the transition. Null for system-initiated transitions. */
+  transitionedByUserId?: string | null;
+  /** Machine-readable reason code: BACKFILL, STATUS_CHANGE, or MANUAL. */
+  transitionReason?: string | null;
+  notes?: string | null;
+}
+
 export type OpportunityDetailInputs = { [key: string]: unknown };
 
 export type InsightSourceContractPostureClass =
@@ -1124,6 +1138,8 @@ citation list for display.
  */
   sources: InsightSource[];
   decisions?: Decision[];
+  /** Ordered list of canonical stage transitions for this opportunity, oldest first. Used to render the stage transition history on the detail page. */
+  stageHistory?: OpportunityStageHistoryEntry[];
 };
 
 export interface OpportunityListResponse {
@@ -5856,6 +5872,10 @@ ignores the snooze column entirely.
    * @maximum 200
    */
   limit?: number;
+  /**
+   * Filter by S2P canonical stage. Accepts any value from the canonicalStage enum including `Under Re-evaluation`.
+   */
+  canonicalStage?: ListOpportunitiesCanonicalStage;
   cursor?: string;
 };
 
@@ -5883,6 +5903,19 @@ export const ListOpportunitiesSnoozed = {
 export type PatchOpportunityClassification400 = {
   error?: string;
 };
+
+export type ListOpportunitiesCanonicalStage =
+  (typeof ListOpportunitiesCanonicalStage)[keyof typeof ListOpportunitiesCanonicalStage];
+
+export const ListOpportunitiesCanonicalStage = {
+  Identified: "Identified",
+  Awarded: "Awarded",
+  In_Contracting: "In Contracting",
+  In_Implementation: "In Implementation",
+  Realized: "Realized",
+  "Closed-No_Action": "Closed-No Action",
+  "Under_Re-evaluation": "Under Re-evaluation",
+} as const;
 
 export type RunNextCycleParams = {
   /**

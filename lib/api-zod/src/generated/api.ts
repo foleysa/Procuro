@@ -1560,6 +1560,20 @@ export const ListOpportunitiesQueryParams = zod.object({
     .min(1)
     .max(listOpportunitiesQueryLimitMax)
     .default(listOpportunitiesQueryLimitDefault),
+  canonicalStage: zod
+    .enum([
+      "Identified",
+      "Awarded",
+      "In Contracting",
+      "In Implementation",
+      "Realized",
+      "Closed-No Action",
+      "Under Re-evaluation",
+    ])
+    .optional()
+    .describe(
+      "Filter by S2P canonical stage. Accepts any value from the canonicalStage enum including `Under Re-evaluation`.",
+    ),
   cursor: zod.coerce.string().optional(),
 });
 
@@ -2290,6 +2304,39 @@ export const GetOpportunityResponse = zod
           }),
         )
         .optional(),
+      stageHistory: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            fromStage: zod
+              .string()
+              .nullish()
+              .describe(
+                "Stage the opportunity transitioned FROM. Null for the initial seed row.",
+              ),
+            toStage: zod
+              .string()
+              .describe("Stage the opportunity transitioned TO."),
+            transitionedAt: zod.coerce.date(),
+            transitionedByUserId: zod
+              .string()
+              .nullish()
+              .describe(
+                "Email\/ID of the actor who triggered the transition. Null for system-initiated transitions.",
+              ),
+            transitionReason: zod
+              .string()
+              .nullish()
+              .describe(
+                "Machine-readable reason code: BACKFILL, STATUS_CHANGE, or MANUAL.",
+              ),
+            notes: zod.string().nullish(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Ordered list of canonical stage transitions for this opportunity, oldest first. Used to render the stage transition history on the detail page.",
+        ),
     }),
   );
 

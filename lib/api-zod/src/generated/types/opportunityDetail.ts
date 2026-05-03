@@ -15,6 +15,7 @@ import type { Decision } from "./decision";
 import type { InsightSource } from "./insightSource";
 import type { Opportunity } from "./opportunity";
 import type { OpportunityDetailInputs } from "./opportunityDetailInputs";
+import type { OpportunityStageHistoryEntry } from "./opportunityStageHistoryEntry";
 
 export type OpportunityDetail = Opportunity & {
   inputs?: OpportunityDetailInputs;
@@ -26,4 +27,6 @@ citation list for display.
  */
   sources: InsightSource[];
   decisions?: Decision[];
+  /** Ordered list of canonical stage transitions for this opportunity, oldest first. Used to render the stage transition history on the detail page. */
+  stageHistory?: OpportunityStageHistoryEntry[];
 };

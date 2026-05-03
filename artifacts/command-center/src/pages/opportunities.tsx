@@ -10,6 +10,7 @@ import {
   LeverId,
   ListOpportunitiesStatus,
   ListOpportunitiesSnoozed,
+  ListOpportunitiesCanonicalStage,
   RejectionReasonCode,
   type Opportunity,
   type BulkOpportunityActionResult,
@@ -53,6 +54,7 @@ import {
   X,
   Clock,
   RotateCcw,
+  AlertTriangle,
 } from "lucide-react";
 
 const STATUS_OPTS = [
@@ -113,6 +115,7 @@ export default function Opportunities() {
   }, []);
   const [statusFilter, setStatusFilter] = useState<string>(initial.status);
   const [leverFilter, setLeverFilter] = useState<string>(initial.lever);
+  const [stageFilter, setStageFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<PendingAction | null>(null);
 
@@ -126,8 +129,9 @@ export default function Opportunities() {
       // Default `snoozed=exclude` is server-side; no need to set explicitly.
     }
     if (leverFilter !== "all") p.leverId = leverFilter;
+    if (stageFilter !== "all") p.canonicalStage = stageFilter;
     return p as never;
-  }, [statusFilter, leverFilter]);
+  }, [statusFilter, leverFilter, stageFilter]);
 
   const { data, isLoading, error } = useListOpportunities(params);
   const allItems = data?.items ?? [];
@@ -243,6 +247,26 @@ export default function Opportunities() {
               {Object.values(LeverId).map((id) => (
                 <SelectItem key={id} value={id}>
                   {leverLabel(id)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={stageFilter}
+            onValueChange={(v) => {
+              setStageFilter(v);
+              setSelected(new Set());
+            }}
+          >
+            <SelectTrigger className="w-[200px]" data-testid="filter-stage">
+              <SelectValue placeholder="All stages" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All stages</SelectItem>
+              {Object.values(ListOpportunitiesCanonicalStage).map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -771,7 +795,50 @@ export function OppRow({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 ml-4">
+        <div className="flex items-center gap-2 ml-4 flex-wrap justify-end">
+          {(opp.breachingSla || opp.breachingDoaSla) && (
+            <Badge
+              variant="destructive"
+              className="gap-1"
+              data-testid={`sla-breach-${opp.id}`}
+              title={
+                opp.breachingDoaSla
+                  ? "Exceeds DOA-tier identification SLA"
+                  : "Exceeds gate SLA for current stage"
+              }
+            >
+              <AlertTriangle className="w-3 h-3" />
+              SLA breach
+            </Badge>
+          )}
+          {opp.canonicalStage && (
+            <Badge
+              variant="outline"
+              className="hidden sm:inline-flex"
+              data-testid={`stage-${opp.id}`}
+            >
+              {opp.canonicalStage}
+            </Badge>
+          )}
+          {opp.savingsType && (
+            <Badge
+              variant="secondary"
+              className="hidden md:inline-flex"
+              data-testid={`savings-type-${opp.id}`}
+            >
+              {opp.savingsType}
+            </Badge>
+          )}
+          {opp.doaTier && (
+            <Badge
+              variant="outline"
+              className="hidden md:inline-flex font-mono"
+              data-testid={`doa-tier-${opp.id}`}
+              title={`DOA Tier ${opp.doaTier}`}
+            >
+              T{opp.doaTier}
+            </Badge>
+          )}
           {opp.snoozedUntil && (
             <Badge
               variant="outline"
@@ -804,7 +871,7 @@ export function OppRow({
               {formatPercent(opp.confidence)} conf.
             </div>
           </div>
-          <ArrowRight className="w-4 h-4 text-muted-foreground" />
+          <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
         </div>
       </Link>
     </div>

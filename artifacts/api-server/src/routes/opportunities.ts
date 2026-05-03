@@ -282,6 +282,7 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   const leverId = req.query.leverId as LeverId | undefined;
   const cycleId = req.query.cycleId as string | undefined;
   const supplierId = req.query.supplierId as string | undefined;
+  const canonicalStageFilter = req.query.canonicalStage as CanonicalStage | undefined;
   const snoozed = parseSnoozeFilter(req.query.snoozed);
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? "100", 10) || 100, 1),
@@ -296,6 +297,7 @@ router.get("/opportunities", tenantMiddleware, async (req, res) => {
   if (status) where.push(eq(opportunitiesTable.status, status));
   if (leverId) where.push(eq(opportunitiesTable.leverId, leverId));
   if (cycleId) where.push(eq(opportunitiesTable.cycleId, cycleId));
+  if (canonicalStageFilter) where.push(eq(opportunitiesTable.canonicalStage, canonicalStageFilter));
   if (snoozed === "exclude") {
     // A row is "currently snoozed" iff snoozed_until > now(). We OR with
     // `IS NULL` so unsnoozed rows are kept, matching the Today feed.
@@ -421,6 +423,11 @@ router.get("/opportunities/:id", tenantMiddleware, async (req, res) => {
     .from(decisionsTable)
     .where(eq(decisionsTable.opportunityId, id))
     .orderBy(desc(decisionsTable.createdAt));
+  const stageHistory = await db
+    .select()
+    .from(opportunityStageHistoryTable)
+    .where(eq(opportunityStageHistoryTable.opportunityId, id))
+    .orderBy(opportunityStageHistoryTable.transitionedAt);
   const inputs = (row.opp.inputs ?? {}) as Record<string, unknown>;
   res.json({
     ...mapOpportunity(row),
@@ -437,6 +444,15 @@ router.get("/opportunities/:id", tenantMiddleware, async (req, res) => {
         d.realizedSavingsUsd !== null ? Number(d.realizedSavingsUsd) : null,
       notes: null,
       createdAt: d.createdAt,
+    })),
+    stageHistory: stageHistory.map((s) => ({
+      id: s.id,
+      fromStage: s.fromStage ?? null,
+      toStage: s.toStage,
+      transitionedAt: s.transitionedAt,
+      transitionedByUserId: s.transitionedByUserId ?? null,
+      transitionReason: s.transitionReason ?? null,
+      notes: s.notes ?? null,
     })),
   });
 });

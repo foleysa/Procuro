@@ -640,6 +640,20 @@ paths:
           maximum: 200
           default: 100
       - in: query
+        name: canonicalStage
+        description: 'Filter by S2P canonical stage. Accepts any value from the
+          canonicalStage enum including `Under Re-evaluation`.'
+        schema:
+          type: string
+          enum:
+          - Identified
+          - Awarded
+          - In Contracting
+          - In Implementation
+          - Realized
+          - Closed-No Action
+          - Under Re-evaluation
+      - in: query
         name: cursor
         schema:
           type: string
@@ -6741,6 +6755,36 @@ components:
             terminal stages that have no defined SLA upper bound.
 
             '
+    OpportunityStageHistoryEntry:
+      type: object
+      required:
+      - id
+      - toStage
+      - transitionedAt
+      properties:
+        id:
+          type: string
+        fromStage:
+          type: string
+          nullable: true
+          description: 'Stage the opportunity transitioned FROM. Null for the initial seed row.'
+        toStage:
+          type: string
+          description: 'Stage the opportunity transitioned TO.'
+        transitionedAt:
+          type: string
+          format: date-time
+        transitionedByUserId:
+          type: string
+          nullable: true
+          description: 'Email/ID of the actor who triggered the transition. Null for system-initiated transitions.'
+        transitionReason:
+          type: string
+          nullable: true
+          description: 'Machine-readable reason code: BACKFILL, STATUS_CHANGE, or MANUAL.'
+        notes:
+          type: string
+          nullable: true
     OpportunityDetail:
       allOf:
       - $ref: '#/components/schemas/Opportunity'
@@ -6770,6 +6814,12 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/Decision'
+          stageHistory:
+            type: array
+            description: 'Ordered list of canonical stage transitions for this opportunity,
+              oldest first. Used to render the stage transition history on the detail page.'
+            items:
+              $ref: '#/components/schemas/OpportunityStageHistoryEntry'
     InsightSource:
       type: object
       description: 'A single signal-source descriptor backing an insight. Mirrors the
