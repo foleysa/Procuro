@@ -4925,6 +4925,13 @@ the design doc; unknown keys are tolerated.
   severity: TodayFeedItemSeverity;
 }
 
+export interface AckTodayAnnotationResponse {
+  id: string;
+  /** User id that performed the ack, when resolvable from the session. */
+  ackedBy: string | null;
+  ackedAt: string | null;
+}
+
 export interface TodayFeedSourceError {
   source: string;
   error: string;

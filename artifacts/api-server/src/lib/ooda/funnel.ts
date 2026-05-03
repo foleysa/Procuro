@@ -1138,9 +1138,21 @@ export interface RecentAutoAnnotation {
  */
 export async function getRecentAutoAnnotations(
   orgId: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; includeAcked?: boolean } = {},
 ): Promise<RecentAutoAnnotation[]> {
   const limit = Math.max(1, Math.min(50, opts.limit ?? 10));
+  // Default behaviour (#210): hide acked annotations from the Today
+  // card so the noise level stays manageable as cycles accumulate. The
+  // `includeAcked` escape hatch is preserved for admin views that
+  // still want the full history.
+  const includeAcked = opts.includeAcked ?? false;
+  const filters = [
+    eq(funnelAnnotationsTable.orgId, orgId),
+    eq(funnelAnnotationsTable.source, "auto"),
+  ];
+  if (!includeAcked) {
+    filters.push(isNull(funnelAnnotationsTable.ackedAt));
+  }
   const rows = await db
     .select({
       id: funnelAnnotationsTable.id,
@@ -1164,12 +1176,7 @@ export async function getRecentAutoAnnotations(
         eq(funnelSnapshotsTable.orgId, orgId),
       ),
     )
-    .where(
-      and(
-        eq(funnelAnnotationsTable.orgId, orgId),
-        eq(funnelAnnotationsTable.source, "auto"),
-      ),
-    )
+    .where(and(...filters))
     .orderBy(desc(funnelAnnotationsTable.createdAt))
     .limit(limit);
 

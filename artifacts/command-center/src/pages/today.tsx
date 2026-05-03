@@ -1,7 +1,13 @@
 import { Link } from "wouter";
-import { useGetTodayFeed } from "@workspace/api-client-react";
+import {
+  useGetTodayFeed,
+  useAckTodayAnnotation,
+  getGetTodayFeedQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   AlertTriangle,
   Sparkles,
@@ -11,6 +17,7 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Check,
 } from "lucide-react";
 import { scrubError } from "@/lib/scrub-error";
 import { useMyRole } from "@/lib/use-my-role";
@@ -465,26 +472,7 @@ function DeltasCard({
           ) : (
             <ul className="space-y-2">
               {recent.slice(0, 5).map((a) => (
-                <li
-                  key={a.id}
-                  className="flex items-start gap-2 text-sm"
-                  data-testid={`today-deltas-annotation-${a.kind}`}
-                >
-                  {a.kind === "stage_drop" ? (
-                    <TrendingDown className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                  ) : a.kind === "stage_spike" ? (
-                    <TrendingUp className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
-                  ) : (
-                    <Sparkles className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm leading-snug">{a.summary}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      cycle #{a.cycleGeneration}
-                      {a.targetLeverId ? ` · ${a.targetLeverId}` : ""}
-                    </p>
-                  </div>
-                </li>
+                <AnnotationRow key={a.id} annotation={a} />
               ))}
             </ul>
           )}
@@ -533,6 +521,64 @@ function DeltasCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Single auto-annotation row with an inline "Acknowledge" button (#210).
+ *
+ * Acking calls the new POST /today/annotations/:id/ack endpoint, which
+ * sets `acked_by` / `acked_at` on the underlying funnel_annotations
+ * row. The Today reader filters acked rows out by default, so on the
+ * next feed refetch the annotation simply disappears from the card and
+ * the noise level stays manageable as cycles accumulate.
+ *
+ * We invalidate the Today feed query rather than mutating the cached
+ * payload by hand — the feed is a `partial`/`errors`/`items[]` shape
+ * across six sources, and a hand-spliced update would be brittle.
+ */
+function AnnotationRow({ annotation }: { annotation: AutoAnnotation }) {
+  const qc = useQueryClient();
+  const ack = useAckTodayAnnotation({
+    mutation: {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getGetTodayFeedQueryKey() });
+      },
+    },
+  });
+  return (
+    <li
+      className="flex items-start gap-2 text-sm"
+      data-testid={`today-deltas-annotation-${annotation.kind}`}
+    >
+      {annotation.kind === "stage_drop" ? (
+        <TrendingDown className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+      ) : annotation.kind === "stage_spike" ? (
+        <TrendingUp className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+      ) : (
+        <Sparkles className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm leading-snug">{annotation.summary}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          cycle #{annotation.cycleGeneration}
+          {annotation.targetLeverId ? ` · ${annotation.targetLeverId}` : ""}
+        </p>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0"
+        disabled={ack.isPending}
+        onClick={() => ack.mutate({ id: annotation.id })}
+        data-testid={`today-deltas-annotation-ack-${annotation.id}`}
+        aria-label="Acknowledge annotation"
+      >
+        <Check className="w-3 h-3 mr-1" />
+        {ack.isPending ? "Acking…" : "Acknowledge"}
+      </Button>
+    </li>
   );
 }
 

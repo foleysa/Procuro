@@ -19,3 +19,9 @@ export { BulkAddWatchedIssuersResponse } from "./generated/api";
 
 // Same TS2308 ambiguity for the engine-access denial POST body (#207).
 export { RecordEngineAccessDenialBody } from "./generated/api";
+
+// Same TS2308 ambiguity for the Today annotation ack response (#210):
+// orval emits both a zod runtime schema and a TypeScript interface with
+// the same name. The explicit re-export makes the zod schema win at
+// this barrel; the TS type is reachable via the generated types path.
+export { AckTodayAnnotationResponse } from "./generated/api";

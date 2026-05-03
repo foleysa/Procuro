@@ -9348,6 +9348,38 @@ export const GetTodayFeedResponse = zod.object({
 });
 
 /**
+ * Sets `acked_by` / `acked_at` on the underlying `funnel_annotations`
+row so the next `/today/feed` fetch (which filters `acked_at IS NULL`
+by default) hides it. Tenant-scoped; 404 if the row doesn't belong
+to the caller's org. Idempotent on repeat clicks.
+
+ * @summary Acknowledge ("dismiss") an auto-annotation from the Today card
+ */
+export const AckTodayAnnotationParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const AckTodayAnnotationHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const AckTodayAnnotationResponse = zod.object({
+  id: zod.string(),
+  ackedBy: zod
+    .string()
+    .nullable()
+    .describe(
+      "User id that performed the ack, when resolvable from the session.",
+    ),
+  ackedAt: zod.coerce.date().nullable(),
+});
+
+/**
  * Composes collectors, jobs (last 24h), data sources, integrations, and
 funnel snapshot failures into a single fail-soft rollup. Per-source
 failures populate `errors[]` and set `partial=true` rather than failing

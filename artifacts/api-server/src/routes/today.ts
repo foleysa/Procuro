@@ -42,8 +42,9 @@ import {
   opportunitiesTable,
   jobsTable,
   analysisCyclesTable,
+  funnelAnnotationsTable,
 } from "@workspace/db";
-import { and, eq, desc, gte, sql } from "drizzle-orm";
+import { and, eq, desc, gte, isNull, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { resolveRbacContext } from "../lib/rbac";
 import {
@@ -559,5 +560,90 @@ router.get("/today/feed", tenantMiddleware, async (req: Request, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   res.json(response);
 });
+
+/**
+ * Acknowledge ("dismiss") an auto-annotation surfaced on the Today
+ * "What changed since last cycle" card (#210). Sets `acked_by` /
+ * `acked_at` on the underlying `funnel_annotations` row so the next
+ * Today fetch (which filters `acked_at IS NULL` by default) hides it.
+ *
+ * Tenant-scoped: the row must belong to the caller's org AND be an
+ * `auto` annotation (operator notes live on the engine page, not the
+ * Today card, so acking them from this route would be off-contract);
+ * otherwise we return 404. Idempotent: a repeat ack is a no-op success
+ * — the UPDATE only fires when `acked_at IS NULL`, and a follow-up
+ * SELECT returns the original timestamp so the response is stable
+ * across repeat clicks.
+ */
+router.post(
+  "/today/annotations/:id/ack",
+  tenantMiddleware,
+  async (req: Request, res) => {
+    const orgId = requireOrgId(req);
+    const id = String(req.params["id"]);
+    // Actor attribution comes from `tenantMiddleware` (which sets
+    // `req.clerkUserId`) and from any prior `resolveRbacContext` call
+    // (which sets `req.rbac.userId`). Either is acceptable; we prefer
+    // the rbac-resolved id for consistency with audit-log writes
+    // elsewhere, falling back to the raw clerk id, then null for
+    // service / dev-header callers.
+    const userId =
+      req.rbac?.userId ?? req.clerkUserId ?? null;
+
+    // First-time ack: only stamp when not already acked. The
+    // `source = 'auto'` filter keeps this route off operator notes.
+    const updated = await db
+      .update(funnelAnnotationsTable)
+      .set({ ackedBy: userId, ackedAt: new Date() })
+      .where(
+        and(
+          eq(funnelAnnotationsTable.orgId, orgId),
+          eq(funnelAnnotationsTable.id, id),
+          eq(funnelAnnotationsTable.source, "auto"),
+          isNull(funnelAnnotationsTable.ackedAt),
+        ),
+      )
+      .returning({
+        id: funnelAnnotationsTable.id,
+        ackedBy: funnelAnnotationsTable.ackedBy,
+        ackedAt: funnelAnnotationsTable.ackedAt,
+      });
+    if (updated[0]) {
+      const row = updated[0];
+      return res.json({
+        id: row.id,
+        ackedBy: row.ackedBy,
+        ackedAt: row.ackedAt ? row.ackedAt.toISOString() : null,
+      });
+    }
+
+    // Either the row doesn't exist for this tenant / source, or it's
+    // already acked. Disambiguate with a SELECT so repeat-ack returns
+    // 200 with the original timestamp (idempotent) and a missing /
+    // operator-note row returns 404.
+    const [existing] = await db
+      .select({
+        id: funnelAnnotationsTable.id,
+        ackedBy: funnelAnnotationsTable.ackedBy,
+        ackedAt: funnelAnnotationsTable.ackedAt,
+      })
+      .from(funnelAnnotationsTable)
+      .where(
+        and(
+          eq(funnelAnnotationsTable.orgId, orgId),
+          eq(funnelAnnotationsTable.id, id),
+          eq(funnelAnnotationsTable.source, "auto"),
+        ),
+      );
+    if (!existing) {
+      return res.status(404).json({ error: "annotation_not_found" });
+    }
+    return res.json({
+      id: existing.id,
+      ackedBy: existing.ackedBy,
+      ackedAt: existing.ackedAt ? existing.ackedAt.toISOString() : null,
+    });
+  },
+);
 
 export default router;

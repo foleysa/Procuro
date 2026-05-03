@@ -4482,6 +4482,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TodayFeed"
+  /today/annotations/{id}/ack:
+    post:
+      operationId: ackTodayAnnotation
+      tags: [today]
+      summary: Acknowledge ("dismiss") an auto-annotation from the Today card
+      description: |
+        Sets `acked_by` / `acked_at` on the underlying `funnel_annotations`
+        row so the next `/today/feed` fetch (which filters `acked_at IS NULL`
+        by default) hides it. Tenant-scoped; 404 if the row doesn't belong
+        to the caller's org. Idempotent on repeat clicks.
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Annotation acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AckTodayAnnotationResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /operations/health:
     get:
       operationId: getOperationsHealth
@@ -13044,6 +13066,20 @@ components:
           type: string
           enum: [info, warn, error]
           description: Display severity, normalized across sources.
+    AckTodayAnnotationResponse:
+      type: object
+      required: [id, ackedBy, ackedAt]
+      properties:
+        id:
+          type: string
+        ackedBy:
+          type: string
+          nullable: true
+          description: User id that performed the ack, when resolvable from the session.
+        ackedAt:
+          type: string
+          format: date-time
+          nullable: true
     TodayFeedSourceError:
       type: object
       required:

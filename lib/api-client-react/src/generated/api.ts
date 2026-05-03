@@ -23,6 +23,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AckTodayAnnotationResponse,
   AddWatchedIssuerRequest,
   AddWatchlistMemberRequest,
   AdminApiKeyIssued,
@@ -13837,6 +13838,95 @@ export function useGetTodayFeed<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Sets `acked_by` / `acked_at` on the underlying `funnel_annotations`
+row so the next `/today/feed` fetch (which filters `acked_at IS NULL`
+by default) hides it. Tenant-scoped; 404 if the row doesn't belong
+to the caller's org. Idempotent on repeat clicks.
+
+ * @summary Acknowledge ("dismiss") an auto-annotation from the Today card
+ */
+export const getAckTodayAnnotationUrl = (id: string) => {
+  return `/api/today/annotations/${id}/ack`;
+};
+
+export const ackTodayAnnotation = async (
+  id: string,
+  options?: RequestInit,
+): Promise<AckTodayAnnotationResponse> => {
+  return customFetch<AckTodayAnnotationResponse>(getAckTodayAnnotationUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAckTodayAnnotationMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ackTodayAnnotation>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ackTodayAnnotation>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["ackTodayAnnotation"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ackTodayAnnotation>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return ackTodayAnnotation(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AckTodayAnnotationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ackTodayAnnotation>>
+>;
+
+export type AckTodayAnnotationMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Acknowledge ("dismiss") an auto-annotation from the Today card
+ */
+export const useAckTodayAnnotation = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ackTodayAnnotation>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ackTodayAnnotation>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getAckTodayAnnotationMutationOptions(options));
+};
 
 /**
  * Composes collectors, jobs (last 24h), data sources, integrations, and
