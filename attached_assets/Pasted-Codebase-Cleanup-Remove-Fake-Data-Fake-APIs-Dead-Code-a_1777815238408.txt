@@ -1,0 +1,169 @@
+Codebase Cleanup: Remove Fake Data, Fake APIs, Dead Code, and Orphans
+What & Why
+The codebase has accumulated prototype-era artifacts that are now actively harming reliability. Fake background jobs are running and failing in the queue (visible on the dashboard as failed tasks), stub endpoints return success for operations that never happen, mock fixtures are being read where real data should be, and orphan files plus unused dependencies are inflating the build and the cognitive load.
+This must be cleaned up before the S2P data model ticket (#284) ships. If #284 lands on top of fake APIs and mock fixtures, half of that ticket is spent fighting Potemkin code. Run this first.
+Two phases — inventory first, removal second. No destructive changes without explicit user sign-off between phases. Single-phase "delete everything that looks fake" prompts produce catastrophic deletions of load-bearing code.
+Phase 1 — Comprehensive Inventory (NO deletions)
+Produce a single audit report at docs/cleanup-audit-2026-05-03.md cataloging every suspicious item across six categories. No code is modified or deleted in Phase 1. This is read-only analysis.
+Categories to inventory
+Category A — Fake/Mock Data
+
+Hardcoded fixture arrays referenced outside test files (const mockX = [...])
+@faker-js/faker, casual, or similar generators imported by runtime paths (not test-only paths)
+Seed data files imported by application code (not just by migrations)
+"Demo mode" toggles, env vars, or feature flags that bypass real queries
+Hardcoded user IDs, org IDs, or tenant IDs that don't come from auth context
+
+Category B — Fake/Stub APIs
+
+API route handlers that return hardcoded JSON regardless of input
+Endpoints with empty bodies, commented-out logic, or // TODO: implement
+MSW (Mock Service Worker) handlers active outside test environment
+Routes that accept requests but never write to a database or queue
+Webhook receivers that log but don't process
+API routes registered but never called from any frontend component or service
+
+Category C — Orphan Files
+
+Files in the repo not imported by any other file (excluding entry points, configs, migrations)
+React components defined but never rendered
+Utility functions exported but never imported
+Database tables with no application code reading or writing them
+Migrations applied but with schema unused by current code
+Test files for deleted functionality
+
+Category D — Dead Code Inside Live Files
+
+Imports that aren't used
+Functions defined but never called
+Commented-out code blocks older than 30 days (verify via git blame)
+Unreachable branches (if (false), code after unconditional return)
+Duplicate utility functions (same logic, different names)
+Legacy compatibility shims for systems no longer in use
+
+Category E — Unused Dependencies and Bloat
+
+Packages in package.json not imported anywhere (run depcheck)
+Dev dependencies misplaced in production dependencies
+Multiple packages doing the same thing (e.g., both lodash and ramda)
+Build artifacts committed to the repo (dist/, .next/, build/)
+Large unused assets in public/ or assets/
+
+Category F — Background Jobs and Tasks (special focus)
+This is the category the user flagged explicitly. The dashboard shows failing jobs — find out why.
+
+Cron jobs / scheduled tasks registered but pointing at deleted handlers
+Queue consumers (BullMQ, Inngest, Trigger.dev, etc.) listening to topics that no producer publishes to
+Tasks that fail repeatedly with the same error (cross-reference logs / job table)
+Tasks calling fake APIs from Category B
+Tasks operating on fake data from Category A
+Retry loops failing for >7 days
+
+Required output format
+For each item found, one row in this exact format in docs/cleanup-audit-2026-05-03.md:
+| ID  | Category        | File / Location                          | Description                                                              | Last touched | Recommendation | Risk if removed                                  |
+|-----|-----------------|------------------------------------------|--------------------------------------------------------------------------|--------------|----------------|--------------------------------------------------|
+| 001 | A — Fake Data   | src/data/mockOpportunities.ts            | 200 hardcoded opportunity records imported by /api/opportunities/list    | 2025-09-14   | DELETE         | LOW — replaced by real DB query in #284          |
+| 002 | B — Fake API    | src/app/api/sourcing/run-event/route.ts  | Returns {success: true} regardless of input; no DB write, no queue push  | 2025-08-22   | REPLACE        | MEDIUM — frontend calls this on RFx button click |
+| 003 | F — Background  | src/jobs/refresh-pipeline.ts             | Cron registered but handler does nothing; failing 144x/day               | 2025-10-01   | DELETE         | LOW — no value, generating noise                 |
+Recommendation values (use exactly these four):
+
+DELETE — safe to remove, no functional loss
+REPLACE — remove fake, build real implementation (creates a follow-up ticket)
+KEEP — appears suspicious but is intentional (must include reason)
+INVESTIGATE — unclear; needs human review before deciding
+
+Phase 1 deliverables
+
+docs/cleanup-audit-2026-05-03.md — full inventory in the table format above
+Summary block at the top of the report with:
+
+Total items found, grouped by category
+Total files affected
+Estimated lines of code removable
+Estimated dependencies removable
+Number of failing jobs identified (Category F)
+Top 10 highest-impact items (largest LOC, most-called fake APIs, most-failing jobs)
+
+
+A flagged section listing every KEEP item with explicit reason
+A flagged section listing every INVESTIGATE item that needs user decision
+No code changes whatsoever. Phase 1 is read-only. STOP and wait for user approval before Phase 2.
+
+Phase 2 — Sequenced Removal (after Phase 1 sign-off)
+Only after the user reviews the audit and approves do we proceed to deletions. Removal happens in six batches, one commit per batch, in this order:
+Batch 1 — Failing background jobs (Category F) — highest priority because they generate noise that hides real failures. Delete cron registrations, queue consumers, and handlers marked DELETE.
+Batch 2 — Fake APIs (Category B) — remove stub endpoints marked DELETE. For endpoints marked REPLACE, leave in place with an explicit // TODO: replace before ship comment and create a follow-up ticket per stub.
+Batch 3 — Fake data (Category A) — remove mock fixtures, faker imports, demo-mode toggles. Where fake data was the only data source, the calling code should now error explicitly (not silently return empty) so the gap is visible.
+Batch 4 — Orphan files (Category C) — delete files with zero imports. Verify with a fresh static analysis pass after deletion.
+Batch 5 — Dead code inside live files (Category D) — remove unused imports, unreachable branches, commented-out blocks, duplicate utilities.
+Batch 6 — Unused dependencies and bloat (Category E) — remove from package.json, run pnpm install, commit lockfile change. Verify build still passes.
+Removal rules (non-negotiable)
+
+One commit per batch. Each commit message names the batch and lists item IDs from the audit. Example: Batch 1: remove failing background jobs (items 003, 007, 012, 015, 019).
+Run the test suite, type check, and lint after every batch. If anything breaks, revert that batch and mark the failing items INVESTIGATE in the audit.
+No item marked KEEP gets touched.
+No item marked INVESTIGATE gets touched without explicit user approval.
+TypeCheck and lint must pass after every batch.
+Build must succeed after every batch.
+Any item discovered to be load-bearing during deletion gets reverted, marked KEEP in the audit with the reason it broke, and skipped permanently.
+
+Out of scope
+
+Refactoring live code that isn't fake / dead / orphan (separate ticket).
+Building real implementations to replace stubs marked REPLACE (each becomes a follow-up ticket).
+Performance optimization (separate ticket).
+Schema cleanup (handled in #284; do not touch the database schema in this ticket unless it's fully orphaned per Category C).
+Test coverage improvements (handled in #287).
+
+Steps for Replit
+Phase 1:
+
+Run static analysis to find orphan files. Tools: madge --orphans, ts-prune, depcheck, unimported. Capture output.
+Search for fake data patterns: grep -rE "mock|fake|stub|fixture|faker|seed|demo" src/ filtered by file path. Manually classify each hit against Category A definition.
+Audit every API route file. For each route, verify it (a) calls a real data layer, (b) is referenced by some frontend code, (c) has logic in the handler body. Routes failing any of those checks go in the audit.
+Audit background jobs. Cross-reference registered cron jobs and queue consumers against actual handlers. Cross-reference handlers against the failing jobs log.
+Compile the audit report at docs/cleanup-audit-2026-05-03.md. Calculate summary stats. Flag KEEP and INVESTIGATE items in dedicated sections.
+STOP. Post a comment on the ticket: "Phase 1 complete. Ready for review." Wait for user approval before proceeding.
+
+Phase 2 (only after user approves the audit):
+7. Execute Batches 1 through 6 in order, one commit per batch. After each commit: run tests, typecheck, lint, build. If any fail, revert and mark items INVESTIGATE.
+8. After Batch 6 completes, run a final static analysis pass to confirm no new orphans were introduced by the deletions.
+9. Update the audit report with commit hashes for every DELETE item, marking the ticket complete.
+Acceptance criteria
+Phase 1:
+
+Audit report exists at docs/cleanup-audit-2026-05-03.md with all six categories populated.
+Every item has all seven columns filled in.
+Summary statistics at the top match the item count below.
+Top 10 highest-impact items called out explicitly.
+All KEEP recommendations include a reason.
+All INVESTIGATE items flagged in their own section.
+Zero code changes in this phase. Confirm with git diff showing only the audit file added.
+
+Phase 2 (per batch):
+
+One commit per batch with message naming batch number and item IDs.
+Test suite passes after each commit.
+TypeCheck passes after each commit.
+Lint passes after each commit.
+Build succeeds after each commit.
+
+Phase 2 (overall, all must pass before ticket closes):
+
+Failing background jobs count drops to zero, OR every remaining failure has a tracked root cause that is not a fake handler.
+depcheck reports no unused dependencies.
+LOC reduction matches the Phase 1 estimate within 15%.
+madge --orphans returns zero orphan files.
+Final state of docs/cleanup-audit-2026-05-03.md shows every DELETE item marked complete with commit hash.
+A new section "Follow-up tickets created" lists every REPLACE item with a corresponding ticket number.
+
+Rollback plan
+Each batch is one commit, so any individual batch can be reverted with git revert <commit-hash> without affecting other batches. If multiple batches need to be rolled back, revert in reverse order (Batch 6 → Batch 5 → ...). Audit report is preserved across reverts.
+Mode guidance
+
+Phase 1: Power. This is investigative work across the entire codebase requiring careful classification. Lite or Economy will miss items.
+Phase 2: Economy per batch. Removal is mechanical once the audit is approved. Power is overkill and burns credits.
+
+Why this matters (for the reviewer)
+Until this is clean, every new feature lands on top of fake foundations and gets blamed when those foundations crack. The S2P data model in #284 and the dashboard rebuild that follows are both worthless if half their inputs are stubs returning fake JSON.
