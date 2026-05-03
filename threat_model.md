@@ -9,9 +9,10 @@ The primary production attack surface is the API server. `artifacts/mockup-sandb
 ## Assets
 
 - **Tenant procurement data** — suppliers, contracts, purchase orders, invoices, payments, shipments, opportunities, and savings data. Cross-tenant disclosure or tampering would expose sensitive spend patterns and corrupt business outcomes.
-- **Tenant API tokens** — bearer credentials stored as SHA-256 hashes in `org_api_tokens`. A valid token grants access to that tenant’s data and write operations.
+- **Tenant API tokens and roles** — bearer credentials stored as SHA-256 hashes plus user/API-key role assignments. A valid credential must grant only its intended tenant-scoped capabilities and must never cross into platform-administrator authority.
+- **External integration and alert delivery credentials** — ERP OAuth credentials, webhook signing secrets, and Slack/Teams/webhook URLs stored for tenant integrations and alert delivery. These are sensitive bearer-like credentials and should not be returned after write.
 - **Decision and audit history** — cycle triggers, opportunity approvals/rejections/executions/realizations, and collector audit records. These records matter for accountability, billing, and operator trust.
-- **Platform control-plane secrets** — especially `PLATFORM_ADMIN_TOKEN`, which gates collector-management endpoints that operate across tenants.
+- **Platform control-plane secrets** — especially `PLATFORM_ADMIN_TOKEN`, which gates collector-management endpoints and other system-level operations that operate across tenants.
 - **Service availability** — ingestion, job processing, and analysis-cycle execution are core workloads in a shared multi-tenant backend; one tenant should not be able to starve others.
 
 ## Trust Boundaries
@@ -19,14 +20,15 @@ The primary production attack surface is the API server. `artifacts/mockup-sandb
 - **Client / API boundary** — browsers, mobile clients, and integrations call the Express API. The client is untrusted; all authn, authz, validation, and workload controls must be enforced server-side.
 - **API / PostgreSQL boundary** — the API has direct database access. Query scoping and parameterization must prevent cross-tenant reads/writes and injection.
 - **Tenant / tenant boundary** — every request must stay bound to a single org, and tenant-supplied headers or IDs must never override that binding in production.
-- **Tenant / platform-admin boundary** — collector registration, kill-switch, audit, and execution controls are platform-wide and must be isolated from normal tenant capabilities.
+- **Tenant / platform-admin boundary** — collector registration, kill-switch, audit, background job control, and execution controls are platform-wide and must be isolated from normal tenant capabilities.
+- **API / external network boundary** — tenant-configurable integrations and alert destinations cause the server to make outbound requests. Production egress must prevent tenant input from reaching loopback, link-local, private infrastructure, metadata services, or unintended third-party hosts.
 - **Production / dev-only boundary** — dev fallbacks such as header-based tenant selection and seeded-org defaults may exist locally but must stay disabled in production.
 
 ## Scan Anchors
 
 - **Production entry points:** `artifacts/api-server/src/app.ts`, `artifacts/api-server/src/index.ts`, and `artifacts/api-server/src/routes/*.ts`.
-- **Highest-risk areas:** `artifacts/api-server/src/lib/tenant.ts`, `lib/auth.ts`, `lib/platform-admin.ts`, `routes/ingest.ts`, `routes/jobs.ts`, `routes/cycles.ts`, `routes/opportunities.ts`, and collector runtime code under `src/lib/intelligence/`.
-- **Authenticated tenant surfaces:** `/me`, `/spend`, `/suppliers`, `/opportunities`, `/cycles`, `/jobs`, `/ingest`, `/billing`, `/market-signals`, and collector listing.
+- **Highest-risk areas:** `artifacts/api-server/src/lib/tenant.ts`, `lib/auth.ts`, `lib/platform-admin.ts`, `routes/admin-users.ts`, `routes/ingest.ts`, `routes/jobs.ts`, `routes/cycles.ts`, `routes/alerts.ts`, `routes/integrations.ts`, `routes/opportunities.ts`, and collector runtime code under `src/lib/intelligence/`.
+- **Authenticated tenant surfaces:** `/me`, `/spend`, `/suppliers`, `/opportunities`, `/cycles`, `/jobs`, `/ingest`, `/billing`, `/market-signals`, `/alert-*`, `/integrations`, and collector listing.
 - **Platform-admin surfaces:** collector mutation, run, kill/unkill, and audit endpoints in `routes/collectors.ts`.
 - **Usually dev-only / ignore unless proven reachable:** `artifacts/mockup-sandbox/**`, `scripts/**`, generated API clients/specs, and local bootstrap conveniences that require `NODE_ENV !== "production"`.
 
@@ -44,7 +46,7 @@ All mutation routes must enforce tenant scoping in every database write, includi
 
 ### Information Disclosure
 
-API responses, job metadata, logs, and collector/audit outputs must not leak another tenant’s data or platform-only operational details. Shared/global records that are intentionally visible across tenants must be narrowly defined; internal results, errors, or secrets must not be exposed through convenience endpoints.
+API responses, job metadata, logs, integration views, alert channel views, and collector/audit outputs must not leak another tenant’s data, platform-only operational details, or stored delivery credentials. Shared/global records that are intentionally visible across tenants must be narrowly defined; internal results, errors, or secrets must not be exposed through convenience endpoints.
 
 ### Denial of Service
 
