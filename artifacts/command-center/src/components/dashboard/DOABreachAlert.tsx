@@ -1,6 +1,9 @@
 import { Link } from "wouter";
 import { AlertOctagon, ArrowRight } from "lucide-react";
-import { useGetOpportunitiesDoaSummary } from "@workspace/api-client-react";
+import {
+  getGetOpportunitiesDoaSummaryQueryKey,
+  useGetOpportunitiesDoaSummary,
+} from "@workspace/api-client-react";
 
 const URGENT_TIERS = [
   { tier: 1, label: "Tier 1 — Strategic", slaLabel: "24 h", approver: "Board" },
@@ -9,7 +12,10 @@ const URGENT_TIERS = [
 
 export function DOABreachAlert() {
   const { data } = useGetOpportunitiesDoaSummary({
-    query: { refetchInterval: 30_000 },
+    query: {
+      queryKey: getGetOpportunitiesDoaSummaryQueryKey(),
+      refetchInterval: 30_000,
+    },
   });
 
   const tierMap = new Map((data?.tiers ?? []).map((t) => [t.doaTier, t]));

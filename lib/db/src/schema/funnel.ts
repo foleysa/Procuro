@@ -133,7 +133,7 @@ export const funnelSnapshotsTable = pgTable(
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex("funnel_snapshots_cycle_uq").on(t.cycleId),
+    uniqueIndex("funnel_snapshots_cycle_uq").on(t.cycleId, t.cycleGeneration),
     index("funnel_snapshots_org_idx").on(t.orgId, t.cycleGeneration),
     index("funnel_snapshots_created_at_idx").on(t.orgId, t.createdAt),
   ],

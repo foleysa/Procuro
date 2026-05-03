@@ -80,8 +80,17 @@ function installNassFetchStub(): void {
     capturedRequests.push({ url, params });
 
     const commodity = u.searchParams.get("commodity_desc") ?? "";
-    const fixture = USDA_NASS_FIXTURE_RESPONSES[commodity];
+    const isStateRequest =
+      u.searchParams.get("agg_level_desc") === "STATE" ||
+      u.searchParams.has("state_alpha");
+    const fixture = isStateRequest
+      ? undefined
+      : USDA_NASS_FIXTURE_RESPONSES[commodity];
 
+    // State-level series share the same `commodity_desc` as the
+    // national series but the fixtures only seed the national curve.
+    // Returning empty data here keeps the per-(materialCode) draft
+    // counts in lockstep with the national fixture.
     // Unknown commodity → empty 200 so non-curated series can't pollute
     // the assertions if NASS_SERIES grows later.
     if (!fixture) {

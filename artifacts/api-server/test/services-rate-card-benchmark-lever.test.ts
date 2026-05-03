@@ -221,7 +221,12 @@ describe("services_rate_card_benchmark Tier-5 lever (#216)", () => {
       ["p75", OEWS_P75],
       ["p90", OEWS_P90],
     ];
-    for (const [agg, value] of aggregates) {
+    // Stagger observedAt by aggregate index — `market_signals_natural_key_uq`
+    // is keyed on (collector, type, scope*, observed_at) and does not
+    // distinguish on metadata.aggregate, so writing all four percentiles
+    // at the exact same instant collides on the natural key.
+    for (let i = 0; i < aggregates.length; i++) {
+      const [agg, value] = aggregates[i]!;
       const sigId = newId("sig");
       signalIds.push(sigId);
       await db.insert(marketSignalsTable).values({
@@ -234,7 +239,7 @@ describe("services_rate_card_benchmark Tier-5 lever (#216)", () => {
         value: String(value),
         unit: "USD/hour",
         currency: "USD",
-        observedAt: today,
+        observedAt: new Date(today.getTime() + i),
         sourceUrl: "https://www.bls.gov/oes/current/oes_nat.htm",
         posture: "public-api",
         confidence: "0.9500",

@@ -374,13 +374,15 @@ router.get(
 /**
  * Strip anything that would be hostile in a `Content-Disposition`
  * filename or a downloaded file on disk. Keeps lower-case alphanumerics
- * and `-`/`_`; collapses repeats; falls back to "tenant" if the result
- * is empty.
+ * and `-` (underscores and other punctuation are folded to `-` so the
+ * filename matches the documented `procuro-trust-<slug>-<date>.pdf`
+ * kebab shape); collapses repeats; falls back to "tenant" if the
+ * result is empty.
  */
 function sanitizeFilenamePart(input: string): string {
   const cleaned = input
     .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   return cleaned || "tenant";
