@@ -24,7 +24,7 @@ import {
   apiKeysTable,
   adminAuditLogTable,
 } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import app from "../src/app";
 import { generateToken } from "../src/lib/auth";
 import { newId } from "../src/lib/ids";
@@ -68,11 +68,25 @@ async function issueAdminKey(orgId: string, label: string): Promise<string> {
   return plain;
 }
 
-async function countRowsForOrg(orgId: string): Promise<number> {
+/**
+ * Count only the rows belonging to this specific test run: the seed row
+ * itself (matched by id) plus any "mutation_attempt_blocked" rows that
+ * reference it as targetId. Filtering by seedId makes the count immune
+ * to concurrent test files that may write to the same shared org.
+ */
+async function countTestRows(orgId: string, seedId: string): Promise<number> {
   const [row] = await db
     .select({ c: sql<number>`count(*)::int` })
     .from(adminAuditLogTable)
-    .where(eq(adminAuditLogTable.orgId, orgId));
+    .where(
+      and(
+        eq(adminAuditLogTable.orgId, orgId),
+        or(
+          eq(adminAuditLogTable.id, seedId),
+          eq(adminAuditLogTable.targetId, seedId),
+        ),
+      ),
+    );
   return Number(row?.c ?? 0);
 }
 
@@ -98,7 +112,8 @@ test("PATCH/DELETE /api/admin/audit/:id returns 403 and writes an audit row", as
 
   try {
     await withServer(async (port) => {
-      const before = await countRowsForOrg(orgId);
+      // before = 1: only the seed row is present for our (orgId, seedId) pair.
+      const before = await countTestRows(orgId, seedId);
 
       // 1) PATCH must 403 + record an attempt.
       const patchRes = await fetch(
@@ -121,7 +136,7 @@ test("PATCH/DELETE /api/admin/audit/:id returns 403 and writes an audit row", as
       assert.equal(patchBody.reason, "audit_log_append_only");
       assert.match(patchBody.message, /append-only/i);
 
-      const afterPatch = await countRowsForOrg(orgId);
+      const afterPatch = await countTestRows(orgId, seedId);
       assert.equal(
         afterPatch - before,
         1,
@@ -142,7 +157,7 @@ test("PATCH/DELETE /api/admin/audit/:id returns 403 and writes an audit row", as
       };
       assert.equal(deleteBody.reason, "audit_log_append_only");
 
-      const afterDelete = await countRowsForOrg(orgId);
+      const afterDelete = await countTestRows(orgId, seedId);
       assert.equal(
         afterDelete - afterPatch,
         1,

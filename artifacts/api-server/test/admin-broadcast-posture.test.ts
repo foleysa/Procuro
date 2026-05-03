@@ -38,7 +38,6 @@ delete process.env["PLATFORM_ADMIN_TOKEN"];
 
 import {
   db,
-  pool,
   collectorsTable,
   collectorAuditLogTable,
   collectorTenantOptInsTable,
@@ -226,12 +225,10 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     } catch (err) {
       console.error("[cleanup] broadcast-posture cleanup failed:", err);
     }
-    await pool.end().catch(() => {});
   });
 
-  // Total org count is the contract's `tenantsAffected` value for
-  // every successful broadcast — capture it once so all assertions
-  // below stay aligned even if other tests added orgs concurrently.
+  // Capture a lower-bound tenant count. Other tests may add orgs
+  // concurrently so we treat this as a minimum, not an exact value.
   const expectedTenants = await totalOrgCount();
   assert.ok(
     expectedTenants >= ORG_IDS.length,
@@ -312,6 +309,11 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     // -------------------------------------------------------------------
     // 4) Force-opt-in (tenantOptedIn: true). Every org gets an opt-in
     //    row with optedIn=1 and one audit row each.
+    //
+    //    NOTE: We use the actual `tenantsAffected` from the response
+    //    (not `expectedTenants`) for all row-count assertions because
+    //    other tests may add orgs concurrently between when we captured
+    //    `expectedTenants` and when the broadcast runs.
     // -------------------------------------------------------------------
     const optInRes = await postBroadcast<{
       id: string;
@@ -322,19 +324,21 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
       reason: "vendor flipped to public-api",
     });
     assert.equal(optInRes.status, 200);
-    assert.deepEqual(optInRes.body, {
-      id: COLLECTOR_ID,
-      tenantOptedIn: true,
-      tenantsAffected: expectedTenants,
-    });
+    assert.equal(optInRes.body.id, COLLECTOR_ID);
+    assert.equal(optInRes.body.tenantOptedIn, true);
+    assert.ok(
+      optInRes.body.tenantsAffected >= ORG_IDS.length,
+      `tenantsAffected (${optInRes.body.tenantsAffected}) should be >= ${ORG_IDS.length} (our test orgs)`,
+    );
+    const n1 = optInRes.body.tenantsAffected;
     assert.equal(
       await countOptInRows(),
-      expectedTenants,
+      n1,
       "every org gets an opt-in row after force-opt-in",
     );
     assert.equal(
       await countAuditRows(),
-      expectedTenants,
+      n1,
       "exactly one audit row per tenant after force-opt-in",
     );
     let optIns = await loadOptInsForOurOrgs();
@@ -345,8 +349,9 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
 
     // -------------------------------------------------------------------
     // 5) Force-opt-out (tenantOptedIn: false). The previous rows must
-    //    be UPDATED in place — row count stable, but every value flips
-    //    to optedIn=0. A second audit row per tenant is written.
+    //    be UPDATED in place — every value flips to optedIn=0. Any orgs
+    //    added since the opt-in also receive new rows (upsert semantics).
+    //    A second audit row per tenant is written.
     // -------------------------------------------------------------------
     const optOutRes = await postBroadcast<{
       id: string;
@@ -358,15 +363,19 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     });
     assert.equal(optOutRes.status, 200);
     assert.equal(optOutRes.body.tenantOptedIn, false);
-    assert.equal(optOutRes.body.tenantsAffected, expectedTenants);
+    assert.ok(
+      optOutRes.body.tenantsAffected >= n1,
+      `opt-out tenantsAffected (${optOutRes.body.tenantsAffected}) should be >= opt-in count (${n1})`,
+    );
+    const n2 = optOutRes.body.tenantsAffected;
     assert.equal(
       await countOptInRows(),
-      expectedTenants,
-      "force-opt-out updates existing rows in place (no duplicates)",
+      n2,
+      "force-opt-out upserts rows for all current orgs (no duplicates per org)",
     );
     assert.equal(
       await countAuditRows(),
-      expectedTenants * 2,
+      n1 + n2,
       "second broadcast adds one more audit row per tenant",
     );
     optIns = await loadOptInsForOurOrgs();
@@ -390,7 +399,11 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     });
     assert.equal(clearRes.status, 200);
     assert.equal(clearRes.body.tenantOptedIn, null);
-    assert.equal(clearRes.body.tenantsAffected, expectedTenants);
+    assert.ok(
+      clearRes.body.tenantsAffected >= ORG_IDS.length,
+      `clear tenantsAffected (${clearRes.body.tenantsAffected}) should be >= our test org count (${ORG_IDS.length})`,
+    );
+    const n3 = clearRes.body.tenantsAffected;
     assert.equal(
       await countOptInRows(),
       0,
@@ -398,7 +411,7 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     );
     assert.equal(
       await countAuditRows(),
-      expectedTenants * 3,
+      n1 + n2 + n3,
       "third broadcast adds one more audit row per tenant",
     );
 
@@ -525,6 +538,9 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
       { tenantOptedIn: true },
     );
     assert.equal(recoveryRes.status, 200);
-    assert.equal(recoveryRes.body.tenantsAffected, expectedTenants);
+    assert.ok(
+      recoveryRes.body.tenantsAffected >= expectedTenants,
+      `recovery tenantsAffected (${recoveryRes.body.tenantsAffected}) should be >= ${expectedTenants}`,
+    );
   });
 });

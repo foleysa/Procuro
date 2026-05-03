@@ -944,58 +944,73 @@ router.post(
       return;
     }
 
-    const orgs = await db.select({ id: orgsTable.id }).from(orgsTable);
     let tenantsAffected = 0;
     await db.transaction(async (tx) => {
-      for (const org of orgs) {
-        if (data.tenantOptedIn === null) {
-          // Drop the per-tenant override so resolution falls back to
-          // `tenantOptInDefault` again.
-          const result = await tx
-            .delete(collectorTenantOptInsTable)
-            .where(
-              and(
-                eq(collectorTenantOptInsTable.orgId, org.id),
-                eq(collectorTenantOptInsTable.collectorId, id),
-              ),
-            );
-          // drizzle returns nothing useful for delete; treat as
-          // "applied" so the audit row still fires for this org.
-          void result;
-        } else {
-          await tx
-            .insert(collectorTenantOptInsTable)
-            .values({
-              id: `cto_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-              orgId: org.id,
-              collectorId: id,
-              optedIn: data.tenantOptedIn ? 1 : 0,
-              updatedBy: actor,
-            })
-            .onConflictDoUpdate({
-              target: [
-                collectorTenantOptInsTable.orgId,
-                collectorTenantOptInsTable.collectorId,
-              ],
-              set: {
-                optedIn: data.tenantOptedIn ? 1 : 0,
-                updatedAt: new Date(),
-                updatedBy: actor,
-              },
-            });
+      if (data.tenantOptedIn === null) {
+        // Clear case: select all current orgs for the audit trail, then bulk-delete
+        // the per-tenant overrides so resolution falls back to tenantOptInDefault.
+        // The audit log has no FK on org_id, so inserts are safe regardless of
+        // concurrent org mutations.
+        const orgs = await tx.select({ id: orgsTable.id }).from(orgsTable);
+        await tx
+          .delete(collectorTenantOptInsTable)
+          .where(eq(collectorTenantOptInsTable.collectorId, id));
+        for (let i = 0; i < orgs.length; i++) {
+          await tx.insert(collectorAuditLogTable).values({
+            id: `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}_${i}`,
+            collectorId: id,
+            event: "tenant_opt_in_broadcast",
+            metadata: {
+              actor,
+              orgId: orgs[i]!.id,
+              tenantOptedIn: null,
+              reason: data.reason ?? null,
+            },
+          });
         }
-        await tx.insert(collectorAuditLogTable).values({
-          id: `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}_${tenantsAffected}`,
-          collectorId: id,
-          event: "tenant_opt_in_broadcast",
-          metadata: {
-            actor,
-            orgId: org.id,
-            tenantOptedIn: data.tenantOptedIn,
-            reason: data.reason ?? null,
-          },
-        });
-        tenantsAffected += 1;
+        tenantsAffected = orgs.length;
+      } else {
+        // Upsert case: use a CTE that locks every org row FOR KEY SHARE before
+        // the INSERT so that concurrent DELETEs on orgs are blocked until our
+        // transaction commits.  Without the lock, PostgreSQL's READ COMMITTED
+        // isolation can still see an org during the SELECT phase and then fail
+        // the FK check after another transaction deletes it (error 23503).
+        const optedInVal = data.tenantOptedIn ? 1 : 0;
+        const result = await tx.execute(sql`
+          WITH locked_orgs AS (
+            SELECT id FROM orgs FOR KEY SHARE
+          )
+          INSERT INTO collector_tenant_opt_ins (id, org_id, collector_id, opted_in, updated_by)
+          SELECT
+            concat('cto_', to_hex(floor(extract(epoch from clock_timestamp()) * 1000)::bigint), '_', (row_number() OVER ())::text),
+            lo.id,
+            ${id},
+            ${optedInVal},
+            ${actor}
+          FROM locked_orgs lo
+          ON CONFLICT (org_id, collector_id) DO UPDATE
+            SET opted_in     = EXCLUDED.opted_in,
+                updated_at   = NOW(),
+                updated_by   = EXCLUDED.updated_by
+          RETURNING org_id
+        `);
+        const affectedOrgIds = (result.rows as Array<{ org_id: string }>).map(
+          (r) => r.org_id,
+        );
+        tenantsAffected = affectedOrgIds.length;
+        for (let i = 0; i < affectedOrgIds.length; i++) {
+          await tx.insert(collectorAuditLogTable).values({
+            id: `aud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}_${i}`,
+            collectorId: id,
+            event: "tenant_opt_in_broadcast",
+            metadata: {
+              actor,
+              orgId: affectedOrgIds[i]!,
+              tenantOptedIn: data.tenantOptedIn,
+              reason: data.reason ?? null,
+            },
+          });
+        }
       }
     });
 

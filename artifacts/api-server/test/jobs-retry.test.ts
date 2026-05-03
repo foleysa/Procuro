@@ -27,7 +27,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { db, pool, jobsTable, type JobKind } from "@workspace/db";
+import { db, jobsTable, type JobKind } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 
 import {
@@ -112,6 +112,32 @@ async function getRow(jobId: string) {
 }
 
 /**
+ * Drive processOnce() in a tight loop until the specific job row has been
+ * claimed and processed (attempts >= minAttempts). Race-tolerant: works
+ * regardless of whether this test process or the live API server worker
+ * claims the row first — both advance `attempts` when they claim the job.
+ */
+async function driveJobUntilAttempt(
+  jobId: string,
+  minAttempts: number,
+  timeoutMs = 8_000,
+): Promise<NonNullable<Awaited<ReturnType<typeof getRow>>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await processOnce().catch(() => {});
+    const row = await getRow(jobId);
+    if (row && row.attempts >= minAttempts) return row;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `job ${jobId} did not reach attempts=${minAttempts} within ${timeoutMs}ms` +
+          ` (last: status=${row?.status ?? "missing"}, attempts=${row?.attempts ?? "?"})`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/**
  * Drive the queue locally and poll until the job reaches a terminal
  * state (`failed` or `succeeded`) with non-zero attempts, or the
  * timeout elapses. Race-tolerant: works whether this process or the
@@ -167,7 +193,6 @@ test("queue auto-retry / backoff behaviour", async (t) => {
     } catch (err) {
       console.error("[cleanup] jobs-retry cleanup failed:", err);
     }
-    await pool.end().catch(() => {});
   });
 
   await deleteTestJobs();
@@ -189,11 +214,10 @@ test("queue auto-retry / backoff behaviour", async (t) => {
       });
 
       // First attempt should fail transiently and reschedule.
+      // Use driveJobUntilAttempt so the assertion holds whether this
+      // process or the live API server worker claims the row first.
       const before = Date.now();
-      const claimed1 = await processOnce();
-      assert.equal(claimed1, true, "worker should have claimed the job");
-
-      const after1 = await getRow(job.id);
+      const after1 = await driveJobUntilAttempt(job.id, 1);
       assert.ok(after1, "job row still exists after transient failure");
       assert.equal(after1.status, "pending", "status reset to pending");
       assert.equal(after1.attempts, 1, "attempts incremented to 1");
@@ -205,21 +229,27 @@ test("queue auto-retry / backoff behaviour", async (t) => {
         `scheduled_for (${next}) should be in the future relative to ${before}`,
       );
 
-      // Worker must NOT pick the job up again while scheduled_for is in
-      // the future. Calling processOnce should be a no-op (returns false).
-      const claimedTooEarly = await processOnce();
+      // Worker must NOT pick the job up again while scheduled_for is in the
+      // future.  In a concurrent suite other tests may have ready jobs so
+      // processOnce() can legitimately return true (it claimed a different
+      // job).  What matters is that OUR specific job was NOT re-attempted.
+      await processOnce();
+      const afterEarly = await getRow(job.id);
+      assert.ok(afterEarly, "job row still exists after early processOnce");
       assert.equal(
-        claimedTooEarly,
-        false,
+        afterEarly.attempts,
+        1,
         "worker must skip jobs whose scheduled_for has not yet arrived",
+      );
+      assert.ok(
+        afterEarly.scheduledFor &&
+          new Date(afterEarly.scheduledFor).getTime() > Date.now(),
+        `scheduled_for (${afterEarly.scheduledFor}) must still be in the future`,
       );
 
       // Fast-forward and verify the next attempt succeeds.
       await fastForwardScheduledFor(job.id);
-      const claimed2 = await processOnce();
-      assert.equal(claimed2, true, "worker should claim the rescheduled job");
-
-      const after2 = await getRow(job.id);
+      const after2 = await driveJobUntilAttempt(job.id, 2);
       assert.ok(after2);
       assert.equal(after2.status, "succeeded", "second attempt succeeded");
       assert.equal(after2.attempts, 2, "attempts incremented to 2");
@@ -247,8 +277,7 @@ test("queue auto-retry / backoff behaviour", async (t) => {
       });
 
       // Attempt 1 — should reschedule (1 < 2).
-      await processOnce();
-      const after1 = await getRow(job.id);
+      const after1 = await driveJobUntilAttempt(job.id, 1);
       assert.ok(after1);
       assert.equal(after1.status, "pending");
       assert.equal(after1.attempts, 1);
@@ -256,8 +285,7 @@ test("queue auto-retry / backoff behaviour", async (t) => {
 
       // Fast-forward and run attempt 2 — budget exhausted, should fail.
       await fastForwardScheduledFor(job.id);
-      await processOnce();
-      const after2 = await getRow(job.id);
+      const after2 = await driveJobUntilAttempt(job.id, 2);
       assert.ok(after2);
       assert.equal(
         after2.status,
@@ -290,8 +318,7 @@ test("queue auto-retry / backoff behaviour", async (t) => {
         maxAttempts: 5,
       });
 
-      await processOnce();
-      const row = await getRow(job.id);
+      const row = await driveJobUntilAttempt(job.id, 1);
       assert.ok(row);
       assert.equal(
         row.status,
