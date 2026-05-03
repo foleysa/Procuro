@@ -71,6 +71,7 @@ import { SourcingPlaysInFlight } from "@/components/dashboard/SourcingPlaysInFli
 import { StageGateBottlenecks } from "@/components/dashboard/StageGateBottlenecks";
 import { MethodsAndTools } from "@/components/dashboard/MethodsAndTools";
 import { DOAApprovalQueue } from "@/components/dashboard/DOAApprovalQueue";
+import { DOABreachAlert } from "@/components/dashboard/DOABreachAlert";
 
 const POLL_MS = 30_000;
 
@@ -623,6 +624,11 @@ export default function Dashboard() {
           to inspect all rows.
         </div>
       )}
+
+      {/* SLA breach alert — sticky banner that surfaces Tier 1/2 DOA
+          breaches above the fold so urgent approvals can't be missed.
+          Self-clearing: returns null when no high-tier breaches. */}
+      <DOABreachAlert />
 
       {/* Tier 1 — OUTCOMES HEADER. Three tiles: Realized Savings
           (hero), Identified Pipeline, Gap to Goal. Replaces the
