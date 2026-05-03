@@ -26,6 +26,7 @@ import {
   fredSeriesForScopeCode,
   materialCodeForCategoryCode,
 } from "../src/lib/intelligence/scope-taxonomy";
+import { NASS_SERIES } from "../src/lib/intelligence/collectors/usda-nass-economic-index";
 
 describe("FRED_SERIES_CATALOG", () => {
   it("every series has a canonical material or category scope code", () => {
@@ -254,6 +255,88 @@ describe("MATERIAL_TO_CATEGORY_CODES (#62 mapping)", () => {
     assert.equal(materialCodeForCategoryCode("UNKNOWN_CODE"), null);
     assert.equal(materialCodeForCategoryCode(""), null);
     assert.equal(materialCodeForCategoryCode(null), null);
+  });
+
+  it("pins the USDA NASS agricultural material aliases (Task #253)", () => {
+    // Each NASS series materialCode (CORN, WHEAT, SOYBEANS, MILK,
+    // CHEESE, BUTTER, BEEF_CATTLE, HOGS, BROILERS, COTTON) must be
+    // wired into MATERIAL_TO_CATEGORY_CODES so food/dairy/meat/cotton
+    // category pages surface NASS observations alongside (or instead
+    // of) the World Bank Pink Sheet equivalents. A future refactor
+    // that drops one of these will fail this test before tenants
+    // silently lose the lever.
+    const pins: Record<string, string[]> = {
+      CORN: ["CORN", "MAIZE", "FEED_CORN"],
+      WHEAT: ["WHEAT", "WHEAT_FLOUR", "FLOUR"],
+      SOYBEANS: ["SOYBEANS", "SOY", "SOY_OIL", "SOYMEAL"],
+      MILK: ["MILK", "FLUID_MILK", "RAW_MILK"],
+      CHEESE: ["CHEESE", "CHEESE_BLOCK"],
+      BUTTER: ["BUTTER"],
+      BEEF_CATTLE: ["BEEF_CATTLE", "BEEF", "CATTLE"],
+      HOGS: ["HOGS", "PORK", "PIGS"],
+      BROILERS: ["BROILERS", "CHICKEN", "POULTRY"],
+      COTTON: ["COTTON", "RAW_COTTON", "UPLAND_COTTON"],
+    };
+    for (const [material, expectedAliases] of Object.entries(pins)) {
+      const aliases = MATERIAL_TO_CATEGORY_CODES[
+        material as keyof typeof MATERIAL_TO_CATEGORY_CODES
+      ];
+      assert.ok(
+        aliases,
+        `${material} missing from MATERIAL_TO_CATEGORY_CODES (Task #253)`,
+      );
+      for (const a of expectedAliases) {
+        assert.ok(
+          aliases.includes(a),
+          `${material} aliases should include ${a} (Task #253 spec)`,
+        );
+      }
+    }
+  });
+
+  it("USDA NASS material codes round-trip via materialCodeForCategoryCode", () => {
+    // Sanity-check the reverse lookup for every NASS series + a few
+    // common tenant aliases. If a future edit shadows one of these
+    // under a different canonical material the lever will silently
+    // stop matching the right tenant categories.
+    assert.equal(materialCodeForCategoryCode("CORN"), "CORN");
+    assert.equal(materialCodeForCategoryCode("maize"), "CORN");
+    assert.equal(materialCodeForCategoryCode("WHEAT"), "WHEAT");
+    assert.equal(materialCodeForCategoryCode("flour"), "WHEAT");
+    assert.equal(materialCodeForCategoryCode("SOYBEANS"), "SOYBEANS");
+    assert.equal(materialCodeForCategoryCode("soy_oil"), "SOYBEANS");
+    assert.equal(materialCodeForCategoryCode("MILK"), "MILK");
+    assert.equal(materialCodeForCategoryCode("fluid_milk"), "MILK");
+    assert.equal(materialCodeForCategoryCode("CHEESE"), "CHEESE");
+    assert.equal(materialCodeForCategoryCode("BUTTER"), "BUTTER");
+    assert.equal(materialCodeForCategoryCode("BEEF"), "BEEF_CATTLE");
+    assert.equal(materialCodeForCategoryCode("cattle"), "BEEF_CATTLE");
+    assert.equal(materialCodeForCategoryCode("PORK"), "HOGS");
+    assert.equal(materialCodeForCategoryCode("hogs"), "HOGS");
+    assert.equal(materialCodeForCategoryCode("CHICKEN"), "BROILERS");
+    assert.equal(materialCodeForCategoryCode("poultry"), "BROILERS");
+    assert.equal(materialCodeForCategoryCode("COTTON"), "COTTON");
+    assert.equal(materialCodeForCategoryCode("upland_cotton"), "COTTON");
+  });
+
+  it("NASS_SERIES material codes are all present in the alias map", () => {
+    // Pin the contract between the USDA NASS collector's curated
+    // series list and the canonical alias map. We import NASS_SERIES
+    // directly so adding a new series without a matching
+    // MATERIAL_TO_CATEGORY_CODES entry fails CI here — the omission
+    // would silently drop the new series off category pages otherwise.
+    for (const series of NASS_SERIES) {
+      const code = series.materialCode;
+      const aliases =
+        MATERIAL_TO_CATEGORY_CODES[
+          code as keyof typeof MATERIAL_TO_CATEGORY_CODES
+        ];
+      assert.ok(aliases, `NASS material ${code} missing from alias map`);
+      assert.ok(
+        aliases.includes(code),
+        `NASS material ${code} must include itself as an alias`,
+      );
+    }
   });
 
   it("materialCodeForCategoryCode resolves the new Task #141 aliases", () => {

@@ -42,6 +42,20 @@ export const CANONICAL_MATERIAL_CODES = [
   "CRUDE_PETROLEUM",
   "NATURAL_GAS_INDUSTRIAL",
   "FUELS_AND_POWER",
+  // Agricultural commodities (USDA NASS QuickStats — task #244).
+  // WHEAT and SOYBEANS overlap with World Bank Pink Sheet emissions
+  // (identical scope_material_code) so both feeds light up the same
+  // canonical material on category pages.
+  "CORN",
+  "WHEAT",
+  "SOYBEANS",
+  "MILK",
+  "CHEESE",
+  "BUTTER",
+  "BEEF_CATTLE",
+  "HOGS",
+  "BROILERS",
+  "COTTON",
 ] as const;
 export type CanonicalMaterialCode = (typeof CANONICAL_MATERIAL_CODES)[number];
 
@@ -470,6 +484,54 @@ export const MATERIAL_TO_CATEGORY_CODES: Readonly<
     "LPG",
     "ELECTRICITY",
     "POWER",
+  ],
+
+  // ─── Agricultural commodities (USDA NASS — task #253) ──────────────
+  // Each NASS material code (CORN, WHEAT, SOYBEANS, MILK, CHEESE,
+  // BUTTER, BEEF_CATTLE, HOGS, BROILERS, COTTON) maps to the tenant
+  // category-code aliases that procurement teams commonly use for that
+  // input. WHEAT and SOYBEANS overlap with the World Bank Pink Sheet,
+  // which emits the same scope_material_code so both feeds light up
+  // the same category page. Pink Sheet's "MAIZE" is folded into CORN
+  // as an alias so a tenant category coded MAIZE picks up the NASS
+  // CORN series; uniqueness across canonical materials is preserved.
+  CORN: ["CORN", "MAIZE", "CORN_GRAIN", "FEED_CORN"],
+  WHEAT: ["WHEAT", "WHEAT_FLOUR", "FLOUR", "HRW_WHEAT", "SRW_WHEAT"],
+  SOYBEANS: [
+    "SOYBEANS",
+    "SOYBEAN",
+    "SOY",
+    "SOY_OIL",
+    "SOYBEAN_OIL",
+    "SOYMEAL",
+    "SOYBEAN_MEAL",
+  ],
+  MILK: ["MILK", "FLUID_MILK", "RAW_MILK", "DAIRY_MILK"],
+  CHEESE: ["CHEESE", "CHEESE_BLOCK", "CHEESE_BARREL", "CHEDDAR"],
+  BUTTER: ["BUTTER", "BUTTER_BULK", "DAIRY_BUTTER"],
+  BEEF_CATTLE: [
+    "BEEF_CATTLE",
+    "BEEF",
+    "CATTLE",
+    "STEERS",
+    "GROUND_BEEF",
+    "BEEF_TRIM",
+  ],
+  HOGS: ["HOGS", "HOG", "PORK", "PIGS", "PORK_BELLY", "PORK_LOIN"],
+  BROILERS: [
+    "BROILERS",
+    "BROILER",
+    "CHICKEN",
+    "POULTRY",
+    "CHICKEN_BREAST",
+    "BROILER_CHICKEN",
+  ],
+  COTTON: [
+    "COTTON",
+    "RAW_COTTON",
+    "COTTON_LINT",
+    "UPLAND_COTTON",
+    "COTTON_FIBER",
   ],
 };
 

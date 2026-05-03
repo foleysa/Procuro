@@ -55,6 +55,10 @@ import type {
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { getCollector } from "../lib/intelligence/runtime";
+import {
+  MATERIAL_TO_CATEGORY_CODES,
+  materialCodeForCategoryCode,
+} from "../lib/intelligence/scope-taxonomy";
 import type { IntelligenceCollector } from "../lib/intelligence/collector";
 import { subscribeMarketSignalIds } from "../lib/intelligence/event-bus";
 
@@ -556,6 +560,21 @@ router.get(
       }
       if (categoryCode) {
         conds.push(eq(marketSignalsTable.scopeCategoryCode, categoryCode));
+        // Mirror the category branch: when the contract's category
+        // code resolves to a canonical material via the alias map,
+        // also pull material-scoped signals (USDA NASS, FRED PPI,
+        // World Bank Pink Sheet) so contract pages don't miss the
+        // commodity feeds for food/dairy/meat/cotton contracts.
+        const resolvedMaterial = materialCodeForCategoryCode(categoryCode);
+        if (resolvedMaterial) {
+          const aliases = MATERIAL_TO_CATEGORY_CODES[resolvedMaterial];
+          conds.push(
+            inArray(
+              marketSignalsTable.scopeMaterialCode,
+              aliases as unknown as string[],
+            ),
+          );
+        }
       }
       scopeCondition = conds.length > 0 ? or(...conds)! : sql`FALSE`;
       details = {
@@ -586,7 +605,29 @@ router.get(
         return;
       }
       label = c.name;
-      scopeCondition = eq(marketSignalsTable.scopeCategoryCode, id);
+      // Always pull signals scoped directly to this category code.
+      // Additionally, when the category code resolves to a canonical
+      // material via the alias map (e.g. tenant code "BEEF" →
+      // BEEF_CATTLE, "MAIZE" → CORN, "WHEAT" → WHEAT), surface every
+      // material-scoped signal whose scope_material_code is one of
+      // that material's aliases. This lets food/dairy/meat/cotton
+      // category pages show USDA NASS observations alongside the
+      // World Bank Pink Sheet equivalents — both feeds emit on the
+      // same canonical alias set.
+      const catConds: SQL[] = [
+        eq(marketSignalsTable.scopeCategoryCode, id),
+      ];
+      const resolvedMaterial = materialCodeForCategoryCode(id);
+      if (resolvedMaterial) {
+        const aliases = MATERIAL_TO_CATEGORY_CODES[resolvedMaterial];
+        catConds.push(
+          inArray(
+            marketSignalsTable.scopeMaterialCode,
+            aliases as unknown as string[],
+          ),
+        );
+      }
+      scopeCondition = catConds.length === 1 ? catConds[0]! : or(...catConds)!;
     } else if (kind === "material") {
       // We key signals by `scope_material_code` which collectors stamp
       // with the SKU value; resolve a friendlier label from items.
