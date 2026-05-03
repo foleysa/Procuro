@@ -50,3 +50,29 @@ export function clearTokenCache(): void {
 export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
+
+/**
+ * Refuse to start the process if `ALLOW_DEV_TENANT_HEADER=true` is set
+ * outside of a development environment. The dev-tenant header bypass
+ * lets any caller declare themselves a `platform_admin` in any tenant
+ * — strictly intentional in `NODE_ENV=development` for the local
+ * smoke flow, catastrophic anywhere else (UAT v2 Blocker D-15, May
+ * 2026). We require an explicit positive `NODE_ENV=development`;
+ * unset / typo / "test" / "staging" / "production" all crash so the
+ * misconfiguration is impossible to ship past CI.
+ */
+export function assertDevTenantHeaderSafe(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    env["ALLOW_DEV_TENANT_HEADER"] === "true" &&
+    env["NODE_ENV"] !== "development"
+  ) {
+    throw new Error(
+      "FATAL: ALLOW_DEV_TENANT_HEADER=true is only permitted when " +
+        `NODE_ENV=development. Refusing to start with NODE_ENV=${
+          env["NODE_ENV"] ?? "(unset)"
+        }.`,
+    );
+  }
+}

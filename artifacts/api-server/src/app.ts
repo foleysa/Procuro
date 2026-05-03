@@ -6,11 +6,17 @@ import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { globalErrorHandler } from "./lib/global-error-handler";
+import { assertDevTenantHeaderSafe } from "./lib/auth";
 import {
   CLERK_PROXY_PATH,
   clerkProxyMiddleware,
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
+
+// Fail fast at module load if the dev-tenant impersonation header is
+// enabled outside of a development environment. See
+// `assertDevTenantHeaderSafe` for rationale (UAT v2 Blocker D-15).
+assertDevTenantHeaderSafe();
 
 const app: Express = express();
 
