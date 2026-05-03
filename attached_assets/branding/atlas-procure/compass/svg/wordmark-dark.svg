@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" width="720" height="180">
+  <rect width="720" height="180" fill="#0B1220"/>
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" font-size="64" letter-spacing="6" fill="#60A5FA">
+    <text x="320" y="116" text-anchor="end">ATLAS</text>
+    <text x="400" y="116" text-anchor="start">PROCURE</text>
+  </g>
+  <polygon points="360,86 375,101 360,116 345,101" fill="#38BDF8"/>
+</svg>

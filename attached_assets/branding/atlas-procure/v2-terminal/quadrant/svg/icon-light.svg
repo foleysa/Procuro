@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" fill="#FFFFFF"/>
+  <!-- outer frame -->
+  <rect x="32" y="32" width="192" height="192" fill="none" stroke="#0A0A0B" stroke-width="3"/>
+  <!-- internal cross dividers -->
+  <line x1="128" y1="32" x2="128" y2="224" stroke="#0A0A0B" stroke-width="3"/>
+  <line x1="32" y1="128" x2="224" y2="128" stroke="#0A0A0B" stroke-width="3"/>
+  <!-- top-right cell filled amber (NE quadrant — "north-east" / target) -->
+  <rect x="131" y="35" width="90" height="90" fill="#F2A33A"/>
+  <!-- small ticks inside other quadrants -->
+  <g stroke="#0A0A0B" stroke-width="2">
+    <!-- NW: dot grid -->
+    <circle cx="60"  cy="60"  r="3" fill="#0A0A0B"/>
+    <circle cx="80"  cy="60"  r="3" fill="#0A0A0B"/>
+    <circle cx="100" cy="60"  r="3" fill="#0A0A0B"/>
+    <circle cx="60"  cy="80"  r="3" fill="#0A0A0B"/>
+    <circle cx="80"  cy="80"  r="3" fill="#0A0A0B"/>
+    <circle cx="60"  cy="100" r="3" fill="#0A0A0B"/>
+    <!-- SW: ascending bar chart -->
+    <line x1="55"  y1="200" x2="55"  y2="180"/>
+    <line x1="70"  y1="200" x2="70"  y2="170"/>
+    <line x1="85"  y1="200" x2="85"  y2="155"/>
+    <line x1="100" y1="200" x2="100" y2="145"/>
+    <!-- SE: diagonal trend line -->
+    <line x1="145" y1="205" x2="210" y2="150"/>
+    <circle cx="210" cy="150" r="4" fill="#F2A33A"/>
+  </g>
+</svg>

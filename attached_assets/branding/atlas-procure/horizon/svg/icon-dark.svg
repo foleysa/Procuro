@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="#0B1220"/>
+  <!-- horizon baseline -->
+  <line x1="44" y1="178" x2="212" y2="178" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
+  <!-- semicircle arc rising from baseline -->
+  <path d="M 60 178 A 68 68 0 0 1 196 178" fill="none" stroke="#60A5FA" stroke-width="14" stroke-linecap="round"/>
+  <!-- inner arc -->
+  <path d="M 88 178 A 40 40 0 0 1 168 178" fill="none" stroke="#60A5FA" stroke-opacity="0.4" stroke-width="6" stroke-linecap="round"/>
+  <!-- north star above apex -->
+  <g fill="#38BDF8">
+    <polygon points="128,52 138,86 128,80 118,86"/>
+    <polygon points="128,108 138,86 128,92 118,86"/>
+    <polygon points="156,80 138,86 144,80 138,74"/>
+    <polygon points="100,80 118,86 112,80 118,74"/>
+  </g>
+  <circle cx="128" cy="86" r="3" fill="#0B1220"/>
+</svg>

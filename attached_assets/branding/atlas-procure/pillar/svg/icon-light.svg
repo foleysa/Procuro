@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="#FFFFFF"/>
+  <!-- left pillar -->
+  <polygon points="56,212 96,212 144,44 116,44" fill="#1D4ED8"/>
+  <!-- right pillar -->
+  <polygon points="200,212 160,212 112,44 140,44" fill="#1D4ED8"/>
+  <!-- horizontal lintel / crossbar (slight shadow color for depth) -->
+  <rect x="86" y="142" width="84" height="22" fill="#1D4ED8"/>
+  <!-- accent up-arrow inside the negative-space triangle -->
+  <polygon points="128,86 142,118 134,118 134,134 122,134 122,118 114,118" fill="#38BDF8"/>
+</svg>

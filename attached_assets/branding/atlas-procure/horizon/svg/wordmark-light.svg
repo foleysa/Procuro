@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" width="720" height="180">
+  <rect width="720" height="180" fill="#FFFFFF"/>
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="700" font-size="78" fill="#1D4ED8">
+    <text x="40" y="118">atlas procure</text>
+  </g>
+  <!-- small accent dot trailing -->
+  <circle cx="660" cy="118" r="9" fill="#38BDF8"/>
+</svg>

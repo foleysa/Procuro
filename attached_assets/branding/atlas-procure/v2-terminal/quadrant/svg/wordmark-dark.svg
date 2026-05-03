@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" width="720" height="180">
+  <rect width="720" height="180" fill="#0A0A0B"/>
+  <g font-family="DejaVu Sans, IBM Plex Sans, Inter, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-weight="900" font-size="58" letter-spacing="2" fill="#F4F2EE">
+    <text x="40" y="112">ATLAS PROCURE</text>
+  </g>
+  <!-- four hairline ticks under the wordmark suggesting columns -->
+  <g stroke="#F4F2EE" stroke-width="2">
+    <line x1="40"  y1="134" x2="160" y2="134"/>
+    <line x1="170" y1="134" x2="290" y2="134"/>
+    <line x1="300" y1="134" x2="420" y2="134"/>
+    <line x1="430" y1="134" x2="550" y2="134"/>
+  </g>
+  <!-- amber tick on last column -->
+  <rect x="430" y="131" width="120" height="6" fill="#F2A33A"/>
+</svg>

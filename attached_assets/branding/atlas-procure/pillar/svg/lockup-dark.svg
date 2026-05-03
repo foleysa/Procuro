@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" width="960" height="240">
+  <rect width="960" height="240" fill="#0B1220"/>
+  <g transform="translate(40,40) scale(0.625)">
+    <rect x="16" y="16" width="224" height="224" rx="44" fill="#60A5FA"/>
+    <polygon points="56,212 96,212 144,44 116,44" fill="#0B1220"/>
+    <polygon points="200,212 160,212 112,44 140,44" fill="#0B1220"/>
+    <rect x="86" y="142" width="84" height="22" fill="#0B1220"/>
+    <polygon points="128,86 142,118 134,118 134,134 122,134 122,118 114,118" fill="#38BDF8"/>
+  </g>
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" font-size="74" fill="#60A5FA">
+    <text x="240" y="138">Atlas Procure</text>
+  </g>
+  <rect x="522" y="156" width="262" height="6" rx="3" fill="#38BDF8"/>
+</svg>

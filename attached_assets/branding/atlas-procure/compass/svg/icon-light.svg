@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="#FFFFFF"/>
+  <!-- subtle inner ring -->
+  <circle cx="128" cy="128" r="92" fill="none" stroke="#1D4ED8" stroke-opacity="0.18" stroke-width="2"/>
+  <!-- 4-point compass star (north slightly extended) -->
+  <g fill="#1D4ED8">
+    <!-- north (long) -->
+    <polygon points="128,30 142,128 128,118 114,128"/>
+    <!-- south -->
+    <polygon points="128,224 142,128 128,138 114,128"/>
+    <!-- east -->
+    <polygon points="222,128 128,142 138,128 128,114"/>
+    <!-- west -->
+    <polygon points="34,128 128,142 118,128 128,114"/>
+  </g>
+  <!-- diagonal accent points (smaller) -->
+  <g fill="#38BDF8" opacity="0.95">
+    <polygon points="180,76 132,124 132,132 124,132"/>
+    <polygon points="76,180 124,132 124,124 132,124"/>
+  </g>
+  <circle cx="128" cy="128" r="9" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="3"/>
+</svg>

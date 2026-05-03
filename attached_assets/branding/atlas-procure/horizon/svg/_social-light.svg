@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#FFFFFF"/>
+  <g transform="translate(120,195)">
+  <rect width="960" height="240" fill="#FFFFFF"/>
+  <g transform="translate(40,40) scale(0.625)">
+    <rect x="16" y="16" width="224" height="224" rx="44" fill="#1D4ED8"/>
+    <line x1="44" y1="178" x2="212" y2="178" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 60 178 A 68 68 0 0 1 196 178" fill="none" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round"/>
+    <path d="M 88 178 A 40 40 0 0 1 168 178" fill="none" stroke="#FFFFFF" stroke-opacity="0.4" stroke-width="6" stroke-linecap="round"/>
+    <g fill="#38BDF8">
+      <polygon points="128,52 138,86 128,80 118,86"/>
+      <polygon points="128,108 138,86 128,92 118,86"/>
+      <polygon points="156,80 138,86 144,80 138,74"/>
+      <polygon points="100,80 118,86 112,80 118,74"/>
+    </g>
+    <circle cx="128" cy="86" r="3" fill="#1D4ED8"/>
+  </g>
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="700" font-size="76" fill="#1D4ED8">
+    <text x="240" y="138">atlas procure</text>
+  </g>
+  <circle cx="858" cy="138" r="10" fill="#38BDF8"/>
+</g>
+</svg>

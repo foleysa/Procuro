@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" width="960" height="240">
+  <rect width="960" height="240" fill="#0B1220"/>
+  <!-- icon block (scaled compass) -->
+  <g transform="translate(40,40) scale(0.625)">
+    <rect x="16" y="16" width="224" height="224" rx="44" fill="#60A5FA"/>
+    <circle cx="128" cy="128" r="92" fill="none" stroke="#0B1220" stroke-opacity="0.18" stroke-width="2"/>
+    <g fill="#0B1220">
+      <polygon points="128,30 142,128 128,118 114,128"/>
+      <polygon points="128,224 142,128 128,138 114,128"/>
+      <polygon points="222,128 128,142 138,128 128,114"/>
+      <polygon points="34,128 128,142 118,128 128,114"/>
+    </g>
+    <g fill="#38BDF8" opacity="0.95">
+      <polygon points="180,76 132,124 132,132 124,132"/>
+      <polygon points="76,180 124,132 124,124 132,124"/>
+    </g>
+    <circle cx="128" cy="128" r="9" fill="#60A5FA" stroke="#0B1220" stroke-width="3"/>
+  </g>
+  <!-- wordmark -->
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" font-size="62" letter-spacing="5" fill="#60A5FA">
+    <text x="240" y="138">ATLAS</text>
+    <text x="610" y="138">PROCURE</text>
+  </g>
+  <polygon points="578,108 593,123 578,138 563,123" fill="#38BDF8"/>
+</svg>

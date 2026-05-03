@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" width="720" height="180">
+  <rect width="720" height="180" fill="#FFFFFF"/>
+  <g font-family="DejaVu Sans, system-ui, -apple-system, Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" font-size="78" fill="#1D4ED8">
+    <text x="40" y="118">Atlas Procure</text>
+  </g>
+  <!-- accent underline bar under "Procure" -->
+  <rect x="338" y="138" width="278" height="6" rx="3" fill="#38BDF8"/>
+</svg>

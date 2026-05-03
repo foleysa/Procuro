@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 240" width="1100" height="240">
+  <rect width="1100" height="240" fill="#FFFFFF"/>
+  <g transform="translate(40,40) scale(0.625)">
+    <rect width="256" height="256" fill="#FFFFFF"/>
+    <polygon points="48,224 92,224 144,40 116,40" fill="#0A0A0B"/>
+    <polygon points="208,224 164,224 112,40 140,40" fill="#0A0A0B"/>
+    <rect x="80" y="146" width="44" height="20" fill="#0A0A0B"/>
+    <rect x="132" y="146" width="44" height="20" fill="#0A0A0B"/>
+    <rect x="48" y="232" width="160" height="4" fill="#2D7FF9"/>
+  </g>
+  <rect x="240" y="68" width="170" height="3" fill="#2D7FF9"/>
+  <g font-family="DejaVu Sans, IBM Plex Sans, Inter, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-weight="900" font-size="60" letter-spacing="3" fill="#0A0A0B">
+    <text x="240" y="142">ATLAS PROCURE</text>
+  </g>
+</svg>
