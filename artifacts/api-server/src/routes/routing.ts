@@ -21,6 +21,7 @@ import {
   listOpenQueue,
   resolveQueueEntry,
   checkRoutingHealth,
+  suggestCategoryMappings,
 } from "../lib/intelligence/routing";
 
 const router: IRouter = Router();
@@ -36,7 +37,19 @@ router.get(
       500,
     );
     const rows = await listOpenQueue(orgId, limit);
-    res.json({ entries: rows });
+    // Layer D — attach top-3 suggestions per row so operators can
+    // one-click accept the most likely canonical code instead of
+    // scrolling the flat dropdown. Computed in a single batched
+    // trigram query at request time; no precompute or background job.
+    const suggestionsByQueueId = await suggestCategoryMappings({
+      orgId,
+      queueIds: rows.map((r) => r.id),
+    });
+    const entries = rows.map((r) => ({
+      ...r,
+      suggestions: suggestionsByQueueId.get(r.id) ?? [],
+    }));
+    res.json({ entries });
   },
 );
 

@@ -48,6 +48,8 @@ import {
   getRoutingHealthMetadata,
   bandForCategory,
   bootstrapCategoryLeverMappings,
+  bootstrapTrigramSuggestions,
+  suggestCategoryMappings,
   ALL_BANDS,
   FALLBACK_BAND,
   isBand,
@@ -73,6 +75,9 @@ let orgB: string;
 before(async () => {
   // Materialized view + triggers must exist before we read from it.
   await bootstrapCategoryLeverMappings();
+  // Layer D suggestions need pg_trgm + GIN index on the normalized
+  // columns. Idempotent like the materialized view bootstrap.
+  await bootstrapTrigramSuggestions();
 
   orgA = nid("org");
   orgB = nid("org");
@@ -682,6 +687,118 @@ describe("resolveQueueEntry (Layer C)", () => {
       }),
       /escalate_to_global/,
     );
+  });
+});
+
+describe("suggestCategoryMappings (Layer D)", () => {
+  it("ranks an obvious near-match against an existing global synonym at the top", async () => {
+    // 'Steel' maps globally to IRON_STEEL via the seed; a queued
+    // misspelling should surface IRON_STEEL as the strongest pick.
+    // Use a string close enough to the seeded "steel" synonym that
+    // trigram similarity clears the 0.25 floor without being an exact
+    // match (which would short-circuit through Layer A and never have
+    // landed in the queue in the first place).
+    const tenantString = `Stainless Steel ${RUN}`;
+    const queued = await enqueueUnmapped({ orgId: orgA, tenantString });
+    const m = await suggestCategoryMappings({
+      orgId: orgA,
+      queueIds: [queued.id],
+    });
+    const list = m.get(queued.id) ?? [];
+    assert.ok(list.length > 0, "should produce at least one suggestion");
+    assert.equal(
+      list[0]!.canonicalCode,
+      "IRON_STEEL",
+      "top suggestion should be the canonical code of the closest synonym",
+    );
+    assert.ok(
+      list[0]!.confidence > 0.25 && list[0]!.confidence <= 1,
+      "confidence should be in the public (minSim, 1] range",
+    );
+    assert.ok(list.length <= 3, "default topN must cap at 3");
+  });
+
+  it("boosts a cross-tenant operator-vouched mapping over a weaker global one", async () => {
+    // Another tenant (orgB) already mapped this exact normalized
+    // string to LUMBER. orgA's queue entry should see LUMBER ranked
+    // ahead of any weaker code-spelling match — the operator vouch
+    // from another tenant is a stronger signal than canonical-code
+    // similarity alone.
+    const tenantString = `Acme-Forest-Products-${RUN}`;
+    await db.insert(synonymRegistryTable).values({
+      id: nid("syn"),
+      tenantString,
+      normalized: normalizeCategoryString(tenantString),
+      canonicalCode: "LUMBER",
+      scope: "tenant_scoped",
+      orgId: orgB,
+      source: "operator",
+    });
+    const queued = await enqueueUnmapped({ orgId: orgA, tenantString });
+    const m = await suggestCategoryMappings({
+      orgId: orgA,
+      queueIds: [queued.id],
+    });
+    const list = m.get(queued.id) ?? [];
+    assert.ok(list.length > 0);
+    assert.equal(list[0]!.canonicalCode, "LUMBER");
+    assert.equal(
+      list[0]!.reason,
+      "cross_tenant_synonym",
+      "evidence reason must surface that this came from another tenant",
+    );
+  });
+
+  it("ignores source='auto' rows when ranking suggestions", async () => {
+    // Auto-source rows are reserved for v2 — they must NOT propagate
+    // through the operator UI as if they were already approved
+    // mappings. Mirrors the Layer A resolver's filter.
+    const tenantString = `Phantom-${RUN}-auto`;
+    await db.insert(synonymRegistryTable).values({
+      id: nid("syn"),
+      tenantString,
+      normalized: normalizeCategoryString(tenantString),
+      canonicalCode: "LUMBER",
+      scope: "global",
+      orgId: null,
+      source: "auto",
+    });
+    const queued = await enqueueUnmapped({ orgId: orgA, tenantString });
+    const m = await suggestCategoryMappings({
+      orgId: orgA,
+      queueIds: [queued.id],
+    });
+    const list = m.get(queued.id) ?? [];
+    // The auto row must not contribute LUMBER as a synonym match.
+    // (LUMBER could still appear if its canonical_code spelling
+    // happens to be similar to the tenant string, but the test
+    // string is deliberately unrelated, so the list should be
+    // either empty or contain only canonical_code_match entries —
+    // none with reason='global_synonym'.)
+    for (const s of list) {
+      assert.notEqual(
+        s.reason,
+        "global_synonym",
+        "auto-source synonym rows must not produce global_synonym suggestions",
+      );
+    }
+  });
+
+  it("returns an empty map for an empty input batch", async () => {
+    const m = await suggestCategoryMappings({ orgId: orgA, queueIds: [] });
+    assert.equal(m.size, 0);
+  });
+
+  it("respects topN to cap suggestions per queue entry", async () => {
+    const tenantString = `Steel-${RUN}-cap`;
+    const queued = await enqueueUnmapped({ orgId: orgA, tenantString });
+    const m = await suggestCategoryMappings({
+      orgId: orgA,
+      queueIds: [queued.id],
+      topN: 1,
+    });
+    const list = m.get(queued.id) ?? [];
+    assert.ok(list.length <= 1);
   });
 });
 

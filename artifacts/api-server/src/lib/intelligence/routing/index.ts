@@ -61,6 +61,15 @@ export {
   refreshCategoryLeverMappings,
 } from "./materialized-view";
 
+// Layer D — at-request fuzzy/cross-tenant suggestions for the queue
+export {
+  suggestCategoryMappings,
+  bootstrapTrigramSuggestions,
+  type RoutingSuggestion,
+  type SuggestionReason,
+  type SuggestCategoryMappingsArgs,
+} from "./suggestions";
+
 // Bands constants
 export { ALL_BANDS, FALLBACK_BAND, isBand } from "./bands";
 

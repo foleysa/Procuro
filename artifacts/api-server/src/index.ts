@@ -62,7 +62,10 @@ import {
   startAlertsEscalationScheduler,
   startOperationalSynthScheduler,
 } from "./lib/alerts/schedulers";
-import { bootstrapCategoryLeverMappings } from "./lib/intelligence/routing";
+import {
+  bootstrapCategoryLeverMappings,
+  bootstrapTrigramSuggestions,
+} from "./lib/intelligence/routing";
 import { ensureWarehouseSchema } from "@workspace/intelligence";
 
 const rawPort = process.env["PORT"];
@@ -208,6 +211,10 @@ app.listen(port, async (err) => {
   // lib/intelligence/routing/materialized-view.ts.
   try {
     await bootstrapCategoryLeverMappings();
+    // Layer D suggestions need pg_trgm + the GIN index on
+    // synonym_registry.normalized to be in place before the admin
+    // queue endpoint serves its first request.
+    await bootstrapTrigramSuggestions();
     logger.info("Routing materialized view bootstrapped");
   } catch (e) {
     logger.error(

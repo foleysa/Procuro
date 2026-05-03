@@ -1242,6 +1242,19 @@ function MappingDataHealthCard() {
   );
 }
 
+type SuggestionReason =
+  | "tenant_synonym"
+  | "global_synonym"
+  | "cross_tenant_synonym"
+  | "canonical_code_match";
+
+interface RoutingSuggestion {
+  canonicalCode: string;
+  /** 0..1 trigram similarity (with optional cross-tenant boost). */
+  confidence: number;
+  reason: SuggestionReason;
+}
+
 interface QueueEntry {
   id: string;
   orgId: string;
@@ -1250,6 +1263,14 @@ interface QueueEntry {
   spendTrailing90dUsd: string;
   firstSeenAt: string;
   lastSeenAt: string;
+  /**
+   * Layer D: top-3 suggested canonical codes for this tenant string,
+   * ranked at request time by trigram similarity against existing
+   * synonyms (own tenant, other tenants, global) plus the canonical
+   * code spelling. Empty when nothing crossed the similarity floor;
+   * absent on legacy responses (treat as empty).
+   */
+  suggestions?: RoutingSuggestion[];
 }
 interface QueueResp { entries: QueueEntry[]; }
 interface CanonicalCodesResp { codes: string[]; }
@@ -1382,6 +1403,7 @@ export function RoutingQueueTab() {
           <TableHeader>
             <TableRow>
               <TableHead>Tenant string</TableHead>
+              <TableHead>Suggestions</TableHead>
               <TableHead>90d spend</TableHead>
               <TableHead>First seen</TableHead>
               <TableHead>Map to</TableHead>
@@ -1392,7 +1414,7 @@ export function RoutingQueueTab() {
           <TableBody>
             {(queue.data?.entries ?? []).length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground">
+                <TableCell colSpan={7} className="text-muted-foreground">
                   Queue is empty.
                 </TableCell>
               </TableRow>
@@ -1403,6 +1425,21 @@ export function RoutingQueueTab() {
                 <TableRow key={e.id} data-testid={`row-queue-${e.id}`}>
                   <TableCell className="font-mono text-xs">
                     {e.tenantString}
+                  </TableCell>
+                  <TableCell>
+                    <SuggestionsCell
+                      suggestions={e.suggestions ?? []}
+                      onAccept={(s) =>
+                        resolveMut.mutate({
+                          id: e.id,
+                          canonicalCode: s.canonicalCode,
+                          scope: pick.scope,
+                          tenantString: e.tenantString,
+                        })
+                      }
+                      isPending={resolveMut.isPending}
+                      queueId={e.id}
+                    />
                   </TableCell>
                   <TableCell>{fmtUsd(e.spendTrailing90dUsd)}</TableCell>
                   <TableCell>{fmtTime(e.firstSeenAt)}</TableCell>
@@ -1488,6 +1525,79 @@ export function RoutingQueueTab() {
         isPending={resolveMut.isPending}
       />
     </Card>
+  );
+}
+
+/**
+ * Inline display of Layer-D suggestions for one queue entry.
+ *
+ * Renders up to three pills, each labeled with the canonical code,
+ * a confidence percentage, and the source-of-evidence reason. Clicking
+ * a pill kicks off the same `resolveMut` flow the manual dropdown
+ * uses — including the same collision-detection round trip — so the
+ * server-side write path is identical regardless of how the operator
+ * picked the code.
+ */
+function SuggestionsCell(props: {
+  suggestions: RoutingSuggestion[];
+  onAccept: (s: RoutingSuggestion) => void;
+  isPending: boolean;
+  queueId: string;
+}) {
+  const { suggestions, onAccept, isPending, queueId } = props;
+  if (suggestions.length === 0) {
+    return (
+      <span
+        className="text-xs text-muted-foreground"
+        data-testid={`suggestions-empty-${queueId}`}
+      >
+        —
+      </span>
+    );
+  }
+  // Map each evidence reason to a short, low-noise label so operators
+  // can tell a strong cross-tenant operator-vouched match apart from a
+  // weak code-spelling guess at a glance.
+  const reasonLabel: Record<SuggestionReason, string> = {
+    tenant_synonym: "your tenant",
+    cross_tenant_synonym: "other tenants",
+    global_synonym: "global",
+    canonical_code_match: "code spelling",
+  };
+  return (
+    <div
+      className="flex flex-wrap gap-1"
+      data-testid={`suggestions-${queueId}`}
+    >
+      {suggestions.map((s) => {
+        const pct = Math.round(s.confidence * 100);
+        const variant: "default" | "secondary" | "outline" =
+          pct >= 75 ? "default" : pct >= 50 ? "secondary" : "outline";
+        return (
+          <Button
+            key={`${s.canonicalCode}:${s.reason}`}
+            size="sm"
+            variant="outline"
+            className="h-auto px-2 py-1 text-xs"
+            disabled={isPending}
+            onClick={() => onAccept(s)}
+            data-testid={`btn-suggestion-${queueId}-${s.canonicalCode}`}
+            title={`${pct}% similarity via ${reasonLabel[s.reason]}`}
+          >
+            <span className="font-mono">{s.canonicalCode}</span>
+            <Badge
+              variant={variant}
+              className="ml-1.5 px-1 py-0 text-[10px] font-sans"
+            >
+              {pct}%
+            </Badge>
+            <span className="ml-1 text-muted-foreground">
+              · {reasonLabel[s.reason]}
+            </span>
+          </Button>
+        );
+      })}
+    </div>
   );
 }
 
