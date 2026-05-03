@@ -218,6 +218,31 @@ router.post("/ingest/mock-erp", tenantMiddleware, requirePermission("ingest:writ
  */
 const MAX_STREAM_BYTES = 1024 * 1024 * 1024; // 1 GB
 
+/**
+ * Maximum number of concurrent streaming CSV uploads allowed per org.
+ * Prevents a single tenant from flooding the shared API process with
+ * multiple simultaneous large uploads, each holding parser memory up to
+ * MAX_STREAM_BYTES. An in-process counter is sufficient because streaming
+ * ingest runs in the same Node.js process for its full duration.
+ */
+const MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG = 3;
+
+/** Tracks the number of active streaming uploads per org. */
+const activeStreamUploads = new Map<string, number>();
+
+function incrementActiveUploads(orgId: string): void {
+  activeStreamUploads.set(orgId, (activeStreamUploads.get(orgId) ?? 0) + 1);
+}
+
+function decrementActiveUploads(orgId: string): void {
+  const current = activeStreamUploads.get(orgId) ?? 0;
+  if (current <= 1) {
+    activeStreamUploads.delete(orgId);
+  } else {
+    activeStreamUploads.set(orgId, current - 1);
+  }
+}
+
 function isMultipart(req: Request): boolean {
   const ct = String(req.headers["content-type"] ?? "").toLowerCase();
   return ct.startsWith("multipart/form-data");
@@ -442,6 +467,19 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
     return;
   }
 
+  // Per-org concurrency check: reject the request early if the tenant
+  // already has too many simultaneous streaming uploads in flight. This
+  // prevents a single authenticated tenant from opening many concurrent
+  // large uploads that each hold parser/buffer memory simultaneously.
+  const activeUploads = activeStreamUploads.get(orgId) ?? 0;
+  if (activeUploads >= MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG) {
+    res.status(429).json({
+      error: `Too many concurrent uploads. You may have at most ${MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG} streaming uploads in flight at once. Wait for an active upload to finish before starting a new one.`,
+    });
+    return;
+  }
+  incrementActiveUploads(orgId);
+
   // Tie the lifecycle of the streaming ingest to the HTTP request: when the
   // browser calls `xhr.abort()` Express fires `req.on("aborted")` and we
   // trip this controller, which is forwarded into `streamCsvEntity` so it
@@ -637,6 +675,7 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
       });
     }
   } finally {
+    decrementActiveUploads(orgId);
     if (!res.writableEnded) res.end();
   }
 });

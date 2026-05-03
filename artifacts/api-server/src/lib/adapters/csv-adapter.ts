@@ -720,6 +720,12 @@ export async function streamCsvEntity(
       // exactly which lines collided when an in-batch
       // conflict-target-key duplicate is detected (Task #89).
       info: true,
+      // Limit per-record memory: a single CSV record larger than this
+      // causes csv-parse to emit an error and terminates the stream.
+      // Without this guard, a crafted file with one enormous quoted
+      // field accumulates up to the 1 GB route limit before yielding a
+      // row, exhausting API process memory and causing a DoS.
+      max_record_size: 1 * 1024 * 1024, // 1 MB per record
     }),
   );
 

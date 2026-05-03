@@ -8,7 +8,6 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
-import { runAnalysisCycle } from "../lib/ooda/cycle";
 import { ensureOrgAnalysisCycleScheduled } from "../lib/jobs/queue";
 import {
   dedupeSources,
@@ -87,52 +86,45 @@ router.get("/cycles/:id", tenantMiddleware, async (req, res) => {
 /**
  * Run an OODA cycle.
  *
- * Default behaviour is synchronous (suitable for the demo seed dataset).
- * For real-world / F500 scale, pass `?async=true` to enqueue the run on the
- * background job queue and return a `jobId` for polling via `/jobs/:id`.
+ * All cycle runs are enqueued through `ensureOrgAnalysisCycleScheduled`,
+ * which applies the same per-tenant pending+running quota and advisory-lock
+ * deduplication used by the scheduled fan-out. This prevents authenticated
+ * tenants from bypassing workload controls and monopolising shared API and
+ * database resources by calling this endpoint directly or concurrently.
+ *
+ * The `?async` parameter is accepted for backwards compatibility but is now
+ * a no-op — every call returns a 202 with a job id for polling via
+ * `/jobs/:id`.
  */
 router.post("/cycles/run", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
   const orgId = requireOrgId(req);
   const triggeredBy = req.actorEmail ?? "system@procuro.ai";
-  const isAsync =
-    req.query["async"] === "true" || req.query["async"] === "1";
 
-  if (isAsync) {
-    // Route through the same race-safe dedupe helper the periodic
-    // `analysis_cycle_fanout` handler uses, so a manual "Run now"
-    // click overlapping a scheduled fan-out (or a double-click) can
-    // never produce two pending `run_analysis_cycle` rows for one org.
-    // When dedupe hits, we return the already-in-flight job's id so
-    // the UI can poll it just like a freshly-enqueued one.
-    const result = await ensureOrgAnalysisCycleScheduled(orgId, {
-      payload: { triggeredBy, source: "manual" },
-    });
-    if (result.enqueued) {
-      res.status(202).json({ jobId: result.job.id, status: result.job.status });
-      return;
-    }
-    if (result.reason === "in_flight") {
-      res.status(202).json({
-        jobId: result.existingJobId,
-        status: "in_flight",
-        deduped: true,
-      });
-      return;
-    }
-    // quota_exceeded
-    res.status(429).json({
-      error: "Per-tenant pending+running job quota exceeded",
+  // Route through the same race-safe dedupe helper the periodic
+  // `analysis_cycle_fanout` handler uses, so a manual "Run now" click
+  // overlapping a scheduled fan-out (or a double-click) can never produce
+  // two pending `run_analysis_cycle` rows for one org. When dedupe hits,
+  // we return the already-in-flight job's id so the UI can poll it just
+  // like a freshly-enqueued one.
+  const result = await ensureOrgAnalysisCycleScheduled(orgId, {
+    payload: { triggeredBy, source: "manual" },
+  });
+
+  if (result.enqueued) {
+    res.status(202).json({ jobId: result.job.id, status: result.job.status });
+    return;
+  }
+  if (result.reason === "in_flight") {
+    res.status(202).json({
+      jobId: result.existingJobId,
+      status: "in_flight",
+      deduped: true,
     });
     return;
   }
-
-  const result = await runAnalysisCycle({ orgId, triggeredBy });
-  res.json({
-    cycleId: result.cycleId,
-    generation: result.generation,
-    opportunitiesCreated: result.opportunitiesCreated,
-    totalProjectedUsd: result.totalProjectedUsd,
-    priorDeltas: result.priorDeltas,
+  // quota_exceeded
+  res.status(429).json({
+    error: "Per-tenant pending+running job quota exceeded",
   });
 });
 
