@@ -6,6 +6,8 @@ import {
   useRejectOpportunity,
   useExecuteOpportunity,
   useRealizeOpportunity,
+  useBulkSnoozeOpportunities,
+  useBulkUnsnoozeOpportunities,
   RejectionReasonCode,
   getGetOpportunityQueryKey,
   getListOpportunitiesQueryKey,
@@ -43,6 +45,9 @@ import {
   ArrowDownRight,
   BarChart3,
   ExternalLink,
+  Clock,
+  RotateCcw,
+  History,
 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
@@ -64,6 +69,7 @@ export default function OpportunityDetail() {
   );
   const [rejectNote, setRejectNote] = useState("");
   const [realizedAmount, setRealizedAmount] = useState("");
+  const [snoozeDays, setSnoozeDays] = useState<number>(7);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: getGetOpportunityQueryKey(id) });
@@ -108,6 +114,26 @@ export default function OpportunityDetail() {
       onError: (e: Error) => toast({ title: "Realize failed", description: String(e), variant: "destructive" }),
     },
   });
+  const snoozeM = useBulkSnoozeOpportunities({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "Snoozed" });
+        invalidate();
+      },
+      onError: (e: Error) =>
+        toast({ title: "Snooze failed", description: String(e), variant: "destructive" }),
+    },
+  });
+  const unsnoozeM = useBulkUnsnoozeOpportunities({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "Unsnoozed" });
+        invalidate();
+      },
+      onError: (e: Error) =>
+        toast({ title: "Unsnooze failed", description: String(e), variant: "destructive" }),
+    },
+  });
 
   if (isLoading || !opp) {
     return (
@@ -119,6 +145,13 @@ export default function OpportunityDetail() {
   }
 
   const status = opp.status;
+  const decisions = opp.decisions ?? [];
+  // Decisions arrive newest-first from the API. The most recent
+  // `snooze` event tells us who deferred this opportunity and when
+  // — that's what the operator needs to see at a glance.
+  const lastSnoozeDecision = decisions.find((d) => d.eventType === "snooze");
+  const isSnoozed =
+    !!opp.snoozedUntil && new Date(opp.snoozedUntil).getTime() > Date.now();
 
   return (
     <div className="p-8 space-y-6 max-w-5xl">
@@ -136,6 +169,41 @@ export default function OpportunityDetail() {
           {leverLabel(opp.leverId)} · Tier {opp.tier} · cycle {opp.cycleId.slice(-8)}
         </p>
       </div>
+
+      {isSnoozed && opp.snoozedUntil && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          data-testid="banner-snoozed"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            <span>
+              Snoozed until{" "}
+              <strong data-testid="text-snoozed-until">
+                {formatDateTime(opp.snoozedUntil)}
+              </strong>
+              {lastSnoozeDecision?.actorEmail && (
+                <>
+                  {" "}by{" "}
+                  <strong data-testid="text-snoozed-by">
+                    {lastSnoozeDecision.actorEmail}
+                  </strong>
+                </>
+              )}
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => unsnoozeM.mutate({ data: { ids: [id] } })}
+            disabled={unsnoozeM.isPending}
+            data-testid="btn-unsnooze"
+          >
+            <RotateCcw className="w-4 h-4 mr-1" />
+            Unsnooze
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Kpi label="Projected" value={formatUsd(opp.projectedSavingsUsd, { compact: true })} />
@@ -192,6 +260,62 @@ export default function OpportunityDetail() {
         </Link>
       )}
 
+      {decisions.length > 0 && (
+        <Card data-testid="card-decision-history">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <History className="w-4 h-4" />
+              Decision history
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm">
+            <ul className="space-y-2" data-testid="list-decisions">
+              {decisions.map((d) => (
+                <li
+                  key={d.id}
+                  className="flex items-start gap-3 border-l-2 pl-3 py-1"
+                  data-testid={`decision-${d.eventType}`}
+                  data-event-type={d.eventType}
+                >
+                  <DecisionIcon eventType={d.eventType} />
+                  <div className="flex-1">
+                    <div className="font-medium">
+                      <span className="capitalize">{d.eventType}</span>
+                      {d.actorEmail && (
+                        <span className="text-muted-foreground font-normal">
+                          {" "}by{" "}
+                          <span data-testid="decision-actor">
+                            {d.actorEmail}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground tabular-nums">
+                      {formatDateTime(d.createdAt)}
+                    </div>
+                    {d.eventType === "reject" && d.rejectedReasonCode && (
+                      <div className="text-xs mt-1 text-muted-foreground">
+                        {REJECTION_REASON_LABELS[d.rejectedReasonCode] ??
+                          d.rejectedReasonCode}
+                        {d.rejectedReasonText && (
+                          <span className="italic"> — "{d.rejectedReasonText}"</span>
+                        )}
+                      </div>
+                    )}
+                    {d.eventType === "realize" &&
+                      typeof d.realizedSavingsUsd === "number" && (
+                        <div className="text-xs mt-1 text-muted-foreground">
+                          Realized {formatUsd(d.realizedSavingsUsd, { compact: true })}
+                        </div>
+                      )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {(opp.approvedAt || opp.rejectedAt || opp.executingAt || opp.realizedAt) && (
         <Card>
           <CardHeader><CardTitle>Timeline</CardTitle></CardHeader>
@@ -209,6 +333,63 @@ export default function OpportunityDetail() {
                 {opp.rejectedReasonText && <div className="text-xs italic mt-1">"{opp.rejectedReasonText}"</div>}
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {status === "proposed" && !isSnoozed && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-amber-700">
+              <Clock className="w-4 h-4" />
+              Snooze
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="snooze-days">Defer for</Label>
+              <Select
+                value={String(snoozeDays)}
+                onValueChange={(v) => setSnoozeDays(Number(v))}
+              >
+                <SelectTrigger
+                  id="snooze-days"
+                  className="w-[140px]"
+                  data-testid="select-snooze-days"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 day</SelectItem>
+                  <SelectItem value="3">3 days</SelectItem>
+                  <SelectItem value="7">7 days</SelectItem>
+                  <SelectItem value="14">14 days</SelectItem>
+                  <SelectItem value="30">30 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                snoozeM.mutate({
+                  data: {
+                    ids: [id],
+                    snoozedUntil: new Date(
+                      Date.now() + snoozeDays * 24 * 60 * 60 * 1000,
+                    ).toISOString(),
+                  },
+                })
+              }
+              disabled={snoozeM.isPending}
+              data-testid="btn-snooze"
+            >
+              <Clock className="w-4 h-4 mr-1" />
+              Snooze opportunity
+            </Button>
+            <p className="text-xs text-muted-foreground basis-full">
+              Hides this row from the Today queue and the default
+              opportunities list until the deadline passes.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -338,6 +519,26 @@ export default function OpportunityDetail() {
       </Link>
     </div>
   );
+}
+
+function DecisionIcon({ eventType }: { eventType: string }) {
+  const cls = "w-4 h-4 mt-0.5";
+  switch (eventType) {
+    case "approve":
+      return <Check className={`${cls} text-green-700`} />;
+    case "reject":
+      return <X className={`${cls} text-destructive`} />;
+    case "execute":
+      return <Play className={`${cls} text-blue-700`} />;
+    case "realize":
+      return <DollarSign className={`${cls} text-emerald-700`} />;
+    case "snooze":
+      return <Clock className={`${cls} text-amber-700`} />;
+    case "unsnooze":
+      return <RotateCcw className={`${cls} text-muted-foreground`} />;
+    default:
+      return <History className={`${cls} text-muted-foreground`} />;
+  }
 }
 
 function Kpi({ label, value }: { label: string; value: string }) {
