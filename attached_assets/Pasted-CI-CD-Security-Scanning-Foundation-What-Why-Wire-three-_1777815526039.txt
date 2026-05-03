@@ -1,0 +1,202 @@
+CI/CD Security Scanning Foundation
+What & Why
+Wire three security scanners into the GitHub Actions CI pipeline so every pull request is automatically checked for committed secrets, vulnerable dependencies, and code-level security flaws. AI-generated code routinely leaks credentials and pulls in vulnerable packages — without these scanners running on every PR, those issues ship to production unnoticed.
+This ticket has zero dependencies on other tickets. It can run in parallel with #285 and #284 because it only touches CI configuration and security tooling, not application code or schema. Run it as soon as a developer is available — every day this isn't wired up is another day secrets and CVEs ship without anyone noticing.
+Done looks like
+Three independent scanners running in CI on every push and pull request:
+ScannerToolPurposeCI behaviorSecretsGitleaksDetect committed credentials (API keys, DB URLs, OAuth tokens, JWTs)Fail PR on any new secret outside allowlistDependenciesDependabot + npm auditFlag vulnerable packages, auto-PR upgradesFail CI on high or critical vulnerabilities not yet patchedSASTSemgrepCode-level security flaw scanning (OWASP Top 10, TypeScript/React patterns)Fail PR on any finding marked error severity
+All three scanners run as parallel jobs in CI. Total CI time impact ≤ 90 seconds. A SECURITY.md file documents how findings are handled, who is notified, and the remediation timeline.
+A .security-baseline.md file records existing findings (anything already in the codebase before this ticket lands) so CI fails only on new findings, not the baseline. Each baselined item has a follow-up ticket reference so it isn't forgotten.
+Out of scope
+
+Penetration testing — manual, separate engagement, separate ticket.
+Runtime security monitoring (RASP, WAF, IDS) — different tooling category, not part of this ticket.
+Compliance certifications (SOC 2, ISO 27001, FedRAMP) — separate body of work.
+Fixing existing baseline findings — each becomes its own follow-up ticket created during this work.
+Container image scanning — only relevant once we ship containers; defer to a future ticket.
+Infrastructure-as-code scanning (Terraform, CloudFormation) — defer until IaC is in use.
+
+Steps for Replit
+Step 1 — Gitleaks (secrets scanning)
+
+Create .github/workflows/gitleaks.yml:
+
+yamlname: Gitleaks
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+Create .gitleaks.toml at the repo root with a starter allowlist:
+
+toml[extend]
+useDefault = true
+
+[allowlist]
+description = "Repo-specific allowlist for false positives"
+paths = [
+  '''(.*?)(test|spec|fixture|mock)(.*?)\.(ts|tsx|js|jsx)$''',
+  '''(.*?)example\.env$''',
+  '''(.*?)\.env\.example$''',
+]
+# Add specific commit SHAs or regex patterns here ONLY with explicit user approval
+
+Run Gitleaks locally once to generate a baseline of existing findings: gitleaks detect --source . --report-path gitleaks-baseline.json. Document any findings in .security-baseline.md with a follow-up ticket per item.
+
+Step 2 — Dependabot (dependency scanning, auto-upgrades)
+
+Create .github/dependabot.yml:
+
+yamlversion: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "patch"
+          - "minor"
+      development-dependencies:
+        dependency-type: "development"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+Add npm audit as a CI step in the existing CI workflow:
+
+yaml- name: npm audit
+  run: pnpm audit --audit-level=high
+  continue-on-error: false  # fail the build on high/critical
+Step 3 — Semgrep (SAST)
+
+Create .github/workflows/semgrep.yml:
+
+yamlname: Semgrep
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - run: semgrep ci --config=p/owasp-top-ten --config=p/typescript --config=p/react --config=p/secrets
+        env:
+          SEMGREP_RULES: p/owasp-top-ten p/typescript p/react p/secrets
+
+Run Semgrep locally once against the current codebase to generate a baseline. Document existing findings in .security-baseline.md with a follow-up ticket per finding marked error severity.
+
+Step 4 — Baseline documentation
+Create .security-baseline.md at the repo root with the following structure:
+markdown# Security Baseline
+
+This file records security findings that existed at the time CI scanning was wired up (#286).
+CI fails only on NEW findings beyond this baseline. Each item below has a follow-up ticket.
+
+## Gitleaks findings (baseline)
+| ID | File | Line | Finding type | Follow-up ticket |
+|----|------|------|--------------|-------------------|
+| ... | ... | ... | ... | #XXX |
+
+## Dependency vulnerabilities (baseline)
+| Package | Version | CVE | Severity | Follow-up ticket |
+|---------|---------|-----|----------|-------------------|
+| ... | ... | ... | ... | #XXX |
+
+## Semgrep findings (baseline)
+| Rule ID | File | Line | Severity | Follow-up ticket |
+|---------|------|------|----------|-------------------|
+| ... | ... | ... | ... | #XXX |
+Every item in this file requires a follow-up ticket. Do not allowlist findings without one.
+Step 5 — SECURITY.md documentation
+Create SECURITY.md at the repo root:
+markdown# Security
+
+## Reporting a vulnerability
+Email: [security contact email]
+Do not file public issues for security vulnerabilities.
+
+## CI Security Scanning
+This repo runs three automated security scans on every pull request:
+- **Gitleaks** — detects committed secrets
+- **Dependabot + npm audit** — detects vulnerable dependencies
+- **Semgrep** — static analysis for code-level security flaws
+
+A failed scan blocks the PR from merging. To resolve:
+- Secrets: rotate the credential, remove from history if needed, update `.gitleaks.toml` allowlist ONLY with security-team approval
+- Dependencies: update the package to a patched version
+- SAST findings: fix the code, or document the false positive with a Semgrep `nosem` comment AND security-team approval
+
+## Baseline findings
+See `.security-baseline.md` for findings present before automated scanning was wired up.
+Each has a follow-up ticket; CI fails only on NEW findings.
+
+## Remediation timeline
+- Critical: 24 hours
+- High: 7 days
+- Medium: 30 days
+- Low: next quarter
+Acceptance criteria (all must pass before merge)
+CI integration
+
+A pull request that introduces a hardcoded API key fails the Gitleaks job.
+A pull request that adds a package with a known high-severity CVE fails the npm audit step.
+A pull request that adds code matching a Semgrep error-severity rule fails the Semgrep job.
+A pull request with no security issues passes all three jobs in ≤ 90 seconds total.
+
+Baseline correctness
+
+.security-baseline.md exists and lists every finding present at ticket start.
+Every baseline item has a follow-up ticket number filled in (no blanks).
+Re-running each scanner against main after this ticket lands produces only baseline findings — no new ones.
+
+Documentation
+
+SECURITY.md exists at repo root with reporting contact, scan descriptions, baseline reference, and remediation timeline.
+.gitleaks.toml, .github/dependabot.yml, and the two new workflow files exist and are valid.
+
+Test the full pipeline
+Open a deliberate test PR that:
+
+Adds a fake AWS access key in a non-test file → confirm Gitleaks fails the job.
+Adds a known-vulnerable package version → confirm npm audit fails the job.
+Adds a Semgrep rule violation → confirm Semgrep fails the job.
+
+After verification, close the test PR without merging. Document the test PR URL in the ticket as evidence.
+Rollback plan
+Each scanner is wired in via independent workflow files. If any single scanner produces too much noise or breaks development velocity:
+
+Disable the offending workflow by renaming .github/workflows/<scanner>.yml to .disabled.
+File a ticket to tune the configuration before re-enabling.
+Other scanners continue running normally.
+
+The baseline file and SECURITY.md remain regardless of which scanners are active.
+Mode guidance
+Economy. This is configuration work — wiring tools into GitHub Actions, writing YAML files, generating baselines. Economy mode handles it cleanly. Power is overkill and burns credits without improving the output. Lite is too thin for the multi-file scope.
+Why this matters (for the reviewer)
+The dashboard you're building displays $584M in pipeline value. AI-generated codebases routinely leak database credentials, API keys, and OAuth tokens into git history. If a credential leaks and the dashboard is internet-facing or accessible to an attacker who's already inside the network, every record in that pipeline is exposed.
+These three scanners cost almost nothing to run, catch the highest-frequency real-world security failures, and run on every PR forever once wired up. The cost of NOT having them is exactly one breach away.

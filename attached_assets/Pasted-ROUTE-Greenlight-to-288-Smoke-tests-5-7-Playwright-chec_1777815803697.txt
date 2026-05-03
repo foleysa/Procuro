@@ -1,0 +1,401 @@
+ROUTE: Greenlight to #288. Smoke tests — 5–7 Playwright checks running post-deploy in <60s. Standalone scope, no dependencies on dashboard rebuild yet because we want smoke to work against the existing dashboard the moment #287 lands. Active corrections in force: structures not clever prompts, embedded specs not described in prose, verifiable acceptance criteria, mode guidance.
+
+PLAN: Single polished ticket. Short — smoke tests are small by design. Embed the actual Playwright test code so Replit produces it cleanly. End with confirmation prompt.
+
+BUILD/SHIP:
+
+---
+
+# #288 — Smoke Tests (Post-Deploy Health Checks)
+
+## What & Why
+
+Establish a small, fast set of automated checks that run against every deployment and verify the application is up and the highest-value paths haven't broken. Smoke tests don't replace deeper testing — they catch catastrophic failures (the app won't start, the homepage 500s, login is broken, the dashboard won't render) within seconds of a deploy, before users notice.
+
+Today, after a deploy completes, no automated check runs. The first signal that something broke is a user opening the app and seeing it not work. Smoke tests close that gap with a 60-second post-deploy verification.
+
+**Dependencies:** #287 (test framework) must be merged so Playwright is installed, the CI runner is configured, and there's an established test directory structure.
+
+## Done looks like
+
+A handful of fast Playwright tests run automatically after every successful deploy to staging and production, hitting the highest-value paths in the application. The full suite completes in ≤ 60 seconds. Failure pages a designated channel (Slack webhook, email, or whatever notification path the team already uses) and surfaces as a red status on the deploy.
+
+The smoke suite covers seven checks:
+
+1. **App responds** — homepage returns HTTP 200 in under 3 seconds.
+2. **Static assets load** — main JS bundle, main CSS bundle, and one critical font return 200 from CDN/origin.
+3. **Auth works** — login page loads, valid credentials authenticate successfully, session cookie is set.
+4. **Dashboard renders** — the Command Center page loads after login, shows the three Outcomes tiles (Realized Savings, Identified Pipeline, Gap to Goal), and contains no "Error" or "undefined" text in visible UI.
+5. **API health** — `GET /api/health` returns 200 with body `{ status: 'ok' }`. If no health endpoint exists, this ticket adds one.
+6. **Database connectivity** — `GET /api/opportunities?limit=1` returns 200 with at least one opportunity record (or a deterministic empty-state message if the test database is empty).
+7. **No 500s on critical routes** — fetch each of `/`, `/dashboard`, `/api/opportunities`, `/api/health` and assert none return 5xx.
+
+These run after every deploy. They are the canary, not the full bird.
+
+## Out of scope
+
+- Comprehensive E2E tests covering full user journeys (handled in #290).
+- Performance assertions beyond the 3-second response budget (handled in #291).
+- Accessibility checks (handled in #292).
+- Visual regression (handled in #293).
+- Tests of business logic or data integrity (handled in #287 and #289).
+- Authentication test for OAuth providers (use email/password for the test account; real SSO test is a future ticket).
+- Mobile or responsive checks (smoke runs desktop viewport only).
+
+## Steps for Replit
+
+### Step 1 — Test account and credentials
+
+Create a dedicated smoke test account in the staging and production environments:
+- Email: `smoke-test@<your-domain>.com`
+- Password: stored as `SMOKE_TEST_PASSWORD` in GitHub Actions secrets and in the deploy environment
+
+This account has read-only access to the dashboard, no destructive permissions, and is excluded from any analytics or audit reports. Document its existence in `docs/smoke-test-account.md` so it isn't accidentally deleted.
+
+### Step 2 — Health endpoint (if it doesn't exist)
+
+If the application doesn't have a health endpoint yet, add one:
+
+```typescript
+// src/app/api/health/route.ts
+import { NextResponse } from 'next/server';
+import { db } from '@/db';
+import { sql } from 'drizzle-orm';
+
+export async function GET() {
+  try {
+    // Verify DB is reachable
+    await db.execute(sql`SELECT 1`);
+    return NextResponse.json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch (error) {
+    return NextResponse.json(
+      { status: 'error', error: error instanceof Error ? error.message : 'unknown' },
+      { status: 503 }
+    );
+  }
+}
+```
+
+### Step 3 — Playwright smoke config
+
+Create `playwright.smoke.config.ts`:
+
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/smoke',
+  timeout: 30_000,
+  expect: { timeout: 5_000 },
+  retries: 2,
+  workers: 4,
+  reporter: [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'smoke-results.json' }]],
+  use: {
+    baseURL: process.env.SMOKE_BASE_URL ?? 'http://localhost:3000',
+    headless: true,
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    trace: 'retain-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+});
+```
+
+### Step 4 — Smoke test files
+
+Create `tests/smoke/health.smoke.test.ts`:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('smoke: app health', () => {
+  test('homepage returns 200 in under 3 seconds', async ({ page }) => {
+    const start = Date.now();
+    const response = await page.goto('/');
+    const elapsed = Date.now() - start;
+
+    expect(response?.status()).toBe(200);
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  test('health endpoint returns ok', async ({ request }) => {
+    const response = await request.get('/api/health');
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe('ok');
+  });
+
+  test('no 500s on critical routes', async ({ request }) => {
+    const routes = ['/', '/dashboard', '/api/health'];
+    for (const route of routes) {
+      const response = await request.get(route);
+      expect(response.status(), `${route} returned ${response.status()}`).toBeLessThan(500);
+    }
+  });
+});
+```
+
+Create `tests/smoke/auth.smoke.test.ts`:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('smoke: authentication', () => {
+  test('login page loads', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.getByLabel(/email/i)).toBeVisible();
+    await expect(page.getByLabel(/password/i)).toBeVisible();
+  });
+
+  test('valid credentials authenticate successfully', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(process.env.SMOKE_TEST_EMAIL!);
+    await page.getByLabel(/password/i).fill(process.env.SMOKE_TEST_PASSWORD!);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+
+    await expect(page).toHaveURL(/\/dashboard|\/$/, { timeout: 10_000 });
+
+    const cookies = await page.context().cookies();
+    const sessionCookie = cookies.find((c) =>
+      c.name.toLowerCase().includes('session') || c.name.toLowerCase().includes('auth')
+    );
+    expect(sessionCookie).toBeDefined();
+  });
+});
+```
+
+Create `tests/smoke/dashboard.smoke.test.ts`:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('smoke: dashboard renders', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(process.env.SMOKE_TEST_EMAIL!);
+    await page.getByLabel(/password/i).fill(process.env.SMOKE_TEST_PASSWORD!);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.waitForURL(/\/dashboard|\/$/);
+  });
+
+  test('Command Center loads with three Outcomes tiles', async ({ page }) => {
+    await page.goto('/dashboard');
+
+    await expect(page.getByText(/realized savings/i)).toBeVisible();
+    await expect(page.getByText(/identified pipeline/i)).toBeVisible();
+    await expect(page.getByText(/gap to goal/i)).toBeVisible();
+  });
+
+  test('dashboard contains no error indicators in visible UI', async ({ page }) => {
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const body = await page.locator('body').innerText();
+    expect(body).not.toMatch(/\bundefined\b/);
+    expect(body).not.toMatch(/\bnull\b(?!\s*-?\s*soft)/i);  // allow "N/A — Soft" but not raw "null"
+    expect(body).not.toMatch(/\b(error|failed to load|something went wrong)\b/i);
+  });
+
+  test('opportunities API returns data', async ({ request }) => {
+    const response = await request.get('/api/opportunities?limit=1');
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body).toHaveProperty('data');
+    expect(Array.isArray(body.data)).toBe(true);
+  });
+});
+```
+
+Create `tests/smoke/static-assets.smoke.test.ts`:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('smoke: static assets load', () => {
+  test('main bundles return 200 from origin or CDN', async ({ page }) => {
+    const failedAssets: string[] = [];
+
+    page.on('response', (response) => {
+      const url = response.url();
+      const isAsset = url.match(/\.(js|css|woff2?|ttf|otf)(\?|$)/);
+      if (isAsset && response.status() >= 400) {
+        failedAssets.push(`${response.status()} ${url}`);
+      }
+    });
+
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    expect(failedAssets, `Failed assets: ${failedAssets.join(', ')}`).toEqual([]);
+  });
+});
+```
+
+### Step 5 — CI workflow
+
+Create `.github/workflows/smoke.yml`:
+
+```yaml
+name: Smoke Tests
+on:
+  workflow_run:
+    workflows: ["Deploy"]   # adjust to actual deploy workflow name
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [staging, production]
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run smoke tests
+        env:
+          SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: pnpm exec playwright test --config playwright.smoke.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-failure-evidence
+          path: |
+            playwright-report/
+            test-results/
+            smoke-results.json
+          retention-days: 7
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🔴 Smoke tests FAILED on ${{ vars.SMOKE_BASE_URL }}",
+              "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*Smoke tests failed* on `${{ vars.SMOKE_BASE_URL }}` after deploy. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"}}
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+```
+
+### Step 6 — Documentation
+
+Create `tests/smoke/README.md`:
+
+```markdown
+# Smoke Tests
+
+These tests run automatically after every deploy and verify the application is up
+and the highest-value paths haven't broken. They complete in ≤ 60 seconds.
+
+## What they cover
+- App responds (homepage, health endpoint)
+- Static assets load (JS/CSS/fonts)
+- Authentication (login flow)
+- Dashboard renders (Command Center loads with Outcomes tiles)
+- API health (opportunities endpoint returns data)
+- No 500s on critical routes
+
+## What they don't cover
+- Full user journeys → see #290
+- Performance assertions beyond response time → see #291
+- Accessibility → see #292
+- Visual regression → see #293
+- Business logic correctness → see #287 and #289
+
+## Running locally
+SMOKE_BASE_URL=http://localhost:3000 \
+SMOKE_TEST_EMAIL=smoke-test@example.com \
+SMOKE_TEST_PASSWORD=... \
+pnpm exec playwright test --config playwright.smoke.config.ts
+
+## When a smoke test fails
+1. Check Slack for the alert.
+2. View the Playwright report (uploaded as a CI artifact on failure).
+3. Decide: roll back the deploy, hotfix forward, or accept the failure if the test itself is flaky.
+4. If the test is flaky, file a ticket — flaky smoke tests are worse than no smoke tests.
+```
+
+## Acceptance criteria (all must pass before merge)
+
+### Suite runs and passes
+
+- All seven smoke checks listed in "Done looks like" exist as Playwright tests in `tests/smoke/`.
+- Running `pnpm exec playwright test --config playwright.smoke.config.ts` against a working environment passes all tests in ≤ 60 seconds.
+- The CI workflow `Smoke Tests` triggers automatically after the deploy workflow completes and reports its status.
+
+### Failure paths work
+
+- Manually break the app (stop the database, or deploy a broken build to staging) and confirm:
+  - The CI workflow `Smoke Tests` fails.
+  - A Slack notification posts to the configured channel with the failure details.
+  - Playwright artifacts (screenshots, videos, traces) are uploaded and downloadable.
+- Restore the app and confirm the next smoke run passes cleanly.
+
+### Test account exists
+
+- A `smoke-test@<your-domain>.com` account exists in staging and production with read-only access.
+- The account is documented in `docs/smoke-test-account.md`.
+- `SMOKE_TEST_EMAIL` and `SMOKE_TEST_PASSWORD` are set as GitHub Actions secrets.
+- `SMOKE_BASE_URL` is set as a GitHub Actions variable (per environment).
+
+### Health endpoint exists
+
+- `GET /api/health` returns 200 with `{ status: 'ok' }` when DB is reachable.
+- `GET /api/health` returns 503 with `{ status: 'error', error: '<message>' }` when DB is unreachable.
+- Verified manually by stopping the test database and hitting the endpoint.
+
+### Documentation exists
+
+- `tests/smoke/README.md` exists with the content specified above.
+
+### No flaky tests
+
+- Run the smoke suite 10 times in a row against a healthy environment.
+- All 10 runs must pass cleanly. If any run fails for non-environmental reasons, fix the test before merging.
+
+## Rollback plan
+
+The smoke workflow is independent of the deploy workflow. If smoke tests are causing problems:
+
+1. Disable the workflow by renaming `.github/workflows/smoke.yml` to `.disabled`.
+2. Deploys continue without post-deploy verification (back to the current state).
+3. Test files, Playwright config, and the smoke-test account stay in place; nothing else needs reverting.
+4. Re-enable once the issue is fixed.
+
+The health endpoint stays in place regardless — it's useful even without smoke tests running against it.
+
+## Mode guidance
+
+**Economy.** This is straightforward Playwright work and CI configuration — well within Economy's range. Power is overkill. Lite cannot handle the multi-file scope including CI workflow, test account setup, and documentation.
+
+## Why this matters (for the reviewer)
+
+Right now, after a deploy, the only signal that something broke is a user opening the app and seeing it not work. For an internal procurement dashboard with limited daily users, that signal can take hours or days. By the time someone notices, the bad deploy has been live for a long time, the rollback is harder, and credibility takes a hit.
+
+Smoke tests close that gap to under a minute. They don't catch every bug — they catch the catastrophic ones, the ones a 5-second human check would catch if a human were watching every deploy. The test suite is small by design. Comprehensive coverage lives in #287, #289, #290, and the rest. Smoke is the canary.
+
+---
+
+That's #288, locked.
+
+**Confirm and I'll roll into #289 (data integrity tests — the CFO insurance) next.**

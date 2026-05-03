@@ -1,0 +1,157 @@
+S2P Data Model Foundation
+What & Why
+Add the data fields, history table, and config plumbing needed to support canonical Source-to-Pay (S2P) vocabulary, savings-type tagging, baseline tracking, and per-gate Delegation of Authority (DOA) SLA tracking. Nothing in the dashboard restructure can be built correctly until the data has the right shape.
+This is foundation only. No UI changes in this ticket. The dashboard rebuild that consumes this schema is a separate set of tickets that follow once the data model lands.
+Run #285 (codebase cleanup) before this ticket. Building the new schema on top of fake APIs and orphan code means half this ticket is spent fighting Potemkin code.
+Done looks like
+Every opportunity record carries the following new fields:
+FieldTypeNotescanonical_stageenumIdentified | Awarded | In Contracting | In Implementation | Realized | Closed-No Action | Under Re-evaluationsavings_typeenumIdentified | Negotiated | Implemented | Realizedsavings_classificationenumHard | Cost Avoidance | Softclassification_needs_reviewbooleanDefault true for backfilled recordssourcing_strategyenumCompetitive RFP | Single-to-Dual Source | Should-Cost Challenge | Tiered Pricing Audit / Rebate Claim | Invoice-to-Contract Reconciliation | Catalog Enforcement | Negotiated Renewal | Unclassified (default: Unclassified)baseline_methodenumPrior Unit Price | Market Index | Should-Cost Model | Supplier Proposed Increase | Internal Estimate | N/A — Softbaseline_valuedecimalNullablebaseline_sourcetextNullable; free-text for contract reference, index name, model run ID, etc.stage_entered_attimestampUpdated automatically on every canonical_stage changedoa_tiergenerated columnInteger 1–4, derived from award_value using doa-config.ts thresholds
+New table: opportunity_stage_history
+A row is written on every stage transition. This table cannot be reconstructed retroactively — every transition from this point forward must be captured.
+sqlopportunity_stage_history (
+  id                       uuid PRIMARY KEY,
+  opportunity_id           uuid NOT NULL REFERENCES opportunities(id),
+  from_stage               text,                   -- nullable for initial backfill row
+  to_stage                 text NOT NULL,
+  transitioned_at          timestamp NOT NULL,
+  transitioned_by_user_id  uuid REFERENCES users(id),  -- nullable for backfill / system transitions
+  transition_reason        text,
+  notes                    text
+)
+Config file: doa-config.ts
+DOA tier thresholds and per-gate SLAs live in config, not hardcoded:
+typescript// doa-config.ts
+export const DOA_TIERS = [
+  { tier: 1, threshold_max: 250_000,    approver_role: 'Category Manager',     sla_hours: 48 },
+  { tier: 2, threshold_max: 1_000_000,  approver_role: 'Procurement Director', sla_hours: 120 },  // 5 days
+  { tier: 3, threshold_max: 5_000_000,  approver_role: 'VP Procurement',       sla_hours: 168 },  // 7 days
+  { tier: 4, threshold_max: Infinity,   approver_role: 'CPO + CFO joint',      sla_hours: 240 },  // 10 days
+];
+
+export const GATE_SLAS = {
+  'Identified -> Awarded':              { sla_hours_default: 120, owner_role: 'Sourcing Lead / DOA approver' },
+  'Awarded -> In Contracting':          { sla_hours_default: 72,  owner_role: 'Legal / Procurement Ops' },
+  'In Contracting -> In Implementation':{ sla_hours_default: 168, owner_role: 'Procurement Ops' },
+  'In Implementation -> Realized':      { sla_hours_default: 720, owner_role: 'Finance / Category Manager' },  // 30 days
+};
+Computed-at-query-time fields
+These are NOT stored; they are computed by a helper function and included in every API response that returns opportunity records:
+
+time_in_current_stage — hours since stage_entered_at
+breaching_sla — boolean, computed by gate_sla_breach(opportunity) which reads the current stage and the corresponding SLA from GATE_SLAS
+
+OpenAPI + codegen
+OpenAPI spec updated to include all new fields. Run pnpm --filter @workspace/api-spec run codegen to regenerate Zod schemas and React Query hooks. Resolve any resulting type errors.
+Backfill mapping (embedded for pre-write review)
+sql-- Source: existing platform_status field on opportunities table
+-- Target: new canonical_stage, savings_type, savings_classification fields
+-- All backfilled records receive classification_needs_review = true
+
+platform_status='Proposed'                → canonical_stage='Identified',          savings_type='Identified'
+platform_status='Approved'                → canonical_stage='Awarded',             savings_type='Negotiated'
+platform_status='Executing'               → canonical_stage='In Implementation',   savings_type='Implemented'
+platform_status='Realized'                → canonical_stage='Realized',            savings_type='Realized'
+platform_status='Rejected'                → canonical_stage='Closed-No Action',    savings_type='Identified'
+platform_status='Rejected (under review)' → canonical_stage='Under Re-evaluation', savings_type='Identified'
+
+-- ALL backfilled records also receive:
+savings_classification      = 'Hard'
+classification_needs_review = true
+baseline_method             = 'Internal Estimate'
+baseline_value              = NULL
+baseline_source             = 'BACKFILL — needs review'
+sourcing_strategy           = 'Unclassified'
+stage_entered_at            = COALESCE(updated_at, created_at)
+
+-- For each backfilled opportunity, write ONE row to opportunity_stage_history:
+INSERT INTO opportunity_stage_history (opportunity_id, from_stage, to_stage, transitioned_at, transition_reason)
+VALUES (<id>, NULL, <canonical_stage>, <stage_entered_at>, 'BACKFILL');
+Note on Closed-No Action and Under Re-evaluation backfill: these records are tagged savings_type='Identified' because the prior stage cannot be reconstructed without history that doesn't yet exist. Going forward, opportunity_stage_history will record the actual prior stage on every transition.
+Gating condition for the next ticket (dashboard rebuild)
+No aggregate view labeled "Hard Savings" — and no aggregate displayed to Finance, the CFO, or any executive — may include records where classification_needs_review = true until Category Manager review is complete. Any UI total that crosses Finance must filter or visually flag these records.
+This is a hard gate, not a recommendation. The dashboard rebuild ticket inherits this constraint.
+Out of scope
+
+Any UI changes — those come in subsequent tickets.
+Changing the data ingestion layer, recommendation engine, or refresh cadence.
+Edit UI for sourcing strategies (admin UI is a future ticket).
+Category Manager review workflow for classification_needs_review = true records (separate ticket).
+Test coverage for this schema (handled in #287).
+Performance optimization of the history table at scale (handled in #291).
+
+Steps for Replit
+
+Schema additions migration — Drizzle migration adds the ten new columns to the opportunities table. doa_tier is a generated column from award_value. time_in_current_stage and breaching_sla are NOT stored — they are computed at query time.
+DOA + gate SLA config — Create doa-config.ts (or .json) under shared config. Define four DOA tiers with thresholds, approver roles, and SLA hours. Define per-gate SLAs for each canonical_stage transition. Import wherever doa_tier or gate_sla_breach() is used.
+History table creation migration — Drizzle migration creates opportunity_stage_history table with the schema specified above.
+Stage transition trigger — Add a database trigger (or application-layer hook in the data access layer, depending on stack) that writes a row to opportunity_stage_history on every canonical_stage change. Capture transitioned_by_user_id from the request context.
+Backfill migration — Apply the mapping above as an additive UPDATE to existing opportunity records, AND insert one seed row per opportunity into opportunity_stage_history. The full mapping table from the section above must appear in a comment block at the top of the migration file for reviewer sign-off.
+Query layer + gate_sla_breach() helper — Update opportunity query helpers and API routes to compute and include time_in_current_stage and breaching_sla on every response. Helper reads SLAs from GATE_SLAS config.
+OpenAPI spec + codegen — Add new fields to OpenAPI spec; run pnpm --filter @workspace/api-spec run codegen; resolve any resulting type errors.
+Smoke verification — manually verify the schema and trigger work end-to-end before marking the ticket ready for review (see Acceptance criteria below).
+
+Acceptance criteria (all must pass before merge)
+Schema completeness
+sql-- 1. No null canonical fields on any opportunity record
+SELECT count(*) FROM opportunities WHERE canonical_stage IS NULL;        -- expect 0
+SELECT count(*) FROM opportunities WHERE savings_type IS NULL;           -- expect 0
+SELECT count(*) FROM opportunities WHERE savings_classification IS NULL; -- expect 0
+SELECT count(*) FROM opportunities WHERE doa_tier IS NULL;               -- expect 0
+SELECT count(*) FROM opportunities WHERE sourcing_strategy IS NULL;      -- expect 0
+SELECT count(*) FROM opportunities WHERE baseline_method IS NULL;        -- expect 0
+Backfill correctness
+sql-- 2. Backfill flag set correctly
+SELECT count(*) FROM opportunities WHERE classification_needs_review = true;
+-- expect: equal to total record count at time of migration
+
+-- 3. History seed rows created
+SELECT count(*) FROM opportunity_stage_history WHERE transition_reason = 'BACKFILL';
+-- expect: equal to total opportunity count at time of migration
+
+-- 4. Under Re-evaluation records preserved (the 8 records / $884K from source platform)
+SELECT count(*) FROM opportunities WHERE canonical_stage = 'Under Re-evaluation';
+-- expect: matches the count of platform_status='Rejected (under review)' records pre-migration
+Manual sample verification
+
+Pull 5 sample opportunities at each canonical_stage value (35 total). For each, verify canonical_stage and savings_type match the backfill mapping.
+Confirm at least one opportunity exists at Under Re-evaluation.
+Confirm stage_entered_at is populated on every record (not NULL).
+
+API contract verification
+
+API call to GET /opportunities returns time_in_current_stage (number) and breaching_sla (boolean) on every record in the payload.
+OpenAPI spec validates with no errors.
+pnpm typecheck passes across all packages.
+
+End-to-end transition test
+
+Create a test opportunity via the API.
+Transition it through all five stages: Identified → Awarded → In Contracting → In Implementation → Realized.
+Verify opportunity_stage_history has 5 rows for that opportunity, each with correct from_stage, to_stage, transitioned_at, and transitioned_by_user_id.
+Verify stage_entered_at on the parent record updates with each transition.
+Verify time_in_current_stage resets to ~0 after each transition.
+
+Build hygiene
+
+pnpm typecheck passes.
+pnpm lint passes.
+pnpm build succeeds.
+Down migration drops all ten new columns AND the opportunity_stage_history table cleanly. Test the down migration before merge.
+
+Rollback plan
+If the migration causes downstream failures:
+
+Run the down migration — drops all ten new columns and the opportunity_stage_history table.
+Restore previous OpenAPI spec from git; re-run codegen.
+Backfill data is non-destructive (additive UPDATE only on existing records, no source data deleted), so no source data is lost on rollback.
+The platform_status field is untouched throughout this migration and remains the fallback truth for stage information.
+
+Mode guidance
+Power. This ticket has multi-file changes (migration files, config, history table, trigger, query layer helpers, OpenAPI spec, codegen output, and end-to-end verification). Economy will likely need three rounds and burn more credits than Power in one pass. Lite cannot handle work of this scope.
+Why this matters (for the reviewer)
+Two things in this ticket cannot be added cheaply later:
+
+The stage history table. Cycle-time analytics, audit trails, and funnel reconstruction all depend on having a row per transition. If we don't capture this from day one, every transition until we add it is lost forever.
+Baseline fields paired with savings types. The first question a CFO asks about a "$8.3M realized" number is "saved against what?" Without baseline_method, baseline_value, and baseline_source, that question has no answer.
+
+Everything else in this ticket can be retrofitted. These two cannot.

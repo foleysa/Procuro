@@ -1,0 +1,740 @@
+ROUTE: Greenlight to #289 — data integrity tests, the CFO insurance ticket. SQL assertions that verify the numbers reconcile across views, run as a scheduled job and on every migration. Active corrections in force: structures not clever prompts, embedded specs not described in prose, verifiable acceptance criteria, mode guidance, lead with money where applicable. This ticket directly serves the "lead with money" rule — it's what protects the dollar figures from silent corruption.
+
+Some tests here overlap with #287's aggregate gate test. That's intentional — the aggregate gate (Hard Savings excludes review-flagged records) is so important it should run in two places: as a unit test in #287 (catches it during PR review) AND as a scheduled SQL assertion here (catches it if production data drifts away from the schema's intent). I'll note that explicitly.
+
+PLAN: Single polished ticket. Embed the actual SQL assertions because Replit Agent will produce closer-to-spec output if it sees the shape, and these assertions ARE the deliverable. End with confirmation prompt.
+
+BUILD/SHIP:
+
+---
+
+# #289 — Data Integrity Tests (Savings Reconciliation — CFO Insurance)
+
+## What & Why
+
+Establish a set of SQL-level assertions that continuously verify the dollar figures on the dashboard reconcile against the underlying data, that savings types are tagged consistently, and that the gating conditions from #284 are actually being honored in production. These are the CFO insurance tests — the ones that catch the silent killer where the dashboard says $8.3M, the underlying records sum to $7.9M, no one notices for a quarter, and then the CFO does.
+
+Unit tests catch logic bugs at PR time. Smoke tests catch deploy disasters. **Data integrity tests catch the slow drift between what the dashboard shows and what's true.** That drift comes from many sources: a backfill run incorrectly, a manual SQL fix that bypassed the trigger, a one-off data import that skipped validation, a feature flag that filtered records inconsistently across views.
+
+These assertions run on a schedule (every 15 minutes) AND after every migration. When one fails, the team knows within minutes — before the CFO opens the dashboard.
+
+**Dependencies:** #284 (S2P data model) must be merged. #287 (test framework) must be merged so the assertion runner has Vitest infrastructure to plug into. #286 (CI security) should be merged.
+
+## Done looks like
+
+A new test category — `data-integrity` — runs SQL assertions against the production database (and staging) on two triggers:
+
+1. **Scheduled:** every 15 minutes via a cron job or scheduled GitHub Actions workflow.
+2. **Post-migration:** automatically after any database migration runs, before the deploy is marked complete.
+
+Failures alert the team via the same Slack channel as smoke tests, with the specific assertion name and the actual vs expected values shown.
+
+The suite covers eleven assertions across four families:
+
+**Family 1 — Aggregate reconciliation (4 assertions):** dashboard totals match underlying records.
+**Family 2 — Savings type integrity (3 assertions):** every savings figure is tagged correctly and consistently.
+**Family 3 — Stage history integrity (2 assertions):** the history table accurately reflects current state.
+**Family 4 — Gating conditions (2 assertions):** the #284 hard gates (Hard Savings excludes review-flagged records, Realized requires baseline) are being honored.
+
+The exact assertions and expected results are specified below.
+
+## Out of scope
+
+- Application-level logic tests (handled in #287).
+- Browser-level user flow tests (handled in #290).
+- Performance assertions on query speed (handled in #291).
+- Cross-system reconciliation against ERP or AP systems (separate ticket — that's a manual financial close process, not an automated test).
+- Automatic remediation of integrity failures (this ticket detects; a future ticket can build self-healing).
+- Historical backfill of integrity audit logs (we start the audit log fresh from when this ticket lands).
+
+## Steps for Replit
+
+### Step 1 — Assertion infrastructure
+
+Install: `pnpm add -D @vitest/runner` if not already present from #287.
+
+Create `tests/data-integrity/runner.ts` — the harness that runs assertions against a real database connection (NOT Testcontainers; this runs against staging/production):
+
+```typescript
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { sql } from 'drizzle-orm';
+
+export type AssertionResult = {
+  name: string;
+  family: 'aggregate' | 'savings_type' | 'stage_history' | 'gating';
+  passed: boolean;
+  actual: unknown;
+  expected: unknown;
+  message: string;
+  query: string;
+};
+
+export type Assertion = {
+  name: string;
+  family: AssertionResult['family'];
+  description: string;
+  run: (db: ReturnType<typeof drizzle>) => Promise<AssertionResult>;
+};
+
+export async function runAssertions(connectionString: string, assertions: Assertion[]): Promise<AssertionResult[]> {
+  const conn = postgres(connectionString, { max: 1 });
+  const db = drizzle(conn);
+  const results: AssertionResult[] = [];
+
+  for (const assertion of assertions) {
+    try {
+      const result = await assertion.run(db);
+      results.push(result);
+    } catch (err) {
+      results.push({
+        name: assertion.name,
+        family: assertion.family,
+        passed: false,
+        actual: 'ERROR',
+        expected: 'query to execute successfully',
+        message: err instanceof Error ? err.message : String(err),
+        query: '<errored>',
+      });
+    }
+  }
+
+  await conn.end();
+  return results;
+}
+```
+
+### Step 2 — The eleven assertions
+
+Create `tests/data-integrity/assertions.ts` with all eleven assertions. The structure for each is the same — only the SQL and the assertion logic differ.
+
+**Family 1: Aggregate Reconciliation**
+
+```typescript
+import { sql } from 'drizzle-orm';
+import type { Assertion } from './runner';
+
+export const assertion_dashboard_realized_matches_records: Assertion = {
+  name: 'dashboard_realized_savings_matches_record_sum',
+  family: 'aggregate',
+  description: 'The Realized Savings number shown on the dashboard equals SUM(award_value) of all opportunities where canonical_stage = Realized AND classification_needs_review = false',
+  run: async (db) => {
+    const query = `
+      SELECT
+        (SELECT COALESCE(SUM(award_value), 0)
+         FROM opportunities
+         WHERE canonical_stage = 'Realized'
+           AND savings_classification = 'Hard'
+           AND classification_needs_review = false
+        ) AS record_sum,
+        (SELECT realized_hard_savings_total FROM dashboard_aggregates WHERE id = 'current')
+        AS dashboard_total
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { record_sum: string; dashboard_total: string };
+    const recordSum = Number(r.record_sum);
+    const dashboardTotal = Number(r.dashboard_total);
+    const passed = Math.abs(recordSum - dashboardTotal) < 1;  // allow ≤ $1 rounding tolerance
+    return {
+      name: 'dashboard_realized_savings_matches_record_sum',
+      family: 'aggregate',
+      passed,
+      actual: { recordSum, dashboardTotal },
+      expected: 'recordSum === dashboardTotal (within $1)',
+      message: passed
+        ? 'Dashboard Realized Savings matches underlying records'
+        : `Dashboard shows $${dashboardTotal.toLocaleString()} but records sum to $${recordSum.toLocaleString()} — drift of $${Math.abs(recordSum - dashboardTotal).toLocaleString()}`,
+      query,
+    };
+  },
+};
+
+export const assertion_pipeline_value_matches_addressable_plus_unaddressable: Assertion = {
+  name: 'pipeline_value_decomposition_intact',
+  family: 'aggregate',
+  description: 'Identified Pipeline = Addressable + Non-addressable. The two pieces must sum to the whole.',
+  run: async (db) => {
+    const query = `
+      SELECT
+        SUM(award_value) FILTER (WHERE is_addressable = true) AS addressable,
+        SUM(award_value) FILTER (WHERE is_addressable = false) AS not_addressable,
+        SUM(award_value) AS total
+      FROM opportunities
+      WHERE canonical_stage IN ('Identified', 'Awarded', 'In Contracting', 'In Implementation')
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { addressable: string; not_addressable: string; total: string };
+    const addressable = Number(r.addressable ?? 0);
+    const notAddressable = Number(r.not_addressable ?? 0);
+    const total = Number(r.total ?? 0);
+    const passed = Math.abs((addressable + notAddressable) - total) < 1;
+    return {
+      name: 'pipeline_value_decomposition_intact',
+      family: 'aggregate',
+      passed,
+      actual: { addressable, notAddressable, total, computed: addressable + notAddressable },
+      expected: 'addressable + notAddressable === total',
+      message: passed
+        ? 'Pipeline value decomposition reconciles'
+        : `Pipeline decomposition broken: ${addressable} + ${notAddressable} = ${addressable + notAddressable}, total = ${total}`,
+      query,
+    };
+  },
+};
+
+export const assertion_lever_totals_match_aggregate: Assertion = {
+  name: 'lever_totals_sum_to_aggregate',
+  family: 'aggregate',
+  description: 'Sum of Realized $ across all levers equals total Realized Savings',
+  run: async (db) => {
+    const query = `
+      SELECT
+        (SELECT SUM(realized_value) FROM lever_performance) AS lever_sum,
+        (SELECT SUM(award_value) FROM opportunities
+         WHERE canonical_stage = 'Realized'
+           AND savings_classification = 'Hard'
+           AND classification_needs_review = false
+        ) AS aggregate_realized
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { lever_sum: string; aggregate_realized: string };
+    const leverSum = Number(r.lever_sum ?? 0);
+    const aggregate = Number(r.aggregate_realized ?? 0);
+    const passed = Math.abs(leverSum - aggregate) < 1;
+    return {
+      name: 'lever_totals_sum_to_aggregate',
+      family: 'aggregate',
+      passed,
+      actual: { leverSum, aggregate },
+      expected: 'leverSum === aggregate (within $1)',
+      message: passed
+        ? 'Lever totals reconcile to aggregate'
+        : `Lever sum $${leverSum.toLocaleString()} ≠ aggregate $${aggregate.toLocaleString()}`,
+      query,
+    };
+  },
+};
+
+export const assertion_pipeline_funnel_counts_match: Assertion = {
+  name: 'pipeline_funnel_counts_match_records',
+  family: 'aggregate',
+  description: 'Pipeline funnel counts on dashboard match COUNT(*) per canonical_stage',
+  run: async (db) => {
+    const query = `
+      SELECT
+        canonical_stage,
+        COUNT(*) AS record_count,
+        (SELECT count FROM dashboard_funnel_counts WHERE stage = opportunities.canonical_stage) AS dashboard_count
+      FROM opportunities
+      GROUP BY canonical_stage
+    `;
+    const rows = await db.execute(sql.raw(query));
+    const mismatches = (rows as Array<{ canonical_stage: string; record_count: string; dashboard_count: string }>)
+      .filter((r) => Number(r.record_count) !== Number(r.dashboard_count));
+    const passed = mismatches.length === 0;
+    return {
+      name: 'pipeline_funnel_counts_match_records',
+      family: 'aggregate',
+      passed,
+      actual: { mismatches },
+      expected: 'no mismatches between record counts and dashboard counts',
+      message: passed
+        ? 'Pipeline funnel counts reconcile'
+        : `Funnel mismatch on ${mismatches.length} stages: ${JSON.stringify(mismatches)}`,
+      query,
+    };
+  },
+};
+```
+
+**Family 2: Savings Type Integrity**
+
+```typescript
+export const assertion_no_null_savings_types: Assertion = {
+  name: 'no_null_savings_types_or_classifications',
+  family: 'savings_type',
+  description: 'Every opportunity has a non-null savings_type, savings_classification, and canonical_stage',
+  run: async (db) => {
+    const query = `
+      SELECT
+        COUNT(*) FILTER (WHERE savings_type IS NULL) AS null_types,
+        COUNT(*) FILTER (WHERE savings_classification IS NULL) AS null_classifications,
+        COUNT(*) FILTER (WHERE canonical_stage IS NULL) AS null_stages
+      FROM opportunities
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { null_types: string; null_classifications: string; null_stages: string };
+    const nullTypes = Number(r.null_types);
+    const nullClass = Number(r.null_classifications);
+    const nullStages = Number(r.null_stages);
+    const passed = nullTypes === 0 && nullClass === 0 && nullStages === 0;
+    return {
+      name: 'no_null_savings_types_or_classifications',
+      family: 'savings_type',
+      passed,
+      actual: { nullTypes, nullClass, nullStages },
+      expected: 'all three counts === 0',
+      message: passed
+        ? 'All opportunities have complete savings tagging'
+        : `Found ${nullTypes} null savings_types, ${nullClass} null savings_classifications, ${nullStages} null canonical_stages`,
+      query,
+    };
+  },
+};
+
+export const assertion_savings_type_matches_canonical_stage: Assertion = {
+  name: 'savings_type_consistent_with_canonical_stage',
+  family: 'savings_type',
+  description: 'savings_type aligns with canonical_stage per the #284 mapping. Realized stage = Realized type, etc.',
+  run: async (db) => {
+    const query = `
+      SELECT id, canonical_stage, savings_type
+      FROM opportunities
+      WHERE
+        (canonical_stage = 'Identified'         AND savings_type != 'Identified')  OR
+        (canonical_stage = 'Awarded'            AND savings_type != 'Negotiated')  OR
+        (canonical_stage = 'In Contracting'     AND savings_type NOT IN ('Negotiated', 'Implemented')) OR
+        (canonical_stage = 'In Implementation'  AND savings_type != 'Implemented') OR
+        (canonical_stage = 'Realized'           AND savings_type != 'Realized')
+    `;
+    const rows = await db.execute(sql.raw(query));
+    const violations = rows as Array<{ id: string; canonical_stage: string; savings_type: string }>;
+    const passed = violations.length === 0;
+    return {
+      name: 'savings_type_consistent_with_canonical_stage',
+      family: 'savings_type',
+      passed,
+      actual: { violationCount: violations.length, examples: violations.slice(0, 5) },
+      expected: 'no opportunities where savings_type misaligns with canonical_stage',
+      message: passed
+        ? 'savings_type and canonical_stage are consistent on every record'
+        : `${violations.length} opportunities have mismatched stage/type. Examples: ${JSON.stringify(violations.slice(0, 5))}`,
+      query,
+    };
+  },
+};
+
+export const assertion_realized_records_have_baseline: Assertion = {
+  name: 'realized_records_have_baseline_value_or_soft_marker',
+  family: 'savings_type',
+  description: 'Every record with savings_type = Realized has a non-null baseline_value OR is explicitly tagged baseline_method = N/A — Soft',
+  run: async (db) => {
+    const query = `
+      SELECT id, savings_type, baseline_method, baseline_value, savings_classification
+      FROM opportunities
+      WHERE savings_type = 'Realized'
+        AND (baseline_value IS NULL AND baseline_method != 'N/A — Soft')
+    `;
+    const rows = await db.execute(sql.raw(query));
+    const violations = rows as Array<{ id: string; savings_type: string; baseline_method: string; baseline_value: string | null }>;
+    const passed = violations.length === 0;
+    return {
+      name: 'realized_records_have_baseline_value_or_soft_marker',
+      family: 'savings_type',
+      passed,
+      actual: { violationCount: violations.length, examples: violations.slice(0, 5) },
+      expected: 'every Realized record has a baseline_value or is marked Soft',
+      message: passed
+        ? 'All Realized records have valid baselines'
+        : `${violations.length} Realized records missing baseline_value. CFO will ask "saved against what?" and the answer will be: nothing.`,
+      query,
+    };
+  },
+};
+```
+
+**Family 3: Stage History Integrity**
+
+```typescript
+export const assertion_stage_history_matches_current_state: Assertion = {
+  name: 'stage_history_latest_row_matches_current_canonical_stage',
+  family: 'stage_history',
+  description: 'For every opportunity, the most recent row in opportunity_stage_history has to_stage = the current canonical_stage on the parent record',
+  run: async (db) => {
+    const query = `
+      SELECT o.id, o.canonical_stage AS parent_stage, h.to_stage AS history_latest
+      FROM opportunities o
+      LEFT JOIN LATERAL (
+        SELECT to_stage
+        FROM opportunity_stage_history
+        WHERE opportunity_id = o.id
+        ORDER BY transitioned_at DESC
+        LIMIT 1
+      ) h ON true
+      WHERE h.to_stage IS DISTINCT FROM o.canonical_stage
+    `;
+    const rows = await db.execute(sql.raw(query));
+    const violations = rows as Array<{ id: string; parent_stage: string; history_latest: string | null }>;
+    const passed = violations.length === 0;
+    return {
+      name: 'stage_history_latest_row_matches_current_canonical_stage',
+      family: 'stage_history',
+      passed,
+      actual: { violationCount: violations.length, examples: violations.slice(0, 5) },
+      expected: 'history.latest_to_stage === opportunity.canonical_stage for every opportunity',
+      message: passed
+        ? 'Stage history reflects current state on every record'
+        : `${violations.length} opportunities have history out of sync with current state. Examples: ${JSON.stringify(violations.slice(0, 5))}`,
+      query,
+    };
+  },
+};
+
+export const assertion_every_opportunity_has_history_row: Assertion = {
+  name: 'every_opportunity_has_at_least_one_history_row',
+  family: 'stage_history',
+  description: 'Every opportunity has at least one row in opportunity_stage_history (either a backfill seed or a real transition)',
+  run: async (db) => {
+    const query = `
+      SELECT o.id
+      FROM opportunities o
+      LEFT JOIN opportunity_stage_history h ON h.opportunity_id = o.id
+      WHERE h.id IS NULL
+    `;
+    const rows = await db.execute(sql.raw(query));
+    const orphans = rows as Array<{ id: string }>;
+    const passed = orphans.length === 0;
+    return {
+      name: 'every_opportunity_has_at_least_one_history_row',
+      family: 'stage_history',
+      passed,
+      actual: { orphanCount: orphans.length, examples: orphans.slice(0, 5).map((r) => r.id) },
+      expected: 'no opportunities without at least one history row',
+      message: passed
+        ? 'Every opportunity has at least one history row'
+        : `${orphans.length} opportunities have no history. The trigger or backfill missed them.`,
+      query,
+    };
+  },
+};
+```
+
+**Family 4: Gating Conditions (the #284 hard gates)**
+
+```typescript
+export const assertion_hard_savings_aggregate_excludes_review_flagged: Assertion = {
+  name: 'hard_savings_aggregate_excludes_classification_needs_review',
+  family: 'gating',
+  description: 'THE CFO INSURANCE TEST. No record where classification_needs_review = true contributes to any aggregate labeled Hard Savings.',
+  run: async (db) => {
+    const query = `
+      SELECT
+        (SELECT realized_hard_savings_total FROM dashboard_aggregates WHERE id = 'current') AS dashboard_hard_total,
+        (SELECT COALESCE(SUM(award_value), 0)
+         FROM opportunities
+         WHERE canonical_stage = 'Realized'
+           AND savings_classification = 'Hard'
+           AND classification_needs_review = true
+        ) AS forbidden_amount
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { dashboard_hard_total: string; forbidden_amount: string };
+    const dashboardTotal = Number(r.dashboard_hard_total);
+    const forbidden = Number(r.forbidden_amount);
+    const cleanQuery = `
+      SELECT COALESCE(SUM(award_value), 0) AS clean_total
+      FROM opportunities
+      WHERE canonical_stage = 'Realized'
+        AND savings_classification = 'Hard'
+        AND classification_needs_review = false
+    `;
+    const [cleanRow] = await db.execute(sql.raw(cleanQuery));
+    const cleanTotal = Number((cleanRow as { clean_total: string }).clean_total);
+    const passed = Math.abs(dashboardTotal - cleanTotal) < 1;
+    return {
+      name: 'hard_savings_aggregate_excludes_classification_needs_review',
+      family: 'gating',
+      passed,
+      actual: { dashboardTotal, cleanTotal, forbidden },
+      expected: 'dashboardTotal === SUM where classification_needs_review = false',
+      message: passed
+        ? 'CFO gate honored: review-flagged records excluded from Hard Savings'
+        : `CFO GATE BROKEN: dashboard shows $${dashboardTotal.toLocaleString()}, clean total is $${cleanTotal.toLocaleString()}, $${forbidden.toLocaleString()} of review-flagged Hard records leaked into the aggregate. THIS IS THE FAILURE MODE THAT KILLS PLATFORM CREDIBILITY.`,
+      query,
+    };
+  },
+};
+
+export const assertion_no_realized_without_baseline_in_dashboard: Assertion = {
+  name: 'dashboard_does_not_count_realized_records_missing_baseline',
+  family: 'gating',
+  description: 'The dashboard Realized total does not include any record where savings_type = Realized but baseline_value IS NULL and baseline_method != N/A — Soft',
+  run: async (db) => {
+    const query = `
+      SELECT COALESCE(SUM(award_value), 0) AS missing_baseline_in_realized
+      FROM opportunities
+      WHERE savings_type = 'Realized'
+        AND baseline_value IS NULL
+        AND baseline_method != 'N/A — Soft'
+    `;
+    const [row] = await db.execute(sql.raw(query));
+    const r = row as { missing_baseline_in_realized: string };
+    const missing = Number(r.missing_baseline_in_realized);
+    const passed = missing === 0;
+    return {
+      name: 'dashboard_does_not_count_realized_records_missing_baseline',
+      family: 'gating',
+      passed,
+      actual: { dollarsMissingBaseline: missing },
+      expected: 'no Realized record contributes to the dashboard total without a baseline',
+      message: passed
+        ? 'No Realized records missing baselines'
+        : `$${missing.toLocaleString()} of Realized records have no baseline. They should not be in any dashboard total.`,
+      query,
+    };
+  },
+};
+```
+
+Aggregate them in `tests/data-integrity/assertions.ts`:
+
+```typescript
+export const ALL_ASSERTIONS: Assertion[] = [
+  assertion_dashboard_realized_matches_records,
+  assertion_pipeline_value_matches_addressable_plus_unaddressable,
+  assertion_lever_totals_match_aggregate,
+  assertion_pipeline_funnel_counts_match,
+  assertion_no_null_savings_types,
+  assertion_savings_type_matches_canonical_stage,
+  assertion_realized_records_have_baseline,
+  assertion_stage_history_matches_current_state,
+  assertion_every_opportunity_has_history_row,
+  assertion_hard_savings_aggregate_excludes_review_flagged,
+  assertion_no_realized_without_baseline_in_dashboard,
+];
+```
+
+### Step 3 — Runner script
+
+Create `scripts/run-data-integrity.ts`:
+
+```typescript
+import { runAssertions } from '../tests/data-integrity/runner';
+import { ALL_ASSERTIONS } from '../tests/data-integrity/assertions';
+
+async function main() {
+  const connectionString = process.env.DATA_INTEGRITY_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error('No DATABASE_URL or DATA_INTEGRITY_DATABASE_URL set');
+    process.exit(1);
+  }
+
+  const results = await runAssertions(connectionString, ALL_ASSERTIONS);
+  const failed = results.filter((r) => !r.passed);
+
+  console.log(JSON.stringify({ total: results.length, failed: failed.length, results }, null, 2));
+
+  if (failed.length > 0) {
+    console.error(`${failed.length} of ${results.length} integrity assertions FAILED`);
+    process.exit(1);
+  }
+  console.log(`All ${results.length} integrity assertions passed`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+Add to `package.json`:
+
+```json
+{
+  "scripts": {
+    "data-integrity": "tsx scripts/run-data-integrity.ts"
+  }
+}
+```
+
+### Step 4 — Audit log table
+
+Create a new migration that adds an audit log table:
+
+```sql
+CREATE TABLE data_integrity_audit_log (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_at          timestamp NOT NULL DEFAULT now(),
+  assertion_name  text NOT NULL,
+  family          text NOT NULL,
+  passed          boolean NOT NULL,
+  actual          jsonb,
+  expected        text,
+  message         text,
+  triggered_by    text NOT NULL  -- 'scheduled' | 'post_migration' | 'manual'
+);
+
+CREATE INDEX ON data_integrity_audit_log (run_at DESC);
+CREATE INDEX ON data_integrity_audit_log (assertion_name, run_at DESC);
+CREATE INDEX ON data_integrity_audit_log (passed) WHERE passed = false;  -- fast lookup of failures
+```
+
+Update the runner to write every result to this table.
+
+### Step 5 — CI workflow (scheduled + post-migration)
+
+Create `.github/workflows/data-integrity.yml`:
+
+```yaml
+name: Data Integrity
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_run:
+    workflows: ["Deploy"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options: [staging, production]
+
+jobs:
+  integrity:
+    if: ${{ github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Run data integrity assertions
+        env:
+          DATA_INTEGRITY_DATABASE_URL: ${{ secrets.DATA_INTEGRITY_DATABASE_URL }}
+        run: pnpm data-integrity
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: integrity-failure-${{ github.run_id }}
+          path: |
+            integrity-results.json
+          retention-days: 30
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🟥 DATA INTEGRITY FAILURE",
+              "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*Data integrity assertion failed* on production. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>. This is the failure mode that erodes CFO trust — investigate immediately."}}
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+```
+
+Use a **read-only** database user for `DATA_INTEGRITY_DATABASE_URL`. The runner only reads — it has no need for write permissions.
+
+### Step 6 — Documentation
+
+Create `tests/data-integrity/README.md`:
+
+```markdown
+# Data Integrity Tests
+
+These are the CFO insurance tests. They run on a schedule and after every migration,
+verifying that the dollar figures shown on the dashboard reconcile against the
+underlying data, that savings types are tagged consistently, and that the gating
+conditions from #284 are honored.
+
+## When they run
+- Every 15 minutes against production (scheduled)
+- After every successful deploy (post-migration)
+- Manually via `pnpm data-integrity` against any environment
+
+## What they cover
+Eleven assertions across four families:
+- Aggregate Reconciliation — dashboard totals match record sums
+- Savings Type Integrity — every figure is tagged correctly
+- Stage History Integrity — history reflects current state, every record has history
+- Gating Conditions — the #284 hard gates (Hard Savings excludes review-flagged, Realized requires baseline) are honored
+
+## When an assertion fails
+1. Slack alert posts with the assertion name and actual vs expected.
+2. Pull the failure JSON from the CI artifacts.
+3. Run the failing assertion's `query` field against the database to inspect.
+4. Fix the underlying data (NOT the assertion — the assertion is correct, the data is wrong).
+5. Investigate root cause: was it a manual SQL fix, a backfill, a migration that bypassed the trigger?
+6. Add a regression test in #287 if the bug came from application code.
+
+## What NOT to do
+- Do NOT relax an assertion's threshold to make it pass.
+- Do NOT comment out a failing assertion.
+- Do NOT skip the CI integrity check on a deploy because it's blocking you.
+
+If an assertion is wrong (false positive), fix the assertion and document the change in this README.
+```
+
+## Acceptance criteria (all must pass before merge)
+
+### All eleven assertions exist and run
+
+- All eleven assertions listed in Step 2 are implemented in `tests/data-integrity/assertions.ts`.
+- Running `pnpm data-integrity` against a clean staging environment passes all eleven.
+- Running `pnpm data-integrity` against a deliberately corrupted environment (insert a record violating each gate) fails the corresponding assertions with clear actual vs expected messages.
+
+### Audit log writes correctly
+
+- After a run, the `data_integrity_audit_log` table has eleven new rows, one per assertion.
+- The `triggered_by` column correctly identifies whether the run was scheduled, post-migration, or manual.
+
+### CI runs on schedule
+
+- The workflow `Data Integrity` is registered in GitHub Actions.
+- A scheduled run executes within 15 minutes of merge and writes to the audit log.
+- A workflow_run trigger fires the integrity job after the deploy workflow completes.
+
+### Failure paths work
+
+- Manually corrupt one record in staging (e.g., set `classification_needs_review = true` on a record currently included in the Hard Savings aggregate) and confirm:
+  - The next scheduled run fails the `hard_savings_aggregate_excludes_classification_needs_review` assertion.
+  - A Slack notification posts.
+  - The audit log records the failure.
+- Restore the record and confirm the next run passes cleanly.
+
+### Read-only DB credentials
+
+- `DATA_INTEGRITY_DATABASE_URL` points to a database user with `SELECT` only — no `INSERT`, `UPDATE`, `DELETE`, or DDL.
+- Verified by attempting an `INSERT` from that connection and confirming it fails.
+
+### Documentation exists
+
+- `tests/data-integrity/README.md` exists with the content specified above.
+
+## Rollback plan
+
+If integrity assertions are causing problems (false positives, performance issues, alert fatigue):
+
+1. Disable the workflow by renaming `.github/workflows/data-integrity.yml` to `.disabled`.
+2. The audit log table remains; historical data is preserved.
+3. Assertions can still be run manually via `pnpm data-integrity` against any environment.
+4. Re-enable once specific assertions are tuned or fixed.
+
+The audit log table is the only piece of this ticket that touches the database schema. If it needs to be removed, write a down migration that drops the table — it has no foreign keys into other tables, so removal is safe.
+
+## Mode guidance
+
+**Power.** Eleven SQL assertions with specific reconciliation logic, an audit log table migration, a CI workflow with cron + workflow_run triggers, and Slack alerting. The SQL itself needs to be precise — Economy mode tends to write almost-right SQL that passes on the happy path but misses edge cases (NULL handling, boundary values, COALESCE on empty tables). Power mode produces tighter assertions on the first pass.
+
+## Why this matters (for the reviewer)
+
+This ticket is the structural enforcement of the rule we already established: **lead with money, and the money has to be right.**
+
+Application-level tests in #287 catch logic bugs at PR time. Smoke tests in #288 catch deploy disasters. But the failure mode that kills credibility most quickly is the slow drift: dashboard says $8.3M, records say $7.9M, no one notices for a quarter, then the CFO does. That drift comes from manual SQL fixes, one-off imports, feature flags filtering inconsistently across views, or a backfill run incorrectly. None of those show up in unit tests because the application code is correct — the *data* is wrong.
+
+Eleven SQL assertions running every 15 minutes is the cheapest possible insurance against that failure mode. The aggregate gate test (assertion 10) is the single most important: it catches the dashboard rebuild silently breaking the #284 gating condition. If that assertion fails, the dashboard is lying to the CFO. Fix it within the hour.
+
+---
+
+That's #289, locked.
+
+**Confirm and I'll roll into #290 (E2E test for the critical user journey) next.**

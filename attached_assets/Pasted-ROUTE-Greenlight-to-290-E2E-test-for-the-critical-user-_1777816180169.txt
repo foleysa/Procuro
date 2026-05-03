@@ -1,0 +1,571 @@
+ROUTE: Greenlight to #290. E2E test for the critical user journey — login → dashboard → click into queue → approve an opportunity → verify stage moved → verify history row written → verify dashboard refreshed. One golden-path Playwright test, runs on every PR. Active corrections in force: structures not clever prompts, embedded specs not described in prose, verifiable acceptance criteria, mode guidance.
+
+Note: this ticket has a soft dependency on the dashboard rebuild having an "approve" UI control. If the rebuild isn't far enough along when this ticket runs, the test should target whatever approve mechanism exists today (even if that's an API-only path triggered from the UI). I'll handle that with a flexibility clause.
+
+PLAN: Single polished ticket. Embedded Playwright test code because the journey is long and Replit will produce closer-to-spec output if it sees the shape. End with confirmation prompt.
+
+BUILD/SHIP:
+
+---
+
+# #290 — End-to-End Test: Approve an Opportunity (Critical User Journey)
+
+## What & Why
+
+Establish one comprehensive Playwright E2E test that exercises the highest-value user journey on the platform: a procurement approver logs in, lands on the dashboard, opens an opportunity awaiting sign-off, approves it, and sees the dashboard reflect the change. Behind the scenes the test verifies the database transitions correctly, the history table writes a row, and the dashboard aggregates refresh.
+
+E2E tests are expensive to write and maintain, so be selective. This ticket adds **one** test — the critical journey — not a full suite. The principle from the 2026 testing community consensus: a small set of high-value E2E tests covering the "money-making paths" beats a large set covering everything.
+
+The journey under test is the one that, if it ever silently breaks, kills the platform. The dashboard's whole purpose is to surface opportunities for approval. If the approve path is broken, every other feature is theatrical.
+
+**Dependencies:** #287 (test framework with Playwright installed), #284 (data model with stage transitions), and at least one stage of the dashboard rebuild that exposes an approve UI control. If the dashboard rebuild hasn't reached the approve UI yet when this ticket lands, see the "Flexibility clause" below.
+
+## Done looks like
+
+A single Playwright E2E test file at `tests/e2e/approve-opportunity.e2e.test.ts` that:
+
+1. Logs in as a test approver account with appropriate DOA tier permissions.
+2. Navigates to the dashboard and verifies the Outcomes tiles render.
+3. Locates an opportunity in the `Identified` stage awaiting approval.
+4. Clicks the approve action.
+5. Verifies the UI shows the opportunity transitioned to `Awarded`.
+6. Verifies the dashboard's "awaiting sign-off" count decreased by one.
+7. Verifies via API that the opportunity's `canonical_stage` is now `Awarded`.
+8. Verifies via API that `opportunity_stage_history` has a new row with `from_stage = 'Identified'`, `to_stage = 'Awarded'`, and the test approver's user ID.
+9. Verifies the Realized Savings, Identified Pipeline, and Gap to Goal numbers on the dashboard updated correctly.
+
+Plus a complementary **rejection journey** as a sibling test in the same file:
+
+- Same login and navigation, but reject the opportunity instead of approve.
+- Verify `canonical_stage` is now `Closed-No Action`.
+- Verify history row records the rejection with `transition_reason` populated.
+
+The suite runs on every pull request and blocks merge on failure. Total runtime ≤ 3 minutes including Playwright browser setup.
+
+## Out of scope
+
+- Tests for every other user journey (each future critical path gets its own ticket — registration, supplier creation, RFx event setup, etc.).
+- Cross-browser testing — Chromium only for now. Firefox and WebKit are future tickets.
+- Mobile viewport testing — desktop only.
+- Performance assertions beyond the 3-minute budget (handled in #291).
+- Visual regression on the screens involved (handled in #293).
+- Accessibility checks (handled in #292).
+- Tests of the approval workflow's email or Slack notifications (those are separate integrations with their own test paths).
+
+## Flexibility clause
+
+If the dashboard rebuild has not yet shipped the approve UI control when this ticket runs:
+
+- The test should target whatever approve mechanism exists in the application at that moment — even if that's an API-only path triggered programmatically.
+- Mark the test with `test.fixme()` for any UI assertions that depend on UI controls not yet built, with a TODO referencing the dashboard rebuild ticket.
+- The data-layer assertions (DB stage change, history row written) must work regardless of UI state.
+- When the approve UI ships, a follow-up PR removes the `fixme` markers and adds the UI assertions.
+
+This keeps the test useful immediately rather than blocked on the dashboard rebuild's pace.
+
+## Steps for Replit
+
+### Step 1 — Test approver account
+
+Create a dedicated E2E test account in staging (and a parallel account in any other environment where this test runs):
+
+- Email: `e2e-approver@<your-domain>.com`
+- Password: stored as `E2E_APPROVER_PASSWORD` in GitHub Actions secrets and in the test environment
+- Role: Procurement Director (DOA Tier 2 — can approve opportunities up to $1M)
+- Permissions: read/write on opportunities, write on stage transitions
+
+This account is separate from the smoke test account (`smoke-test@`) — smoke needs read-only, E2E needs write. Document its existence in `docs/e2e-test-accounts.md`.
+
+### Step 2 — Test data seeding
+
+E2E tests need a known starting state. Create `tests/e2e/seed.ts` that prepares the database before each test:
+
+```typescript
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { opportunities, opportunityStageHistory } from '../../src/db/schema';
+import { eq, sql } from 'drizzle-orm';
+
+const E2E_TEST_OPP_PREFIX = 'e2e-test-';
+
+export async function seedApprovableOpportunity(connectionString: string, approverId: string) {
+  const conn = postgres(connectionString);
+  const db = drizzle(conn);
+
+  // Clean any leftover E2E test opportunities from prior runs
+  await db.execute(sql`
+    DELETE FROM opportunity_stage_history
+    WHERE opportunity_id IN (
+      SELECT id FROM opportunities WHERE external_ref LIKE ${E2E_TEST_OPP_PREFIX + '%'}
+    )
+  `);
+  await db.execute(sql`
+    DELETE FROM opportunities WHERE external_ref LIKE ${E2E_TEST_OPP_PREFIX + '%'}
+  `);
+
+  // Seed a fresh opportunity in Identified stage, sized for Tier 2 (under $1M)
+  const externalRef = `${E2E_TEST_OPP_PREFIX}${Date.now()}`;
+  const [opp] = await db
+    .insert(opportunities)
+    .values({
+      external_ref: externalRef,
+      award_value: 750_000,
+      canonical_stage: 'Identified',
+      savings_type: 'Identified',
+      savings_classification: 'Hard',
+      classification_needs_review: false,
+      sourcing_strategy: 'Competitive RFP',
+      baseline_method: 'Prior Unit Price',
+      baseline_value: 800_000,
+      stage_entered_at: new Date(),
+      lever: 'Supplier Consolidation',
+      title: `E2E test opportunity ${externalRef}`,
+    })
+    .returning();
+
+  // Seed the initial history row
+  await db.insert(opportunityStageHistory).values({
+    opportunity_id: opp.id,
+    from_stage: null,
+    to_stage: 'Identified',
+    transitioned_at: new Date(),
+    transition_reason: 'E2E_SEED',
+  });
+
+  await conn.end();
+  return { id: opp.id, externalRef, awardValue: 750_000 };
+}
+
+export async function cleanupE2EOpportunities(connectionString: string) {
+  const conn = postgres(connectionString);
+  const db = drizzle(conn);
+  await db.execute(sql`
+    DELETE FROM opportunity_stage_history
+    WHERE opportunity_id IN (
+      SELECT id FROM opportunities WHERE external_ref LIKE ${E2E_TEST_OPP_PREFIX + '%'}
+    )
+  `);
+  await db.execute(sql`
+    DELETE FROM opportunities WHERE external_ref LIKE ${E2E_TEST_OPP_PREFIX + '%'}
+  `);
+  await conn.end();
+}
+```
+
+### Step 3 — Playwright E2E config
+
+Create `playwright.e2e.config.ts`:
+
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  timeout: 90_000,
+  expect: { timeout: 10_000 },
+  retries: 1,
+  workers: 1,                    // E2E tests touch shared DB state; serialize
+  reporter: [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'e2e-results.json' }]],
+  use: {
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
+    headless: true,
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    trace: 'retain-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+});
+```
+
+### Step 4 — The E2E test
+
+Create `tests/e2e/approve-opportunity.e2e.test.ts`:
+
+```typescript
+import { test, expect, type APIRequestContext } from '@playwright/test';
+import { seedApprovableOpportunity, cleanupE2EOpportunities } from './seed';
+
+const DB_URL = process.env.E2E_DATABASE_URL!;
+const APPROVER_EMAIL = process.env.E2E_APPROVER_EMAIL!;
+const APPROVER_PASSWORD = process.env.E2E_APPROVER_PASSWORD!;
+const APPROVER_USER_ID = process.env.E2E_APPROVER_USER_ID!;
+
+test.describe('Critical user journey: approve an opportunity', () => {
+  let seededOpp: { id: string; externalRef: string; awardValue: number };
+
+  test.beforeEach(async () => {
+    seededOpp = await seedApprovableOpportunity(DB_URL, APPROVER_USER_ID);
+  });
+
+  test.afterAll(async () => {
+    await cleanupE2EOpportunities(DB_URL);
+  });
+
+  test('approver logs in, sees opportunity, approves it, dashboard reflects change', async ({ page, request }) => {
+    // ─── 1. Log in ──────────────────────────────────────────────
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(APPROVER_EMAIL);
+    await page.getByLabel(/password/i).fill(APPROVER_PASSWORD);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.waitForURL(/\/dashboard|\/$/, { timeout: 15_000 });
+
+    // ─── 2. Dashboard renders Outcomes tiles ────────────────────
+    await page.goto('/dashboard');
+    await expect(page.getByText(/realized savings/i)).toBeVisible();
+    await expect(page.getByText(/identified pipeline/i)).toBeVisible();
+    await expect(page.getByText(/gap to goal/i)).toBeVisible();
+
+    // Capture baseline counts from the dashboard
+    const awaitingSignOffBefore = await page
+      .locator('[data-testid="awaiting-sign-off-count"]')
+      .textContent();
+    const awaitingCountBefore = Number(awaitingSignOffBefore?.replace(/[^0-9]/g, '') ?? 0);
+
+    // ─── 3. Locate the seeded opportunity ───────────────────────
+    await page.goto(`/opportunities/${seededOpp.id}`);
+    await expect(page.getByText(seededOpp.externalRef)).toBeVisible();
+    await expect(page.getByText(/identified/i)).toBeVisible();
+
+    // ─── 4. Approve it ──────────────────────────────────────────
+    await page.getByRole('button', { name: /approve|award/i }).click();
+
+    // Confirmation modal if it exists
+    const confirmButton = page.getByRole('button', { name: /confirm approval|confirm award/i });
+    if (await confirmButton.isVisible().catch(() => false)) {
+      await confirmButton.click();
+    }
+
+    // ─── 5. UI shows transition to Awarded ──────────────────────
+    await expect(page.getByText(/awarded/i)).toBeVisible({ timeout: 10_000 });
+
+    // ─── 6. Dashboard awaiting count decreased ──────────────────
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+    const awaitingSignOffAfter = await page
+      .locator('[data-testid="awaiting-sign-off-count"]')
+      .textContent();
+    const awaitingCountAfter = Number(awaitingSignOffAfter?.replace(/[^0-9]/g, '') ?? 0);
+    expect(awaitingCountAfter).toBe(awaitingCountBefore - 1);
+
+    // ─── 7. API confirms canonical_stage = Awarded ──────────────
+    const cookies = await page.context().cookies();
+    const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+    const apiResponse = await request.get(`/api/opportunities/${seededOpp.id}`, {
+      headers: { cookie: cookieHeader },
+    });
+    expect(apiResponse.status()).toBe(200);
+    const oppFromApi = await apiResponse.json();
+    expect(oppFromApi.canonical_stage).toBe('Awarded');
+    expect(oppFromApi.savings_type).toBe('Negotiated');
+
+    // ─── 8. History row written correctly ───────────────────────
+    const historyResponse = await request.get(`/api/opportunities/${seededOpp.id}/history`, {
+      headers: { cookie: cookieHeader },
+    });
+    expect(historyResponse.status()).toBe(200);
+    const history = await historyResponse.json();
+    const latest = history.data[0];
+    expect(latest.from_stage).toBe('Identified');
+    expect(latest.to_stage).toBe('Awarded');
+    expect(latest.transitioned_by_user_id).toBe(APPROVER_USER_ID);
+    expect(new Date(latest.transitioned_at).getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  test('approver rejects an opportunity instead of approving', async ({ page, request }) => {
+    // ─── Log in ─────────────────────────────────────────────────
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(APPROVER_EMAIL);
+    await page.getByLabel(/password/i).fill(APPROVER_PASSWORD);
+    await page.getByRole('button', { name: /sign in|log in/i }).click();
+    await page.waitForURL(/\/dashboard|\/$/, { timeout: 15_000 });
+
+    // ─── Open the seeded opportunity and reject ─────────────────
+    await page.goto(`/opportunities/${seededOpp.id}`);
+    await page.getByRole('button', { name: /reject|decline|close.*no action/i }).click();
+
+    // Reason field if present (the platform's reject flow likely captures one)
+    const reasonField = page.getByLabel(/reason|why/i);
+    if (await reasonField.isVisible().catch(() => false)) {
+      await reasonField.fill('E2E test rejection');
+    }
+    const confirmButton = page.getByRole('button', { name: /confirm reject|confirm decline/i });
+    if (await confirmButton.isVisible().catch(() => false)) {
+      await confirmButton.click();
+    }
+
+    // ─── UI shows Closed - No Action ────────────────────────────
+    await expect(page.getByText(/closed.*no action/i)).toBeVisible({ timeout: 10_000 });
+
+    // ─── API confirms ───────────────────────────────────────────
+    const cookies = await page.context().cookies();
+    const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+    const apiResponse = await request.get(`/api/opportunities/${seededOpp.id}`, {
+      headers: { cookie: cookieHeader },
+    });
+    const oppFromApi = await apiResponse.json();
+    expect(oppFromApi.canonical_stage).toBe('Closed-No Action');
+
+    // ─── History row records the rejection with reason ──────────
+    const historyResponse = await request.get(`/api/opportunities/${seededOpp.id}/history`, {
+      headers: { cookie: cookieHeader },
+    });
+    const history = await historyResponse.json();
+    const latest = history.data[0];
+    expect(latest.from_stage).toBe('Identified');
+    expect(latest.to_stage).toBe('Closed-No Action');
+    expect(latest.transitioned_by_user_id).toBe(APPROVER_USER_ID);
+    expect(latest.transition_reason ?? '').toContain('E2E test rejection');
+  });
+});
+```
+
+### Step 5 — Test data attribute hooks
+
+The test uses `data-testid="awaiting-sign-off-count"` to locate the count tile reliably. Add this attribute to the dashboard component during the rebuild. Other selectors use roles and accessible names which are more durable than CSS classes.
+
+If the dashboard rebuild ticket hasn't shipped these `data-testid` attributes yet, add them as part of this ticket's PR — small, surgical edits to the existing components to make them testable. Document each `data-testid` added in `tests/e2e/test-ids.md`.
+
+### Step 6 — CI workflow
+
+Create `.github/workflows/e2e.yml`:
+
+```yaml
+name: E2E Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: e2e_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run migrations on E2E DB
+        env:
+          DATABASE_URL: postgres://e2e:e2e@localhost:5432/e2e_db
+        run: pnpm drizzle-kit migrate
+      - name: Seed E2E approver account
+        env:
+          DATABASE_URL: postgres://e2e:e2e@localhost:5432/e2e_db
+          E2E_APPROVER_EMAIL: ${{ secrets.E2E_APPROVER_EMAIL }}
+          E2E_APPROVER_PASSWORD: ${{ secrets.E2E_APPROVER_PASSWORD }}
+        run: pnpm tsx scripts/seed-e2e-approver.ts
+      - name: Start application
+        env:
+          DATABASE_URL: postgres://e2e:e2e@localhost:5432/e2e_db
+          NODE_ENV: test
+        run: |
+          pnpm build
+          pnpm start &
+          npx wait-on http://localhost:3000 --timeout 60000
+      - name: Run E2E tests
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_DATABASE_URL: postgres://e2e:e2e@localhost:5432/e2e_db
+          E2E_APPROVER_EMAIL: ${{ secrets.E2E_APPROVER_EMAIL }}
+          E2E_APPROVER_PASSWORD: ${{ secrets.E2E_APPROVER_PASSWORD }}
+          E2E_APPROVER_USER_ID: ${{ secrets.E2E_APPROVER_USER_ID }}
+        run: pnpm exec playwright test --config playwright.e2e.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-failure-evidence
+          path: |
+            playwright-report/
+            test-results/
+            e2e-results.json
+          retention-days: 14
+```
+
+### Step 7 — Seed script for approver account
+
+Create `scripts/seed-e2e-approver.ts`:
+
+```typescript
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { users } from '../src/db/schema';
+import bcrypt from 'bcrypt';
+
+async function main() {
+  const conn = postgres(process.env.DATABASE_URL!);
+  const db = drizzle(conn);
+
+  const passwordHash = await bcrypt.hash(process.env.E2E_APPROVER_PASSWORD!, 10);
+  const [user] = await db
+    .insert(users)
+    .values({
+      email: process.env.E2E_APPROVER_EMAIL!,
+      password_hash: passwordHash,
+      role: 'Procurement Director',
+      doa_tier: 2,
+    })
+    .returning();
+
+  console.log(`E2E approver seeded: ${user.id}`);
+  console.log(`Set E2E_APPROVER_USER_ID=${user.id} as a GitHub Actions secret`);
+  await conn.end();
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+After the first CI run, capture the printed user ID and set it as `E2E_APPROVER_USER_ID` in GitHub Actions secrets so subsequent runs can verify the approver attribution.
+
+### Step 8 — Documentation
+
+Create `tests/e2e/README.md`:
+
+```markdown
+# E2E Tests
+
+These tests exercise the highest-value user journeys end-to-end through a real
+browser against a real application against a real database. They are expensive
+to run and maintain, so we keep the suite small and focused on critical paths.
+
+## What's covered today
+- Approve an opportunity (the critical journey)
+- Reject an opportunity (sibling test in the same file)
+
+## What's not covered
+- Smoke checks → see #288
+- Data integrity → see #289
+- Performance → see #291
+- Accessibility → see #292
+- Visual regression → see #293
+- Application logic correctness → see #287
+
+## Adding a new E2E test
+Adding a new E2E test is a deliberate decision. The bar:
+1. The journey is critical — silently breaking it would damage the platform's value proposition.
+2. The journey cannot be adequately tested at the unit or integration level.
+3. The journey involves multiple components, real database state, and UI interaction together.
+
+If a test passes the bar, file a new ticket. Don't pile tests into this one.
+
+## Running locally
+pnpm start  # in another terminal
+E2E_BASE_URL=http://localhost:3000 \
+E2E_DATABASE_URL=postgres://... \
+E2E_APPROVER_EMAIL=e2e-approver@example.com \
+E2E_APPROVER_PASSWORD=... \
+E2E_APPROVER_USER_ID=... \
+pnpm exec playwright test --config playwright.e2e.config.ts
+
+## When an E2E test fails
+1. View the Playwright report (uploaded as a CI artifact, retained 14 days).
+2. Watch the failure video and inspect the trace.
+3. Decide: is the test wrong, or is the application wrong?
+4. If the application is wrong: fix it, the test stays.
+5. If the test is wrong: fix the test (e.g., wrong selector, race condition).
+6. NEVER skip the test to get a deploy through. Skipped E2E tests are how the platform breaks silently.
+
+## Flakiness policy
+Flaky E2E tests are worse than no E2E tests because they train the team to ignore failures.
+- If a test fails sporadically, file a ticket immediately.
+- If the same test fails three times in a week without an application bug, quarantine it
+  with `test.fixme()` and investigate.
+- Fix flakiness within one sprint or remove the test.
+```
+
+## Acceptance criteria (all must pass before merge)
+
+### Test runs and passes
+
+- `tests/e2e/approve-opportunity.e2e.test.ts` exists with both the approve and reject tests.
+- Running `pnpm exec playwright test --config playwright.e2e.config.ts` against a working environment passes both tests in ≤ 3 minutes including Playwright browser setup.
+- The test seeds its own data, runs cleanly, and cleans up after itself — no leftover E2E records in the database after the run.
+
+### Both journeys are covered
+
+- The approve journey verifies all nine steps listed in "Done looks like."
+- The reject journey verifies the four steps listed for the sibling test.
+
+### Failure paths produce useful evidence
+
+- When a test fails, Playwright artifacts (screenshot, video, trace) are uploaded as CI artifacts and retained for 14 days.
+- Manually break the application (e.g., make the approve API return 500) and confirm:
+  - The test fails with a clear assertion message.
+  - The artifacts include a screenshot at the point of failure.
+  - The video shows the full journey up to and including the failure.
+
+### CI gates merge on E2E pass
+
+- The `E2E Tests` workflow runs on every pull request.
+- A failing E2E test blocks merge to `main`.
+- Branch protection on `main` requires the E2E job to pass.
+
+### Test accounts and data hooks exist
+
+- `e2e-approver@<your-domain>.com` exists in staging with Procurement Director role and DOA Tier 2 permissions.
+- `E2E_APPROVER_EMAIL`, `E2E_APPROVER_PASSWORD`, `E2E_APPROVER_USER_ID` are set as GitHub Actions secrets.
+- `E2E_DATABASE_URL` is set as a GitHub Actions secret pointing at the E2E database (NOT production).
+- `data-testid` attributes used by the test are present in the dashboard components (or added in this ticket's PR).
+- Test IDs are documented in `tests/e2e/test-ids.md`.
+
+### No flakiness
+
+- Run the E2E suite 10 times in a row against a healthy environment.
+- All 10 runs must pass cleanly. If any run fails for non-environmental reasons, fix the test before merging.
+
+### Documentation exists
+
+- `tests/e2e/README.md` exists with the content specified above.
+
+## Rollback plan
+
+The E2E workflow is independent of all other workflows. If E2E tests are causing problems:
+
+1. Disable the workflow by renaming `.github/workflows/e2e.yml` to `.disabled`.
+2. PRs continue to merge based on unit, integration, smoke, and security checks.
+3. The E2E test files, Playwright config, seed scripts, and approver account stay in place — nothing else needs reverting.
+4. Re-enable once specific issues are fixed.
+
+The `data-testid` attributes added to dashboard components are harmless to leave in place even if E2E is disabled — they have no runtime cost and may be useful for other testing.
+
+## Mode guidance
+
+**Power.** This ticket has multi-file complexity: Playwright config, two test scenarios with full assertion coverage, seed and cleanup scripts, an approver-account seeding script, a CI workflow that spins up Postgres + migrations + builds the app + runs Playwright with browsers, and `data-testid` attributes coordinated across the codebase. Economy mode will produce flaky tests with brittle selectors. Lite cannot handle the scope.
+
+Run as a **single Power-mode session** so the seed/cleanup/test/CI all share one consistent style.
+
+## Why this matters (for the reviewer)
+
+The dashboard's purpose is to surface opportunities for approval. If the approve path silently breaks — UI button no longer wired to the API, API not transitioning the stage, history table not writing — the platform is theatrical. People look at numbers, click buttons, nothing changes downstream, and no one notices for weeks because the dashboard still *renders*.
+
+Unit tests in #287 verify the transition function works in isolation. Integration tests verify the database trigger fires. Smoke tests verify the dashboard loads. None of those catch the case where the UI button is wired to the wrong handler, or the auth context isn't passed through to the trigger, or the dashboard caches an old aggregate after the transition.
+
+This single E2E test catches all three. It's the one test that, if it passes, lets you say "the critical journey works" with confidence. If it ever fails, that's the most important alert in the system — louder than smoke, louder than integrity assertions — because it means the platform's whole job isn't being done.
+
+---
+
+That's #290, locked.
+
+**Confirm and I'll roll into #291 (performance / soak test) next. That's the ticket you bumped in priority because no stress or load testing has happened yet — I'll factor that in.**

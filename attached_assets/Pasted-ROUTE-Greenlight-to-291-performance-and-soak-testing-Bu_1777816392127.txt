@@ -1,0 +1,725 @@
+ROUTE: Greenlight to #291 — performance and soak testing. Bumped in priority because no stress or load testing has happened yet (he confirmed earlier in the conversation). k6 for load/stress, plus a soak scenario simulating 12 months of stage history to verify the new `opportunity_stage_history` table doesn't degrade query performance at scale. This is the ticket that protects against the "CPO opens dashboard during board meeting and it spins for 30 seconds" failure mode I called out earlier. Active corrections in force: structures not clever prompts, embedded specs not described in prose, verifiable acceptance criteria, mode guidance.
+
+PLAN: Single polished ticket. Embed k6 scripts because they ARE the deliverable and Replit will produce closer-to-spec output if it sees the shape. Three scenarios — load, stress, soak. Establish performance baselines so regressions are detectable on every release. End with confirmation prompt.
+
+BUILD/SHIP:
+
+---
+
+# #291 — Performance and Soak Testing (Load, Stress, 12-Month Soak)
+
+## What & Why
+
+Establish performance testing — load, stress, and soak — for the dashboard and its API. **No stress or load testing has been performed on this application yet.** That means we don't know how many concurrent users it can serve before it slows down, where queries break under realistic data volumes, or whether the new `opportunity_stage_history` table will degrade query performance as it grows over 12 months.
+
+For a dashboard that displays $584M in pipeline value to procurement leadership, this is a real exposure. The day a CPO opens the Command Center during a board meeting and it spins for 30 seconds, credibility evaporates and doesn't come back.
+
+This ticket establishes three performance scenarios using **k6** (the 2026 community default for performance testing), captures baselines for every critical endpoint, runs the suite on a schedule, and gates major releases on performance regressions exceeding documented thresholds.
+
+**Dependencies:** #284 (data model in place — needed to seed realistic soak data), #287 (test framework — for the scripts to plug into a known infrastructure), #289 (data integrity assertions — soak runs may amplify any drift, and we want integrity checks running in parallel).
+
+## Done looks like
+
+Three k6 performance scenarios live in the repository, runnable locally and in CI:
+
+| Scenario | What it does | When it runs | Pass/fail gate |
+|---|---|---|---|
+| **Load test** | Simulate normal expected traffic against the dashboard and its key endpoints | On every PR that touches API or DB code; weekly scheduled run against staging | p95 response time ≤ 1500ms; error rate ≤ 0.1% |
+| **Stress test** | Push past expected load to find the breaking point and document it | Monthly scheduled run against staging | App handles 5× expected peak before degradation; documents the exact concurrent-user count where p95 exceeds 3000ms |
+| **Soak test** | Run sustained load for 4 hours against a database seeded with 12 months of simulated stage history | Pre-release gate before any major version ship; quarterly scheduled run | No memory leaks (RSS growth ≤ 10%); no query slowdown over time (p95 stable within 20%); zero connection pool exhaustion errors |
+
+A `docs/performance-baselines.md` file records the established baseline numbers for every critical endpoint. Performance regressions are detected against these baselines automatically — a PR that pushes p95 above the baseline by more than 20% fails CI.
+
+## Out of scope
+
+- Frontend rendering performance (Lighthouse, Web Vitals) — separate ticket; this one focuses on backend and API.
+- Database query plan optimization — if the soak test surfaces slow queries, fixes go in follow-up tickets, not this one.
+- CDN, caching layer, or edge optimization — separate concern.
+- Chaos / fault injection (kill DB, network partition) — separate ticket if needed.
+- Mobile network simulation — separate ticket.
+- Real production load tests — never. Performance tests run against staging only.
+
+## Steps for Replit
+
+### Step 1 — Install k6 and supporting tooling
+
+k6 itself is a Go binary, not an npm package. Install via the platform's package manager:
+
+```bash
+# macOS local dev
+brew install k6
+
+# Linux CI runners
+sudo gpg -k
+sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+sudo apt-get update
+sudo apt-get install k6
+```
+
+Install dev-dependency helpers in the repo:
+
+```bash
+pnpm add -D @types/k6
+```
+
+Create `tests/performance/` directory.
+
+### Step 2 — Soak data seeding script
+
+The soak test needs a database that looks like 12 months of accumulated activity. Create `scripts/seed-soak-data.ts`:
+
+```typescript
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { opportunities, opportunityStageHistory } from '../src/db/schema';
+import { faker } from '@faker-js/faker';
+
+const TARGET_OPP_COUNT = 50_000;             // 12 months of opportunities
+const AVG_TRANSITIONS_PER_OPP = 3;            // realistic average across stages
+const SOAK_PREFIX = 'soak-';
+
+async function main() {
+  const conn = postgres(process.env.SOAK_DATABASE_URL!, { max: 10 });
+  const db = drizzle(conn);
+
+  console.log(`Seeding ${TARGET_OPP_COUNT} opportunities with ~${TARGET_OPP_COUNT * AVG_TRANSITIONS_PER_OPP} history rows...`);
+
+  // Clean any prior soak data
+  await conn`DELETE FROM opportunity_stage_history WHERE opportunity_id IN (SELECT id FROM opportunities WHERE external_ref LIKE ${SOAK_PREFIX + '%'})`;
+  await conn`DELETE FROM opportunities WHERE external_ref LIKE ${SOAK_PREFIX + '%'}`;
+
+  // Batch insert opportunities
+  const BATCH_SIZE = 1000;
+  const stages = ['Identified', 'Awarded', 'In Contracting', 'In Implementation', 'Realized', 'Closed-No Action'];
+  const stageWeights = [0.40, 0.25, 0.10, 0.05, 0.15, 0.05];
+
+  for (let batch = 0; batch < TARGET_OPP_COUNT / BATCH_SIZE; batch++) {
+    const records = [];
+    for (let i = 0; i < BATCH_SIZE; i++) {
+      const idx = batch * BATCH_SIZE + i;
+      const finalStage = weightedPick(stages, stageWeights);
+      const createdAt = faker.date.between({ from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), to: new Date() });
+      records.push({
+        external_ref: `${SOAK_PREFIX}${idx}`,
+        award_value: faker.number.int({ min: 10_000, max: 5_000_000 }),
+        canonical_stage: finalStage,
+        savings_type: stageToType(finalStage),
+        savings_classification: 'Hard',
+        classification_needs_review: false,
+        sourcing_strategy: faker.helpers.arrayElement([
+          'Competitive RFP', 'Single-to-Dual Source', 'Should-Cost Challenge',
+          'Tiered Pricing Audit / Rebate Claim', 'Catalog Enforcement', 'Negotiated Renewal',
+        ]),
+        baseline_method: 'Prior Unit Price',
+        baseline_value: faker.number.int({ min: 10_000, max: 6_000_000 }),
+        stage_entered_at: faker.date.recent({ days: 30, refDate: createdAt }),
+        lever: faker.helpers.arrayElement([
+          'Supplier Consolidation', 'SKU Price Benchmark', 'Maverick Spend',
+          'Missed Volume Threshold', 'Contract Leakage',
+        ]),
+        title: `Soak test opp ${idx}`,
+        created_at: createdAt,
+        updated_at: createdAt,
+      });
+    }
+    await db.insert(opportunities).values(records);
+    console.log(`Inserted batch ${batch + 1} of ${TARGET_OPP_COUNT / BATCH_SIZE}`);
+  }
+
+  // For each opportunity, write a realistic history trail leading to its current stage
+  console.log('Generating stage history trails...');
+  const allOpps = await conn`SELECT id, canonical_stage, stage_entered_at FROM opportunities WHERE external_ref LIKE ${SOAK_PREFIX + '%'}`;
+  const transitionPath = ['Identified', 'Awarded', 'In Contracting', 'In Implementation', 'Realized'];
+
+  for (let i = 0; i < allOpps.length; i += 500) {
+    const batch = allOpps.slice(i, i + 500);
+    const historyRows = [];
+    for (const opp of batch) {
+      const targetStage = opp.canonical_stage;
+      const stageIdx = transitionPath.indexOf(targetStage);
+      if (stageIdx < 0) {
+        // Closed-No Action: one transition from Identified
+        historyRows.push({
+          opportunity_id: opp.id,
+          from_stage: 'Identified',
+          to_stage: 'Closed-No Action',
+          transitioned_at: opp.stage_entered_at,
+          transition_reason: 'soak-seed',
+        });
+      } else {
+        // Add one history row per stage walked through
+        for (let s = 0; s <= stageIdx; s++) {
+          historyRows.push({
+            opportunity_id: opp.id,
+            from_stage: s === 0 ? null : transitionPath[s - 1],
+            to_stage: transitionPath[s],
+            transitioned_at: faker.date.recent({ days: 365, refDate: opp.stage_entered_at }),
+            transition_reason: 'soak-seed',
+          });
+        }
+      }
+    }
+    await db.insert(opportunityStageHistory).values(historyRows);
+    if (i % 5000 === 0) console.log(`History batch ${i} of ${allOpps.length}`);
+  }
+
+  const oppCount = await conn`SELECT count(*)::int FROM opportunities WHERE external_ref LIKE ${SOAK_PREFIX + '%'}`;
+  const histCount = await conn`SELECT count(*)::int FROM opportunity_stage_history`;
+  console.log(`Soak seed complete: ${oppCount[0].count} opportunities, ${histCount[0].count} history rows`);
+
+  await conn.end();
+}
+
+function stageToType(stage: string): string {
+  switch (stage) {
+    case 'Identified': return 'Identified';
+    case 'Awarded': return 'Negotiated';
+    case 'In Contracting': return 'Negotiated';
+    case 'In Implementation': return 'Implemented';
+    case 'Realized': return 'Realized';
+    case 'Closed-No Action': return 'Identified';
+    default: return 'Identified';
+  }
+}
+
+function weightedPick<T>(items: T[], weights: number[]): T {
+  const r = Math.random();
+  let acc = 0;
+  for (let i = 0; i < items.length; i++) {
+    acc += weights[i];
+    if (r <= acc) return items[i];
+  }
+  return items[items.length - 1];
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+Add to `package.json`:
+
+```json
+{
+  "scripts": {
+    "seed:soak": "tsx scripts/seed-soak-data.ts"
+  }
+}
+```
+
+### Step 3 — Load test scenario
+
+Create `tests/performance/load.k6.js`:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep, group } from 'k6';
+import { Counter, Rate, Trend } from 'k6/metrics';
+
+const errorRate = new Rate('errors');
+const dashboardLatency = new Trend('dashboard_latency');
+const opportunityListLatency = new Trend('opportunity_list_latency');
+const opportunityDetailLatency = new Trend('opportunity_detail_latency');
+
+export const options = {
+  scenarios: {
+    normal_load: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '30s', target: 5 },     // ramp to 5 concurrent users
+        { duration: '2m',  target: 25 },    // ramp to 25 (expected peak)
+        { duration: '5m',  target: 25 },    // hold at peak for 5 minutes
+        { duration: '30s', target: 0 },     // ramp down
+      ],
+      gracefulRampDown: '30s',
+    },
+  },
+  thresholds: {
+    http_req_failed: ['rate<0.001'],                    // < 0.1% errors
+    http_req_duration: ['p(95)<1500'],                  // p95 under 1.5s globally
+    'dashboard_latency': ['p(95)<2000'],                // dashboard p95 under 2s
+    'opportunity_list_latency': ['p(95)<1000'],
+    'opportunity_detail_latency': ['p(95)<800'],
+  },
+};
+
+const BASE = __ENV.PERF_BASE_URL || 'http://localhost:3000';
+const TOKEN = __ENV.PERF_API_TOKEN;
+
+export default function () {
+  const headers = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
+
+  group('dashboard', () => {
+    const res = http.get(`${BASE}/api/dashboard/aggregates`, { headers });
+    dashboardLatency.add(res.timings.duration);
+    const ok = check(res, {
+      'dashboard 200': (r) => r.status === 200,
+      'dashboard has realized_savings': (r) => JSON.parse(r.body).realized_savings !== undefined,
+      'dashboard has identified_pipeline': (r) => JSON.parse(r.body).identified_pipeline !== undefined,
+    });
+    errorRate.add(!ok);
+  });
+
+  group('opportunity list', () => {
+    const res = http.get(`${BASE}/api/opportunities?limit=50&stage=Identified`, { headers });
+    opportunityListLatency.add(res.timings.duration);
+    const ok = check(res, {
+      'list 200': (r) => r.status === 200,
+      'list returns array': (r) => Array.isArray(JSON.parse(r.body).data),
+    });
+    errorRate.add(!ok);
+  });
+
+  group('opportunity detail', () => {
+    const listRes = http.get(`${BASE}/api/opportunities?limit=1`, { headers });
+    if (listRes.status === 200) {
+      const data = JSON.parse(listRes.body).data;
+      if (data.length > 0) {
+        const res = http.get(`${BASE}/api/opportunities/${data[0].id}`, { headers });
+        opportunityDetailLatency.add(res.timings.duration);
+        const ok = check(res, {
+          'detail 200': (r) => r.status === 200,
+          'detail has canonical_stage': (r) => JSON.parse(r.body).canonical_stage !== undefined,
+          'detail has time_in_current_stage': (r) => JSON.parse(r.body).time_in_current_stage !== undefined,
+        });
+        errorRate.add(!ok);
+      }
+    }
+  });
+
+  sleep(Math.random() * 3 + 1);  // think time 1-4s
+}
+```
+
+### Step 4 — Stress test scenario
+
+Create `tests/performance/stress.k6.js`:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
+
+const errorRate = new Rate('errors');
+const dashboardLatency = new Trend('dashboard_latency');
+
+export const options = {
+  scenarios: {
+    stress: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '1m',  target: 50 },
+        { duration: '2m',  target: 100 },
+        { duration: '2m',  target: 200 },
+        { duration: '2m',  target: 400 },
+        { duration: '2m',  target: 800 },
+        { duration: '1m',  target: 0 },
+      ],
+      gracefulRampDown: '30s',
+    },
+  },
+  thresholds: {
+    // Don't fail on thresholds — we WANT to find the breaking point
+    http_req_failed: ['rate<1'],
+    http_req_duration: ['p(95)<10000'],   // 10s ceiling so the test eventually exits
+  },
+};
+
+const BASE = __ENV.PERF_BASE_URL || 'http://localhost:3000';
+const TOKEN = __ENV.PERF_API_TOKEN;
+
+export default function () {
+  const headers = { Authorization: `Bearer ${TOKEN}` };
+
+  const res = http.get(`${BASE}/api/dashboard/aggregates`, { headers });
+  dashboardLatency.add(res.timings.duration);
+  const ok = check(res, {
+    'status < 500': (r) => r.status < 500,
+  });
+  errorRate.add(!ok);
+
+  sleep(Math.random() * 2);
+}
+
+export function handleSummary(data) {
+  // Capture the breaking point: the VU level at which p95 first exceeds 3000ms
+  const stages = data.metrics.dashboard_latency?.values || {};
+  const summary = {
+    'p95_at_peak': stages['p(95)'],
+    'breaking_point_documented': stages['p(95)'] > 3000 ? 'YES — see thresholds' : 'NOT REACHED in this run',
+  };
+  return {
+    'stdout': JSON.stringify(summary, null, 2),
+    'stress-summary.json': JSON.stringify(data, null, 2),
+  };
+}
+```
+
+### Step 5 — Soak test scenario
+
+Create `tests/performance/soak.k6.js`:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep, group } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
+
+const errorRate = new Rate('errors');
+const dashboardLatencyOverTime = new Trend('dashboard_latency_over_time');
+const oppListLatencyOverTime = new Trend('opp_list_latency_over_time');
+const historyQueryLatency = new Trend('history_query_latency');
+
+export const options = {
+  scenarios: {
+    soak: {
+      executor: 'constant-vus',
+      vus: 25,
+      duration: '4h',          // sustained 4-hour soak
+    },
+  },
+  thresholds: {
+    http_req_failed: ['rate<0.005'],                    // < 0.5% errors over 4 hours
+    http_req_duration: ['p(95)<2000'],                  // p95 must stay under 2s for the whole run
+    'dashboard_latency_over_time': ['p(95)<2500'],
+    'opp_list_latency_over_time': ['p(95)<1500'],
+    'history_query_latency': ['p(95)<1500'],            // history table is the new schema; verify it stays fast
+  },
+};
+
+const BASE = __ENV.PERF_BASE_URL || 'http://localhost:3000';
+const TOKEN = __ENV.PERF_API_TOKEN;
+
+export default function () {
+  const headers = { Authorization: `Bearer ${TOKEN}` };
+
+  group('dashboard', () => {
+    const res = http.get(`${BASE}/api/dashboard/aggregates`, { headers });
+    dashboardLatencyOverTime.add(res.timings.duration);
+    errorRate.add(res.status !== 200);
+  });
+
+  group('opp list paginated', () => {
+    const offset = Math.floor(Math.random() * 1000) * 50;
+    const res = http.get(`${BASE}/api/opportunities?limit=50&offset=${offset}`, { headers });
+    oppListLatencyOverTime.add(res.timings.duration);
+    errorRate.add(res.status !== 200);
+  });
+
+  group('history query', () => {
+    const listRes = http.get(`${BASE}/api/opportunities?limit=1`, { headers });
+    if (listRes.status === 200) {
+      const data = JSON.parse(listRes.body).data;
+      if (data.length > 0) {
+        const res = http.get(`${BASE}/api/opportunities/${data[0].id}/history`, { headers });
+        historyQueryLatency.add(res.timings.duration);
+        errorRate.add(res.status !== 200);
+      }
+    }
+  });
+
+  sleep(Math.random() * 3 + 1);
+}
+
+export function handleSummary(data) {
+  return {
+    'stdout': JSON.stringify({
+      'duration_hours': 4,
+      'total_requests': data.metrics.http_reqs?.values?.count,
+      'error_rate': data.metrics.http_req_failed?.values?.rate,
+      'p95_dashboard_ms': data.metrics.dashboard_latency_over_time?.values?.['p(95)'],
+      'p95_opp_list_ms': data.metrics.opp_list_latency_over_time?.values?.['p(95)'],
+      'p95_history_ms': data.metrics.history_query_latency?.values?.['p(95)'],
+    }, null, 2),
+    'soak-summary.json': JSON.stringify(data, null, 2),
+  };
+}
+```
+
+### Step 6 — Performance baselines file
+
+Create `docs/performance-baselines.md`:
+
+```markdown
+# Performance Baselines
+
+Established: <DATE OF FIRST SUCCESSFUL RUN>
+Environment: staging
+Concurrency: 25 VUs
+Database: 50,000 opportunities, ~150,000 history rows
+
+| Endpoint                                  | p50    | p95     | p99    | Notes                          |
+|-------------------------------------------|--------|---------|--------|--------------------------------|
+| GET /api/dashboard/aggregates             | <fill> | <fill>  | <fill> | Cached aggregate query         |
+| GET /api/opportunities?limit=50           | <fill> | <fill>  | <fill> | Paginated list                 |
+| GET /api/opportunities/:id                | <fill> | <fill>  | <fill> | Single record + computed fields|
+| GET /api/opportunities/:id/history        | <fill> | <fill>  | <fill> | History query                  |
+| POST /api/opportunities/:id/transition    | <fill> | <fill>  | <fill> | Stage transition write         |
+
+## Stress test breaking point
+- VU count at which p95 dashboard latency exceeded 3000ms: <fill>
+- VU count at which error rate exceeded 5%: <fill>
+- First component to bottleneck: <fill — DB connections / API server CPU / etc.>
+
+## Regression detection
+A PR fails CI if the load test produces:
+- p95 > 1.2 × baseline on any endpoint, OR
+- error rate > 0.1%, OR
+- any threshold violation in the load test scenario
+
+If a regression is intentional and acceptable (e.g., new feature is justifiably slower):
+1. Update this file with the new baseline.
+2. Document the reason in the same PR.
+3. Reviewer approves the new baseline explicitly.
+```
+
+### Step 7 — CI workflows
+
+Create `.github/workflows/performance-load.yml`:
+
+```yaml
+name: Performance — Load
+on:
+  pull_request:
+    paths:
+      - 'src/app/api/**'
+      - 'src/db/**'
+      - 'drizzle/**'
+  schedule:
+    - cron: '0 6 * * 1'   # weekly Monday 6am UTC
+  workflow_dispatch:
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      - name: Run load test
+        env:
+          PERF_BASE_URL: ${{ vars.STAGING_URL }}
+          PERF_API_TOKEN: ${{ secrets.PERF_API_TOKEN }}
+        run: k6 run tests/performance/load.k6.js --summary-export=load-summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-summary
+          path: load-summary.json
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {"text": "🟠 Load test FAILED — performance regression detected. View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+```
+
+Create `.github/workflows/performance-stress.yml`:
+
+```yaml
+name: Performance — Stress
+on:
+  schedule:
+    - cron: '0 4 1 * *'   # 1st of each month, 4am UTC
+  workflow_dispatch:
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      - name: Run stress test
+        env:
+          PERF_BASE_URL: ${{ vars.STAGING_URL }}
+          PERF_API_TOKEN: ${{ secrets.PERF_API_TOKEN }}
+        run: k6 run tests/performance/stress.k6.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-summary
+          path: stress-summary.json
+      - name: Update breaking-point doc
+        run: echo "Review stress-summary.json and update docs/performance-baselines.md with the breaking point"
+```
+
+Create `.github/workflows/performance-soak.yml`:
+
+```yaml
+name: Performance — Soak
+on:
+  schedule:
+    - cron: '0 22 * * 5'   # Friday 10pm UTC, runs over the weekend
+  workflow_dispatch:
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # 5 hours including setup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      - name: Seed soak data
+        env:
+          SOAK_DATABASE_URL: ${{ secrets.SOAK_DATABASE_URL }}
+        run: pnpm seed:soak
+      - name: Run soak test
+        env:
+          PERF_BASE_URL: ${{ vars.SOAK_URL }}
+          PERF_API_TOKEN: ${{ secrets.PERF_API_TOKEN }}
+        run: k6 run tests/performance/soak.k6.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-summary
+          path: soak-summary.json
+          retention-days: 90
+```
+
+### Step 8 — Documentation
+
+Create `tests/performance/README.md`:
+
+```markdown
+# Performance Tests
+
+Three k6 scenarios covering load, stress, and soak. Run against staging only —
+never against production.
+
+## Scenarios
+
+### Load (`load.k6.js`)
+Simulates normal expected traffic: 25 concurrent users for 5 minutes after a 2.5
+minute ramp-up. Runs on every PR that touches API or DB code, plus weekly
+scheduled. Fails CI if p95 latency or error rate exceeds the baseline.
+
+### Stress (`stress.k6.js`)
+Pushes from 50 to 800 concurrent users over 10 minutes to find the breaking
+point. Runs monthly. Does NOT fail CI on threshold breaches — the goal is to
+document where the application starts to degrade.
+
+### Soak (`soak.k6.js`)
+Sustained 25 concurrent users for 4 hours against a database seeded with 12
+months of opportunity and stage history data. Runs weekly over the weekend.
+Catches memory leaks, connection pool exhaustion, and query degradation that
+only show up over time.
+
+## Running locally
+PERF_BASE_URL=http://localhost:3000 \
+PERF_API_TOKEN=... \
+k6 run tests/performance/load.k6.js
+
+## Baselines
+See `docs/performance-baselines.md` for current baseline numbers and the stress
+test breaking point. Update the file whenever a baseline shifts intentionally.
+
+## When a performance test fails
+1. Check the summary artifact uploaded by the CI run.
+2. Identify whether the regression is in latency, error rate, or both.
+3. If the regression is intentional (new feature is justifiably slower):
+   - Update `docs/performance-baselines.md` in the same PR.
+   - Reviewer must approve the new baseline.
+4. If the regression is unintentional:
+   - Find what changed in the PR (DB query, new endpoint, dependency upgrade).
+   - Profile locally with `k6 run --vus 25 --duration 60s tests/performance/load.k6.js`.
+   - Fix or revert.
+```
+
+## Acceptance criteria (all must pass before merge)
+
+### All three scenarios run
+
+- `tests/performance/load.k6.js`, `tests/performance/stress.k6.js`, `tests/performance/soak.k6.js` exist and execute successfully against a working staging environment.
+- Soak data seed script `scripts/seed-soak-data.ts` runs end-to-end and produces 50,000 opportunities and ~150,000 history rows.
+
+### Baselines captured
+
+- `docs/performance-baselines.md` exists with all five endpoints filled in (p50, p95, p99) from a real load test run.
+- The stress test breaking point is documented (VU count where p95 exceeds 3000ms, first component to bottleneck).
+
+### CI runs on schedule
+
+- `Performance — Load` workflow runs on PRs touching API/DB code, weekly schedule, and manual trigger.
+- `Performance — Stress` workflow runs monthly and on manual trigger.
+- `Performance — Soak` workflow runs weekly (Friday evening) and on manual trigger.
+- All three workflows upload their summary JSON as artifacts.
+
+### Failure paths work
+
+- A deliberately slow endpoint (add `await sleep(2000)` to `/api/dashboard/aggregates`) causes the load test to fail and post a Slack alert.
+- The stress test runs to completion even when thresholds breach, and produces a summary documenting the breaking point.
+- The soak test detects a deliberate memory leak (e.g., a process that retains all request bodies in memory) and reports degrading p95 over time.
+
+### Soak surfaces history table behavior
+
+- Soak test completes 4 hours against a 50,000-opp / 150,000-history-row database.
+- p95 history query latency stays under 1500ms throughout.
+- No connection pool exhaustion errors in the soak summary.
+- No query degradation > 20% from start to end of the soak.
+
+### Documentation exists
+
+- `tests/performance/README.md` exists with the content specified above.
+- `docs/performance-baselines.md` exists with baselines and breaking point.
+
+## Rollback plan
+
+Performance test infrastructure is independent of all application code. If any test scenario causes problems:
+
+1. Disable the relevant workflow by renaming `.github/workflows/performance-*.yml` to `.disabled`.
+2. Other scenarios continue running.
+3. Local `k6 run` execution remains available for ad-hoc testing.
+4. The soak data seeded into the SOAK database can be cleaned with: `DELETE FROM opportunity_stage_history WHERE opportunity_id IN (SELECT id FROM opportunities WHERE external_ref LIKE 'soak-%'); DELETE FROM opportunities WHERE external_ref LIKE 'soak-%';`
+
+The baselines file (`docs/performance-baselines.md`) stays in place regardless — it remains the documented reference for any future performance work.
+
+## Mode guidance
+
+**Power.** Three k6 scenarios, a soak data seeder generating 50K records with realistic history trails, three CI workflows with different trigger patterns, secrets and variables coordination across staging environments, and documentation. Economy mode will produce thresholds that don't actually fail (a common k6 trap — thresholds default to non-blocking) and seed data that's too uniform to surface real query patterns. Power mode produces a tighter first pass.
+
+Run as a **single Power-mode session** so the three scenarios share consistent metric names and threshold conventions.
+
+## Why this matters (for the reviewer)
+
+You haven't done any stress or load testing yet. Today the dashboard might serve 5 users smoothly and crawl at 25, and you wouldn't know until a CPO opens it during a board meeting and watches it spin. You also don't know whether the new `opportunity_stage_history` table — which will accumulate hundreds of rows per opportunity over months — will keep up with dashboard queries when it's holding 12 months of writes.
+
+Three things this ticket protects against:
+
+1. **The board-meeting spin.** Load test catches it on every PR that touches the API or DB. Regression detection runs automatically.
+2. **The "we don't know our limit" gap.** Stress test documents the exact concurrent-user count where the application breaks. That number goes in capacity planning conversations.
+3. **The slow-burn degradation.** Soak test runs against a 12-month-aged database and exposes anything that drifts over time — memory leaks, connection pool issues, history table queries that get slower as the table grows.
+
+Without this ticket, every performance question — "can we handle a hundred users?" "will the new schema still be fast in a year?" — is a guess. With it, every question has a recent number behind it.
+
+---
+
+That's #291, locked.
+
+**Confirm and I'll roll into #292 (accessibility tests with axe-core) next.**

@@ -1,0 +1,500 @@
+Test Framework + Unit and Integration Coverage for #284
+What & Why
+Establish the test infrastructure that every subsequent test ticket (#288 through #293) depends on, AND write the unit and integration tests that lock in the #284 data model so future changes can't silently break it.
+This is the bottleneck ticket. Every test ticket downstream — smoke, data integrity, E2E, performance, accessibility, visual regression — assumes there is a working test runner, a working test database, fixture factories, and a CI hook that runs tests on every PR. Without this ticket, the others have nothing to plug into.
+This ticket has two halves. Half one is infrastructure (test runner, DB setup, fixtures, CI). Half two is coverage (write the actual tests). Do not ship half one without half two — an empty test framework that runs zero tests is worse than no framework, because it creates the false signal "tests pass" when there are no tests.
+Dependencies: #284 (S2P data model) must be merged. #286 (CI security scanning) should be merged so the new test job slots into a CI pipeline that already enforces other quality gates.
+Done looks like
+Half one — Infrastructure
+
+Test runner: Vitest configured for the monorepo, with separate configs for unit and integration tests.
+Integration test database: Testcontainers spins up an ephemeral Postgres instance per test run. Migrations applied automatically before tests; teardown automatic after.
+Fixture factory: A typed factory module produces realistic opportunity records, users, and stage transitions for tests. No hardcoded fixture arrays scattered across test files — one source of truth.
+Coverage reporting: Vitest coverage runs in CI and posts a comment on each PR showing line and branch coverage by package. Fails CI if total line coverage drops below the established baseline.
+CI hook: A new GitHub Actions workflow runs unit tests on every PR (≤ 60s), runs integration tests on every PR (≤ 5 min), and gates merge on both passing.
+Coverage baseline: initial baseline established and committed. CI fails if a PR drops coverage; CI passes if a PR adds coverage.
+
+Half two — Coverage for #284
+The following are covered by tests, with the example test code shown below as the minimum bar:
+
+Stage transition trigger — every canonical_stage change writes one row to opportunity_stage_history with correct from_stage, to_stage, transitioned_at, transitioned_by_user_id.
+Gate SLA computation — gate_sla_breach() returns correct breaching boolean for every combination of current stage and time_in_current_stage, using GATE_SLAS config.
+DOA tier derivation — doa_tier generated column produces correct tier 1–4 for boundary award values ($249,999 / $250,000 / $250,001 / etc.).
+Backfill mapping — every platform_status value maps to the correct canonical_stage and savings_type per the #284 mapping table.
+Backfill review flag — every backfilled record has classification_needs_review = true.
+Aggregate gate (the CFO insurance test) — any aggregate query labeled "Hard Savings" excludes records where classification_needs_review = true. This is the test that catches the dashboard rebuild silently breaking the gating condition from #284.
+Baseline field correctness — savings_type = 'Realized' records have a non-null baseline_value OR baseline_method = 'N/A — Soft'. Other combinations fail validation.
+OpenAPI contract — generated Zod schemas match the actual API response shape for GET /opportunities.
+End-to-end transition — opportunity created → moved through all five stages → history table has 5 correctly-ordered rows.
+
+Out of scope
+
+E2E tests through the browser (handled in #290).
+Smoke tests (handled in #288).
+Data integrity SQL assertions (handled in #289 — note the overlap with the aggregate gate test here, which is acceptable because that one specific test is so important it lives in two places).
+Performance / load tests (handled in #291).
+Accessibility tests (handled in #292).
+Visual regression tests (handled in #293).
+Tests for code paths outside the #284 data model (those are written as the relevant features ship, per #294's regression rule).
+
+Steps for Replit
+Step 1 — Vitest configuration
+Install: pnpm add -D vitest @vitest/coverage-v8 @vitest/ui
+Create vitest.config.ts at the repo root:
+typescriptimport { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary', 'html'],
+      thresholds: {
+        lines: 60,        // baseline; raise as coverage grows
+        branches: 55,
+        functions: 60,
+        statements: 60,
+      },
+      exclude: [
+        'node_modules/**',
+        'dist/**',
+        '**/*.config.ts',
+        '**/migrations/**',
+        '**/*.d.ts',
+      ],
+    },
+    include: ['**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/integration/**'],
+  },
+});
+Create vitest.integration.config.ts for integration tests:
+typescriptimport { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    include: ['**/integration/**/*.{test,spec}.ts'],
+    testTimeout: 30000,         // integration tests are slower
+    hookTimeout: 60000,          // Testcontainers startup
+    setupFiles: ['./tests/integration/setup.ts'],
+  },
+});
+Step 2 — Testcontainers + integration DB setup
+Install: pnpm add -D @testcontainers/postgresql testcontainers
+Create tests/integration/setup.ts:
+typescriptimport { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { beforeAll, afterAll } from 'vitest';
+
+let container: StartedPostgreSqlContainer;
+let connectionString: string;
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine')
+    .withDatabase('test_db')
+    .withUsername('test')
+    .withPassword('test')
+    .start();
+
+  connectionString = container.getConnectionUri();
+  process.env.DATABASE_URL = connectionString;
+
+  const sql = postgres(connectionString, { max: 1 });
+  const db = drizzle(sql);
+  await migrate(db, { migrationsFolder: './drizzle' });
+  await sql.end();
+}, 60000);
+
+afterAll(async () => {
+  await container?.stop();
+});
+
+export const getConnectionString = () => connectionString;
+Step 3 — Fixture factory
+Install: pnpm add -D @faker-js/faker (test-only — must be in devDependencies)
+Create tests/fixtures/factory.ts:
+typescriptimport { faker } from '@faker-js/faker';
+
+export type OpportunityFixture = {
+  id: string;
+  award_value: number;
+  canonical_stage: string;
+  savings_type: string;
+  savings_classification: string;
+  classification_needs_review: boolean;
+  sourcing_strategy: string;
+  baseline_method: string;
+  baseline_value: number | null;
+  stage_entered_at: Date;
+};
+
+export function makeOpportunity(overrides: Partial<OpportunityFixture> = {}): OpportunityFixture {
+  return {
+    id: faker.string.uuid(),
+    award_value: faker.number.int({ min: 10_000, max: 10_000_000 }),
+    canonical_stage: 'Identified',
+    savings_type: 'Identified',
+    savings_classification: 'Hard',
+    classification_needs_review: false,
+    sourcing_strategy: 'Competitive RFP',
+    baseline_method: 'Prior Unit Price',
+    baseline_value: faker.number.int({ min: 10_000, max: 1_000_000 }),
+    stage_entered_at: faker.date.recent({ days: 30 }),
+    ...overrides,
+  };
+}
+
+export function makeBackfilledOpportunity(overrides: Partial<OpportunityFixture> = {}): OpportunityFixture {
+  return makeOpportunity({
+    classification_needs_review: true,
+    baseline_method: 'Internal Estimate',
+    baseline_value: null,
+    sourcing_strategy: 'Unclassified',
+    ...overrides,
+  });
+}
+
+export function makeUser() {
+  return {
+    id: faker.string.uuid(),
+    email: faker.internet.email(),
+    role: faker.helpers.arrayElement(['Category Manager', 'Procurement Director', 'VP Procurement']),
+  };
+}
+Step 4 — Example unit tests (write all of these, plus more)
+Create src/data/__tests__/doa-tier.test.ts:
+typescriptimport { describe, it, expect } from 'vitest';
+import { computeDoaTier } from '../doa';
+
+describe('computeDoaTier', () => {
+  it.each([
+    [1, 1],
+    [249_999, 1],
+    [250_000, 2],
+    [250_001, 2],
+    [999_999, 2],
+    [1_000_000, 3],
+    [4_999_999, 3],
+    [5_000_000, 4],
+    [50_000_000, 4],
+  ])('award value %i maps to tier %i', (awardValue, expectedTier) => {
+    expect(computeDoaTier(awardValue)).toBe(expectedTier);
+  });
+
+  it('throws on negative award values', () => {
+    expect(() => computeDoaTier(-1)).toThrow();
+  });
+});
+Create src/data/__tests__/gate-sla.test.ts:
+typescriptimport { describe, it, expect } from 'vitest';
+import { gateSlaBreach } from '../gate-sla';
+import { makeOpportunity } from '../../../tests/fixtures/factory';
+
+describe('gateSlaBreach', () => {
+  it('does not breach when time in stage is below SLA', () => {
+    const opp = makeOpportunity({
+      canonical_stage: 'Identified',
+      stage_entered_at: new Date(Date.now() - 24 * 60 * 60 * 1000), // 24 hours ago
+    });
+    const result = gateSlaBreach(opp);
+    expect(result.breaching).toBe(false);
+  });
+
+  it('breaches when time in stage exceeds SLA', () => {
+    const opp = makeOpportunity({
+      canonical_stage: 'Identified',
+      stage_entered_at: new Date(Date.now() - 200 * 60 * 60 * 1000), // 200 hours ago, SLA is 120
+    });
+    const result = gateSlaBreach(opp);
+    expect(result.breaching).toBe(true);
+    expect(result.sla_hours).toBe(120);
+  });
+
+  it.each([
+    'Identified',
+    'Awarded',
+    'In Contracting',
+    'In Implementation',
+  ])('returns valid breach result for stage %s', (stage) => {
+    const opp = makeOpportunity({ canonical_stage: stage });
+    const result = gateSlaBreach(opp);
+    expect(result).toHaveProperty('breaching');
+    expect(result).toHaveProperty('sla_hours');
+  });
+
+  it('returns breaching=false for terminal stages', () => {
+    const realized = makeOpportunity({ canonical_stage: 'Realized' });
+    const closed = makeOpportunity({ canonical_stage: 'Closed-No Action' });
+    expect(gateSlaBreach(realized).breaching).toBe(false);
+    expect(gateSlaBreach(closed).breaching).toBe(false);
+  });
+});
+Step 5 — Example integration tests (write all of these, plus more)
+Create tests/integration/stage-transition.integration.test.ts:
+typescriptimport { describe, it, expect, beforeEach } from 'vitest';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { eq } from 'drizzle-orm';
+import { opportunities, opportunityStageHistory } from '../../src/db/schema';
+import { transitionStage } from '../../src/data/stage-transition';
+import { makeOpportunity, makeUser } from '../fixtures/factory';
+
+describe('stage transition writes history row', () => {
+  let db: ReturnType<typeof drizzle>;
+  let sql: ReturnType<typeof postgres>;
+
+  beforeEach(async () => {
+    sql = postgres(process.env.DATABASE_URL!);
+    db = drizzle(sql);
+    await sql`TRUNCATE opportunities, opportunity_stage_history CASCADE`;
+  });
+
+  it('writes one history row per transition', async () => {
+    const user = makeUser();
+    const opp = makeOpportunity({ canonical_stage: 'Identified' });
+
+    await db.insert(opportunities).values(opp);
+    await transitionStage(db, opp.id, 'Awarded', user.id);
+
+    const history = await db
+      .select()
+      .from(opportunityStageHistory)
+      .where(eq(opportunityStageHistory.opportunity_id, opp.id));
+
+    expect(history).toHaveLength(1);
+    expect(history[0].from_stage).toBe('Identified');
+    expect(history[0].to_stage).toBe('Awarded');
+    expect(history[0].transitioned_by_user_id).toBe(user.id);
+  });
+
+  it('captures full lifecycle: 5 transitions = 5 history rows', async () => {
+    const user = makeUser();
+    const opp = makeOpportunity({ canonical_stage: 'Identified' });
+    await db.insert(opportunities).values(opp);
+
+    const path = ['Awarded', 'In Contracting', 'In Implementation', 'Realized'];
+    for (const stage of path) {
+      await transitionStage(db, opp.id, stage, user.id);
+    }
+
+    const history = await db
+      .select()
+      .from(opportunityStageHistory)
+      .where(eq(opportunityStageHistory.opportunity_id, opp.id))
+      .orderBy(opportunityStageHistory.transitioned_at);
+
+    expect(history).toHaveLength(4);
+    expect(history.map((r) => r.to_stage)).toEqual(path);
+  });
+
+  it('updates stage_entered_at on the parent record', async () => {
+    const user = makeUser();
+    const opp = makeOpportunity({ canonical_stage: 'Identified' });
+    await db.insert(opportunities).values(opp);
+    const before = opp.stage_entered_at;
+
+    await new Promise((r) => setTimeout(r, 10)); // ensure clock advances
+    await transitionStage(db, opp.id, 'Awarded', user.id);
+
+    const [updated] = await db
+      .select()
+      .from(opportunities)
+      .where(eq(opportunities.id, opp.id));
+
+    expect(updated.stage_entered_at.getTime()).toBeGreaterThan(before.getTime());
+  });
+});
+Create tests/integration/aggregate-gate.integration.test.ts — THE CFO INSURANCE TEST:
+typescriptimport { describe, it, expect, beforeEach } from 'vitest';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { opportunities } from '../../src/db/schema';
+import { computeHardSavingsTotal } from '../../src/data/aggregates';
+import { makeOpportunity, makeBackfilledOpportunity } from '../fixtures/factory';
+
+describe('Hard Savings aggregate excludes classification_needs_review records', () => {
+  let db: ReturnType<typeof drizzle>;
+  let sql: ReturnType<typeof postgres>;
+
+  beforeEach(async () => {
+    sql = postgres(process.env.DATABASE_URL!);
+    db = drizzle(sql);
+    await sql`TRUNCATE opportunities CASCADE`;
+  });
+
+  it('excludes backfilled records from Hard Savings totals', async () => {
+    const reviewed = makeOpportunity({
+      savings_type: 'Realized',
+      savings_classification: 'Hard',
+      classification_needs_review: false,
+      baseline_value: 1_000_000,
+    });
+    const backfilled = makeBackfilledOpportunity({
+      savings_type: 'Realized',
+      savings_classification: 'Hard',
+      classification_needs_review: true,
+      baseline_value: 5_000_000,
+    });
+
+    await db.insert(opportunities).values([reviewed, backfilled]);
+
+    const total = await computeHardSavingsTotal(db);
+
+    expect(total).toBe(1_000_000);
+    expect(total).not.toBe(6_000_000);
+    expect(total).not.toBe(5_000_000);
+  });
+
+  it('returns zero when all records need review', async () => {
+    const records = Array.from({ length: 10 }, () =>
+      makeBackfilledOpportunity({
+        savings_type: 'Realized',
+        savings_classification: 'Hard',
+        classification_needs_review: true,
+        baseline_value: 100_000,
+      })
+    );
+    await db.insert(opportunities).values(records);
+
+    const total = await computeHardSavingsTotal(db);
+    expect(total).toBe(0);
+  });
+});
+Step 6 — Backfill mapping verification test
+Create tests/integration/backfill-mapping.integration.test.ts:
+typescriptimport { describe, it, expect } from 'vitest';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import { sql } from 'drizzle-orm';
+
+describe('backfill mapping integrity', () => {
+  it('every opportunity has a non-null canonical_stage and savings_type', async () => {
+    const conn = postgres(process.env.DATABASE_URL!);
+    const db = drizzle(conn);
+
+    const result = await db.execute(sql`
+      SELECT
+        count(*) FILTER (WHERE canonical_stage IS NULL) AS null_stages,
+        count(*) FILTER (WHERE savings_type IS NULL) AS null_types,
+        count(*) FILTER (WHERE doa_tier IS NULL) AS null_tiers
+      FROM opportunities
+    `);
+
+    const row = result[0] as { null_stages: number; null_types: number; null_tiers: number };
+    expect(row.null_stages).toBe(0);
+    expect(row.null_types).toBe(0);
+    expect(row.null_tiers).toBe(0);
+  });
+
+  it('every backfilled opportunity has a corresponding history row with reason BACKFILL', async () => {
+    const conn = postgres(process.env.DATABASE_URL!);
+    const db = drizzle(conn);
+
+    const result = await db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM opportunities) AS opp_count,
+        (SELECT count(*) FROM opportunity_stage_history WHERE transition_reason = 'BACKFILL') AS backfill_history_count
+    `);
+
+    const row = result[0] as { opp_count: number; backfill_history_count: number };
+    expect(row.backfill_history_count).toBe(row.opp_count);
+  });
+});
+Step 7 — CI workflow
+Create .github/workflows/test.yml:
+yamlname: Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run --coverage
+      - uses: davelosert/vitest-coverage-report-action@v2
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run --config vitest.integration.config.ts
+Step 8 — Coverage baseline + branch protection
+
+After all tests are written and passing, run pnpm vitest run --coverage and capture the baseline numbers.
+Update vitest.config.ts thresholds to match the actual baseline (e.g., if real coverage is 72% lines, set threshold to 70% to allow ±2% noise).
+Commit the baseline.
+Configure GitHub branch protection on main to require both the unit and integration jobs to pass before merge.
+
+Acceptance criteria (all must pass before merge)
+Infrastructure works
+
+pnpm vitest run executes all unit tests in ≤ 60 seconds.
+pnpm vitest run --config vitest.integration.config.ts executes all integration tests in ≤ 5 minutes.
+Testcontainers starts a Postgres container, applies migrations, runs tests, and tears down cleanly with no leaked containers (docker ps shows no leftover test containers after the run).
+Coverage report generates and uploads to the PR comment.
+
+CI gating works
+
+A PR that introduces a failing unit test fails the unit job and is blocked from merging.
+A PR that introduces a failing integration test fails the integration job and is blocked from merging.
+A PR that drops coverage below the baseline fails CI.
+
+Coverage exists for #284
+The following must have at least one passing test each (verify by listing test files in PR description):
+
+DOA tier derivation (boundary values around all four thresholds)
+Gate SLA computation (under, at, over for each gate)
+Stage transition trigger (writes one history row per transition)
+Full lifecycle transition (5 stages = 5 history rows in correct order)
+stage_entered_at updates on transition
+Backfill mapping (every platform_status value maps correctly)
+Backfill review flag (every backfilled record has classification_needs_review = true)
+Aggregate gate test (Hard Savings excludes review-flagged records) — this test must exist
+Baseline field correctness (Realized requires baseline_value or N/A — Soft)
+OpenAPI contract (Zod schemas match actual API shapes)
+
+Fixture factory exists
+
+tests/fixtures/factory.ts exists with makeOpportunity, makeBackfilledOpportunity, makeUser exports.
+No test file uses inline hardcoded fixture arrays — all fixtures come from the factory.
+
+Documentation
+
+tests/README.md exists explaining how to run unit tests, integration tests, and coverage locally.
+
+Rollback plan
+The test infrastructure is additive — it does not modify production code paths. If any part of this ticket causes problems:
+
+Disable the Tests workflow by renaming .github/workflows/test.yml to .disabled.
+CI continues running other checks (security scanning from #286).
+Tests still run locally for any developer who wants them.
+Remove the workflow rename once the issue is fixed; no schema or production code changes need to be reverted.
+
+The Vitest configuration files, fixture factory, and test files can stay in the repo even if CI is disabled — they cause no runtime impact.
+Mode guidance
+Power. This ticket has the highest scope of any in the test battery: multi-package configuration, Testcontainers integration, fixture factory design, ~30+ test files, CI workflow, coverage thresholds, and branch protection. Economy will need three or four rounds and produce inconsistent test patterns. Lite cannot handle this scope at all.
+Run this ticket as a single Power-mode session, not split. The tests need to share a consistent style, fixture pattern, and assertion approach — that consistency is harder to achieve across multiple sessions.
+Why this matters (for the reviewer)
+Every test ticket downstream — #288 smoke, #289 data integrity, #290 E2E, #291 performance, #292 accessibility, #293 visual regression — depends on this ticket landing first. If this ticket is rushed or under-specified, every downstream test ticket inherits the gaps and the whole test pyramid stays broken.
+The aggregate gate test is the single most important test in this ticket. If the dashboard rebuild silently includes classification_needs_review = true records in a "Hard Savings" total shown to the CFO, that is the failure mode that erodes credibility for the entire platform. This test catches it before it ships.

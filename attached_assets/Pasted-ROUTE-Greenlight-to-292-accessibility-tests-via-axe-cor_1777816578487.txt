@@ -1,0 +1,549 @@
+ROUTE: Greenlight to #292 — accessibility tests via axe-core in CI. WCAG 2.2 AA compliance, runs on every PR, blocks on serious/critical violations. Lower complexity than the prior tickets (it's a drop-in scanner) but matters more than its size suggests because procurement enterprise sales conversations frequently include WCAG questions during vendor due diligence. Active corrections in force: structures not clever prompts, embedded specs not described in prose, verifiable acceptance criteria, mode guidance.
+
+PLAN: Single polished ticket. Lighter than #287/#290/#291 because the work itself is lighter — wire axe-core into Playwright, scan every dashboard route, set thresholds, document baseline. Embed example test code. End with confirmation prompt.
+
+BUILD/SHIP:
+
+---
+
+# #292 — Accessibility Tests (WCAG 2.2 AA via axe-core)
+
+## What & Why
+
+Establish automated accessibility testing on every dashboard route using axe-core, the industry-standard a11y scanning engine. Run on every pull request, block merges on serious or critical violations, and document the existing baseline so regressions are detectable without forcing every existing issue to be fixed up front.
+
+This matters for two reasons. First, if this platform ever sells into a regulated enterprise (financial services, healthcare, government, federal contractors), WCAG 2.2 AA compliance is asked about during vendor due diligence. Failing that question costs deals. Second, large procurement organizations — the platform's natural buyer — increasingly require Voluntary Product Accessibility Templates (VPATs) before sourcing. Automated scanning is the cheapest way to keep accessibility from silently degrading between manual audits.
+
+This ticket does not promise full WCAG compliance. Automated scanning catches roughly 30–40% of accessibility issues — the rest require manual testing with screen readers and keyboard-only navigation. This ticket establishes the automated floor and a baseline; manual auditing is a separate engagement.
+
+**Dependencies:** #287 (test framework with Playwright installed), #290 helpful but not required (the test approver account is reusable for authenticated route scanning).
+
+## Done looks like
+
+axe-core scans run automatically against every dashboard route on every pull request, configured for WCAG 2.2 Level AA standards. The CI job:
+
+- Logs in as a test account with appropriate permissions.
+- Visits every public route AND every authenticated dashboard route.
+- Runs an axe-core scan on each route.
+- Uploads a JSON report of all findings as a CI artifact.
+- Fails the build on any **new** serious or critical violation beyond the documented baseline.
+- Passes if findings match or improve on the baseline.
+
+A `.a11y-baseline.json` file records existing violations at the time this ticket lands, with each item linked to a follow-up ticket. CI fails only on new violations, not the baseline — same pattern as #286's security baseline.
+
+A `docs/accessibility.md` documents the standard targeted (WCAG 2.2 AA), the scanning tool, what the CI gate enforces, and how to handle violations.
+
+## Out of scope
+
+- Manual accessibility audits with screen readers (NVDA, JAWS, VoiceOver) — separate engagement.
+- Keyboard-only navigation testing — partially covered by axe but full coverage is manual.
+- Color contrast remediation for existing baseline violations — each becomes its own follow-up ticket.
+- WCAG 2.2 Level AAA testing — Level AA is the enterprise standard.
+- VPAT document creation — separate ticket if a deal requires it.
+- Mobile accessibility (mobile assistive tech variants) — separate ticket.
+- Accessibility testing of email or PDF outputs — separate ticket.
+
+## Steps for Replit
+
+### Step 1 — Install axe-core for Playwright
+
+```bash
+pnpm add -D @axe-core/playwright
+```
+
+### Step 2 — Test account
+
+Reuse the smoke test account from #288 (`smoke-test@<your-domain>.com`) for authenticated scans — read-only access is sufficient. The same `SMOKE_TEST_EMAIL` and `SMOKE_TEST_PASSWORD` secrets work here.
+
+### Step 3 — Routes to scan
+
+Define the inventory of routes in `tests/a11y/routes.ts`:
+
+```typescript
+export type RouteInventory = {
+  path: string;
+  name: string;
+  authenticated: boolean;
+  description: string;
+};
+
+export const ROUTES_TO_SCAN: RouteInventory[] = [
+  // Public routes
+  { path: '/',                  name: 'home',            authenticated: false, description: 'Marketing home page' },
+  { path: '/login',             name: 'login',           authenticated: false, description: 'Login form' },
+
+  // Authenticated dashboard routes
+  { path: '/dashboard',         name: 'command-center',  authenticated: true,  description: 'Command Center main view' },
+  { path: '/opportunities',     name: 'opp-list',        authenticated: true,  description: 'Opportunity list' },
+  { path: '/dashboard/levers',  name: 'lever-perf',      authenticated: true,  description: 'Lever performance breakdown' },
+  { path: '/dashboard/queue',   name: 'sign-off-queue',  authenticated: true,  description: 'Approval queue / Live queue' },
+
+  // Detail routes (the test will hit a known seeded opportunity)
+  // The {OPP_ID} placeholder is replaced at runtime with an env variable
+  { path: '/opportunities/{OPP_ID}',         name: 'opp-detail',  authenticated: true, description: 'Opportunity detail page' },
+  { path: '/opportunities/{OPP_ID}/history', name: 'opp-history', authenticated: true, description: 'Opportunity history view' },
+];
+```
+
+When the dashboard rebuild adds new routes, append them here in the same PR that ships the route. Routes added without a11y coverage are an automatic PR comment.
+
+### Step 4 — Playwright + axe configuration
+
+Create `playwright.a11y.config.ts`:
+
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/a11y',
+  timeout: 60_000,
+  expect: { timeout: 5_000 },
+  retries: 1,
+  workers: 4,
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: 'playwright-a11y-report' }],
+    ['json', { outputFile: 'a11y-results.json' }],
+  ],
+  use: {
+    baseURL: process.env.A11Y_BASE_URL ?? 'http://localhost:3000',
+    headless: true,
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+});
+```
+
+### Step 5 — The accessibility test
+
+Create `tests/a11y/scan.a11y.test.ts`:
+
+```typescript
+import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROUTES_TO_SCAN } from './routes';
+
+const BASELINE_PATH = path.join(process.cwd(), '.a11y-baseline.json');
+
+type AxeViolation = {
+  id: string;
+  impact: 'minor' | 'moderate' | 'serious' | 'critical' | null;
+  description: string;
+  help: string;
+  helpUrl: string;
+  nodes: { html: string; target: string[] }[];
+};
+
+type BaselineEntry = {
+  route: string;
+  violationId: string;
+  impact: string;
+  followUpTicket: string;
+  notes?: string;
+};
+
+function loadBaseline(): BaselineEntry[] {
+  if (!fs.existsSync(BASELINE_PATH)) return [];
+  return JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
+}
+
+function isBaselined(routeName: string, violationId: string, baseline: BaselineEntry[]): boolean {
+  return baseline.some((b) => b.route === routeName && b.violationId === violationId);
+}
+
+async function login(page: Page) {
+  await page.goto('/login');
+  await page.getByLabel(/email/i).fill(process.env.SMOKE_TEST_EMAIL!);
+  await page.getByLabel(/password/i).fill(process.env.SMOKE_TEST_PASSWORD!);
+  await page.getByRole('button', { name: /sign in|log in/i }).click();
+  await page.waitForURL(/\/dashboard|\/$/, { timeout: 15_000 });
+}
+
+const baseline = loadBaseline();
+
+for (const route of ROUTES_TO_SCAN) {
+  test(`a11y: ${route.name} (${route.path})`, async ({ page }) => {
+    if (route.authenticated) {
+      await login(page);
+    }
+
+    const path = route.path.replace('{OPP_ID}', process.env.A11Y_TEST_OPP_ID ?? '');
+    if (route.path.includes('{OPP_ID}') && !process.env.A11Y_TEST_OPP_ID) {
+      test.skip(true, 'A11Y_TEST_OPP_ID not set; skipping detail-route scan');
+    }
+
+    await page.goto(path);
+    await page.waitForLoadState('networkidle');
+
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+
+    const violations = results.violations as AxeViolation[];
+
+    // Partition into baselined vs new
+    const newViolations = violations.filter((v) => !isBaselined(route.name, v.id, baseline));
+    const seriousOrCritical = newViolations.filter(
+      (v) => v.impact === 'serious' || v.impact === 'critical'
+    );
+
+    // Always log all violations for the report
+    console.log(`Route ${route.name}: ${violations.length} total, ${newViolations.length} new, ${seriousOrCritical.length} new serious/critical`);
+
+    // Fail only on new serious or critical violations
+    expect.soft(seriousOrCritical, formatViolations(seriousOrCritical, route.name)).toHaveLength(0);
+  });
+}
+
+function formatViolations(violations: AxeViolation[], routeName: string): string {
+  if (violations.length === 0) return '';
+  const lines = [`\nNew accessibility violations on route "${routeName}":\n`];
+  for (const v of violations) {
+    lines.push(`  [${v.impact?.toUpperCase()}] ${v.id}: ${v.help}`);
+    lines.push(`    ${v.helpUrl}`);
+    lines.push(`    Affected nodes:`);
+    for (const node of v.nodes.slice(0, 3)) {
+      lines.push(`      - ${node.target.join(' > ')}`);
+    }
+    if (v.nodes.length > 3) {
+      lines.push(`      ... and ${v.nodes.length - 3} more`);
+    }
+  }
+  return lines.join('\n');
+}
+```
+
+### Step 6 — Baseline establishment script
+
+Create `scripts/establish-a11y-baseline.ts`:
+
+```typescript
+/**
+ * Run this ONCE after the a11y suite is in place to capture the existing
+ * violations as the baseline. Subsequent CI runs fail only on NEW violations
+ * beyond this baseline.
+ *
+ * Usage:
+ *   pnpm tsx scripts/establish-a11y-baseline.ts
+ *
+ * Reads `a11y-results.json` produced by the most recent test run and writes
+ * `.a11y-baseline.json` with one entry per existing violation.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+
+type RawAxeReport = {
+  suites: Array<{
+    title: string;
+    tests: Array<{
+      title: string;
+      stdout?: string;
+    }>;
+  }>;
+};
+
+function main() {
+  const resultsPath = path.join(process.cwd(), 'a11y-results.json');
+  const baselinePath = path.join(process.cwd(), '.a11y-baseline.json');
+
+  if (!fs.existsSync(resultsPath)) {
+    console.error('No a11y-results.json found. Run the a11y test suite first.');
+    process.exit(1);
+  }
+
+  const raw = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+  // The actual parsing depends on the Playwright JSON reporter shape; the
+  // implementation should iterate over each test's logged violations and
+  // produce baseline entries with placeholders for follow-up ticket numbers.
+
+  const baseline: Array<{ route: string; violationId: string; impact: string; followUpTicket: string }> = [];
+  // <implementation: walk results, extract violations per route, populate baseline>
+
+  fs.writeFileSync(baselinePath, JSON.stringify(baseline, null, 2));
+  console.log(`Baseline written with ${baseline.length} entries.`);
+  console.log('Each entry has followUpTicket="TBD" — fill these in with actual ticket numbers before committing.');
+}
+
+main();
+```
+
+The baseline file format:
+
+```json
+[
+  {
+    "route": "command-center",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "followUpTicket": "#311",
+    "notes": "Outcomes tile subtitles use #999 on white — needs #595959 minimum"
+  },
+  {
+    "route": "opp-list",
+    "violationId": "label",
+    "impact": "critical",
+    "followUpTicket": "#312",
+    "notes": "Filter dropdown lacks <label> association"
+  }
+]
+```
+
+Every entry must have a non-`TBD` follow-up ticket before the baseline is committed.
+
+### Step 7 — CI workflow
+
+Create `.github/workflows/a11y.yml`:
+
+```yaml
+name: Accessibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  a11y:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: a11y
+          POSTGRES_PASSWORD: a11y
+          POSTGRES_DB: a11y_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Migrate and seed
+        env:
+          DATABASE_URL: postgres://a11y:a11y@localhost:5432/a11y_db
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: |
+          pnpm drizzle-kit migrate
+          pnpm tsx scripts/seed-a11y-data.ts  # seeds smoke account + one opportunity for detail-route scan
+      - name: Start application
+        env:
+          DATABASE_URL: postgres://a11y:a11y@localhost:5432/a11y_db
+          NODE_ENV: test
+        run: |
+          pnpm build
+          pnpm start &
+          npx wait-on http://localhost:3000 --timeout 60000
+      - name: Run accessibility scans
+        env:
+          A11Y_BASE_URL: http://localhost:3000
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          A11Y_TEST_OPP_ID: ${{ secrets.A11Y_TEST_OPP_ID }}
+        run: pnpm exec playwright test --config playwright.a11y.config.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: a11y-report
+          path: |
+            playwright-a11y-report/
+            a11y-results.json
+          retention-days: 30
+```
+
+### Step 8 — Seed script for a11y test data
+
+Create `scripts/seed-a11y-data.ts`. This seeds:
+
+1. The smoke test account (so login works).
+2. One opportunity with a known ID exposed via env var so detail-route scans hit a real record.
+
+```typescript
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { users, opportunities, opportunityStageHistory } from '../src/db/schema';
+import bcrypt from 'bcrypt';
+import fs from 'node:fs';
+
+async function main() {
+  const conn = postgres(process.env.DATABASE_URL!);
+  const db = drizzle(conn);
+
+  const passwordHash = await bcrypt.hash(process.env.SMOKE_TEST_PASSWORD!, 10);
+  await db.insert(users).values({
+    email: process.env.SMOKE_TEST_EMAIL!,
+    password_hash: passwordHash,
+    role: 'Read-only',
+    doa_tier: 1,
+  }).onConflictDoNothing();
+
+  const [opp] = await db.insert(opportunities).values({
+    external_ref: 'a11y-test-opp',
+    award_value: 500_000,
+    canonical_stage: 'Identified',
+    savings_type: 'Identified',
+    savings_classification: 'Hard',
+    classification_needs_review: false,
+    sourcing_strategy: 'Competitive RFP',
+    baseline_method: 'Prior Unit Price',
+    baseline_value: 550_000,
+    stage_entered_at: new Date(),
+    lever: 'Supplier Consolidation',
+    title: 'A11y test opportunity',
+  }).returning();
+
+  await db.insert(opportunityStageHistory).values({
+    opportunity_id: opp.id,
+    from_stage: null,
+    to_stage: 'Identified',
+    transitioned_at: new Date(),
+    transition_reason: 'A11Y_SEED',
+  });
+
+  // Write the opp ID to a file CI can read into a secret on first run, or
+  // capture it in CI logs and set as A11Y_TEST_OPP_ID secret manually.
+  fs.writeFileSync('a11y-test-opp-id.txt', opp.id);
+  console.log(`A11y test opportunity seeded: ${opp.id}`);
+  await conn.end();
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+### Step 9 — Documentation
+
+Create `docs/accessibility.md`:
+
+```markdown
+# Accessibility
+
+This platform targets WCAG 2.2 Level AA. Automated scanning runs on every PR
+using axe-core; manual auditing with screen readers is a separate, periodic
+engagement.
+
+## What's automated
+- axe-core scans every public and authenticated dashboard route on every PR.
+- CI fails on new serious or critical violations beyond the documented baseline.
+- Findings are uploaded as artifacts and retained for 30 days.
+
+## What's not automated (and why)
+Automated scanning catches roughly 30–40% of accessibility issues. The remainder
+require:
+- Screen reader testing (NVDA, JAWS, VoiceOver)
+- Keyboard-only navigation
+- Cognitive accessibility review
+- User testing with assistive tech users
+
+These are scheduled separately and produce a VPAT when needed for sales.
+
+## The baseline
+`.a11y-baseline.json` records violations that existed when automated scanning
+was wired up. Every entry has a follow-up ticket. CI fails only on new
+violations, not baseline ones — the goal is to stop new debt while existing debt
+gets paid down through the follow-up tickets.
+
+## When a scan fails
+1. Pull the artifact from the failed CI run.
+2. Open `a11y-results.json` and find the new violation.
+3. Read the `helpUrl` field — it links to the WCAG criterion and remediation guidance.
+4. Fix the violation in the same PR that introduced it. Do NOT add to the baseline.
+
+## Adding a new route
+When a new route ships, append it to `tests/a11y/routes.ts` in the same PR.
+Routes added without a11y coverage trigger an automatic CI failure.
+
+## Updating the baseline
+The baseline should only grow if an existing violation is split into multiple
+distinct violations during a refactor (no net new accessibility debt). It
+should never grow because new debt was introduced.
+
+To remove a baselined violation after fixing it:
+1. Confirm the violation no longer appears in scan results.
+2. Delete the entry from `.a11y-baseline.json`.
+3. Close the follow-up ticket.
+```
+
+## Acceptance criteria (all must pass before merge)
+
+### Scans run
+
+- All routes in `tests/a11y/routes.ts` are scanned on every PR.
+- The CI workflow `Accessibility` runs successfully against a working build.
+- Scan results are uploaded as artifacts and retained for 30 days.
+
+### Baseline established
+
+- `.a11y-baseline.json` exists with one entry per existing violation at the time of merge.
+- Every baseline entry has a non-`TBD` follow-up ticket number.
+- The total number of baselined violations is documented in `docs/accessibility.md` for tracking.
+
+### CI gates correctly
+
+- A PR that introduces a new serious or critical violation fails the `Accessibility` job.
+- A PR that doesn't change accessibility (matches baseline) passes.
+- A PR that fixes a baselined violation passes (the violation no longer appears in scan output).
+
+### Failure paths produce useful evidence
+
+- Manually introduce a violation (e.g., add a button without an accessible name) and confirm:
+  - The CI job fails with a clear message naming the route, violation ID, impact level, and `helpUrl`.
+  - The artifact contains the full axe report with affected node selectors.
+
+### New-route enforcement
+
+- A PR that adds a new route to the application but doesn't add it to `tests/a11y/routes.ts` is flagged. (This can be enforced by a CI check that compares routes in the app to routes in the inventory file.)
+
+### Documentation exists
+
+- `docs/accessibility.md` exists with the content specified above.
+- `tests/a11y/routes.ts` is well-commented.
+
+## Rollback plan
+
+If accessibility scanning produces too many false positives or is otherwise blocking development:
+
+1. Disable the workflow by renaming `.github/workflows/a11y.yml` to `.disabled`.
+2. Other CI checks continue running.
+3. The `.a11y-baseline.json` file stays in place for reference.
+4. Local scan execution remains available via `pnpm exec playwright test --config playwright.a11y.config.ts`.
+
+The follow-up tickets for baselined violations remain valid work even if automated scanning is paused.
+
+## Mode guidance
+
+**Lite or Economy.** This is mostly drop-in tooling — wiring axe-core into Playwright, creating a routes inventory, generating a baseline, writing a CI workflow. Lite handles the simpler files (config, inventory, docs); Economy is appropriate if Replit needs to coordinate multiple file changes in one session. Power is overkill for this scope.
+
+Recommend running as **Economy** in one session for consistency.
+
+## Why this matters (for the reviewer)
+
+Accessibility scanning is the cheapest test infrastructure to wire up and one of the most expensive failure modes if neglected.
+
+For an internal procurement tool, accessibility doesn't feel urgent. But every enterprise sale conversation in the past five years asks for either a VPAT or evidence of WCAG 2.2 AA conformance. Federal contractors have to comply with Section 508. Large procurement organizations — the platform's natural buyers — increasingly fail vendors on accessibility during sourcing.
+
+Wiring axe-core in now means:
+
+1. The platform doesn't accumulate accessibility debt silently between manual audits.
+2. When a sales conversation asks "are you WCAG 2.2 AA conformant?", the answer is "scan results from every PR are available, and our automated suite catches X% of issues — here's the baseline and the manual audit schedule."
+3. The team builds a habit of considering accessibility on every PR, which is structurally cheaper than retrofitting it later.
+
+Automated scanning doesn't make the platform accessible. It makes accessibility *visible* — which is the necessary first step.
+
+---
+
+That's #292, locked.
+
+**Confirm and I'll roll into #293 (visual regression tests) next. That's the last technical ticket; #294 is a process rule, not a build, so I'll close out the package after #293.**
