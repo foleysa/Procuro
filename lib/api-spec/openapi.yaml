@@ -3470,6 +3470,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FunnelBackfillStatus'
+  /system/cleanup/funnel-snapshots/retention:
+    get:
+      operationId: getSystemFunnelSnapshotRetention
+      tags:
+      - system
+      summary: Read funnel-snapshot retention windows + audit metadata
+      description: 'Returns the active funnel-snapshot retention windows
+        (snapshot age + failure age, in days), the env-derived
+        bootstrap defaults, and the audit metadata for the most
+        recent operator change. Cross-tenant endpoint — gated by the
+        platform-admin token.
+
+        '
+      responses:
+        '200':
+          description: Funnel snapshot retention settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemFunnelSnapshotRetention'
+    put:
+      operationId: updateSystemFunnelSnapshotRetention
+      tags:
+      - system
+      summary: Update funnel-snapshot retention windows
+      description: 'Validates and persists the supplied snapshot/failure
+        retention day counts to `app_settings`. The next
+        `prune_funnel_snapshots` run picks the new cutoffs up
+        automatically. Returns the same shape as GET so the client
+        can refresh from the mutation response.
+
+        '
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemFunnelSnapshotRetentionUpdate'
+      responses:
+        '200':
+          description: Updated funnel-snapshot retention settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemFunnelSnapshotRetention'
+        '400':
+          description: Invalid retention windows
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - error
+                properties:
+                  error:
+                    type: string
   /system/csv-ingest/metrics:
     get:
       operationId: getSystemCsvIngestMetrics
@@ -9299,6 +9355,88 @@ components:
             scheduled.
 
             '
+    SystemFunnelSnapshotRetention:
+      type: object
+      required:
+      - snapshotDays
+      - failureDays
+      - defaultSnapshotDays
+      - defaultFailureDays
+      - isOverride
+      - lastChangedAt
+      - lastChangedBy
+      properties:
+        snapshotDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: 'Active snapshot retention window in days. Snapshots
+            in `funnel_snapshots` (and their cascading
+            `funnel_annotations`) older than this window get pruned
+            on each `prune_funnel_snapshots` run.
+
+            '
+        failureDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: 'Active failure retention window in days. Rows in
+            `funnel_snapshot_failures` older than this window get
+            pruned on each `prune_funnel_snapshots` run.
+
+            '
+        defaultSnapshotDays:
+          type: integer
+          description: 'Bootstrap default snapshot window from env / in-code
+            constant. Surfaced so the UI can show "Default: Nd" next
+            to the editable input.
+
+            '
+        defaultFailureDays:
+          type: integer
+          description: 'Bootstrap default failure window from env / in-code
+            constant. Surfaced so the UI can show "Default: Nd" next
+            to the editable input.
+
+            '
+        isOverride:
+          type: boolean
+          description: 'True when the active windows come from an operator-set
+            row in `app_settings`, false when they equal the env /
+            in-code bootstrap defaults.
+
+            '
+        lastChangedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Wall-clock time of the most recent operator update,
+            or null when the windows have never been overridden.
+
+            '
+        lastChangedBy:
+          type: string
+          nullable: true
+          description: 'Email of the operator who set the current value, or
+            null when the windows have never been overridden.
+
+            '
+    SystemFunnelSnapshotRetentionUpdate:
+      type: object
+      required:
+      - snapshotDays
+      - failureDays
+      properties:
+        snapshotDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: 'New snapshot retention window in days (1–3650).'
+        failureDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: 'New failure retention window in days (1–3650).'
     SystemCleanupRunAccepted:
       type: object
       required:

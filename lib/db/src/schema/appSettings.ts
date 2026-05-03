@@ -46,3 +46,15 @@ export type InsertAppSettingRow = typeof appSettingsTable.$inferInsert;
 
 /** Stable key for the periodic `prune_jobs` cleanup schedule. */
 export const APP_SETTING_KEY_JOB_PRUNE_SCHEDULE = "job_prune_schedule" as const;
+
+/**
+ * Stable key for the funnel-snapshot retention windows (snapshot age
+ * + failure age, in days). Backs the `prune_funnel_snapshots` job's
+ * cutoffs so a Platform Admin can stretch (or shrink) retention from
+ * the System page without an env edit + restart. Env vars
+ * (`FUNNEL_SNAPSHOT_RETENTION_DAYS`,
+ * `FUNNEL_SNAPSHOT_FAILURE_RETENTION_DAYS`) remain bootstrap defaults
+ * used until an operator override is written.
+ */
+export const APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION =
+  "funnel_snapshot_retention" as const;

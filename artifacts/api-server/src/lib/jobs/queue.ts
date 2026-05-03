@@ -2,6 +2,7 @@ import {
   db,
   appSettingsTable,
   APP_SETTING_KEY_JOB_PRUNE_SCHEDULE,
+  APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION,
   erpConnectionsTable,
   jobsTable,
   jobKindSettingsTable,
@@ -1114,13 +1115,51 @@ const DEFAULT_FUNNEL_SNAPSHOT_RETENTION_DAYS = 365;
 const DEFAULT_FUNNEL_FAILURE_RETENTION_DAYS = 90;
 const DEFAULT_FUNNEL_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 
+/**
+ * Hard limits on operator-tunable retention windows. Days must be a
+ * positive integer; the upper bound (3650d ≈ 10 years) keeps a typo
+ * from accidentally pinning every snapshot ever written.
+ */
+const FUNNEL_RETENTION_MIN_DAYS = 1;
+const FUNNEL_RETENTION_MAX_DAYS = 3650;
+
 export interface FunnelSnapshotRetentionConfig {
   snapshotsOlderThanMs: number;
   failuresOlderThanMs: number;
 }
 
-/** Resolve the configured funnel-snapshot retention windows, in milliseconds. */
-export function getFunnelSnapshotRetentionConfig(): FunnelSnapshotRetentionConfig {
+/**
+ * Operator-facing retention metadata. Mirrors the
+ * `JobPruneSchedule` shape so the System page can render the same
+ * "default vs override" UX next to the funnel snapshot cleanup card.
+ */
+export interface FunnelSnapshotRetentionSettings {
+  /** Active snapshot retention window, in days (integer). */
+  snapshotDays: number;
+  /** Active failure-row retention window, in days (integer). */
+  failureDays: number;
+  /** Bootstrap default snapshot window from env / in-code constant. */
+  defaultSnapshotDays: number;
+  /** Bootstrap default failure window from env / in-code constant. */
+  defaultFailureDays: number;
+  /** True when an operator override exists in `app_settings`. */
+  isOverride: boolean;
+  /** Wall-clock time of the most recent operator update, or null. */
+  lastChangedAt: Date | null;
+  /** Email of the operator who set the current value, or null. */
+  lastChangedBy: string | null;
+}
+
+/**
+ * Resolve the bootstrap defaults from env vars (with a hard-coded
+ * fallback). These are the values used until an operator writes an
+ * override row in `app_settings`. Surfaced separately so the System
+ * page can render a "Default: Nd" hint next to the editable input.
+ */
+export function getFunnelSnapshotRetentionDefaults(): {
+  snapshotDays: number;
+  failureDays: number;
+} {
   const snapshotDays = envPositiveNumber(
     "FUNNEL_SNAPSHOT_RETENTION_DAYS",
     DEFAULT_FUNNEL_SNAPSHOT_RETENTION_DAYS,
@@ -1129,10 +1168,157 @@ export function getFunnelSnapshotRetentionConfig(): FunnelSnapshotRetentionConfi
     "FUNNEL_SNAPSHOT_FAILURE_RETENTION_DAYS",
     DEFAULT_FUNNEL_FAILURE_RETENTION_DAYS,
   );
+  return { snapshotDays, failureDays };
+}
+
+interface StoredFunnelRetentionValue {
+  snapshotDays: number;
+  failureDays: number;
+}
+
+function readStoredFunnelRetention(
+  row: AppSettingRow | undefined,
+): StoredFunnelRetentionValue | null {
+  if (!row) return null;
+  const value = row.value as Partial<StoredFunnelRetentionValue> | null;
+  const snap = value?.snapshotDays;
+  const fail = value?.failureDays;
+  if (
+    typeof snap !== "number" ||
+    !Number.isFinite(snap) ||
+    !Number.isInteger(snap) ||
+    snap < FUNNEL_RETENTION_MIN_DAYS ||
+    snap > FUNNEL_RETENTION_MAX_DAYS
+  ) {
+    return null;
+  }
+  if (
+    typeof fail !== "number" ||
+    !Number.isFinite(fail) ||
+    !Number.isInteger(fail) ||
+    fail < FUNNEL_RETENTION_MIN_DAYS ||
+    fail > FUNNEL_RETENTION_MAX_DAYS
+  ) {
+    return null;
+  }
+  return { snapshotDays: snap, failureDays: fail };
+}
+
+/**
+ * Read the currently-active funnel-snapshot retention windows along
+ * with the audit metadata. Falls back to the env-derived defaults
+ * (see `getFunnelSnapshotRetentionDefaults`) when no operator
+ * override exists, or when the stored row fails validation
+ * (defensive — a malformed row should never wedge the pruner).
+ */
+export async function getFunnelSnapshotRetentionSettings(): Promise<FunnelSnapshotRetentionSettings> {
+  const defaults = getFunnelSnapshotRetentionDefaults();
+  const [row] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION));
+  const stored = readStoredFunnelRetention(row);
+  if (!stored) {
+    if (row) {
+      logger.warn(
+        { stored: row.value },
+        "Stored funnel_snapshot_retention is invalid; falling back to defaults",
+      );
+    }
+    return {
+      snapshotDays: defaults.snapshotDays,
+      failureDays: defaults.failureDays,
+      defaultSnapshotDays: defaults.snapshotDays,
+      defaultFailureDays: defaults.failureDays,
+      isOverride: false,
+      lastChangedAt: null,
+      lastChangedBy: null,
+    };
+  }
   return {
-    snapshotsOlderThanMs: snapshotDays * DAY_MS,
-    failuresOlderThanMs: failureDays * DAY_MS,
+    snapshotDays: stored.snapshotDays,
+    failureDays: stored.failureDays,
+    defaultSnapshotDays: defaults.snapshotDays,
+    defaultFailureDays: defaults.failureDays,
+    isOverride: true,
+    lastChangedAt: row?.lastChangedAt ?? row?.updatedAt ?? null,
+    lastChangedBy: row?.lastChangedBy ?? null,
   };
+}
+
+/**
+ * Resolve the configured funnel-snapshot retention windows, in
+ * milliseconds. Reads the persisted operator override from
+ * `app_settings`, falling back to env-derived defaults when none
+ * exists. Async because the read goes through the DB; callers must
+ * `await` the result.
+ */
+export async function getFunnelSnapshotRetentionConfig(): Promise<FunnelSnapshotRetentionConfig> {
+  const settings = await getFunnelSnapshotRetentionSettings();
+  return {
+    snapshotsOlderThanMs: settings.snapshotDays * DAY_MS,
+    failuresOlderThanMs: settings.failureDays * DAY_MS,
+  };
+}
+
+/**
+ * Validate a proposed funnel-snapshot retention day count. Throws a
+ * descriptive `Error` when out of bounds; the route turns the message
+ * into a 400 response.
+ */
+function validateRetentionDays(label: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a number`);
+  }
+  if (!Number.isInteger(value)) {
+    throw new Error(`${label} must be an integer`);
+  }
+  if (value < FUNNEL_RETENTION_MIN_DAYS || value > FUNNEL_RETENTION_MAX_DAYS) {
+    throw new Error(
+      `${label} must be between ${FUNNEL_RETENTION_MIN_DAYS} and ${FUNNEL_RETENTION_MAX_DAYS} days`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Persist a new funnel-snapshot retention override and return the
+ * fresh settings row. The next `prune_funnel_snapshots` run picks the
+ * value up automatically — no in-process timer to reload because the
+ * pruner reads the cutoffs at execution time, not at scheduler arming.
+ */
+export async function setFunnelSnapshotRetentionSettings(args: {
+  snapshotDays: number;
+  failureDays: number;
+  actorEmail: string | null;
+}): Promise<FunnelSnapshotRetentionSettings> {
+  const snapshotDays = validateRetentionDays("snapshotDays", args.snapshotDays);
+  const failureDays = validateRetentionDays("failureDays", args.failureDays);
+  const now = new Date();
+  await db
+    .insert(appSettingsTable)
+    .values({
+      key: APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION,
+      value: { snapshotDays, failureDays } satisfies StoredFunnelRetentionValue,
+      lastChangedAt: now,
+      lastChangedBy: args.actorEmail,
+    })
+    .onConflictDoUpdate({
+      target: appSettingsTable.key,
+      set: {
+        value: {
+          snapshotDays,
+          failureDays,
+        } satisfies StoredFunnelRetentionValue,
+        lastChangedAt: now,
+        lastChangedBy: args.actorEmail,
+      },
+    });
+  logger.info(
+    { snapshotDays, failureDays, actor: args.actorEmail },
+    "Updated funnel_snapshot_retention",
+  );
+  return getFunnelSnapshotRetentionSettings();
 }
 
 export interface PruneFunnelSnapshotsResult {
@@ -1166,7 +1352,7 @@ export interface PruneFunnelSnapshotsResult {
 export async function pruneOldFunnelSnapshots(
   overrides: Partial<FunnelSnapshotRetentionConfig> = {},
 ): Promise<PruneFunnelSnapshotsResult> {
-  const cfg = getFunnelSnapshotRetentionConfig();
+  const cfg = await getFunnelSnapshotRetentionConfig();
   const snapshotsOlderThanMs =
     overrides.snapshotsOlderThanMs ?? cfg.snapshotsOlderThanMs;
   const failuresOlderThanMs =

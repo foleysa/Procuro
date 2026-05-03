@@ -118,7 +118,7 @@ router.get(
     // `prune_funnel_snapshots` job removes it. Computed from env each
     // request — these are constants from `getFunnelSnapshotRetentionConfig`,
     // so the cost is negligible and we avoid a stale cache.
-    const retention = getFunnelSnapshotRetentionConfig();
+    const retention = await getFunnelSnapshotRetentionConfig();
 
     res.json({
       snapshots: rows,

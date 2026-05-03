@@ -7197,6 +7197,129 @@ export const GetFunnelBackfillStatusResponse = zod.object({
 });
 
 /**
+ * Returns the active funnel-snapshot retention windows (snapshot age + failure age, in days), the env-derived bootstrap defaults, and the audit metadata for the most recent operator change. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Read funnel-snapshot retention windows + audit metadata
+ */
+export const getSystemFunnelSnapshotRetentionResponseSnapshotDaysMax = 3650;
+
+export const getSystemFunnelSnapshotRetentionResponseFailureDaysMax = 3650;
+
+export const GetSystemFunnelSnapshotRetentionResponse = zod.object({
+  snapshotDays: zod
+    .number()
+    .min(1)
+    .max(getSystemFunnelSnapshotRetentionResponseSnapshotDaysMax)
+    .describe(
+      "Active snapshot retention window in days. Snapshots in `funnel_snapshots` (and their cascading `funnel_annotations`) older than this window get pruned on each `prune_funnel_snapshots` run.\n",
+    ),
+  failureDays: zod
+    .number()
+    .min(1)
+    .max(getSystemFunnelSnapshotRetentionResponseFailureDaysMax)
+    .describe(
+      "Active failure retention window in days. Rows in `funnel_snapshot_failures` older than this window get pruned on each `prune_funnel_snapshots` run.\n",
+    ),
+  defaultSnapshotDays: zod
+    .number()
+    .describe(
+      'Bootstrap default snapshot window from env \/ in-code constant. Surfaced so the UI can show \"Default: Nd\" next to the editable input.\n',
+    ),
+  defaultFailureDays: zod
+    .number()
+    .describe(
+      'Bootstrap default failure window from env \/ in-code constant. Surfaced so the UI can show \"Default: Nd\" next to the editable input.\n',
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when the active windows come from an operator-set row in `app_settings`, false when they equal the env \/ in-code bootstrap defaults.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Wall-clock time of the most recent operator update, or null when the windows have never been overridden.\n",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the operator who set the current value, or null when the windows have never been overridden.\n",
+    ),
+});
+
+/**
+ * Validates and persists the supplied snapshot/failure retention day counts to `app_settings`. The next `prune_funnel_snapshots` run picks the new cutoffs up automatically. Returns the same shape as GET so the client can refresh from the mutation response.
+
+ * @summary Update funnel-snapshot retention windows
+ */
+export const updateSystemFunnelSnapshotRetentionBodySnapshotDaysMax = 3650;
+
+export const updateSystemFunnelSnapshotRetentionBodyFailureDaysMax = 3650;
+
+export const UpdateSystemFunnelSnapshotRetentionBody = zod.object({
+  snapshotDays: zod
+    .number()
+    .min(1)
+    .max(updateSystemFunnelSnapshotRetentionBodySnapshotDaysMax)
+    .describe("New snapshot retention window in days (1–3650)."),
+  failureDays: zod
+    .number()
+    .min(1)
+    .max(updateSystemFunnelSnapshotRetentionBodyFailureDaysMax)
+    .describe("New failure retention window in days (1–3650)."),
+});
+
+export const updateSystemFunnelSnapshotRetentionResponseSnapshotDaysMax = 3650;
+
+export const updateSystemFunnelSnapshotRetentionResponseFailureDaysMax = 3650;
+
+export const UpdateSystemFunnelSnapshotRetentionResponse = zod.object({
+  snapshotDays: zod
+    .number()
+    .min(1)
+    .max(updateSystemFunnelSnapshotRetentionResponseSnapshotDaysMax)
+    .describe(
+      "Active snapshot retention window in days. Snapshots in `funnel_snapshots` (and their cascading `funnel_annotations`) older than this window get pruned on each `prune_funnel_snapshots` run.\n",
+    ),
+  failureDays: zod
+    .number()
+    .min(1)
+    .max(updateSystemFunnelSnapshotRetentionResponseFailureDaysMax)
+    .describe(
+      "Active failure retention window in days. Rows in `funnel_snapshot_failures` older than this window get pruned on each `prune_funnel_snapshots` run.\n",
+    ),
+  defaultSnapshotDays: zod
+    .number()
+    .describe(
+      'Bootstrap default snapshot window from env \/ in-code constant. Surfaced so the UI can show \"Default: Nd\" next to the editable input.\n',
+    ),
+  defaultFailureDays: zod
+    .number()
+    .describe(
+      'Bootstrap default failure window from env \/ in-code constant. Surfaced so the UI can show \"Default: Nd\" next to the editable input.\n',
+    ),
+  isOverride: zod
+    .boolean()
+    .describe(
+      "True when the active windows come from an operator-set row in `app_settings`, false when they equal the env \/ in-code bootstrap defaults.\n",
+    ),
+  lastChangedAt: zod.coerce
+    .date()
+    .nullable()
+    .describe(
+      "Wall-clock time of the most recent operator update, or null when the windows have never been overridden.\n",
+    ),
+  lastChangedBy: zod
+    .string()
+    .nullable()
+    .describe(
+      "Email of the operator who set the current value, or null when the windows have never been overridden.\n",
+    ),
+});
+
+/**
  * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.
 
  * @summary Recent CSV streaming-ingest throughput + per-entity trend

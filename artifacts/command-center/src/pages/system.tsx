@@ -21,6 +21,9 @@ import {
   useRunSystemFunnelSnapshotCleanup,
   useGetFunnelBackfillStatus,
   useRunFunnelBackfill,
+  useGetSystemFunnelSnapshotRetention,
+  useUpdateSystemFunnelSnapshotRetention,
+  getGetSystemFunnelSnapshotRetentionQueryKey,
   useGetSystemCsvIngestMetrics,
   getGetSystemCsvIngestMetricsQueryKey,
   useGetSystemCsvThroughputHistory,
@@ -629,6 +632,55 @@ export default function System() {
       },
     },
   });
+  // Funnel-snapshot retention windows (#201). Operator-tunable from the
+  // System page so an investigation can stretch retention without an
+  // env edit + restart. Stored in `app_settings`; the next prune run
+  // reads the live cutoffs at execution time, so a save here takes
+  // effect immediately on the next `prune_funnel_snapshots`.
+  const funnelRetentionQueryKey = useMemo(
+    () => getGetSystemFunnelSnapshotRetentionQueryKey(),
+    [],
+  );
+  const funnelRetentionQuery = useGetSystemFunnelSnapshotRetention({
+    query: { queryKey: funnelRetentionQueryKey },
+  });
+  const [funnelSnapshotDaysDraft, setFunnelSnapshotDaysDraft] =
+    useState<string>("");
+  const [funnelFailureDaysDraft, setFunnelFailureDaysDraft] =
+    useState<string>("");
+  const [funnelRetentionDirty, setFunnelRetentionDirty] = useState(false);
+  useEffect(() => {
+    // Same "don't clobber the operator's in-progress edit on a
+    // background refetch" pattern as the cron-schedule input above.
+    if (!funnelRetentionDirty && funnelRetentionQuery.data) {
+      setFunnelSnapshotDaysDraft(
+        String(funnelRetentionQuery.data.snapshotDays),
+      );
+      setFunnelFailureDaysDraft(
+        String(funnelRetentionQuery.data.failureDays),
+      );
+    }
+  }, [funnelRetentionQuery.data, funnelRetentionDirty]);
+  const updateFunnelRetentionM = useUpdateSystemFunnelSnapshotRetention({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Funnel retention updated",
+          description: `Snapshots kept ${resp.snapshotDays}d, failures kept ${resp.failureDays}d.`,
+        });
+        setFunnelRetentionDirty(false);
+        qc.invalidateQueries({ queryKey: funnelRetentionQueryKey });
+        qc.invalidateQueries({ queryKey: funnelCleanupQueryKey });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not update funnel retention",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
   const runFunnelCleanupM = useRunSystemFunnelSnapshotCleanup({
     mutation: {
       onSuccess: (resp) => {
@@ -1301,7 +1353,10 @@ export default function System() {
                     )}
                   </pre>
                 )}
-                <div className="text-xs text-muted-foreground">
+                <div
+                  className="text-xs text-muted-foreground"
+                  data-testid="text-funnel-retention-summary"
+                >
                   Retention windows: snapshots{" "}
                   {Math.round(
                     funnelCleanupQuery.data.retention
@@ -1315,6 +1370,165 @@ export default function System() {
                       (24 * 60 * 60 * 1000),
                   )}
                   d.
+                </div>
+                <div
+                  className="border-t pt-3 space-y-2"
+                  data-testid="section-funnel-retention"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs uppercase text-muted-foreground">
+                      Retention windows (days)
+                    </span>
+                    {funnelRetentionQuery.data && (
+                      <span
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="text-funnel-retention-default"
+                      >
+                        Default:{" "}
+                        <code className="font-mono">
+                          {funnelRetentionQuery.data.defaultSnapshotDays}d
+                        </code>{" "}
+                        /{" "}
+                        <code className="font-mono">
+                          {funnelRetentionQuery.data.defaultFailureDays}d
+                        </code>
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label
+                        htmlFor="funnel-retention-snapshot-days"
+                        className="text-[11px] text-muted-foreground"
+                      >
+                        Snapshots
+                      </label>
+                      <Input
+                        id="funnel-retention-snapshot-days"
+                        data-testid="input-funnel-retention-snapshot-days"
+                        type="number"
+                        min={1}
+                        max={3650}
+                        step={1}
+                        value={funnelSnapshotDaysDraft}
+                        onChange={(e) => {
+                          setFunnelSnapshotDaysDraft(e.target.value);
+                          setFunnelRetentionDirty(true);
+                        }}
+                        disabled={
+                          funnelRetentionQuery.isLoading ||
+                          updateFunnelRetentionM.isPending
+                        }
+                        className="tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="funnel-retention-failure-days"
+                        className="text-[11px] text-muted-foreground"
+                      >
+                        Failures
+                      </label>
+                      <Input
+                        id="funnel-retention-failure-days"
+                        data-testid="input-funnel-retention-failure-days"
+                        type="number"
+                        min={1}
+                        max={3650}
+                        step={1}
+                        value={funnelFailureDaysDraft}
+                        onChange={(e) => {
+                          setFunnelFailureDaysDraft(e.target.value);
+                          setFunnelRetentionDirty(true);
+                        }}
+                        disabled={
+                          funnelRetentionQuery.isLoading ||
+                          updateFunnelRetentionM.isPending
+                        }
+                        className="tabular-nums"
+                      />
+                    </div>
+                  </div>
+                  {(() => {
+                    const snap = Number(funnelSnapshotDaysDraft);
+                    const fail = Number(funnelFailureDaysDraft);
+                    const isValid =
+                      Number.isInteger(snap) &&
+                      snap >= 1 &&
+                      snap <= 3650 &&
+                      Number.isInteger(fail) &&
+                      fail >= 1 &&
+                      fail <= 3650;
+                    const persistedSnap =
+                      funnelRetentionQuery.data?.snapshotDays;
+                    const persistedFail =
+                      funnelRetentionQuery.data?.failureDays;
+                    const matchesPersisted =
+                      persistedSnap === snap && persistedFail === fail;
+                    return (
+                      <>
+                        {!isValid &&
+                          (funnelSnapshotDaysDraft.trim() !== "" ||
+                            funnelFailureDaysDraft.trim() !== "") && (
+                            <div className="text-xs text-red-600">
+                              Each window must be an integer between 1 and 3650
+                              days.
+                            </div>
+                          )}
+                        <div className="flex justify-end">
+                          <Button
+                            data-testid="btn-save-funnel-retention"
+                            size="sm"
+                            onClick={() =>
+                              updateFunnelRetentionM.mutate({
+                                data: {
+                                  snapshotDays: snap,
+                                  failureDays: fail,
+                                },
+                              })
+                            }
+                            disabled={
+                              updateFunnelRetentionM.isPending ||
+                              !isValid ||
+                              (!funnelRetentionDirty && matchesPersisted)
+                            }
+                          >
+                            {updateFunnelRetentionM.isPending ? (
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <Save className="w-3 h-3 mr-1" />
+                            )}
+                            Save
+                          </Button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                  {funnelRetentionQuery.data?.isOverride &&
+                    funnelRetentionQuery.data.lastChangedAt && (
+                      <div
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="text-funnel-retention-audit"
+                      >
+                        Last changed{" "}
+                        {formatDateTime(
+                          funnelRetentionQuery.data.lastChangedAt,
+                        )}
+                        {funnelRetentionQuery.data.lastChangedBy
+                          ? ` by ${funnelRetentionQuery.data.lastChangedBy}`
+                          : ""}
+                        .
+                      </div>
+                    )}
+                  {!funnelRetentionQuery.data?.isOverride &&
+                    funnelRetentionQuery.data && (
+                      <div
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="text-funnel-retention-default-active"
+                      >
+                        Using default windows (no operator override).
+                      </div>
+                    )}
                 </div>
                 <div className="flex justify-end">
                   <Button

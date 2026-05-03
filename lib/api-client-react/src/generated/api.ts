@@ -208,6 +208,8 @@ import type {
   SystemCsvIngestMetrics,
   SystemCsvThroughputHistory,
   SystemFunnelSnapshotCleanupStatus,
+  SystemFunnelSnapshotRetention,
+  SystemFunnelSnapshotRetentionUpdate,
   TestErpConnectionRequest,
   TestErpConnectionResult,
   TodayFeed,
@@ -216,6 +218,7 @@ import type {
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
   UpdateSystemCleanupSchedule400,
+  UpdateSystemFunnelSnapshotRetention400,
   WatchedIssuer,
   WatchedIssuerListResponse,
   WatchedIssuerSuggestionListResponse,
@@ -9752,6 +9755,183 @@ export function useGetFunnelBackfillStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns the active funnel-snapshot retention windows (snapshot age + failure age, in days), the env-derived bootstrap defaults, and the audit metadata for the most recent operator change. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Read funnel-snapshot retention windows + audit metadata
+ */
+export const getGetSystemFunnelSnapshotRetentionUrl = () => {
+  return `/api/system/cleanup/funnel-snapshots/retention`;
+};
+
+export const getSystemFunnelSnapshotRetention = async (
+  options?: RequestInit,
+): Promise<SystemFunnelSnapshotRetention> => {
+  return customFetch<SystemFunnelSnapshotRetention>(
+    getGetSystemFunnelSnapshotRetentionUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSystemFunnelSnapshotRetentionQueryKey = () => {
+  return [`/api/system/cleanup/funnel-snapshots/retention`] as const;
+};
+
+export const getGetSystemFunnelSnapshotRetentionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemFunnelSnapshotRetentionQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>
+  > = ({ signal }) =>
+    getSystemFunnelSnapshotRetention({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemFunnelSnapshotRetentionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>
+>;
+export type GetSystemFunnelSnapshotRetentionQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read funnel-snapshot retention windows + audit metadata
+ */
+
+export function useGetSystemFunnelSnapshotRetention<
+  TData = Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemFunnelSnapshotRetention>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSystemFunnelSnapshotRetentionQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Validates and persists the supplied snapshot/failure retention day counts to `app_settings`. The next `prune_funnel_snapshots` run picks the new cutoffs up automatically. Returns the same shape as GET so the client can refresh from the mutation response.
+
+ * @summary Update funnel-snapshot retention windows
+ */
+export const getUpdateSystemFunnelSnapshotRetentionUrl = () => {
+  return `/api/system/cleanup/funnel-snapshots/retention`;
+};
+
+export const updateSystemFunnelSnapshotRetention = async (
+  systemFunnelSnapshotRetentionUpdate: SystemFunnelSnapshotRetentionUpdate,
+  options?: RequestInit,
+): Promise<SystemFunnelSnapshotRetention> => {
+  return customFetch<SystemFunnelSnapshotRetention>(
+    getUpdateSystemFunnelSnapshotRetentionUrl(),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(systemFunnelSnapshotRetentionUpdate),
+    },
+  );
+};
+
+export const getUpdateSystemFunnelSnapshotRetentionMutationOptions = <
+  TError = ErrorType<UpdateSystemFunnelSnapshotRetention400>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>,
+    TError,
+    { data: BodyType<SystemFunnelSnapshotRetentionUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>,
+  TError,
+  { data: BodyType<SystemFunnelSnapshotRetentionUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSystemFunnelSnapshotRetention"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>,
+    { data: BodyType<SystemFunnelSnapshotRetentionUpdate> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateSystemFunnelSnapshotRetention(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSystemFunnelSnapshotRetentionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>
+>;
+export type UpdateSystemFunnelSnapshotRetentionMutationBody =
+  BodyType<SystemFunnelSnapshotRetentionUpdate>;
+export type UpdateSystemFunnelSnapshotRetentionMutationError =
+  ErrorType<UpdateSystemFunnelSnapshotRetention400>;
+
+/**
+ * @summary Update funnel-snapshot retention windows
+ */
+export const useUpdateSystemFunnelSnapshotRetention = <
+  TError = ErrorType<UpdateSystemFunnelSnapshotRetention400>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>,
+    TError,
+    { data: BodyType<SystemFunnelSnapshotRetentionUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSystemFunnelSnapshotRetention>>,
+  TError,
+  { data: BodyType<SystemFunnelSnapshotRetentionUpdate> },
+  TContext
+> => {
+  return useMutation(
+    getUpdateSystemFunnelSnapshotRetentionMutationOptions(options),
+  );
+};
 
 /**
  * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.

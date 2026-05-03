@@ -5,11 +5,12 @@ import { requirePlatformAdmin } from "../lib/platform-admin";
 import {
   ensureFunnelSnapshotPruneJobScheduled,
   ensurePruneJobScheduled,
-  getFunnelSnapshotRetentionConfig,
+  getFunnelSnapshotRetentionSettings,
   getJobPruneSchedule,
   getJobRetentionConfig,
   getNextJobPruneRunAt,
   parsePruneCron,
+  setFunnelSnapshotRetentionSettings,
   setJobPruneSchedule,
 } from "../lib/jobs/queue";
 import {
@@ -142,7 +143,8 @@ router.get(
       )
       .limit(1);
 
-    const cfg = getFunnelSnapshotRetentionConfig();
+    const settings = await getFunnelSnapshotRetentionSettings();
+    const DAY_MS = 24 * 60 * 60 * 1000;
     res.json({
       lastJob: last
         ? {
@@ -157,10 +159,93 @@ router.get(
         : null,
       activeJobId: active?.id ?? null,
       retention: {
-        snapshotsOlderThanMs: cfg.snapshotsOlderThanMs,
-        failuresOlderThanMs: cfg.failuresOlderThanMs,
+        snapshotsOlderThanMs: settings.snapshotDays * DAY_MS,
+        failuresOlderThanMs: settings.failureDays * DAY_MS,
       },
     });
+  },
+);
+
+/**
+ * Read the funnel-snapshot retention windows + audit metadata. Mirrors
+ * `/system/job-kind-settings` and `/system/cleanup/schedule` so the
+ * System page renders the same "default vs override" UX next to the
+ * Funnel snapshot cleanup card. Cross-tenant — gated by the
+ * platform-admin token.
+ */
+router.get(
+  "/system/cleanup/funnel-snapshots/retention",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    const settings = await getFunnelSnapshotRetentionSettings();
+    res.json({
+      snapshotDays: settings.snapshotDays,
+      failureDays: settings.failureDays,
+      defaultSnapshotDays: settings.defaultSnapshotDays,
+      defaultFailureDays: settings.defaultFailureDays,
+      isOverride: settings.isOverride,
+      lastChangedAt: settings.lastChangedAt
+        ? settings.lastChangedAt.toISOString()
+        : null,
+      lastChangedBy: settings.lastChangedBy,
+    });
+  },
+);
+
+/**
+ * Update the funnel-snapshot retention windows. Both fields are
+ * required positive-integer day counts (1–3650). Persists to
+ * `app_settings` via `setFunnelSnapshotRetentionSettings`; the next
+ * `prune_funnel_snapshots` run picks the value up automatically (the
+ * pruner reads the cutoffs at execution time, not at scheduler
+ * arming, so no in-process timer reload is needed).
+ */
+router.put(
+  "/system/cleanup/funnel-snapshots/retention",
+  requirePlatformAdmin,
+  async (req, res) => {
+    const body = (req.body ?? {}) as {
+      snapshotDays?: unknown;
+      failureDays?: unknown;
+    };
+    const snapRaw = body.snapshotDays;
+    const failRaw = body.failureDays;
+    if (typeof snapRaw !== "number" || typeof failRaw !== "number") {
+      res.status(400).json({
+        error:
+          "Body must include numeric `snapshotDays` and `failureDays` fields",
+      });
+      return;
+    }
+    try {
+      const actor = req.actorEmail ?? "system@procuro.ai";
+      const updated = await setFunnelSnapshotRetentionSettings({
+        snapshotDays: snapRaw,
+        failureDays: failRaw,
+        actorEmail: actor,
+      });
+      req.log.info(
+        {
+          snapshotDays: updated.snapshotDays,
+          failureDays: updated.failureDays,
+          actor,
+        },
+        "Operator updated funnel_snapshot_retention",
+      );
+      res.json({
+        snapshotDays: updated.snapshotDays,
+        failureDays: updated.failureDays,
+        defaultSnapshotDays: updated.defaultSnapshotDays,
+        defaultFailureDays: updated.defaultFailureDays,
+        isOverride: updated.isOverride,
+        lastChangedAt: updated.lastChangedAt
+          ? updated.lastChangedAt.toISOString()
+          : null,
+        lastChangedBy: updated.lastChangedBy,
+      });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
   },
 );
 

@@ -2605,6 +2605,53 @@ export interface FunnelBackfillStatus {
   activeJobId: string | null;
 }
 
+export interface SystemFunnelSnapshotRetention {
+  /**
+   * Active snapshot retention window in days. Snapshots in `funnel_snapshots` (and their cascading `funnel_annotations`) older than this window get pruned on each `prune_funnel_snapshots` run.
+
+   * @minimum 1
+   * @maximum 3650
+   */
+  snapshotDays: number;
+  /**
+   * Active failure retention window in days. Rows in `funnel_snapshot_failures` older than this window get pruned on each `prune_funnel_snapshots` run.
+
+   * @minimum 1
+   * @maximum 3650
+   */
+  failureDays: number;
+  /** Bootstrap default snapshot window from env / in-code constant. Surfaced so the UI can show "Default: Nd" next to the editable input.
+   */
+  defaultSnapshotDays: number;
+  /** Bootstrap default failure window from env / in-code constant. Surfaced so the UI can show "Default: Nd" next to the editable input.
+   */
+  defaultFailureDays: number;
+  /** True when the active windows come from an operator-set row in `app_settings`, false when they equal the env / in-code bootstrap defaults.
+   */
+  isOverride: boolean;
+  /** Wall-clock time of the most recent operator update, or null when the windows have never been overridden.
+   */
+  lastChangedAt: string | null;
+  /** Email of the operator who set the current value, or null when the windows have never been overridden.
+   */
+  lastChangedBy: string | null;
+}
+
+export interface SystemFunnelSnapshotRetentionUpdate {
+  /**
+   * New snapshot retention window in days (1–3650).
+   * @minimum 1
+   * @maximum 3650
+   */
+  snapshotDays: number;
+  /**
+   * New failure retention window in days (1–3650).
+   * @minimum 1
+   * @maximum 3650
+   */
+  failureDays: number;
+}
+
 export type SystemCleanupRunAcceptedStatus =
   (typeof SystemCleanupRunAcceptedStatus)[keyof typeof SystemCleanupRunAcceptedStatus];
 
@@ -5740,6 +5787,10 @@ export type ListWatchedIssuerSuggestionsParams = {
 };
 
 export type UpdateSystemCleanupSchedule400 = {
+  error: string;
+};
+
+export type UpdateSystemFunnelSnapshotRetention400 = {
   error: string;
 };
 
