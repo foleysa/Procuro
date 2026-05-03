@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request } from "express";
 import {
   db,
   opportunitiesTable,
+  opportunityStageHistoryTable,
   decisionsTable,
   suppliersTable,
   categoriesTable,
@@ -11,12 +12,19 @@ import {
   type DecisionEventType,
   type RejectionReasonCode,
   type InsertDecisionRow,
+  type CanonicalStage,
+  type SavingsType,
+  resolveDoaTierNumber,
+  gateSlaBreach,
+  computeBreachingDoaSla,
+  computeTimeInCurrentStageHours,
 } from "@workspace/db";
 import { and, eq, desc, sql, or, lt, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission, resolveRbacContext, roleHasPermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
+import { logger } from "../lib/logger";
 import { extractSourcesFromInputs } from "../lib/insight-sources";
 import { writeAdminAudit, type AdminAuditAction } from "../lib/admin-audit";
 
@@ -121,6 +129,24 @@ function mapOpportunity(row: {
   categoryName?: string | null;
 }) {
   const o = row.opp;
+
+  // Compute S2P query-time fields from stored columns + doa-config.
+  const timeInCurrentStageHours = computeTimeInCurrentStageHours(
+    o.stageEnteredAt ?? null,
+  );
+  const slaBreach = gateSlaBreach({
+    canonicalStage: o.canonicalStage ?? null,
+    stageEnteredAt: o.stageEnteredAt ?? null,
+  });
+  // Tier-aware DOA breach (uses doa_tier identifiedSlaHours, not gate SLA).
+  // True only while the row is in `Identified` and has exceeded the tier's
+  // identifiedSlaHours window — independent of gateSlaBreach.
+  const breachingDoaSla = computeBreachingDoaSla({
+    canonicalStage: o.canonicalStage ?? null,
+    stageEnteredAt: o.stageEnteredAt ?? null,
+    doaTier: o.doaTier ?? null,
+  });
+
   return {
     id: o.id,
     orgId: o.orgId,
@@ -146,7 +172,90 @@ function mapOpportunity(row: {
     lastSeenAt: o.lastSeenAt,
     expiryReason: o.expiryReason,
     createdAt: o.createdAt,
+    // S2P fields (Task #284)
+    savingsType: o.savingsType ?? null,
+    savingsClassification: o.savingsClassification ?? null,
+    classificationNeedsReview: o.classificationNeedsReview ?? false,
+    canonicalStage: o.canonicalStage ?? null,
+    stageEnteredAt: o.stageEnteredAt ?? null,
+    doaTier: o.doaTier ?? null,
+    sourcingStrategy: o.sourcingStrategy ?? null,
+    baselineMethod: o.baselineMethod ?? null,
+    baselineValue: o.baselineValue !== null && o.baselineValue !== undefined
+      ? Number(o.baselineValue)
+      : null,
+    baselineSource: o.baselineSource ?? null,
+    // Computed at query time — never stored
+    timeInCurrentStageHours,
+    breachingSla: slaBreach.breaching,
+    breachingDoaSla,
+    slaHours: slaBreach.slaHours,
   };
+}
+
+/**
+ * Determine the canonical_stage + savings_type that should follow a given
+ * status transition. Called from every approve/execute/realize/reject
+ * endpoint to keep the S2P fields in sync with the status lifecycle.
+ */
+function s2pForStatusTransition(newStatus: string): {
+  canonicalStage: CanonicalStage;
+  savingsType: SavingsType;
+} {
+  switch (newStatus) {
+    case "approved":
+      return { canonicalStage: "Awarded", savingsType: "Negotiated" };
+    case "executing":
+      return { canonicalStage: "In Implementation", savingsType: "Implemented" };
+    case "realized":
+      return { canonicalStage: "Realized", savingsType: "Realized" };
+    case "rejected":
+    case "expired":
+      return { canonicalStage: "Closed-No Action", savingsType: "Identified" };
+    default:
+      return { canonicalStage: "Identified", savingsType: "Identified" };
+  }
+}
+
+/**
+ * Write one row to opportunity_stage_history when canonical_stage changes.
+ * Swallows errors so a history-write failure never blocks the state transition.
+ */
+async function writeStageHistory(args: {
+  opportunityId: string;
+  orgId: string;
+  fromStage: CanonicalStage | null;
+  toStage: CanonicalStage;
+  actor: string | null;
+  reason: string;
+}): Promise<void> {
+  try {
+    await db.insert(opportunityStageHistoryTable).values({
+      id: newId("sh"),
+      opportunityId: args.opportunityId,
+      orgId: args.orgId,
+      fromStage: args.fromStage ?? undefined,
+      toStage: args.toStage,
+      transitionedAt: new Date(),
+      transitionedByUserId: args.actor,
+      transitionReason: args.reason,
+    });
+  } catch (err) {
+    // History write failures must not block the actual state change, but
+    // they MUST be observable: a silent drop here would leave the audit
+    // trail incomplete with no signal to operators.
+    logger.warn(
+      {
+        err,
+        opportunityId: args.opportunityId,
+        orgId: args.orgId,
+        fromStage: args.fromStage,
+        toStage: args.toStage,
+        reason: args.reason,
+      },
+      "Failed to write opportunity_stage_history row",
+    );
+  }
 }
 
 // Snooze filter (#220). `exclude` (default) hides currently-snoozed
@@ -651,10 +760,17 @@ router.post(
     let succeededIds: string[] = [];
     if (succeed.length > 0) {
       try {
+        const now = new Date();
+        const s2p = s2pForStatusTransition("approved");
         await db.transaction(async (tx) => {
           await tx
             .update(opportunitiesTable)
-            .set({ status: "approved" })
+            .set({
+              status: "approved",
+              canonicalStage: s2p.canonicalStage,
+              savingsType: s2p.savingsType,
+              stageEnteredAt: now,
+            })
             .where(
               and(
                 eq(opportunitiesTable.orgId, orgId),
@@ -672,6 +788,21 @@ router.post(
             .values(buildDecisionRows(orgId, actorOf(req), succeed, "approve"));
         });
         succeededIds = succeed.map((r) => r.id);
+        // Write one stage_history row per opportunity so the audit trail
+        // matches what the single-row /approve endpoint records.
+        const actor = actorOf(req);
+        for (const r of succeed) {
+          await writeStageHistory({
+            opportunityId: r.id,
+            orgId,
+            // Bulk endpoints only operate on `proposed` rows, which always
+            // map to canonical_stage 'Identified'.
+            fromStage: "Identified",
+            toStage: s2p.canonicalStage,
+            actor,
+            reason: "STATUS_CHANGE",
+          });
+        }
         await refreshCyclesForRows(orgId, succeed);
       } catch (err) {
         req.log.error({ err }, "bulkApproveOpportunities failed");
@@ -718,6 +849,8 @@ router.post(
     let succeededIds: string[] = [];
     if (succeed.length > 0) {
       try {
+        const now = new Date();
+        const s2p = s2pForStatusTransition("rejected");
         await db.transaction(async (tx) => {
           await tx
             .update(opportunitiesTable)
@@ -725,6 +858,9 @@ router.post(
               status: "rejected",
               rejectedReasonCode: reasonCode,
               rejectedReasonNote: reasonText,
+              canonicalStage: s2p.canonicalStage,
+              savingsType: s2p.savingsType,
+              stageEnteredAt: now,
             })
             .where(
               and(
@@ -744,6 +880,19 @@ router.post(
           );
         });
         succeededIds = succeed.map((r) => r.id);
+        const actor = actorOf(req);
+        for (const r of succeed) {
+          await writeStageHistory({
+            opportunityId: r.id,
+            orgId,
+            // Bulk endpoints only operate on `proposed` rows, which always
+            // map to canonical_stage 'Identified'.
+            fromStage: "Identified",
+            toStage: s2p.canonicalStage,
+            actor,
+            reason: "STATUS_CHANGE",
+          });
+        }
         await refreshCyclesForRows(orgId, succeed);
       } catch (err) {
         req.log.error({ err }, "bulkRejectOpportunities failed");
@@ -919,9 +1068,18 @@ router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("o
       .json({ error: `Cannot approve from status '${opp.status}'` });
     return;
   }
+  const { canonicalStage: newStage, savingsType: newSavingsType } =
+    s2pForStatusTransition("approved");
+  const now = new Date();
   await db
     .update(opportunitiesTable)
-    .set({ status: "approved" })
+    .set({
+      status: "approved",
+      canonicalStage: newStage,
+      savingsType: newSavingsType,
+      stageEnteredAt: now,
+      doaTier: resolveDoaTierNumber(Number(opp.projectedSavingsUsd)),
+    })
     .where(eq(opportunitiesTable.id, opp.id));
   await db.insert(decisionsTable).values({
     id: newId("dec"),
@@ -930,6 +1088,14 @@ router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("o
     cycleId: opp.cycleId,
     eventType: "approve",
     actor: req.actorEmail ?? "system@procuro.ai",
+  });
+  await writeStageHistory({
+    opportunityId: opp.id,
+    orgId,
+    fromStage: opp.canonicalStage ?? null,
+    toStage: newStage,
+    actor: req.actorEmail ?? null,
+    reason: "STATUS_CHANGE",
   });
   await updateCycleAggregates(orgId, opp.cycleId);
   await recordSingleOpportunityAudit(req, {
@@ -965,12 +1131,18 @@ router.post("/opportunities/:id/reject", tenantMiddleware, requirePermission("op
       .json({ error: `Cannot reject from status '${opp.status}'` });
     return;
   }
+  const { canonicalStage: newStage, savingsType: newSavingsType } =
+    s2pForStatusTransition("rejected");
+  const now = new Date();
   await db
     .update(opportunitiesTable)
     .set({
       status: "rejected",
       rejectedReasonCode: reasonCode,
       rejectedReasonNote: reasonText,
+      canonicalStage: newStage,
+      savingsType: newSavingsType,
+      stageEnteredAt: now,
     })
     .where(eq(opportunitiesTable.id, opp.id));
   await db.insert(decisionsTable).values({
@@ -982,6 +1154,14 @@ router.post("/opportunities/:id/reject", tenantMiddleware, requirePermission("op
     actor: req.actorEmail ?? "system@procuro.ai",
     rejectedReasonCode: reasonCode,
     rejectedReasonNote: reasonText,
+  });
+  await writeStageHistory({
+    opportunityId: opp.id,
+    orgId,
+    fromStage: opp.canonicalStage ?? null,
+    toStage: newStage,
+    actor: req.actorEmail ?? null,
+    reason: "STATUS_CHANGE",
   });
   await updateCycleAggregates(orgId, opp.cycleId);
   await recordSingleOpportunityAudit(req, {
@@ -1012,18 +1192,36 @@ router.post("/opportunities/:id/execute", tenantMiddleware, requirePermission("o
       .json({ error: `Cannot mark executing from status '${opp.status}'` });
     return;
   }
-  await db
-    .update(opportunitiesTable)
-    .set({ status: "executing" })
-    .where(eq(opportunitiesTable.id, opp.id));
-  await db.insert(decisionsTable).values({
-    id: newId("dec"),
-    orgId,
-    opportunityId: opp.id,
-    cycleId: opp.cycleId,
-    eventType: "execute",
-    actor: req.actorEmail ?? "system@procuro.ai",
-  });
+  {
+    const { canonicalStage: newStage, savingsType: newSavingsType } =
+      s2pForStatusTransition("executing");
+    const now = new Date();
+    await db
+      .update(opportunitiesTable)
+      .set({
+        status: "executing",
+        canonicalStage: newStage,
+        savingsType: newSavingsType,
+        stageEnteredAt: now,
+      })
+      .where(eq(opportunitiesTable.id, opp.id));
+    await db.insert(decisionsTable).values({
+      id: newId("dec"),
+      orgId,
+      opportunityId: opp.id,
+      cycleId: opp.cycleId,
+      eventType: "execute",
+      actor: req.actorEmail ?? "system@procuro.ai",
+    });
+    await writeStageHistory({
+      opportunityId: opp.id,
+      orgId,
+      fromStage: opp.canonicalStage ?? null,
+      toStage: newStage,
+      actor: req.actorEmail ?? null,
+      reason: "STATUS_CHANGE",
+    });
+  }
   await updateCycleAggregates(orgId, opp.cycleId);
   const [updated] = await db
     .select()
@@ -1050,12 +1248,18 @@ router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("o
       .json({ error: `Cannot realize from status '${opp.status}'` });
     return;
   }
+  const { canonicalStage: newStage, savingsType: newSavingsType } =
+    s2pForStatusTransition("realized");
+  const now = new Date();
   await db
     .update(opportunitiesTable)
     .set({
       status: "realized",
       realizedSavingsUsd: realizedSavingsUsd.toFixed(2),
-      realizedAt: new Date(),
+      realizedAt: now,
+      canonicalStage: newStage,
+      savingsType: newSavingsType,
+      stageEnteredAt: now,
     })
     .where(eq(opportunitiesTable.id, opp.id));
   await db.insert(decisionsTable).values({
@@ -1066,6 +1270,14 @@ router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("o
     eventType: "realize",
     actor: req.actorEmail ?? "system@procuro.ai",
     realizedSavingsUsd: realizedSavingsUsd.toFixed(2),
+  });
+  await writeStageHistory({
+    opportunityId: opp.id,
+    orgId,
+    fromStage: opp.canonicalStage ?? null,
+    toStage: newStage,
+    actor: req.actorEmail ?? null,
+    reason: "STATUS_CHANGE",
   });
   await updateCycleAggregates(orgId, opp.cycleId);
   const [updated] = await db

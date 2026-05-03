@@ -12,7 +12,12 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { LeverId } from "./leverId";
+import type { OpportunityBaselineMethod } from "./opportunityBaselineMethod";
+import type { OpportunityCanonicalStage } from "./opportunityCanonicalStage";
 import type { OpportunityExpiryReason } from "./opportunityExpiryReason";
+import type { OpportunitySavingsClassification } from "./opportunitySavingsClassification";
+import type { OpportunitySavingsType } from "./opportunitySavingsType";
+import type { OpportunitySourcingStrategy } from "./opportunitySourcingStrategy";
 import type { OpportunityStatus } from "./opportunityStatus";
 import type { RejectionReasonCode } from "./rejectionReasonCode";
 
@@ -66,4 +71,84 @@ legacy expirations that pre-date the per-row attribution.
  */
   expiryReason?: OpportunityExpiryReason;
   createdAt: Date;
+  /** S2P savings-type tag tracking the maturity of the savings
+claim through the procurement lifecycle. Backfilled from `status` on
+first deploy; operator-editable thereafter.
+ */
+  savingsType?: OpportunitySavingsType;
+  /** Finance classification for savings reporting.
+Hard = cash savings verified in P&L; Cost Avoidance = price increase
+avoided / rebate captured; Soft = productivity savings not in P&L.
+All backfilled rows default to Hard with classificationNeedsReview=true.
+ */
+  savingsClassification?: OpportunitySavingsClassification;
+  /** True for every row backfilled at migration time,
+prompting operators to confirm or adjust the auto-assigned
+savings_classification. Cleared when an operator explicitly sets a
+classification via the admin UI (future task).
+ */
+  classificationNeedsReview?: boolean | null;
+  /** Procurement-standard stage gate label, kept in sync with
+status transitions. Maps as: proposed→Identified, approved→Awarded,
+executing→In Implementation, realized→Realized,
+rejected/expired→Closed-No Action.
+Under Re-evaluation is a special bucket for rejected-but-under-review
+records that are awaiting re-assessment by procurement.
+ */
+  canonicalStage?: OpportunityCanonicalStage;
+  /** Timestamp when canonicalStage last changed. Used to compute
+timeInCurrentStageHours at query time and to evaluate DOA SLA breaches.
+Set to createdAt for all backfilled rows.
+ */
+  stageEnteredAt?: Date | null;
+  /**
+   * Delegation of Authority tier (1–4) derived from
+projectedSavingsUsd using the DOA tier ladder:
+Tier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),
+Tier 3 (>=250K, VP), Tier 4 (<250K, Manager).
+
+   * @minimum 1
+   * @maximum 4
+   */
+  doaTier?: number | null;
+  /** How the saving is (or will be) captured. Defaults to
+Unclassified for all rows; operator-settable via admin UI (future task).
+ */
+  sourcingStrategy?: OpportunitySourcingStrategy;
+  /** How the benchmark price/cost was established. Required
+for Finance to validate Hard savings. All backfilled rows default to
+Internal Estimate with classificationNeedsReview=true.
+ */
+  baselineMethod?: OpportunityBaselineMethod;
+  /** Numeric baseline value (e.g. prior unit price, index price)
+used in the savings calculation. Units match the opportunity price
+metric. Nullable — may not be known at identification time.
+ */
+  baselineValue?: number | null;
+  /** Free-text provenance of baselineValue (e.g. PO reference,
+index name, model run ID). Set to BACKFILL — needs review for all
+backfilled rows.
+ */
+  baselineSource?: string | null;
+  /** Hours elapsed since the opportunity entered its current
+canonicalStage. Computed at query time from stageEnteredAt; null
+when stageEnteredAt is not set.
+ */
+  timeInCurrentStageHours?: number | null;
+  /** True when the opportunity has exceeded its per-gate SLA
+for the current canonicalStage (defined in doa-config.ts GATE_SLAS).
+Always false for terminal stages (Realized, Closed-No Action) or
+when stageEnteredAt is null. Computed at query time — not stored.
+ */
+  breachingSla?: boolean;
+  /** True when an opportunity is still in `Identified` and has
+exceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate
+SLA). Used by the approval-queue UI to surface tier-1 escalations
+before the gate SLA fires. Always false outside the Identified stage.
+ */
+  breachingDoaSla?: boolean;
+  /** Gate SLA hours for the current canonicalStage. null for
+terminal stages that have no defined SLA upper bound.
+ */
+  slaHours?: number | null;
 }

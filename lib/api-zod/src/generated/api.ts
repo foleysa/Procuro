@@ -1572,6 +1572,8 @@ export const ListOpportunitiesHeader = zod.object({
     ),
 });
 
+export const listOpportunitiesResponseItemsItemDoaTierMax = 4;
+
 export const ListOpportunitiesResponse = zod.object({
   items: zod.array(
     zod.object({
@@ -1648,6 +1650,116 @@ export const ListOpportunitiesResponse = zod.object({
           "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
         ),
       createdAt: zod.coerce.date(),
+      savingsType: zod
+        .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+        .nullish()
+        .describe(
+          "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+        ),
+      savingsClassification: zod
+        .enum(["Hard", "Cost Avoidance", "Soft"])
+        .nullish()
+        .describe(
+          "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+        ),
+      classificationNeedsReview: zod
+        .boolean()
+        .nullish()
+        .describe(
+          "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+        ),
+      canonicalStage: zod
+        .enum([
+          "Identified",
+          "Awarded",
+          "In Contracting",
+          "In Implementation",
+          "Realized",
+          "Closed-No Action",
+          "Under Re-evaluation",
+        ])
+        .nullish()
+        .describe(
+          "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+        ),
+      stageEnteredAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+        ),
+      doaTier: zod
+        .number()
+        .min(1)
+        .max(listOpportunitiesResponseItemsItemDoaTierMax)
+        .nullish()
+        .describe(
+          "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+        ),
+      sourcingStrategy: zod
+        .enum([
+          "Competitive RFP",
+          "Single-to-Dual Source",
+          "Should-Cost Challenge",
+          "Tiered Pricing Audit / Rebate Claim",
+          "Invoice-to-Contract Reconciliation",
+          "Catalog Enforcement",
+          "Negotiated Renewal",
+          "Unclassified",
+        ])
+        .nullish()
+        .describe(
+          "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+        ),
+      baselineMethod: zod
+        .enum([
+          "Prior Unit Price",
+          "Market Index",
+          "Should-Cost Model",
+          "Supplier Proposed Increase",
+          "Internal Estimate",
+          "N/A — Soft",
+        ])
+        .nullish()
+        .describe(
+          "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+        ),
+      baselineValue: zod
+        .number()
+        .nullish()
+        .describe(
+          "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+        ),
+      baselineSource: zod
+        .string()
+        .nullish()
+        .describe(
+          "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+        ),
+      timeInCurrentStageHours: zod
+        .number()
+        .nullish()
+        .describe(
+          "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+        ),
+      breachingSla: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+        ),
+      breachingDoaSla: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+        ),
+      slaHours: zod
+        .number()
+        .nullish()
+        .describe(
+          "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+        ),
     }),
   ),
   nextCursor: zod.string().nullish(),
@@ -1927,6 +2039,8 @@ export const GetOpportunityHeader = zod.object({
     ),
 });
 
+export const getOpportunityResponseOneDoaTierMax = 4;
+
 export const GetOpportunityResponse = zod
   .object({
     id: zod.string(),
@@ -2002,6 +2116,116 @@ export const GetOpportunityResponse = zod
         "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
       ),
     createdAt: zod.coerce.date(),
+    savingsType: zod
+      .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+      .nullish()
+      .describe(
+        "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+      ),
+    savingsClassification: zod
+      .enum(["Hard", "Cost Avoidance", "Soft"])
+      .nullish()
+      .describe(
+        "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+      ),
+    classificationNeedsReview: zod
+      .boolean()
+      .nullish()
+      .describe(
+        "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+      ),
+    canonicalStage: zod
+      .enum([
+        "Identified",
+        "Awarded",
+        "In Contracting",
+        "In Implementation",
+        "Realized",
+        "Closed-No Action",
+        "Under Re-evaluation",
+      ])
+      .nullish()
+      .describe(
+        "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+      ),
+    stageEnteredAt: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+      ),
+    doaTier: zod
+      .number()
+      .min(1)
+      .max(getOpportunityResponseOneDoaTierMax)
+      .nullish()
+      .describe(
+        "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+      ),
+    sourcingStrategy: zod
+      .enum([
+        "Competitive RFP",
+        "Single-to-Dual Source",
+        "Should-Cost Challenge",
+        "Tiered Pricing Audit / Rebate Claim",
+        "Invoice-to-Contract Reconciliation",
+        "Catalog Enforcement",
+        "Negotiated Renewal",
+        "Unclassified",
+      ])
+      .nullish()
+      .describe(
+        "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+      ),
+    baselineMethod: zod
+      .enum([
+        "Prior Unit Price",
+        "Market Index",
+        "Should-Cost Model",
+        "Supplier Proposed Increase",
+        "Internal Estimate",
+        "N/A — Soft",
+      ])
+      .nullish()
+      .describe(
+        "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+      ),
+    baselineValue: zod
+      .number()
+      .nullish()
+      .describe(
+        "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+      ),
+    baselineSource: zod
+      .string()
+      .nullish()
+      .describe(
+        "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+      ),
+    timeInCurrentStageHours: zod
+      .number()
+      .nullish()
+      .describe(
+        "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+      ),
+    breachingSla: zod
+      .boolean()
+      .optional()
+      .describe(
+        "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+      ),
+    breachingDoaSla: zod
+      .boolean()
+      .optional()
+      .describe(
+        "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+      ),
+    slaHours: zod
+      .number()
+      .nullish()
+      .describe(
+        "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+      ),
   })
   .and(
     zod.object({
@@ -2089,6 +2313,8 @@ export const ApproveOpportunityBody = zod.object({
   notes: zod.string().optional(),
 });
 
+export const approveOpportunityResponseDoaTierMax = 4;
+
 export const ApproveOpportunityResponse = zod.object({
   id: zod.string(),
   orgId: zod.string(),
@@ -2163,6 +2389,116 @@ export const ApproveOpportunityResponse = zod.object({
       "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
+  savingsType: zod
+    .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+    .nullish()
+    .describe(
+      "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+    ),
+  savingsClassification: zod
+    .enum(["Hard", "Cost Avoidance", "Soft"])
+    .nullish()
+    .describe(
+      "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+    ),
+  classificationNeedsReview: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+    ),
+  canonicalStage: zod
+    .enum([
+      "Identified",
+      "Awarded",
+      "In Contracting",
+      "In Implementation",
+      "Realized",
+      "Closed-No Action",
+      "Under Re-evaluation",
+    ])
+    .nullish()
+    .describe(
+      "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+    ),
+  stageEnteredAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+    ),
+  doaTier: zod
+    .number()
+    .min(1)
+    .max(approveOpportunityResponseDoaTierMax)
+    .nullish()
+    .describe(
+      "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+    ),
+  sourcingStrategy: zod
+    .enum([
+      "Competitive RFP",
+      "Single-to-Dual Source",
+      "Should-Cost Challenge",
+      "Tiered Pricing Audit / Rebate Claim",
+      "Invoice-to-Contract Reconciliation",
+      "Catalog Enforcement",
+      "Negotiated Renewal",
+      "Unclassified",
+    ])
+    .nullish()
+    .describe(
+      "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+    ),
+  baselineMethod: zod
+    .enum([
+      "Prior Unit Price",
+      "Market Index",
+      "Should-Cost Model",
+      "Supplier Proposed Increase",
+      "Internal Estimate",
+      "N/A — Soft",
+    ])
+    .nullish()
+    .describe(
+      "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+    ),
+  baselineValue: zod
+    .number()
+    .nullish()
+    .describe(
+      "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+    ),
+  baselineSource: zod
+    .string()
+    .nullish()
+    .describe(
+      "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+    ),
+  timeInCurrentStageHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+    ),
+  breachingSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+    ),
+  breachingDoaSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+    ),
+  slaHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+    ),
 });
 
 /**
@@ -2194,6 +2530,8 @@ export const RejectOpportunityBody = zod.object({
   ]),
   reasonText: zod.string().optional(),
 });
+
+export const rejectOpportunityResponseDoaTierMax = 4;
 
 export const RejectOpportunityResponse = zod.object({
   id: zod.string(),
@@ -2269,6 +2607,116 @@ export const RejectOpportunityResponse = zod.object({
       "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
+  savingsType: zod
+    .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+    .nullish()
+    .describe(
+      "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+    ),
+  savingsClassification: zod
+    .enum(["Hard", "Cost Avoidance", "Soft"])
+    .nullish()
+    .describe(
+      "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+    ),
+  classificationNeedsReview: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+    ),
+  canonicalStage: zod
+    .enum([
+      "Identified",
+      "Awarded",
+      "In Contracting",
+      "In Implementation",
+      "Realized",
+      "Closed-No Action",
+      "Under Re-evaluation",
+    ])
+    .nullish()
+    .describe(
+      "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+    ),
+  stageEnteredAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+    ),
+  doaTier: zod
+    .number()
+    .min(1)
+    .max(rejectOpportunityResponseDoaTierMax)
+    .nullish()
+    .describe(
+      "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+    ),
+  sourcingStrategy: zod
+    .enum([
+      "Competitive RFP",
+      "Single-to-Dual Source",
+      "Should-Cost Challenge",
+      "Tiered Pricing Audit / Rebate Claim",
+      "Invoice-to-Contract Reconciliation",
+      "Catalog Enforcement",
+      "Negotiated Renewal",
+      "Unclassified",
+    ])
+    .nullish()
+    .describe(
+      "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+    ),
+  baselineMethod: zod
+    .enum([
+      "Prior Unit Price",
+      "Market Index",
+      "Should-Cost Model",
+      "Supplier Proposed Increase",
+      "Internal Estimate",
+      "N/A — Soft",
+    ])
+    .nullish()
+    .describe(
+      "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+    ),
+  baselineValue: zod
+    .number()
+    .nullish()
+    .describe(
+      "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+    ),
+  baselineSource: zod
+    .string()
+    .nullish()
+    .describe(
+      "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+    ),
+  timeInCurrentStageHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+    ),
+  breachingSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+    ),
+  breachingDoaSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+    ),
+  slaHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+    ),
 });
 
 /**
@@ -2286,6 +2734,8 @@ export const ExecuteOpportunityHeader = zod.object({
       "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
     ),
 });
+
+export const executeOpportunityResponseDoaTierMax = 4;
 
 export const ExecuteOpportunityResponse = zod.object({
   id: zod.string(),
@@ -2361,6 +2811,116 @@ export const ExecuteOpportunityResponse = zod.object({
       "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
+  savingsType: zod
+    .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+    .nullish()
+    .describe(
+      "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+    ),
+  savingsClassification: zod
+    .enum(["Hard", "Cost Avoidance", "Soft"])
+    .nullish()
+    .describe(
+      "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+    ),
+  classificationNeedsReview: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+    ),
+  canonicalStage: zod
+    .enum([
+      "Identified",
+      "Awarded",
+      "In Contracting",
+      "In Implementation",
+      "Realized",
+      "Closed-No Action",
+      "Under Re-evaluation",
+    ])
+    .nullish()
+    .describe(
+      "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+    ),
+  stageEnteredAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+    ),
+  doaTier: zod
+    .number()
+    .min(1)
+    .max(executeOpportunityResponseDoaTierMax)
+    .nullish()
+    .describe(
+      "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+    ),
+  sourcingStrategy: zod
+    .enum([
+      "Competitive RFP",
+      "Single-to-Dual Source",
+      "Should-Cost Challenge",
+      "Tiered Pricing Audit / Rebate Claim",
+      "Invoice-to-Contract Reconciliation",
+      "Catalog Enforcement",
+      "Negotiated Renewal",
+      "Unclassified",
+    ])
+    .nullish()
+    .describe(
+      "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+    ),
+  baselineMethod: zod
+    .enum([
+      "Prior Unit Price",
+      "Market Index",
+      "Should-Cost Model",
+      "Supplier Proposed Increase",
+      "Internal Estimate",
+      "N/A — Soft",
+    ])
+    .nullish()
+    .describe(
+      "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+    ),
+  baselineValue: zod
+    .number()
+    .nullish()
+    .describe(
+      "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+    ),
+  baselineSource: zod
+    .string()
+    .nullish()
+    .describe(
+      "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+    ),
+  timeInCurrentStageHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+    ),
+  breachingSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+    ),
+  breachingDoaSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+    ),
+  slaHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+    ),
 });
 
 /**
@@ -2383,6 +2943,8 @@ export const RealizeOpportunityBody = zod.object({
   realizedSavingsUsd: zod.number(),
   notes: zod.string().optional(),
 });
+
+export const realizeOpportunityResponseDoaTierMax = 4;
 
 export const RealizeOpportunityResponse = zod.object({
   id: zod.string(),
@@ -2458,6 +3020,116 @@ export const RealizeOpportunityResponse = zod.object({
       "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
+  savingsType: zod
+    .enum(["Identified", "Negotiated", "Implemented", "Realized"])
+    .nullish()
+    .describe(
+      "S2P savings-type tag tracking the maturity of the savings\nclaim through the procurement lifecycle. Backfilled from `status` on\nfirst deploy; operator-editable thereafter.\n",
+    ),
+  savingsClassification: zod
+    .enum(["Hard", "Cost Avoidance", "Soft"])
+    .nullish()
+    .describe(
+      "Finance classification for savings reporting.\nHard = cash savings verified in P&L; Cost Avoidance = price increase\navoided \/ rebate captured; Soft = productivity savings not in P&L.\nAll backfilled rows default to Hard with classificationNeedsReview=true.\n",
+    ),
+  classificationNeedsReview: zod
+    .boolean()
+    .nullish()
+    .describe(
+      "True for every row backfilled at migration time,\nprompting operators to confirm or adjust the auto-assigned\nsavings_classification. Cleared when an operator explicitly sets a\nclassification via the admin UI (future task).\n",
+    ),
+  canonicalStage: zod
+    .enum([
+      "Identified",
+      "Awarded",
+      "In Contracting",
+      "In Implementation",
+      "Realized",
+      "Closed-No Action",
+      "Under Re-evaluation",
+    ])
+    .nullish()
+    .describe(
+      "Procurement-standard stage gate label, kept in sync with\nstatus transitions. Maps as: proposed→Identified, approved→Awarded,\nexecuting→In Implementation, realized→Realized,\nrejected\/expired→Closed-No Action.\nUnder Re-evaluation is a special bucket for rejected-but-under-review\nrecords that are awaiting re-assessment by procurement.\n",
+    ),
+  stageEnteredAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      "Timestamp when canonicalStage last changed. Used to compute\ntimeInCurrentStageHours at query time and to evaluate DOA SLA breaches.\nSet to createdAt for all backfilled rows.\n",
+    ),
+  doaTier: zod
+    .number()
+    .min(1)
+    .max(realizeOpportunityResponseDoaTierMax)
+    .nullish()
+    .describe(
+      "Delegation of Authority tier (1–4) derived from\nprojectedSavingsUsd using the DOA tier ladder:\nTier 1 (>=5M, Board), Tier 2 (>=1M, C-Suite),\nTier 3 (>=250K, VP), Tier 4 (<250K, Manager).\n",
+    ),
+  sourcingStrategy: zod
+    .enum([
+      "Competitive RFP",
+      "Single-to-Dual Source",
+      "Should-Cost Challenge",
+      "Tiered Pricing Audit / Rebate Claim",
+      "Invoice-to-Contract Reconciliation",
+      "Catalog Enforcement",
+      "Negotiated Renewal",
+      "Unclassified",
+    ])
+    .nullish()
+    .describe(
+      "How the saving is (or will be) captured. Defaults to\nUnclassified for all rows; operator-settable via admin UI (future task).\n",
+    ),
+  baselineMethod: zod
+    .enum([
+      "Prior Unit Price",
+      "Market Index",
+      "Should-Cost Model",
+      "Supplier Proposed Increase",
+      "Internal Estimate",
+      "N/A — Soft",
+    ])
+    .nullish()
+    .describe(
+      "How the benchmark price\/cost was established. Required\nfor Finance to validate Hard savings. All backfilled rows default to\nInternal Estimate with classificationNeedsReview=true.\n",
+    ),
+  baselineValue: zod
+    .number()
+    .nullish()
+    .describe(
+      "Numeric baseline value (e.g. prior unit price, index price)\nused in the savings calculation. Units match the opportunity price\nmetric. Nullable — may not be known at identification time.\n",
+    ),
+  baselineSource: zod
+    .string()
+    .nullish()
+    .describe(
+      "Free-text provenance of baselineValue (e.g. PO reference,\nindex name, model run ID). Set to BACKFILL — needs review for all\nbackfilled rows.\n",
+    ),
+  timeInCurrentStageHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Hours elapsed since the opportunity entered its current\ncanonicalStage. Computed at query time from stageEnteredAt; null\nwhen stageEnteredAt is not set.\n",
+    ),
+  breachingSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when the opportunity has exceeded its per-gate SLA\nfor the current canonicalStage (defined in doa-config.ts GATE_SLAS).\nAlways false for terminal stages (Realized, Closed-No Action) or\nwhen stageEnteredAt is null. Computed at query time — not stored.\n",
+    ),
+  breachingDoaSla: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True when an opportunity is still in `Identified` and has\nexceeded its DOA-tier identifiedSlaHours (tier-aware, NOT the per-gate\nSLA). Used by the approval-queue UI to surface tier-1 escalations\nbefore the gate SLA fires. Always false outside the Identified stage.\n",
+    ),
+  slaHours: zod
+    .number()
+    .nullish()
+    .describe(
+      "Gate SLA hours for the current canonicalStage. null for\nterminal stages that have no defined SLA upper bound.\n",
+    ),
 });
 
 /**

@@ -10,7 +10,8 @@
   "scripts": {
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
-    "sync": "node ./scripts/sync-schema.mjs"
+    "sync": "node ./scripts/sync-schema.mjs",
+    "backfill-s2p": "node ./scripts/backfill-s2p-fields.mjs"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",

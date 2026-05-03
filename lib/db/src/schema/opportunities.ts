@@ -7,6 +7,7 @@ import {
   uniqueIndex,
   jsonb,
   integer,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { orgsTable } from "./orgs";
@@ -92,6 +93,81 @@ export const opportunityStatusValues = [
   "expired",
 ] as const;
 export type OpportunityStatus = (typeof opportunityStatusValues)[number];
+
+// ---------------------------------------------------------------------------
+// S2P canonical vocabulary (Task #284)
+// ---------------------------------------------------------------------------
+
+/**
+ * Savings type tracks the maturity of a savings claim through the S2P lifecycle.
+ *   Identified      — potential savings flagged by the engine, not yet committed
+ *   Negotiated      — savings agreed in principle (award issued)
+ *   Implemented     — contract signed / purchase order cut; savings flow starting
+ *   Realized        — savings confirmed against actuals in the accounting system
+ */
+export const savingsTypeValues = [
+  "Identified",
+  "Negotiated",
+  "Implemented",
+  "Realized",
+] as const;
+export type SavingsType = (typeof savingsTypeValues)[number];
+
+/**
+ * Savings classification controls how savings are reported in finance.
+ *   Hard            — cash savings verified in the P&L / GL
+ *   Cost Avoidance  — price increase avoided, rebate captured, or TTM spend prevented
+ *   Soft            — productivity/time savings not directly in P&L
+ */
+export const savingsClassificationValues = [
+  "Hard",
+  "Cost Avoidance",
+  "Soft",
+] as const;
+export type SavingsClassification = (typeof savingsClassificationValues)[number];
+
+/**
+ * Canonical stage aligns the opportunity lifecycle with the S2P process gate model.
+ * Maps loosely to the existing `status` enum but uses procurement-standard terminology.
+ *
+ *   Identified         ← status: proposed
+ *   Awarded            ← status: approved
+ *   In Contracting     ← (future gate between approved and executing)
+ *   In Implementation  ← status: executing
+ *   Realized           ← status: realized
+ *   Closed-No Action   ← status: rejected / expired
+ *   Under Re-evaluation← special bucket: rejected-but-under-review records
+ *                        (sourced from the ~8 records tagged as such in the
+ *                         platform at migration time; backfilled from a
+ *                         `rejected_under_review` platform_status if present,
+ *                         otherwise operator-set post-migration)
+ */
+export const canonicalStageValues = [
+  "Identified",
+  "Awarded",
+  "In Contracting",
+  "In Implementation",
+  "Realized",
+  "Closed-No Action",
+  "Under Re-evaluation",
+] as const;
+export type CanonicalStage = (typeof canonicalStageValues)[number];
+
+/**
+ * Sourcing strategy taxonomy for categorising how the saving was (or will be) captured.
+ *   Unclassified is the default for all backfilled and new rows until explicitly set.
+ */
+export const sourcingStrategyValues = [
+  "Competitive RFP",
+  "Single-to-Dual Source",
+  "Should-Cost Challenge",
+  "Tiered Pricing Audit / Rebate Claim",
+  "Invoice-to-Contract Reconciliation",
+  "Catalog Enforcement",
+  "Negotiated Renewal",
+  "Unclassified",
+] as const;
+export type SourcingStrategy = (typeof sourcingStrategyValues)[number];
 
 /** Structured rejection-reason taxonomy. Drives exclusion rules in OODA Learn. */
 export const rejectionReasonCodes = [
@@ -254,6 +330,139 @@ export const opportunitiesTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+
+    // -----------------------------------------------------------------------
+    // S2P canonical vocabulary columns (Task #284)
+    //
+    // MIGRATION PLAN (additive only — no destructive changes):
+    //   1. Ten new nullable columns added to `opportunities` via drizzle-kit push.
+    //   2. New table `opportunity_stage_history` created via drizzle-kit push.
+    //   3. A backfill script (lib/db/scripts/backfill-s2p-fields.mjs) applies
+    //      the following mapping for all rows with canonical_stage IS NULL:
+    //
+    //      status      → canonical_stage         savings_type
+    //      ─────────────────────────────────────────────────────────────
+    //      proposed    → Identified              Identified
+    //      approved    → Awarded                 Negotiated
+    //      executing   → In Implementation       Implemented
+    //      realized    → Realized                Realized
+    //      rejected    → Closed-No Action        Identified  (*)
+    //      expired     → Closed-No Action        Identified  (*)
+    //
+    //      (*) savings_type='Identified' because the prior stage cannot be
+    //          reconstructed without stage history that didn't yet exist.
+    //          Going forward, opportunity_stage_history records the actual
+    //          prior stage on every transition.
+    //
+    //   4. All backfilled rows also receive:
+    //        savings_classification      = 'Hard'              (conservative default)
+    //        classification_needs_review = true                (flagged for review)
+    //        baseline_method             = 'Internal Estimate' (conservative default)
+    //        baseline_value              = NULL
+    //        baseline_source             = 'BACKFILL — needs review'
+    //        sourcing_strategy           = 'Unclassified'
+    //        doa_tier derived from projected_savings_usd:
+    //          >= 5,000,000 → 1 | >= 1,000,000 → 2 | >= 250,000 → 3 | < 250,000 → 4
+    //        stage_entered_at = COALESCE(updated_at, created_at)
+    //   5. A seed row is written to opportunity_stage_history per opportunity:
+    //        from_stage = NULL, to_stage = <backfilled canonical_stage>,
+    //        transitioned_at = stage_entered_at, transition_reason = 'BACKFILL'
+    //   6. `time_in_current_stage_hours` and `breaching_sla` are NOT stored;
+    //      they are computed at query time via gateSlaBreach() in doa-config.ts.
+    //   7. Going-forward: canonical_stage, stage_entered_at, and savings_type
+    //      are updated on every status transition in the opportunities route,
+    //      and a history row is written per transition.
+    // -----------------------------------------------------------------------
+
+    /**
+     * S2P savings-type tag — tracks maturity of the savings claim.
+     * Backfilled from `status` on first deploy; operator-editable thereafter.
+     */
+    savingsType: text("savings_type").$type<SavingsType>(),
+
+    /**
+     * Finance classification for reporting purposes.
+     * All backfilled rows default to `Hard` with `classificationNeedsReview = true`.
+     */
+    savingsClassification: text("savings_classification").$type<SavingsClassification>(),
+
+    /**
+     * Flag set to true for every row backfilled at migration time,
+     * prompting operators to confirm or adjust the auto-assigned
+     * savings_classification. Cleared when an operator explicitly sets
+     * a classification via the admin UI (future task).
+     *
+     * GATING CONDITION: No aggregate labeled "Hard Savings" may include records
+     * where this flag is true until Category Manager review is complete.
+     */
+    classificationNeedsReview: boolean("classification_needs_review").default(false),
+
+    /**
+     * Procurement-standard stage gate label. Kept in sync with `status`
+     * transitions; operators may also advance it manually within the
+     * constraints of the gate model.
+     */
+    canonicalStage: text("canonical_stage").$type<CanonicalStage>(),
+
+    /**
+     * Timestamp when `canonical_stage` last changed. Used to compute
+     * `time_in_current_stage_hours` at query time and to evaluate gate SLA
+     * breaches. Set to COALESCE(updated_at, created_at) for backfilled rows.
+     */
+    stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }),
+
+    /**
+     * DOA tier (1–4) derived from `projected_savings_usd` using the
+     * DOA_TIERS ladder in `lib/db/src/doa-config.ts`. Denormalised here
+     * so the DOA queue can filter/sort without a join to the config.
+     * Must be kept in sync whenever `projected_savings_usd` changes.
+     */
+    doaTier: integer("doa_tier"),
+
+    /**
+     * Sourcing strategy taxonomy — how the saving is (or will be) captured.
+     * Defaults to `Unclassified` for all rows; operator-settable via
+     * admin UI (future task).
+     */
+    sourcingStrategy: text("sourcing_strategy")
+      .$type<SourcingStrategy>()
+      .default("Unclassified"),
+
+    /**
+     * Baseline calculation method — how the benchmark price/cost was
+     * established. Required for Finance to validate "Hard" savings.
+     *   Prior Unit Price      — historical unit price from PO/invoice data
+     *   Market Index          — external commodity/market reference
+     *   Should-Cost Model     — bottom-up TCO engineering estimate
+     *   Supplier Proposed Increase — avoided increase; baseline = current price
+     *   Internal Estimate     — procurement team judgment; lowest rigor
+     *   N/A — Soft            — no financial baseline (Soft classification only)
+     *
+     * All backfilled rows default to 'Internal Estimate' with
+     * classificationNeedsReview = true.
+     */
+    baselineMethod: text("baseline_method").$type<
+      | "Prior Unit Price"
+      | "Market Index"
+      | "Should-Cost Model"
+      | "Supplier Proposed Increase"
+      | "Internal Estimate"
+      | "N/A — Soft"
+    >(),
+
+    /**
+     * The numeric baseline value (e.g. prior unit price, index price) used
+     * in the savings calculation. Units match the opportunity's price metric.
+     * Nullable — may not be known at identification time.
+     */
+    baselineValue: numeric("baseline_value", { precision: 16, scale: 4 }),
+
+    /**
+     * Free-text provenance of the baseline_value (e.g. PO reference number,
+     * index name, model run ID). Set to 'BACKFILL — needs review' for all
+     * backfilled rows.
+     */
+    baselineSource: text("baseline_source"),
   },
   (t) => [
     index("opps_org_idx").on(t.orgId),
@@ -297,6 +506,66 @@ export const opportunitiesTable = pgTable(
 
 export type OpportunityRow = typeof opportunitiesTable.$inferSelect;
 export type InsertOpportunityRow = typeof opportunitiesTable.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Opportunity Stage History (Task #284)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per canonical_stage transition.
+ *
+ * Written by application code (opportunities route) on every
+ * `canonical_stage` change. Backfill seeds one row per opportunity with
+ * from_stage = NULL and transition_reason = 'BACKFILL'.
+ *
+ * This table is the source of truth for "how long did this opportunity
+ * spend in each gate?" and for reconstructing savings_type history on
+ * terminal-state rows (Closed-No Action / Under Re-evaluation) where the
+ * prior stage is now recoverable from this log.
+ */
+export const opportunityStageHistoryTable = pgTable(
+  "opportunity_stage_history",
+  {
+    id: text("id").primaryKey(),
+    opportunityId: text("opportunity_id")
+      .notNull()
+      .references(() => opportunitiesTable.id, { onDelete: "cascade" }),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => orgsTable.id, { onDelete: "cascade" }),
+    /** Stage the opportunity transitioned FROM. NULL for the initial backfill seed row. */
+    fromStage: text("from_stage").$type<CanonicalStage>(),
+    /** Stage the opportunity transitioned TO. */
+    toStage: text("to_stage").$type<CanonicalStage>().notNull(),
+    transitionedAt: timestamp("transitioned_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /**
+     * Email/ID of the actor who triggered the transition.
+     * NULL for system-initiated transitions (auto-expire, backfill).
+     */
+    transitionedByUserId: text("transitioned_by_user_id"),
+    /**
+     * Machine-readable reason code:
+     *   BACKFILL      — seed row written by the backfill migration
+     *   STATUS_CHANGE — driven by an opportunity status transition event
+     *   MANUAL        — operator manually advanced the canonical stage
+     */
+    transitionReason: text("transition_reason"),
+    /** Optional free-text notes from the actor. */
+    notes: text("notes"),
+  },
+  (t) => [
+    index("opp_stage_hist_opp_idx").on(t.opportunityId),
+    index("opp_stage_hist_org_idx").on(t.orgId),
+    index("opp_stage_hist_at_idx").on(t.opportunityId, t.transitionedAt),
+  ],
+);
+
+export type OpportunityStageHistoryRow =
+  typeof opportunityStageHistoryTable.$inferSelect;
+export type InsertOpportunityStageHistoryRow =
+  typeof opportunityStageHistoryTable.$inferInsert;
 
 export const decisionEventTypes = [
   "approve",

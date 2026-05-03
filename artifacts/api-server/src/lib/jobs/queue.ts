@@ -2150,16 +2150,38 @@ export async function expireStaleOpportunities(
   ).toISOString();
 
   // TTL sweep — applies to every org in one statement; doesn't need
-  // any cycle lookup.
-  const ttlRes = await db.execute(sql`
+  // any cycle lookup. Keep canonical_stage / savings_type / stage_entered_at
+  // in sync with the status transition, and seed one history row per
+  // expired opportunity so the audit trail is complete.
+  const ttlRes = await db.execute<{ id: string; org_id: string }>(sql`
     UPDATE opportunities
     SET status = 'expired',
-        expiry_reason = 'ttl'
+        expiry_reason = 'ttl',
+        canonical_stage = 'Closed-No Action',
+        savings_type = 'Identified',
+        stage_entered_at = now()
     WHERE status = 'proposed'
       AND created_at < ${ttlCutoff}
-    RETURNING id
+    RETURNING id, org_id
   `);
   const ttlExpired = ttlRes.rows?.length ?? 0;
+  if (ttlExpired > 0) {
+    await db.execute(sql`
+      INSERT INTO opportunity_stage_history
+        (id, opportunity_id, org_id, from_stage, to_stage,
+         transitioned_at, transitioned_by_user_id, transition_reason)
+      SELECT
+        'sh_' || gen_random_uuid()::text,
+        id, org_id, 'Identified', 'Closed-No Action',
+        now(), NULL, 'AUTO_EXPIRE_TTL'
+      FROM opportunities
+      WHERE status = 'expired' AND expiry_reason = 'ttl'
+        AND id IN (${sql.join(
+          ttlRes.rows!.map((r) => sql`${r.id}`),
+          sql`, `,
+        )})
+    `);
+  }
 
   // Quiet-cycles sweep — needs the per-org Nth-most-recent completed
   // cycle's `completed_at` so we issue one UPDATE per org. The
@@ -2173,10 +2195,13 @@ export async function expireStaleOpportunities(
   for (const org of orgs) {
     orgsScanned += 1;
     const offset = quietCycles - 1;
-    const res = await db.execute(sql`
+    const res = await db.execute<{ id: string }>(sql`
       UPDATE opportunities
       SET status = 'expired',
-          expiry_reason = 'quiet_cycles'
+          expiry_reason = 'quiet_cycles',
+          canonical_stage = 'Closed-No Action',
+          savings_type = 'Identified',
+          stage_entered_at = now()
       WHERE org_id = ${org.id}
         AND status = 'proposed'
         AND last_seen_at IS NOT NULL
@@ -2192,7 +2217,24 @@ export async function expireStaleOpportunities(
         )
       RETURNING id
     `);
-    quietCyclesExpired += res.rows?.length ?? 0;
+    const expiredCount = res.rows?.length ?? 0;
+    if (expiredCount > 0) {
+      await db.execute(sql`
+        INSERT INTO opportunity_stage_history
+          (id, opportunity_id, org_id, from_stage, to_stage,
+           transitioned_at, transitioned_by_user_id, transition_reason)
+        SELECT
+          'sh_' || gen_random_uuid()::text,
+          id, org_id, 'Identified', 'Closed-No Action',
+          now(), NULL, 'AUTO_EXPIRE_QUIET_CYCLES'
+        FROM opportunities
+        WHERE id IN (${sql.join(
+          res.rows!.map((r) => sql`${r.id}`),
+          sql`, `,
+        )})
+      `);
+    }
+    quietCyclesExpired += expiredCount;
   }
 
   const totalExpired = ttlExpired + quietCyclesExpired;

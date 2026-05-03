@@ -7,6 +7,7 @@ import {
   type LeverId,
   type OpportunityRow,
   type AnalysisCycleRow,
+  resolveDoaTierNumber,
 } from "@workspace/db";
 import { eq, and, asc, desc, gt, inArray, lte, sql } from "drizzle-orm";
 import { newId } from "../ids";
@@ -490,6 +491,17 @@ export async function runAnalysisCycle(args: {
       source_tenant_category_string: string | null;
       re_categorized_after_persistence: number;
       created_at: Date;
+      // S2P fields (Task #284) — populated by DB defaults on INSERT below.
+      savings_type: OpportunityRow["savingsType"];
+      savings_classification: OpportunityRow["savingsClassification"];
+      classification_needs_review: boolean | null;
+      canonical_stage: OpportunityRow["canonicalStage"];
+      stage_entered_at: Date | null;
+      doa_tier: number | null;
+      sourcing_strategy: OpportunityRow["sourcingStrategy"];
+      baseline_method: OpportunityRow["baselineMethod"];
+      baseline_value: string | null;
+      baseline_source: string | null;
       inserted: boolean;
     }
 
@@ -503,8 +515,11 @@ export async function runAnalysisCycle(args: {
         chunkStart,
         chunkStart + OPPORTUNITY_INSERT_CHUNK_SIZE,
       );
-      const valueTuples = chunk.map(
-        (r) => sql`(
+      const valueTuples = chunk.map((r) => {
+        // DOA tier from the central ladder in lib/db/src/doa-config.ts —
+        // never inline thresholds here so changes stay in one place.
+        const doaTier = resolveDoaTierNumber(Number(r.projectedSavingsUsd));
+        return sql`(
           ${r.id},
           ${orgId},
           ${cycleId},
@@ -522,16 +537,33 @@ export async function runAnalysisCycle(args: {
           ${r.signalKey},
           ${cycleStartedAt},
           ${r.mappedVia},
-          ${r.sourceTenantCategoryString}
-        )`,
-      );
+          ${r.sourceTenantCategoryString},
+          ${doaTier},
+          'Identified',
+          ${cycleStartedAt},
+          'Identified',
+          'Hard',
+          true,
+          'Unclassified',
+          'Internal Estimate',
+          'OODA cycle — needs review'
+        )`;
+      });
       const upsertRes = await db.execute<UpsertRowSnake>(sql`
         INSERT INTO opportunities (
           id, org_id, cycle_id, lever_id, tier, title, rationale,
           recommended_action, supplier_id, category_id,
           raw_projected_savings_usd, projected_savings_usd, confidence,
           inputs, signal_key, last_seen_at,
-          mapped_via, source_tenant_category_string
+          mapped_via, source_tenant_category_string,
+          doa_tier,
+          -- S2P fields (Task #284): new opportunities start at Identified.
+          -- savings_classification + classification_needs_review default to
+          -- 'Hard'/true so Finance must review before any aggregate counts
+          -- the row as Hard savings.
+          canonical_stage, stage_entered_at, savings_type,
+          savings_classification, classification_needs_review,
+          sourcing_strategy, baseline_method, baseline_source
         ) VALUES ${sql.join(valueTuples, sql`, `)}
         ON CONFLICT (org_id, lever_id, signal_key)
           WHERE status IN ('proposed', 'approved', 'executing')
@@ -549,7 +581,12 @@ export async function runAnalysisCycle(args: {
           last_seen_at = EXCLUDED.last_seen_at,
           tier = EXCLUDED.tier,
           mapped_via = EXCLUDED.mapped_via,
-          source_tenant_category_string = EXCLUDED.source_tenant_category_string
+          source_tenant_category_string = EXCLUDED.source_tenant_category_string,
+          -- Keep doa_tier derived from the (potentially refreshed) projected
+          -- savings so threshold-crossing opportunities don't retain a stale
+          -- tier across cycles. EXCLUDED.doa_tier was computed from the new
+          -- projected_savings_usd in the same statement.
+          doa_tier = EXCLUDED.doa_tier
         RETURNING *, (xmax = 0) AS inserted
       `);
       for (const raw of upsertRes.rows) {
@@ -581,6 +618,17 @@ export async function runAnalysisCycle(args: {
           snoozedUntil: raw.snoozed_until as Date | null,
           expiryReason: raw.expiry_reason as "ttl" | "quiet_cycles" | null,
           createdAt: raw.created_at,
+          // S2P fields (Task #284) — populated from RETURNING * on the upsert.
+          savingsType: raw.savings_type,
+          savingsClassification: raw.savings_classification,
+          classificationNeedsReview: raw.classification_needs_review ?? false,
+          canonicalStage: raw.canonical_stage,
+          stageEnteredAt: raw.stage_entered_at,
+          doaTier: raw.doa_tier,
+          sourcingStrategy: raw.sourcing_strategy,
+          baselineMethod: raw.baseline_method,
+          baselineValue: raw.baseline_value,
+          baselineSource: raw.baseline_source,
         };
         if (raw.inserted) created.push(row);
         else refreshed.push(row);
