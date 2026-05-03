@@ -24,6 +24,7 @@ import type {
 
 import type {
   AckTodayAnnotationResponse,
+  AddUsSupplierRequest,
   AddWatchedIssuerRequest,
   AddWatchlistMemberRequest,
   AdminApiKeyIssued,
@@ -222,6 +223,8 @@ import type {
   UpdateJobKindSettingRequest,
   UpdateSystemCleanupSchedule400,
   UpdateSystemFunnelSnapshotRetention400,
+  UsSupplier,
+  UsSupplierListResponse,
   WatchedIssuer,
   WatchedIssuerListResponse,
   WatchedIssuerSuggestionListResponse,
@@ -8570,6 +8573,255 @@ export function useGetServicesSpend<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns this tenant's suppliers whose `countryCode` is `US`/`USA` — the watch surface for the EPA ECHO and DOL OSHA collectors. Fresh installs are auto-seeded with a starter list of well-known US public companies so the supplier-risk timeline isn't empty on day one; the seed is one-shot and only runs while the tenant has zero US suppliers.
+
+ * @summary List the tenant's watched US suppliers
+ */
+export const getListUsSuppliersUrl = () => {
+  return `/api/us-suppliers`;
+};
+
+export const listUsSuppliers = async (
+  options?: RequestInit,
+): Promise<UsSupplierListResponse> => {
+  return customFetch<UsSupplierListResponse>(getListUsSuppliersUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListUsSuppliersQueryKey = () => {
+  return [`/api/us-suppliers`] as const;
+};
+
+export const getListUsSuppliersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listUsSuppliers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listUsSuppliers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListUsSuppliersQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listUsSuppliers>>> = ({
+    signal,
+  }) => listUsSuppliers({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listUsSuppliers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListUsSuppliersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listUsSuppliers>>
+>;
+export type ListUsSuppliersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List the tenant's watched US suppliers
+ */
+
+export function useListUsSuppliers<
+  TData = Awaited<ReturnType<typeof listUsSuppliers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listUsSuppliers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListUsSuppliersQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Adds a `countryCode = US` row to this tenant's suppliers table. Names are normalised (lowercased, single-spaced) and re-posting the same normalised name for the active tenant returns 409.
+
+ * @summary Add one US supplier to the tenant's watch list
+ */
+export const getAddUsSupplierUrl = () => {
+  return `/api/us-suppliers`;
+};
+
+export const addUsSupplier = async (
+  addUsSupplierRequest: AddUsSupplierRequest,
+  options?: RequestInit,
+): Promise<UsSupplier> => {
+  return customFetch<UsSupplier>(getAddUsSupplierUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addUsSupplierRequest),
+  });
+};
+
+export const getAddUsSupplierMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addUsSupplier>>,
+    TError,
+    { data: BodyType<AddUsSupplierRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addUsSupplier>>,
+  TError,
+  { data: BodyType<AddUsSupplierRequest> },
+  TContext
+> => {
+  const mutationKey = ["addUsSupplier"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addUsSupplier>>,
+    { data: BodyType<AddUsSupplierRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return addUsSupplier(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddUsSupplierMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addUsSupplier>>
+>;
+export type AddUsSupplierMutationBody = BodyType<AddUsSupplierRequest>;
+export type AddUsSupplierMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add one US supplier to the tenant's watch list
+ */
+export const useAddUsSupplier = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addUsSupplier>>,
+    TError,
+    { data: BodyType<AddUsSupplierRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addUsSupplier>>,
+  TError,
+  { data: BodyType<AddUsSupplierRequest> },
+  TContext
+> => {
+  return useMutation(getAddUsSupplierMutationOptions(options));
+};
+
+/**
+ * @summary Remove a watched US supplier from the tenant's list
+ */
+export const getRemoveUsSupplierUrl = (id: string) => {
+  return `/api/us-suppliers/${id}`;
+};
+
+export const removeUsSupplier = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveUsSupplierUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveUsSupplierMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeUsSupplier>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeUsSupplier>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["removeUsSupplier"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeUsSupplier>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return removeUsSupplier(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveUsSupplierMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeUsSupplier>>
+>;
+
+export type RemoveUsSupplierMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Remove a watched US supplier from the tenant's list
+ */
+export const useRemoveUsSupplier = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeUsSupplier>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeUsSupplier>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getRemoveUsSupplierMutationOptions(options));
+};
 
 /**
  * Returns the rows the active tenant has added to the watched-issuer

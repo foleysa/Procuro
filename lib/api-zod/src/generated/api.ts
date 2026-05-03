@@ -6961,6 +6961,85 @@ export const GetServicesSpendResponse = zod
   .describe("Services-only spend slice rendered on the Services > Spend tab.");
 
 /**
+ * Returns this tenant's suppliers whose `countryCode` is `US`/`USA` — the watch surface for the EPA ECHO and DOL OSHA collectors. Fresh installs are auto-seeded with a starter list of well-known US public companies so the supplier-risk timeline isn't empty on day one; the seed is one-shot and only runs while the tenant has zero US suppliers.
+
+ * @summary List the tenant's watched US suppliers
+ */
+export const ListUsSuppliersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListUsSuppliersResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      normalizedName: zod
+        .string()
+        .describe(
+          "Lowercase, single-spaced form of `name` used as the (org_id, normalized_name) uniqueness key.\n",
+        ),
+      countryCode: zod
+        .string()
+        .describe("Always `US` for rows surfaced through this endpoint."),
+      sourceSystem: zod
+        .string()
+        .describe(
+          "Tag identifying how the row was created. `admin` for rows added through this endpoint, `us_supplier_seed` for the starter seed, anything else for rows that originated in CSV ingest or an integration.\n",
+        ),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * Adds a `countryCode = US` row to this tenant's suppliers table. Names are normalised (lowercased, single-spaced) and re-posting the same normalised name for the active tenant returns 409.
+
+ * @summary Add one US supplier to the tenant's watch list
+ */
+export const AddUsSupplierHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const addUsSupplierBodyNameMax = 200;
+
+export const AddUsSupplierBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(addUsSupplierBodyNameMax)
+    .describe(
+      "Display name. The server normalises (lowercases, single-spaces) on the way in.",
+    ),
+});
+
+/**
+ * @summary Remove a watched US supplier from the tenant's list
+ */
+export const RemoveUsSupplierParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const RemoveUsSupplierHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
  * Returns the rows the active tenant has added to the watched-issuer
 registry. Each row names one company (by SEC CIK or UK Companies
 House number) the corporate-filing collectors should poll on this

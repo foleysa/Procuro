@@ -30,6 +30,17 @@ export const orgsTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /**
+     * One-shot marker for the US supplier starter seed used by the EPA
+     * ECHO and DOL OSHA collectors. Set the first time
+     * `ensureUsSuppliersSeeded()` runs for this tenant; never cleared.
+     * The column lets an admin delete every seeded supplier without
+     * triggering a reseed on the next collector tick — i.e. "I already
+     * decided I don't want these" sticks.
+     */
+    usSuppliersSeededAt: timestamp("us_suppliers_seeded_at", {
+      withTimezone: true,
+    }),
   },
 );
 

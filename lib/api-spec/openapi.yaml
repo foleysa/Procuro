@@ -54,6 +54,10 @@ tags:
   description: Contracts directory + renewal calendar
 - name: watched-issuers
   description: Tenant-curated list of corporate filers to poll (SEC EDGAR, UK Companies House)
+- name: us-suppliers
+  description: 'Tenant-curated list of US suppliers polled by the EPA ECHO and DOL OSHA collectors.
+    Fresh installs are auto-seeded with a starter list of well-known US public companies
+    so the supplier-risk timeline starts populating on day one.'
 - name: defense-packs
   description: 'Gemini-backed, citation-verified procurement memos for buyer
 
@@ -3079,6 +3083,80 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServicesSpendResponse'
+  /us-suppliers:
+    get:
+      operationId: listUsSuppliers
+      tags:
+      - us-suppliers
+      summary: List the tenant's watched US suppliers
+      description: 'Returns this tenant''s suppliers whose `countryCode` is `US`/`USA`
+        — the watch surface for the EPA ECHO and DOL OSHA collectors.
+        Fresh installs are auto-seeded with a starter list of well-known
+        US public companies so the supplier-risk timeline isn''t empty
+        on day one; the seed is one-shot and only runs while the tenant
+        has zero US suppliers.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Watched US suppliers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsSupplierListResponse'
+    post:
+      operationId: addUsSupplier
+      tags:
+      - us-suppliers
+      summary: Add one US supplier to the tenant's watch list
+      description: 'Adds a `countryCode = US` row to this tenant''s suppliers table.
+        Names are normalised (lowercased, single-spaced) and re-posting
+        the same normalised name for the active tenant returns 409.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddUsSupplierRequest'
+      responses:
+        '201':
+          description: US supplier created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsSupplier'
+        '400':
+          description: Invalid name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Supplier with that name already on this tenant's list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /us-suppliers/{id}:
+    delete:
+      operationId: removeUsSupplier
+      tags:
+      - us-suppliers
+      summary: Remove a watched US supplier from the tenant's list
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Removed
+        '404':
+          $ref: '#/components/responses/NotFound'
   /watched-issuers:
     get:
       operationId: listWatchedIssuers
@@ -11310,6 +11388,59 @@ components:
       enum:
       - sec_edgar
       - companies_house
+    UsSupplier:
+      type: object
+      required:
+      - id
+      - name
+      - normalizedName
+      - countryCode
+      - sourceSystem
+      - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        normalizedName:
+          type: string
+          description: 'Lowercase, single-spaced form of `name` used as the
+            (org_id, normalized_name) uniqueness key.
+
+            '
+        countryCode:
+          type: string
+          description: Always `US` for rows surfaced through this endpoint.
+        sourceSystem:
+          type: string
+          description: 'Tag identifying how the row was created. `admin` for rows
+            added through this endpoint, `us_supplier_seed` for the
+            starter seed, anything else for rows that originated in CSV
+            ingest or an integration.
+
+            '
+        createdAt:
+          type: string
+          format: date-time
+    UsSupplierListResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsSupplier'
+    AddUsSupplierRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Display name. The server normalises (lowercases, single-spaces) on the way in.
     WatchedIssuer:
       type: object
       required:

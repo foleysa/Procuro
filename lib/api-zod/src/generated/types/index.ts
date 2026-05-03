@@ -13,6 +13,7 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 
 export * from "./ackTodayAnnotationResponse";
+export * from "./addUsSupplierRequest";
 export * from "./addWatchedIssuerRequest";
 export * from "./addWatchlistMemberRequest";
 export * from "./adminApiKeyIssued";
@@ -540,6 +541,8 @@ export * from "./updateErpConnectionRequestStatus";
 export * from "./updateJobKindSettingRequest";
 export * from "./updateSystemCleanupSchedule400";
 export * from "./updateSystemFunnelSnapshotRetention400";
+export * from "./usSupplier";
+export * from "./usSupplierListResponse";
 export * from "./watchedIssuer";
 export * from "./watchedIssuerListResponse";
 export * from "./watchedIssuerSource";

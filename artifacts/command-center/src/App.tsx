@@ -45,6 +45,7 @@ import Integrations from "./pages/integrations";
 import Settings from "./pages/settings";
 import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
+import WatchedUsSuppliers from "./pages/watched-us-suppliers";
 import Admin from "./pages/admin";
 import Today from "./pages/today";
 import Operations from "./pages/operations";
@@ -378,6 +379,7 @@ function AppRoutes() {
             <Route path="/ingest" component={Ingest} />
             <Route path="/integrations" component={Integrations} />
             <Route path="/watched-companies" component={WatchedCompanies} />
+            <Route path="/watched-us-suppliers" component={WatchedUsSuppliers} />
             <Route path="/trust" component={TrustPage} />
             <Route path="/settings" component={Settings} />
             <Route path="/onboarding" component={OnboardingPage} />

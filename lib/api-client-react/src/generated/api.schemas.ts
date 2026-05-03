@@ -4019,6 +4019,33 @@ export const WatchedIssuerSource = {
   companies_house: "companies_house",
 } as const;
 
+export interface UsSupplier {
+  id: string;
+  name: string;
+  /** Lowercase, single-spaced form of `name` used as the (org_id, normalized_name) uniqueness key.
+   */
+  normalizedName: string;
+  /** Always `US` for rows surfaced through this endpoint. */
+  countryCode: string;
+  /** Tag identifying how the row was created. `admin` for rows added through this endpoint, `us_supplier_seed` for the starter seed, anything else for rows that originated in CSV ingest or an integration.
+   */
+  sourceSystem: string;
+  createdAt: string;
+}
+
+export interface UsSupplierListResponse {
+  items: UsSupplier[];
+}
+
+export interface AddUsSupplierRequest {
+  /**
+   * Display name. The server normalises (lowercases, single-spaces) on the way in.
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+}
+
 export interface WatchedIssuer {
   id: string;
   source: WatchedIssuerSource;
