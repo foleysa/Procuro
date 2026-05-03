@@ -1,57 +1,28 @@
 /**
- * End-to-end guardrail that the three import endpoints —
+ * Task #279 — CSV / mock-ERP / streaming-CSV ingest dedupe contract.
  *
- *   1. `POST /api/ingest/csv`         (synchronous JSON payload)
- *   2. `POST /api/ingest/mock-erp`    (synchronous mock-ERP feed)
- *   3. `POST /api/ingest/csv-stream`  (streaming multipart/raw CSV upload)
+ * Three pre-existing trigger paths previously crashed the ingest with
+ * Postgres SQLSTATE 21000 ("ON CONFLICT DO UPDATE command cannot
+ * affect row a second time") because the operator's payload contained
+ * two rows that targeted the same `(orgId, sourceSystem,
+ * sourceExternalId)` upsert key inside ONE statement:
  *
- * — never echo a raw Postgres / Drizzle error back to the client.
+ *   1. POST `/api/ingest/csv`            — two suppliers with the same `externalId`.
+ *   2. POST `/api/ingest/mock-erp`       — a `purchase_order` with two
+ *                                          lines sharing `lineNumber`
+ *                                          (the source external id is
+ *                                          `${rec.externalId}#${l.lineNumber}`).
+ *   3. POST `/api/ingest/csv-stream`     — two CSV rows in the same flush
+ *                                          batch sharing the conflict-target
+ *                                          natural key.
  *
- * Why this exists
- * ---------------
- * `sanitize-db-error.test.ts` covers the helper in isolation: given a
- * fabricated `DatabaseError`, the message is scrubbed. It does NOT prove
- * that the helper is *wired* into the catch blocks of the three ingest
- * routes. A future change that, say, replaces
- *   `res.status(500).json({ error: sanitizeDbErrorMessage(err) })`
- * with an `err.message` shortcut, or switches the streaming branch to
- * write the raw error onto the NDJSON `error` event, would silently
- * restore the regression that the helper was introduced to fix — and the
- * unit tests would still pass because the helper itself is unchanged.
- *
- * What this verifies
- * ------------------
- * For each of the three endpoints, this test triggers a *real* Postgres
- * error against a *real* database (a duplicate-key cardinality violation
- * inside an `ON CONFLICT DO UPDATE` bulk upsert — SQLSTATE 21000) and
- * then asserts:
- *
- *   - The HTTP / NDJSON response body never contains:
- *       - SQL keywords:    `insert into`, `select`, `update`, `values (`
- *       - Param markers:   `$1`, `$2`, `$3`
- *       - PG framing:      `failing query`, `params`, `detail:`,
- *                          `key (`, `already exists`
- *       - Customer values: the supplier name, supplier external id,
- *                          purchase-order number, etc. that the test
- *                          interpolated into the failing payload.
- *
- *   - The response body DOES contain a sanitized, human-friendly summary
- *     (a known leading word like `Database error`, `Duplicate`, or the
- *     wrapping prefix `CSV stream ingest failed:` for the streaming
- *     route).
- *
- * Trigger choice
- * --------------
- * Sending two rows that share the conflict-target columns inside a
- * single `INSERT ... ON CONFLICT DO UPDATE` statement is the simplest
- * way to drive a real database error through the route's catch block
- * without mocking anything. Postgres rejects this with SQLSTATE 21000
- * ("ON CONFLICT DO UPDATE command cannot affect row a second time").
- * The route's `sanitizeDbErrorMessage` call must turn that message into
- * a safe summary; if a regression bypasses the sanitizer, the raw
- * Drizzle error string — which interpolates the supplier external id
- * and other parameter values — would land in the response body and
- * trigger the assertions below.
+ * The fix dedupes the inbound batch with `last write wins` semantics
+ * BEFORE the upsert is sent to Postgres. This file pins the new
+ * contract: every endpoint above must succeed (HTTP 200, no `error`
+ * NDJSON event), persist exactly ONE row per natural key, and the
+ * persisted row carries the values from the LAST input row for that
+ * key (matching the observable result of Postgres applying separate
+ * `INSERT ... ON CONFLICT DO UPDATE` statements in payload order).
  *
  * Prereqs
  * -------
@@ -78,111 +49,13 @@ import {
 import { and, eq, like, or } from "drizzle-orm";
 import app from "../src/app";
 
-const TEST_RUN_ID = `task72-sanitize-${Date.now()}-${process.pid}`;
+const TEST_RUN_ID = `task279-dedupe-${Date.now()}-${process.pid}`;
 const CSV_PREFIX = `${TEST_RUN_ID}-csv-`;
 const ERP_PREFIX = `${TEST_RUN_ID}-erp-`;
 const STREAM_PREFIX = `${TEST_RUN_ID}-stream-`;
 
-/**
- * Sentinel "customer" values interpolated into the failing payloads.
- * These are deliberately distinctive so that a regression that leaks the
- * raw Drizzle error (which embeds bound parameter values) is caught by
- * the substring check below — the unique strings would appear verbatim
- * in the response body. Pick strings that would never appear in a
- * sanitized summary built from SQLSTATE + identifier names alone.
- */
 const SENTINEL_SUPPLIER_NAME = `Acme Sentinel ${TEST_RUN_ID}`;
 const SENTINEL_PO_NUMBER = `PO-${TEST_RUN_ID}`;
-
-/**
- * Substrings that must NEVER appear (case-insensitive) in any error
- * response from any of the three ingest endpoints. Split into two
- * groups for clearer assertion messages.
- */
-const BANNED_SQL_FRAGMENTS = [
-  "insert into",
-  "select ",
-  "update ",
-  "values (",
-  "$1",
-  "$2",
-  "$3",
-  "failing query",
-  "params:",
-  "detail:",
-  "key (",
-  "already exists",
-  "violates unique constraint",
-];
-
-/**
- * "Customer field values" the test interpolates into the failing
- * payloads. If any of these appear in the response body, the route is
- * leaking bound parameter values straight from the Postgres error.
- *
- * Sentinel external-id prefixes are included so a leak of any specific
- * `${PREFIX}sup-A` / `${PREFIX}line-1` style string is caught by a
- * single check; we don't need to enumerate every variant.
- */
-function bannedCustomerValues(): string[] {
-  return [
-    SENTINEL_SUPPLIER_NAME,
-    SENTINEL_PO_NUMBER,
-    CSV_PREFIX,
-    ERP_PREFIX,
-    STREAM_PREFIX,
-  ];
-}
-
-function assertNoLeakage(label: string, body: string): void {
-  const lower = body.toLowerCase();
-  for (const frag of BANNED_SQL_FRAGMENTS) {
-    assert.ok(
-      !lower.includes(frag),
-      `[${label}] response body must not include SQL fragment "${frag}". ` +
-        `Got: ${body}`,
-    );
-  }
-  for (const val of bannedCustomerValues()) {
-    assert.ok(
-      !body.includes(val),
-      `[${label}] response body must not include customer value "${val}". ` +
-        `Got: ${body}`,
-    );
-  }
-}
-
-/**
- * The sanitizer must produce a *useful* summary for the duplicate-key
- * trigger this test fires, not just any acceptable string. The trigger
- * is an `INSERT ... ON CONFLICT DO UPDATE` whose conflict target is hit
- * twice in one statement — Postgres rejects with SQLSTATE 21000
- * ("cardinality_violation").
- *
- * 21000 is not a member of the curated `PG_ERROR_CODES` map (it's not a
- * 23xxx integrity violation, even though it's caused by duplicate key
- * data), so the sanitizer's headline falls into the
- * `Database error <SQLSTATE>` branch — i.e. the message must literally
- * contain `Database error 21000`. Anything weaker (a bare
- * `Internal server error during import`, or no SQLSTATE at all) means
- * either the unwrap of `DrizzleQueryError.cause` regressed or the
- * sanitizer is no longer being called on the wrapped error from the
- * route's catch block. Operators rely on this code being present so they
- * can self-service before opening a support ticket.
- *
- * The streaming endpoint additionally prefixes the sanitized message
- * with `CSV stream ingest failed: `; the helper accepts that wrapper
- * but still requires the `Database error 21000` headline to appear
- * inside it.
- */
-function assertSanitizedHeadline(label: string, body: string): void {
-  assert.ok(
-    body.includes("Database error 21000"),
-    `[${label}] expected response body to contain the specific sanitized ` +
-      `headline "Database error 21000" for the SQLSTATE 21000 trigger. ` +
-      `Got: ${body}`,
-  );
-}
 
 let server: http.Server;
 let baseUrl: string;
@@ -192,7 +65,6 @@ before(async () => {
   if (!process.env["DATABASE_URL"]) {
     throw new Error("DATABASE_URL is required to run this integration test.");
   }
-  // Pick a real org from the seeded DB.
   const [row] = await db.select({ id: orgsTable.id }).from(orgsTable).limit(1);
   if (!row) {
     throw new Error(
@@ -212,9 +84,6 @@ before(async () => {
   }
   baseUrl = `http://127.0.0.1:${addr.port}`;
 
-  // Defensive cleanup of any stragglers from a previous identically
-  // prefixed run (the prefix is timestamped + pid-scoped so this is
-  // normally a no-op).
   await cleanupTestRows();
 });
 
@@ -229,8 +98,6 @@ after(async () => {
 });
 
 async function cleanupTestRows(): Promise<void> {
-  // po_lines first (FK to purchase_orders), then purchase_orders, then
-  // suppliers (other tables FK to suppliers via restrict).
   await db
     .delete(poLinesTable)
     .where(
@@ -247,8 +114,6 @@ async function cleanupTestRows(): Promise<void> {
         like(purchaseOrdersTable.sourceExternalId, `${CSV_PREFIX}%`),
       ),
     );
-  // Suppliers go through both `csv` and `mock_erp` source systems
-  // depending on the route. Match by external-id prefix to catch both.
   await db
     .delete(suppliersTable)
     .where(
@@ -266,13 +131,7 @@ async function cleanupTestRows(): Promise<void> {
     );
 }
 
-test("POST /api/ingest/csv hides SQL when the database rejects the upsert", async () => {
-  // Two suppliers sharing the same `externalId` land in the same chunk
-  // of `bulkInsert(...).onConflictDoUpdate({ target: [orgId,
-  // sourceSystem, sourceExternalId] })`. Postgres rejects the statement
-  // with SQLSTATE 21000 ("ON CONFLICT DO UPDATE command cannot affect
-  // row a second time") — a real DB error that travels through the
-  // route's catch block to `sanitizeDbErrorMessage`.
+test("POST /api/ingest/csv dedupes duplicate supplier rows (last write wins)", async () => {
   const dupExternalId = `${CSV_PREFIX}sup-A`;
   const payload = {
     suppliers: [
@@ -300,36 +159,35 @@ test("POST /api/ingest/csv hides SQL when the database rejects the upsert", asyn
 
   assert.equal(
     res.status,
-    500,
-    `expected /api/ingest/csv to return 500 on a real DB error, got ${res.status}`,
+    200,
+    `expected /api/ingest/csv to succeed with in-batch dup (last write wins), got ${res.status}: ${await res.text()}`,
   );
-  const body = await res.text();
-  assertNoLeakage("/api/ingest/csv", body);
 
-  let json: { error?: string };
-  try {
-    json = JSON.parse(body) as { error?: string };
-  } catch {
-    assert.fail(`/api/ingest/csv response was not valid JSON: ${body}`);
-  }
-  assert.ok(
-    typeof json.error === "string" && json.error.length > 0,
-    `/api/ingest/csv response missing 'error' field: ${body}`,
+  // Exactly one supplier row exists for this externalId, carrying the
+  // LAST input row's values (the dup with countryCode=DE).
+  const rows = await db
+    .select({
+      name: suppliersTable.name,
+      countryCode: suppliersTable.countryCode,
+    })
+    .from(suppliersTable)
+    .where(
+      and(
+        eq(suppliersTable.orgId, orgId),
+        eq(suppliersTable.sourceSystem, "csv"),
+        eq(suppliersTable.sourceExternalId, dupExternalId),
+      ),
+    );
+  assert.equal(
+    rows.length,
+    1,
+    `expected exactly one supplier row after dedupe, got ${rows.length}`,
   );
-  assertSanitizedHeadline("/api/ingest/csv", json.error ?? "");
+  assert.equal(rows[0]!.name, `${SENTINEL_SUPPLIER_NAME} (dup)`);
+  assert.equal(rows[0]!.countryCode, "DE");
 });
 
-test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert", async () => {
-  // The mock-ERP adapter inserts a `purchase_order`'s `lines` in a
-  // single `INSERT ... ON CONFLICT DO UPDATE` keyed on
-  // `(orgId, sourceSystem, sourceExternalId)`, where line external ids
-  // are built as `${rec.externalId}#${l.lineNumber}`. Two lines with
-  // the same `lineNumber` therefore collide on the conflict target
-  // inside one statement → SQLSTATE 21000.
-  //
-  // We first emit a `supplier` record so the PO's `supplierExternalId`
-  // resolves; otherwise the adapter no-ops the PO and never reaches the
-  // failing line insert.
+test("POST /api/ingest/mock-erp dedupes duplicate PO lineNumbers (last write wins)", async () => {
   const supplierExt = `${ERP_PREFIX}sup-1`;
   const poExt = `${ERP_PREFIX}po-1`;
   const updatedAt = new Date().toISOString();
@@ -352,8 +210,8 @@ test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert",
         poNumber: SENTINEL_PO_NUMBER,
         supplierExternalId: supplierExt,
         orderDate: updatedAt,
-        // Two lines with the same `lineNumber` → identical
-        // sourceExternalId on both rows → 21000.
+        // Two lines with the same `lineNumber` — must collapse to one
+        // poLines row carrying the LAST line's sku / qty / price.
         lines: [
           {
             lineNumber: 1,
@@ -387,42 +245,39 @@ test("POST /api/ingest/mock-erp hides SQL when the database rejects the upsert",
 
   assert.equal(
     res.status,
-    500,
-    `expected /api/ingest/mock-erp to return 500 on a real DB error, got ${res.status}`,
+    200,
+    `expected /api/ingest/mock-erp to succeed with in-batch dup (last write wins), got ${res.status}: ${await res.text()}`,
   );
-  const body = await res.text();
-  assertNoLeakage("/api/ingest/mock-erp", body);
 
-  let json: { error?: string };
-  try {
-    json = JSON.parse(body) as { error?: string };
-  } catch {
-    assert.fail(`/api/ingest/mock-erp response was not valid JSON: ${body}`);
-  }
-  assert.ok(
-    typeof json.error === "string" && json.error.length > 0,
-    `/api/ingest/mock-erp response missing 'error' field: ${body}`,
+  const lineExt = `${poExt}#1`;
+  const rows = await db
+    .select({
+      sku: poLinesTable.sku,
+      description: poLinesTable.description,
+      qty: poLinesTable.qty,
+      unitPriceUsd: poLinesTable.unitPriceUsd,
+    })
+    .from(poLinesTable)
+    .where(
+      and(
+        eq(poLinesTable.orgId, orgId),
+        eq(poLinesTable.sourceSystem, "mock_erp"),
+        eq(poLinesTable.sourceExternalId, lineExt),
+      ),
+    );
+  assert.equal(
+    rows.length,
+    1,
+    `expected exactly one po_lines row after dedupe, got ${rows.length}`,
   );
-  assertSanitizedHeadline("/api/ingest/mock-erp", json.error ?? "");
+  assert.equal(rows[0]!.sku, `${ERP_PREFIX}sku-B`);
+  assert.equal(rows[0]!.description, "Sentinel item B");
+  // Numeric columns stringify with the column scale (qty:4, price:4).
+  assert.equal(Number(rows[0]!.qty), 2);
+  assert.equal(Number(rows[0]!.unitPriceUsd), 20);
 });
 
-test("POST /api/ingest/csv-stream pre-checks in-batch duplicates and reports the offending lines", async () => {
-  // Two CSV rows sharing the same `externalId` would land in the same
-  // batch and previously trip the streaming adapter's
-  // `INSERT ... ON CONFLICT DO UPDATE` with SQLSTATE 21000
-  // ("cardinality violation"). Task #89 added a pre-check inside
-  // `flushBatch` so the duplicate is detected from the in-memory
-  // buffer BEFORE Drizzle is called: the route then surfaces a
-  // structured error event carrying the conflict-target column, the
-  // offending value, and the row/line locations of every duplicate.
-  //
-  // This test pins both halves of that contract:
-  //   - The response no longer falls back to the sanitized
-  //     "Database error 21000" headline; the operator gets actionable
-  //     row/line numbers instead.
-  //   - The structured `duplicates` payload is present and points at
-  //     the right CSV lines (header is line 1, so the two duplicate
-  //     data rows live on lines 2 and 3).
+test("POST /api/ingest/csv-stream dedupes in-batch duplicate suppliers (last write wins)", async () => {
   const dupExternalId = `${STREAM_PREFIX}sup-A`;
   const csvBody =
     "externalId,name,countryCode\n" +
@@ -441,32 +296,13 @@ test("POST /api/ingest/csv-stream pre-checks in-batch duplicates and reports the
     },
   );
 
-  // Streaming endpoint returns 200 once headers are flushed; failures
-  // are reported as `{ type: "error" }` NDJSON lines in the body. Pin
-  // both — a regression that turns the streaming error into an HTTP
-  // 5xx is still worth catching, but the body check is what proves the
-  // pre-check is wired in.
   assert.equal(
     res.status,
     200,
-    `expected /api/ingest/csv-stream to return 200 (errors are reported in-band), got ${res.status}`,
+    `expected /api/ingest/csv-stream to return 200, got ${res.status}`,
   );
   const body = await res.text();
-  // The pre-check echoes the offending key value (the externalId the
-  // user just uploaded) back to the same uploader, so we DON'T enforce
-  // the customer-value ban list here. We DO still enforce the SQL /
-  // Postgres-internals ban list — a regression that swaps the
-  // pre-check for the raw Drizzle error must still be caught.
-  const lower = body.toLowerCase();
-  for (const frag of BANNED_SQL_FRAGMENTS) {
-    assert.ok(
-      !lower.includes(frag),
-      `[/api/ingest/csv-stream] response body must not include SQL fragment "${frag}". ` +
-        `Got: ${body}`,
-    );
-  }
 
-  // Parse NDJSON and find the terminal `error` event.
   const lines = body
     .split("\n")
     .map((l) => l.trim())
@@ -476,8 +312,8 @@ test("POST /api/ingest/csv-stream pre-checks in-batch duplicates and reports the
       return JSON.parse(l) as {
         type?: string;
         error?: string;
-        conflictKey?: string;
-        duplicates?: Array<{ row?: number; line?: number }>;
+        rowsParsed?: number;
+        rowsInserted?: number;
       };
     } catch (err) {
       throw new Error(
@@ -487,75 +323,41 @@ test("POST /api/ingest/csv-stream pre-checks in-batch duplicates and reports the
     }
   });
   const errorEvent = events.find((e) => e.type === "error");
-  assert.ok(
-    errorEvent,
-    `/api/ingest/csv-stream did not emit an { type: "error" } NDJSON event. ` +
-      `Events: ${events.map((e) => e.type).join(", ")}`,
-  );
-  assert.ok(
-    typeof errorEvent.error === "string" && errorEvent.error.length > 0,
-    `/api/ingest/csv-stream error event has no 'error' string: ${JSON.stringify(errorEvent)}`,
-  );
-  // The streaming route prefixes the message with
-  // "CSV stream ingest failed:" — keep the prefix in the assertion so
-  // a regression that drops it (or replaces it with a raw error
-  // message) is caught.
-  assert.ok(
-    errorEvent.error.startsWith("CSV stream ingest failed:"),
-    `/api/ingest/csv-stream error event is missing the documented prefix. ` +
-      `Got: ${errorEvent.error}`,
-  );
-
-  // The pre-check fired: the response must NOT fall back to the
-  // sanitized "Database error 21000" headline that operators saw
-  // before Task #89.
-  assert.ok(
-    !errorEvent.error.includes("Database error 21000"),
-    `/api/ingest/csv-stream regressed to the sanitized DB-error fallback ` +
-      `instead of running the in-batch duplicate pre-check. Got: ${errorEvent.error}`,
-  );
-
-  // The structured payload tells the UI which key collided and where.
   assert.equal(
-    errorEvent.conflictKey,
-    "externalId",
-    `/api/ingest/csv-stream error event has wrong conflictKey: ${JSON.stringify(errorEvent)}`,
+    errorEvent,
+    undefined,
+    `/api/ingest/csv-stream emitted an unexpected error event: ${JSON.stringify(errorEvent)}`,
   );
-  assert.ok(
-    Array.isArray(errorEvent.duplicates) && errorEvent.duplicates.length === 2,
-    `/api/ingest/csv-stream error event missing 2-entry duplicates array: ${JSON.stringify(errorEvent)}`,
+  // The route emits a terminal `done` (or similar success) event with
+  // counts. We don't pin the exact event name, but the body must
+  // describe a successful run.
+  const failingEvents = events.filter(
+    (e) => e.type === "error" || (e.error && e.error.length > 0),
   );
-  // Header is line 1 so the two duplicate data rows are on lines 2 + 3,
-  // and they're the 1st + 2nd data rows in the file.
-  const dupLines = errorEvent.duplicates!.map((d) => d.line).sort();
-  const dupRows = errorEvent.duplicates!.map((d) => d.row).sort();
-  assert.deepEqual(
-    dupLines,
-    [2, 3],
-    `/api/ingest/csv-stream duplicate locations point at wrong CSV lines: ` +
-      `${JSON.stringify(errorEvent.duplicates)}`,
-  );
-  assert.deepEqual(
-    dupRows,
-    [1, 2],
-    `/api/ingest/csv-stream duplicate locations point at wrong data rows: ` +
-      `${JSON.stringify(errorEvent.duplicates)}`,
+  assert.equal(
+    failingEvents.length,
+    0,
+    `/api/ingest/csv-stream emitted ${failingEvents.length} failure events: ${JSON.stringify(failingEvents)}`,
   );
 
-  // Sanity-check the human-readable message: it should name the column,
-  // echo the offending value, and call out the colliding lines so the
-  // operator can find them in their editor without parsing the
-  // structured payload.
-  assert.ok(
-    errorEvent.error.includes("externalId"),
-    `expected error message to name the conflict-target column. Got: ${errorEvent.error}`,
+  const rows = await db
+    .select({
+      name: suppliersTable.name,
+      countryCode: suppliersTable.countryCode,
+    })
+    .from(suppliersTable)
+    .where(
+      and(
+        eq(suppliersTable.orgId, orgId),
+        eq(suppliersTable.sourceSystem, "csv"),
+        eq(suppliersTable.sourceExternalId, dupExternalId),
+      ),
+    );
+  assert.equal(
+    rows.length,
+    1,
+    `expected exactly one supplier row after streaming dedupe, got ${rows.length}`,
   );
-  assert.ok(
-    errorEvent.error.includes(dupExternalId),
-    `expected error message to echo the offending externalId value back to the uploader. Got: ${errorEvent.error}`,
-  );
-  assert.ok(
-    errorEvent.error.includes("lines 2 and 3"),
-    `expected error message to call out the colliding CSV lines. Got: ${errorEvent.error}`,
-  );
+  assert.equal(rows[0]!.name, `${SENTINEL_SUPPLIER_NAME} (dup)`);
+  assert.equal(rows[0]!.countryCode, "DE");
 });

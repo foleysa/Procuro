@@ -592,7 +592,35 @@ export async function writeIngestPayload(
   // 2. Suppliers.
   const supplierMap = new Map<string, string>();
   if (payload.suppliers?.length) {
-    const rows = payload.suppliers.map((s) => {
+    // Dedupe by externalId with last-write-wins (Task #279). The
+    // suppliers upsert below targets `(orgId, sourceSystem,
+    // sourceExternalId)`; two payload rows sharing externalId would
+    // otherwise drive a single `INSERT ... ON CONFLICT DO UPDATE`
+    // statement to reject with SQLSTATE 21000 ("ON CONFLICT DO UPDATE
+    // command cannot affect row a second time"). Collapsing in-batch
+    // duplicates here matches the observable result of Postgres
+    // applying separate INSERT statements in upload order: the LAST
+    // row for a key becomes the persisted row.
+    const beforeCount = payload.suppliers.length;
+    const dedupMap = new Map<string, (typeof payload.suppliers)[number]>();
+    for (const s of payload.suppliers) {
+      if (!s.externalId) continue;
+      dedupMap.set(s.externalId, s);
+    }
+    const dedupedSuppliers = Array.from(dedupMap.values());
+    if (dedupedSuppliers.length < beforeCount) {
+      logger.info(
+        {
+          orgId,
+          sourceSystem,
+          inputRowCount: beforeCount,
+          uniqueRowCount: dedupedSuppliers.length,
+          collapsedRowCount: beforeCount - dedupedSuppliers.length,
+        },
+        "ingest writer: collapsed duplicate supplier rows by externalId (last write wins)",
+      );
+    }
+    const rows = dedupedSuppliers.map((s) => {
       const decision = autoDetectBillingCurrency(
         s.billingCurrency,
         s.countryCode,
@@ -649,8 +677,8 @@ export async function writeIngestPayload(
         });
       for (const r of inserted) if (r.ext) supplierMap.set(r.ext, r.id);
     });
-    created += payload.suppliers.length;
-    processed += payload.suppliers.length;
+    created += dedupedSuppliers.length;
+    processed += dedupedSuppliers.length;
     await onProgress?.({ recordsProcessed: processed });
   }
 

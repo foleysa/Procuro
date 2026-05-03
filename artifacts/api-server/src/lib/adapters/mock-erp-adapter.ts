@@ -11,6 +11,7 @@ import {
 import { eq, and, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
+import { logger } from "../logger";
 import type { SourceAdapter, SyncResult } from "./source-adapter";
 
 /**
@@ -255,11 +256,36 @@ async function applyRecord(
       })
       .returning({ id: purchaseOrdersTable.id });
     if (poRow && p.lines.length > 0) {
+      // Dedupe `lines` by `lineNumber` with last-write-wins (Task #279).
+      // The poLines upsert below targets `(orgId, sourceSystem,
+      // sourceExternalId)` where the source external id is built as
+      // `${rec.externalId}#${l.lineNumber}`. Two lines sharing
+      // `lineNumber` would otherwise drive a single
+      // `INSERT ... ON CONFLICT DO UPDATE` to reject with SQLSTATE
+      // 21000. Collapsing duplicates here matches the result of
+      // Postgres applying separate INSERTs in payload order.
+      const lineDedupMap = new Map<number, (typeof p.lines)[number]>();
+      for (const l of p.lines) {
+        lineDedupMap.set(l.lineNumber, l);
+      }
+      const dedupedLines = Array.from(lineDedupMap.values());
+      if (dedupedLines.length < p.lines.length) {
+        logger.info(
+          {
+            orgId,
+            poExternalId: rec.externalId,
+            inputLineCount: p.lines.length,
+            uniqueLineCount: dedupedLines.length,
+            collapsedLineCount: p.lines.length - dedupedLines.length,
+          },
+          "mock-erp ingest: collapsed duplicate PO lines by lineNumber (last write wins)",
+        );
+      }
       // Upsert by source identity so ERP re-syncs update in place.
       await db
         .insert(poLinesTable)
         .values(
-          p.lines.map((l) => ({
+          dedupedLines.map((l) => ({
             id: newId("pol"),
             orgId,
             poId: poRow.id,

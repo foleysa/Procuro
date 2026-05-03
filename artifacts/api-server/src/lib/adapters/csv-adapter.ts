@@ -617,41 +617,101 @@ interface BufferedRow {
 }
 
 /**
- * Group the buffered batch by its entity-specific conflict-target key.
- * If any group has more than one row, throw `CsvBatchDuplicateError`
- * with the offending value and the list of `(row, line)` locations.
+ * Dedupe the buffered batch by its entity-specific conflict-target key
+ * with last-write-wins semantics (Task #279). Returns a new array
+ * containing at most one row per conflict-target value; for any key
+ * that appeared more than once the LATEST occurrence (the row closest
+ * to end of the upload) is kept and the earlier rows are dropped, then
+ * a single `info` log line records the collapse so an operator can
+ * audit which CSV lines were superseded.
+ *
+ * Rationale: previously this function THREW `CsvBatchDuplicateError`
+ * which surfaced as a structured error event and aborted the entire
+ * upload — extremely punishing for multi-million-row feeds where the
+ * tail of the file might re-state a header row already present in
+ * the same batch. Postgres' own `INSERT ... ON CONFLICT DO UPDATE`
+ * across separate statements has the same last-write-wins effect on
+ * the DB row; the pre-check just makes the in-batch case match.
+ *
+ * Order is preserved: the deduped array keeps the rows in the same
+ * relative order they appeared in the upload (the "winning" row for
+ * each key takes that key's last position).
  *
  * Runs in O(n) over a single batch (≤ `BATCH_SIZE` = 1000 rows by
- * default) and only allocates a small `Map<string, ...>` keyed on the
- * conflict-target string, so the cost is negligible compared to the
- * downstream `INSERT ... ON CONFLICT DO UPDATE` round-trip.
+ * default).
  */
-function detectBatchDuplicates(
+function dedupeBatch(
   entity: CsvEntity,
   buffered: BufferedRow[],
-): void {
+): BufferedRow[] {
   const spec = CONFLICT_KEY_SPECS[entity];
-  const groups = new Map<string, BufferedRow[]>();
-  for (const item of buffered) {
-    const key = spec.compute(item.row);
+  // Map<key, indexInBuffered of the LAST row carrying that key>.
+  const latestIndexByKey = new Map<string, number>();
+  // Track all duplicate-line groups for a single audit log line.
+  const collapsed: Array<{
+    key: string;
+    keptLine: number;
+    droppedLines: number[];
+  }> = [];
+  const previousIndexByKey = new Map<string, number>();
+
+  for (let i = 0; i < buffered.length; i++) {
+    const key = spec.compute(buffered[i]!.row);
     if (key === null) continue;
-    let list = groups.get(key);
-    if (!list) {
-      list = [];
-      groups.set(key, list);
+    const prev = latestIndexByKey.get(key);
+    if (prev !== undefined) {
+      previousIndexByKey.set(key, prev);
     }
-    list.push(item);
+    latestIndexByKey.set(key, i);
   }
-  for (const [value, items] of groups) {
-    if (items.length > 1) {
-      throw new CsvBatchDuplicateError({
+
+  if (latestIndexByKey.size === 0 || previousIndexByKey.size === 0) {
+    return buffered;
+  }
+
+  // Build dedupe set: drop indexes that are NOT the latest for their key.
+  const indexesToDrop = new Set<number>();
+  // Group all earlier-than-latest rows by key for the audit log.
+  const droppedByKey = new Map<string, number[]>();
+  for (let i = 0; i < buffered.length; i++) {
+    const key = spec.compute(buffered[i]!.row);
+    if (key === null) continue;
+    const latest = latestIndexByKey.get(key)!;
+    if (i !== latest) {
+      indexesToDrop.add(i);
+      let list = droppedByKey.get(key);
+      if (!list) {
+        list = [];
+        droppedByKey.set(key, list);
+      }
+      list.push(buffered[i]!.line);
+    }
+  }
+  for (const [key, droppedLines] of droppedByKey) {
+    const latest = latestIndexByKey.get(key)!;
+    collapsed.push({
+      key,
+      keptLine: buffered[latest]!.line,
+      droppedLines,
+    });
+  }
+
+  if (collapsed.length > 0) {
+    logger.info(
+      {
         entity,
         conflictKey: spec.label,
-        conflictValue: value,
-        duplicates: items.map((i) => ({ row: i.rowIndex, line: i.line })),
-      });
-    }
+        collapsedKeyCount: collapsed.length,
+        droppedRowCount: indexesToDrop.size,
+        // Cap the per-key sample so an extremely repetitive feed doesn't
+        // blow up the log line size; the totals above are exact.
+        sample: collapsed.slice(0, 10),
+      },
+      "csv ingest: collapsed in-batch duplicate rows (last write wins)",
+    );
   }
+
+  return buffered.filter((_, i) => !indexesToDrop.has(i));
 }
 
 interface StreamCsvArgs {
@@ -947,17 +1007,18 @@ async function flushBatch(
   buffered: BufferedRow[],
 ): Promise<number> {
   if (buffered.length === 0) return 0;
-  // Pre-check the conflict-target key for in-batch duplicates BEFORE
-  // sending the chunk to Postgres. Without this, two rows in the same
-  // batch that share the natural key would hit
-  // `INSERT ... ON CONFLICT DO UPDATE` and Postgres would reject the
-  // statement with SQLSTATE 21000 ("ON CONFLICT DO UPDATE command
-  // cannot affect row a second time"). The sanitizer then strips the
-  // offending value, so the operator sees `Database error 21000 on
-  // table "suppliers"...` and has no way to find the bad rows in the
-  // CSV. Detecting the duplicate ourselves lets us tell the uploader
-  // exactly which lines collided and on what key (Task #89).
-  detectBatchDuplicates(entity, buffered);
+  // Dedupe the batch by its entity-specific conflict-target key BEFORE
+  // sending the chunk to Postgres (Task #279, supersedes Task #89's
+  // throw-on-duplicate behavior). Two rows in the same batch sharing
+  // the natural key would otherwise hit `INSERT ... ON CONFLICT DO
+  // UPDATE` and Postgres rejects the statement with SQLSTATE 21000
+  // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+  // Policy is documented `last write wins`: the latest row in the
+  // upload supersedes earlier rows with the same key, matching the
+  // observable behavior of separate `INSERT ... ON CONFLICT` statements
+  // applied in upload order. Collapsed rows are logged at `info` so an
+  // operator can audit which CSV lines were superseded.
+  buffered = dedupeBatch(entity, buffered);
   // The rest of this function is shape-preserving against the original
   // `Record<string, string>[]` parameter, so unwrap the buffered metadata
   // once and let the per-entity branches keep operating on plain rows.
