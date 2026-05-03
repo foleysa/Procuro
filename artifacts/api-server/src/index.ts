@@ -30,6 +30,7 @@ import {
   startRenewalScanScheduler,
   startAnalysisCycleScheduler,
   startExpireStaleOpportunitiesScheduler,
+  startClearExpiredSnoozesScheduler,
   startRoutingHealthScheduler,
   startDefensePackStalenessScheduler,
   startErpSyncScheduler,
@@ -39,6 +40,7 @@ import {
   deliverAlertsHandler,
   escalateAlertsHandler,
   expireStaleOpportunitiesHandler,
+  clearExpiredSnoozesHandler,
   ingestCsvHandler,
   ingestMockErpHandler,
   pruneFunnelSnapshotsHandler,
@@ -183,6 +185,7 @@ registerJobHandler(
   "expire_stale_opportunities",
   expireStaleOpportunitiesHandler,
 );
+registerJobHandler("clear_expired_snoozes", clearExpiredSnoozesHandler);
 registerJobHandler("routing_health_check", runRoutingHealthCheckHandler);
 registerJobHandler(
   "defense_pack_staleness_scan",
@@ -260,12 +263,13 @@ app.listen(port, async (err) => {
   startAlertsEscalationScheduler();
   startOperationalSynthScheduler();
   startExpireStaleOpportunitiesScheduler();
+  startClearExpiredSnoozesScheduler();
   startRoutingHealthScheduler();
   startDefensePackStalenessScheduler();
   startErpSyncScheduler();
   logger.info(
     { port },
-    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers + expire-stale-opportunities + erp-sync scheduler started",
+    "Server listening; job worker + pruner + renewal-scan + analysis-cycle + alert schedulers + expire-stale-opportunities + clear-expired-snoozes + erp-sync scheduler started",
   );
 
   void seedCollectorRegistry().then(

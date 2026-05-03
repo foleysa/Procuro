@@ -3,6 +3,7 @@ import {
   appSettingsTable,
   APP_SETTING_KEY_JOB_PRUNE_SCHEDULE,
   APP_SETTING_KEY_FUNNEL_SNAPSHOT_RETENTION,
+  decisionsTable,
   erpConnectionsTable,
   jobsTable,
   jobKindSettingsTable,
@@ -79,6 +80,11 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // housekeeping with no upstream API calls; same retry budget as
   // the other pruners.
   expire_stale_opportunities: 3,
+  // Hourly snooze-clear is internal DB housekeeping (no upstream
+  // calls); same retry budget as the other system pruners. The
+  // sweep is naturally idempotent — once a row's snoozed_until has
+  // been cleared, the WHERE clause stops matching it.
+  clear_expired_snoozes: 3,
   // Routing materialized-view drift check is intentionally NOT retried:
   // the handler's own refresh-and-recount step already absorbs transient
   // staleness. If a run still ends with `ok=false` we want the failed
@@ -2294,6 +2300,183 @@ export function stopExpireStaleOpportunitiesScheduler(): void {
   if (expireStaleOppsHandle) clearInterval(expireStaleOppsHandle);
   expireStaleOppsHandle = null;
   expireStaleOppsStarted = false;
+}
+
+// ─── Auto-clear expired snoozes (task #228) ──────────────────────────────
+//
+// Display has always honoured the deadline via the
+// `snoozed_until IS NULL OR snoozed_until <= now()` SQL filter, so a
+// row whose deadline has passed already reappears in lists. But the
+// `snoozed_until` column itself is never cleared by that filter, so
+// rows pile up forever with stale past timestamps. This clutters
+// audit queries and makes naive reporting ("how many rows are
+// currently snoozed?") wrong.
+//
+// This sweep runs hourly, NULLs out every `snoozed_until` whose
+// deadline is in the past, and writes one synthetic
+// `unsnooze` decision per affected row with `actor='system'` so the
+// audit trail records the auto-clear the same way an operator-driven
+// unsnooze would. The UPDATE is naturally idempotent — once a row
+// has been cleared it no longer matches the WHERE clause.
+
+const CLEAR_EXPIRED_SNOOZES_LOCK_KEY = 0x53444a4c; // "SDJL" — stale-snooze
+const DEFAULT_CLEAR_EXPIRED_SNOOZES_INTERVAL_MS = 60 * 60 * 1000; // 1h
+
+export interface ClearExpiredSnoozesResult {
+  /** Number of opportunity rows whose `snoozed_until` was NULLed. */
+  cleared: number;
+  /**
+   * Number of `unsnooze` decision rows successfully written for the
+   * cleared rows. Equal to `cleared` on the happy path; lower if the
+   * audit insert failed (the sweep itself still committed — audit
+   * loss is logged but does not fail the job).
+   */
+  decisionsWritten: number;
+}
+
+/**
+ * Single sweep: clears every `snoozed_until` whose deadline is in the
+ * past and writes a `unsnooze` decision row per affected opportunity
+ * with `actor='system'`.
+ *
+ * Cleared rows that lack a `cycle_id` (legacy) fall back to the same
+ * synthetic `"unknown"` marker the bulk-snooze/unsnooze routes use,
+ * because `decisions.cycle_id` is `NOT NULL` and we never want the
+ * audit insert to blow up on a NOT NULL violation.
+ */
+export async function clearExpiredSnoozes(): Promise<ClearExpiredSnoozesResult> {
+  const res = await db.execute(sql`
+    UPDATE opportunities
+    SET snoozed_until = NULL
+    WHERE snoozed_until IS NOT NULL
+      AND snoozed_until <= now()
+    RETURNING id, org_id, cycle_id
+  `);
+  const rows = (res.rows ?? []) as Array<{
+    id: string;
+    org_id: string;
+    cycle_id: string | null;
+  }>;
+
+  if (rows.length === 0) {
+    return { cleared: 0, decisionsWritten: 0 };
+  }
+
+  const decisionValues = rows.map((r) => ({
+    id: newId("dec"),
+    orgId: r.org_id,
+    opportunityId: r.id,
+    // `decisions.cycle_id` is NOT NULL; legacy rows that somehow lack
+    // a cycle pointer get the same synthetic "unknown" marker the
+    // bulk-snooze/unsnooze routes use.
+    cycleId: r.cycle_id ?? "unknown",
+    eventType: "unsnooze" as const,
+    actor: "system",
+  }));
+
+  let decisionsWritten = 0;
+  try {
+    await db.insert(decisionsTable).values(decisionValues);
+    decisionsWritten = decisionValues.length;
+  } catch (err) {
+    // Audit insert failure must NOT fail the job — the snoozed_until
+    // clear has already committed and re-running the sweep cannot
+    // re-discover those rows. Log loudly so operators notice if
+    // unsnooze decisions stop appearing on the audit feed.
+    logger.warn(
+      { err, cleared: rows.length },
+      "clear_expired_snoozes: failed to insert system unsnooze decision rows",
+    );
+  }
+
+  logger.info(
+    { cleared: rows.length, decisionsWritten },
+    "Auto-cleared expired snoozes",
+  );
+
+  return { cleared: rows.length, decisionsWritten };
+}
+
+/**
+ * Enqueue exactly one `clear_expired_snoozes` job iff there is not
+ * already one pending or running. Same advisory-lock-protected shape
+ * as the other internal schedulers above.
+ */
+export async function ensureClearExpiredSnoozesScheduled(): Promise<JobRow | null> {
+  const jobId = newId("job");
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${CLEAR_EXPIRED_SNOOZES_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'clear_expired_snoozes' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) return;
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'clear_expired_snoozes', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+let clearExpiredSnoozesStarted = false;
+let clearExpiredSnoozesHandle: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start the periodic snooze-clear scheduler. Enqueues a
+ * `clear_expired_snoozes` job at boot, then again on a fixed
+ * interval (default 1h, overridable via
+ * `CLEAR_EXPIRED_SNOOZES_INTERVAL_MS`). Idempotent — calling twice
+ * has no effect.
+ */
+export function startClearExpiredSnoozesScheduler(
+  intervalMs?: number,
+): void {
+  if (clearExpiredSnoozesStarted) return;
+  clearExpiredSnoozesStarted = true;
+  const ms =
+    intervalMs ??
+    envPositiveNumber(
+      "CLEAR_EXPIRED_SNOOZES_INTERVAL_MS",
+      DEFAULT_CLEAR_EXPIRED_SNOOZES_INTERVAL_MS,
+    );
+
+  void ensureClearExpiredSnoozesScheduled().catch((err) => {
+    logger.error(
+      { err: (err as Error).message },
+      "Failed to enqueue initial clear_expired_snoozes",
+    );
+  });
+
+  clearExpiredSnoozesHandle = setInterval(() => {
+    ensureClearExpiredSnoozesScheduled().catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        "Failed to enqueue scheduled clear_expired_snoozes",
+      );
+    });
+  }, ms);
+}
+
+export function stopClearExpiredSnoozesScheduler(): void {
+  if (clearExpiredSnoozesHandle) clearInterval(clearExpiredSnoozesHandle);
+  clearExpiredSnoozesHandle = null;
+  clearExpiredSnoozesStarted = false;
 }
 
 // ─── Per-connection recurring ERP-sync scheduler (task #142) ─────────────

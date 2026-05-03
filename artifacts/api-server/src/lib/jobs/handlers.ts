@@ -39,6 +39,7 @@ import { getErpConnector } from "../connectors/erp-connector";
 import { decryptCredentials } from "../erp/crypto";
 import { runCollector } from "../intelligence/runtime";
 import {
+  clearExpiredSnoozes,
   ensureOrgAnalysisCycleScheduled,
   expireStaleOpportunities,
   isJobCancelRequested,
@@ -321,6 +322,21 @@ export async function expireStaleOpportunitiesHandler(
   _job: JobRow,
 ): Promise<Record<string, unknown>> {
   const result = await expireStaleOpportunities();
+  return result as unknown as Record<string, unknown>;
+}
+
+/**
+ * Hourly housekeeping (task #228): NULL out `snoozed_until` on every
+ * opportunity whose deadline has already passed and write a synthetic
+ * `unsnooze` decision (actor='system') per affected row so audit
+ * queries / reporting stay accurate. The display filter has always
+ * honoured the deadline; this job clears the column itself so the
+ * data matches what the UI shows.
+ */
+export async function clearExpiredSnoozesHandler(
+  _job: JobRow,
+): Promise<Record<string, unknown>> {
+  const result = await clearExpiredSnoozes();
   return result as unknown as Record<string, unknown>;
 }
 

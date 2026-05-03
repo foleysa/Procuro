@@ -44,6 +44,14 @@ export const jobKindValues = [
   // unrefreshed for `OPPORTUNITY_QUIET_CYCLES` cycles) to `expired`
   // so the pending-approvals queue stops growing forever.
   "expire_stale_opportunities",
+  // Hourly housekeeping (task #228): clears stale `snoozed_until`
+  // values whose deadline has already passed and writes a synthetic
+  // `unsnooze` decision (actor='system') per affected row so audit
+  // queries / reporting ("how many rows are currently snoozed?")
+  // stay accurate. Display has always honoured the deadline via the
+  // `snoozed_until <= now()` SQL filter; this job clears the column
+  // itself so the data matches what the UI shows.
+  "clear_expired_snoozes",
   "routing_health_check",
   // Nightly scan that compares each ready Defense Pack's frozen
   // `evidence_snapshot` against the current `market_signals` and flips
