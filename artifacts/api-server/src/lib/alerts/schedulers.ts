@@ -15,7 +15,7 @@
  * the boot sequence in `index.ts` can call them unconditionally.
  */
 
-import { db, jobsTable, type JobKind, type JobRow } from "@workspace/db";
+import { db, type JobKind, type JobRow } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { logger } from "../logger";
@@ -166,5 +166,3 @@ export function startOperationalSynthScheduler(intervalMs = 0): void {
 export function stopOperationalSynthScheduler(): void {
   stop(synthHandle);
 }
-
-void jobsTable;

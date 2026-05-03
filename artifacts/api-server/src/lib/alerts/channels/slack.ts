@@ -1,5 +1,5 @@
 /**
- * Slack channel adapter (stub).
+ * Slack channel adapter.
  *
  * Posts to a Slack incoming-webhook URL when configured. Kept minimal
  * because the production rollout treats Slack as best-effort: if the

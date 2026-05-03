@@ -1,5 +1,5 @@
 /**
- * Microsoft Teams channel adapter (stub).
+ * Microsoft Teams channel adapter.
  *
  * Posts a MessageCard to a Teams incoming-webhook URL when configured.
  * Same simulated-fallback semantics as the Slack adapter so the

@@ -52,10 +52,9 @@ import {
   marketSignalsTable,
   opportunitiesTable,
   orgsTable,
-  alertsTable,
   type AlertSeverity,
 } from "@workspace/db";
-import { and, eq, gt, isNotNull, isNull, sql, desc, lt } from "drizzle-orm";
+import { and, eq, gt, isNotNull, sql, desc } from "drizzle-orm";
 import { createAlert } from "@workspace/intelligence";
 import { logger } from "../logger";
 
@@ -479,19 +478,4 @@ async function synthesizeHighConfidenceOpportunities(
 
 function isoDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-/**
- * Sweep alerts that have been resolved or whose underlying condition
- * has cleared. Currently a no-op stub — the cleanup discussion is
- * deferred to a follow-up; alerts persist until manually resolved.
- */
-export async function sweepStaleAlerts(_now: Date): Promise<number> {
-  // intentionally noop — placeholder so callers can wire it in now and
-  // we can add real auto-resolve heuristics without an API change.
-  void _now;
-  void alertsTable;
-  void isNull;
-  void lt;
-  return 0;
 }
