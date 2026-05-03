@@ -185,6 +185,61 @@ function fmtUsd(n: number | string | undefined): string {
   return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+/**
+ * Snapshot retention countdown (task #200).
+ *
+ * Computes when a snapshot row will be auto-pruned by the daily sweep,
+ * derived from `createdAt + retention.snapshotsOlderThanMs`. Returns
+ * `null` if retention config is unavailable. Negative `daysRemaining`
+ * means the row is already past its cutoff and will be pruned on the
+ * next sweep.
+ */
+function computeRetentionCountdown(
+  createdAt: string,
+  snapshotsOlderThanMs: number | undefined,
+): { daysRemaining: number; expiresAt: Date; nearCutoff: boolean } | null {
+  if (!snapshotsOlderThanMs || !isFinite(snapshotsOlderThanMs)) return null;
+  const created = new Date(createdAt).getTime();
+  if (!isFinite(created)) return null;
+  const expiresAt = new Date(created + snapshotsOlderThanMs);
+  const msRemaining = expiresAt.getTime() - Date.now();
+  const daysRemaining = Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
+  return {
+    daysRemaining,
+    expiresAt,
+    nearCutoff: daysRemaining <= 30,
+  };
+}
+
+function RetentionCountdownBadge({
+  createdAt,
+  snapshotsOlderThanMs,
+  testId,
+}: {
+  createdAt: string;
+  snapshotsOlderThanMs: number | undefined;
+  testId?: string;
+}) {
+  const c = computeRetentionCountdown(createdAt, snapshotsOlderThanMs);
+  if (!c) return <span className="text-muted-foreground">—</span>;
+  const label =
+    c.daysRemaining <= 0
+      ? "expired"
+      : c.daysRemaining === 1
+        ? "expires in 1 day"
+        : `expires in ${c.daysRemaining} days`;
+  return (
+    <Badge
+      variant={c.nearCutoff ? "destructive" : "outline"}
+      className="font-sans text-[10px] uppercase tracking-wide"
+      data-testid={testId}
+      title={`Auto-pruned on or after ${c.expiresAt.toLocaleString()}`}
+    >
+      {label}
+    </Badge>
+  );
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -262,6 +317,7 @@ function SnapshotsTab({
                 <TableHead>Capture</TableHead>
                 <TableHead>Annotated</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead>Retention</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
@@ -299,6 +355,13 @@ function SnapshotsTab({
                   </TableCell>
                   <TableCell>{fmtTime(s.createdAt)}</TableCell>
                   <TableCell>
+                    <RetentionCountdownBadge
+                      createdAt={s.createdAt}
+                      snapshotsOlderThanMs={data.retention?.snapshotsOlderThanMs}
+                      testId={`badge-retention-${s.cycleGeneration}`}
+                    />
+                  </TableCell>
+                  <TableCell>
                     <Button
                       variant="outline"
                       size="sm"
@@ -324,6 +387,18 @@ function SnapshotDetailPanel({ id }: { id: string }) {
     queryFn: () =>
       fetchJson<SnapshotDetail>(`/api/admin/funnel/snapshots/${id}`),
   });
+  // Reuse the cached snapshot list query so this panel can surface the
+  // same retention countdown without a duplicate fetch (task #200). The
+  // detail endpoint doesn't return retention config, but the list one
+  // does and is already hydrated when this panel opens. `enabled: false`
+  // ensures we strictly read whatever the parent SnapshotsTab placed in
+  // the cache instead of triggering our own refetch.
+  const { data: listData } = useQuery({
+    queryKey: ["funnel", "snapshots"],
+    queryFn: () =>
+      fetchJson<SnapshotListResp>("/api/admin/funnel/snapshots?limit=50"),
+    enabled: false,
+  });
   if (isLoading) return <div>Loading…</div>;
   if (!data) return null;
   const { snapshot, annotations } = data;
@@ -335,6 +410,15 @@ function SnapshotDetailPanel({ id }: { id: string }) {
           <CardDescription>
             {fmtTime(snapshot.createdAt)} · captured in{" "}
             {snapshot.captureDurationMs}ms
+            <span className="ml-2 inline-flex items-center align-middle">
+              <RetentionCountdownBadge
+                createdAt={snapshot.createdAt}
+                snapshotsOlderThanMs={
+                  listData?.retention?.snapshotsOlderThanMs
+                }
+                testId={`badge-retention-detail-${snapshot.cycleGeneration}`}
+              />
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
