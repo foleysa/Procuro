@@ -27,6 +27,14 @@ export const jobKindValues = [
   "sync_erp_connection",
   "prune_jobs",
   "prune_funnel_snapshots",
+  // Cross-tenant funnel-snapshot backfill (task #195). Walks every
+  // completed cycle for either one tenant (payload.orgId) or all
+  // tenants (no payload) and writes a snapshot for each cycle that
+  // doesn't already have one. Used to be inline in
+  // `POST /platform/funnel/backfill`; routed through the queue so
+  // an established workspace's thousands of historical cycles do
+  // not block (and time out) the request.
+  "backfill_funnel_snapshots",
   "renewal_alert_scan",
   "deliver_alerts",
   "escalate_alerts",

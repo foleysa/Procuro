@@ -20,6 +20,11 @@ import {
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 
 import { runAnalysisCycle } from "../ooda/cycle";
+import {
+  backfillFunnelSnapshotsForOrg,
+  backfillFunnelSnapshotsForAllTenants,
+} from "../ooda/funnel";
+import { ALL_LEVERS } from "../levers";
 import { emailChannelAdapter } from "../alerts/channels";
 import {
   csvSourceAdapter,
@@ -257,6 +262,51 @@ export async function pruneFunnelSnapshotsHandler(
 ): Promise<Record<string, unknown>> {
   const result = await pruneOldFunnelSnapshots();
   return result as unknown as Record<string, unknown>;
+}
+
+/**
+ * Cross-tenant funnel-snapshot backfill (task #195). Reads the
+ * optional `orgId` from the job payload and walks every completed
+ * cycle for either that tenant or all tenants, writing snapshots for
+ * any cycle that doesn't already have one. The result row mirrors
+ * the shape the now-removed inline `POST /platform/funnel/backfill`
+ * returned (per-tenant reports + totals + duration) so the System
+ * page can render the same summary from `job.result` once the queue
+ * worker finishes the run.
+ */
+export async function backfillFunnelSnapshotsHandler(
+  job: JobRow,
+): Promise<Record<string, unknown>> {
+  const orgIdRaw = job.payload?.["orgId"];
+  const orgId =
+    typeof orgIdRaw === "string" && orgIdRaw.trim() !== ""
+      ? orgIdRaw.trim()
+      : null;
+  const startedAt = Date.now();
+  const reports = orgId
+    ? [await backfillFunnelSnapshotsForOrg(orgId, { ALL_LEVERS })]
+    : await backfillFunnelSnapshotsForAllTenants({ ALL_LEVERS });
+  const totals = reports.reduce(
+    (acc, r) => ({
+      cyclesScanned: acc.cyclesScanned + r.cyclesScanned,
+      snapshotsCreated: acc.snapshotsCreated + r.snapshotsCreated,
+      alreadyHadSnapshot: acc.alreadyHadSnapshot + r.alreadyHadSnapshot,
+      skippedNotCompleted: acc.skippedNotCompleted + r.skippedNotCompleted,
+      failed: acc.failed + r.failed,
+    }),
+    {
+      cyclesScanned: 0,
+      snapshotsCreated: 0,
+      alreadyHadSnapshot: 0,
+      skippedNotCompleted: 0,
+      failed: 0,
+    },
+  );
+  return {
+    tenants: reports,
+    totals,
+    durationMs: Date.now() - startedAt,
+  };
 }
 
 /**

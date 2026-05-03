@@ -2537,6 +2537,74 @@ pending or running), or null when no prune is scheduled.
   retention: SystemFunnelSnapshotCleanupStatusRetention;
 }
 
+export interface FunnelBackfillRequest {
+  /** Optional tenant scope. When set, the backfill walks only this tenant's completed cycles; when omitted or null, every tenant is processed.
+   */
+  orgId?: string | null;
+}
+
+export interface FunnelBackfillTenantReport {
+  orgId: string;
+  cyclesScanned: number;
+  snapshotsCreated: number;
+  alreadyHadSnapshot: number;
+  skippedNotCompleted: number;
+  failed: number;
+}
+
+export type FunnelBackfillResultTotals = {
+  cyclesScanned: number;
+  snapshotsCreated: number;
+  alreadyHadSnapshot: number;
+  skippedNotCompleted: number;
+  failed: number;
+};
+
+export interface FunnelBackfillResult {
+  tenants: FunnelBackfillTenantReport[];
+  totals: FunnelBackfillResultTotals;
+  durationMs: number;
+}
+
+export type FunnelBackfillStatusLastJobStatus =
+  (typeof FunnelBackfillStatusLastJobStatus)[keyof typeof FunnelBackfillStatusLastJobStatus];
+
+export const FunnelBackfillStatusLastJobStatus = {
+  pending: "pending",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Job payload at enqueue. Contains an `orgId` string when the backfill was scoped to a single tenant; empty otherwise.
+
+ */
+export type FunnelBackfillStatusLastJobPayload = {
+  [key: string]: unknown;
+} | null;
+
+export type FunnelBackfillStatusLastJob = {
+  id: string;
+  status: FunnelBackfillStatusLastJobStatus;
+  enqueuedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  result?: FunnelBackfillResult | null;
+  error?: string | null;
+  /** Job payload at enqueue. Contains an `orgId` string when the backfill was scoped to a single tenant; empty otherwise.
+   */
+  payload?: FunnelBackfillStatusLastJobPayload;
+} | null;
+
+export interface FunnelBackfillStatus {
+  lastJob: FunnelBackfillStatusLastJob;
+  /** ID of an in-flight `backfill_funnel_snapshots` row (status pending or running), or null when no backfill is scheduled.
+   */
+  activeJobId: string | null;
+}
+
 export type SystemCleanupRunAcceptedStatus =
   (typeof SystemCleanupRunAcceptedStatus)[keyof typeof SystemCleanupRunAcceptedStatus];
 

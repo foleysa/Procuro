@@ -7115,6 +7115,88 @@ export const GetSystemFunnelSnapshotCleanupStatusResponse = zod.object({
 });
 
 /**
+ * Enqueues a `backfill_funnel_snapshots` job (or returns the
+in-flight one if a backfill is already pending or running) and
+returns 202 with the job id so the System page can poll for
+progress. Per-tenant scoping is opt-in via `orgId`; absence
+means "all tenants". Cross-tenant endpoint — gated by the
+platform-admin token.
+
+ * @summary Enqueue a backfill_funnel_snapshots run on demand
+ */
+export const RunFunnelBackfillBody = zod.object({
+  orgId: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional tenant scope. When set, the backfill walks only this tenant's completed cycles; when omitted or null, every tenant is processed.\n",
+    ),
+});
+
+/**
+ * Returns the most recent `backfill_funnel_snapshots` row
+(regardless of status) plus the id of any in-flight run, so
+the System page can render the per-tenant report from
+`lastJob.result` once the worker finishes and poll while the
+job is still running. Cross-tenant endpoint — gated by the
+platform-admin token.
+
+ * @summary Most-recent backfill_funnel_snapshots run + active job id
+ */
+export const GetFunnelBackfillStatusResponse = zod.object({
+  lastJob: zod
+    .object({
+      id: zod.string(),
+      status: zod.enum([
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+      ]),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      result: zod
+        .object({
+          tenants: zod.array(
+            zod.object({
+              orgId: zod.string(),
+              cyclesScanned: zod.number(),
+              snapshotsCreated: zod.number(),
+              alreadyHadSnapshot: zod.number(),
+              skippedNotCompleted: zod.number(),
+              failed: zod.number(),
+            }),
+          ),
+          totals: zod.object({
+            cyclesScanned: zod.number(),
+            snapshotsCreated: zod.number(),
+            alreadyHadSnapshot: zod.number(),
+            skippedNotCompleted: zod.number(),
+            failed: zod.number(),
+          }),
+          durationMs: zod.number(),
+        })
+        .nullish(),
+      error: zod.string().nullish(),
+      payload: zod
+        .record(zod.string(), zod.unknown())
+        .nullish()
+        .describe(
+          "Job payload at enqueue. Contains an `orgId` string when the backfill was scoped to a single tenant; empty otherwise.\n",
+        ),
+    })
+    .nullable(),
+  activeJobId: zod
+    .string()
+    .nullable()
+    .describe(
+      "ID of an in-flight `backfill_funnel_snapshots` row (status pending or running), or null when no backfill is scheduled.\n",
+    ),
+});
+
+/**
  * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.
 
  * @summary Recent CSV streaming-ingest throughput + per-entity trend

@@ -27,22 +27,24 @@ import {
   analysisCyclesTable,
   opportunitiesTable,
   decisionsTable,
+  jobsTable,
   type LeverId,
 } from "@workspace/db";
 import { and, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
-import { getFunnelSnapshotRetentionConfig } from "../lib/jobs/queue";
+import {
+  ensureBackfillFunnelSnapshotsJobScheduled,
+  getFunnelSnapshotRetentionConfig,
+} from "../lib/jobs/queue";
 import {
   captureFunnelSnapshot,
   funnelSnapshotFailuresCounter,
-  backfillFunnelSnapshotsForOrg,
-  backfillFunnelSnapshotsForAllTenants,
 } from "../lib/ooda/funnel";
 import { requirePlatformAdmin } from "../lib/platform-admin";
 import { ALL_LEVERS } from "../lib/levers";
-import { toAnalyzeResult, type LeverAnalyzer } from "../lib/levers/types";
+import { toAnalyzeResult } from "../lib/levers/types";
 import { loadPriors } from "../lib/ooda/priors";
 import {
   summarizeQueue,
@@ -791,15 +793,19 @@ router.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────
-// Backfill (task #188) — fill in funnel_snapshots for cycles that
-// completed before the snapshot writer shipped. Cross-tenant by design
-// so a platform operator can light up the observability page for every
-// established tenant in one call. Per-tenant invocation is opt-in via
-// the `orgId` body field; absence means "all tenants".
+// Backfill (task #188 / #195) — fill in funnel_snapshots for cycles
+// that completed before the snapshot writer shipped. Cross-tenant by
+// design so a platform operator can light up the observability page
+// for every established tenant in one call. Per-tenant invocation is
+// opt-in via the `orgId` body field; absence means "all tenants".
 //
-// Long-running (proportional to historical cycle count × tenants), so
-// we keep it synchronous and guarded by the platform-admin token.
-// Idempotent: cycles that already have a snapshot are skipped.
+// Routed through the existing job queue (task #195): the request
+// enqueues a `backfill_funnel_snapshots` job and returns 202 with
+// the job id so the System page can poll for status / results
+// instead of blocking the HTTP request for what may be tens of
+// minutes on an established workspace. Concurrent requests are
+// coalesced (only one in-flight backfill platform-wide), mirroring
+// the cleanup card pattern.
 // ─────────────────────────────────────────────────────────────────────
 
 router.post(
@@ -807,33 +813,92 @@ router.post(
   requirePlatformAdmin,
   async (req, res) => {
     const body = (req.body ?? {}) as { orgId?: string | null };
-    const orgId =
-      typeof body.orgId === "string" && body.orgId ? body.orgId : null;
-    const startedAt = Date.now();
-    const reports = orgId
-      ? [await backfillFunnelSnapshotsForOrg(orgId, { ALL_LEVERS })]
-      : await backfillFunnelSnapshotsForAllTenants({ ALL_LEVERS });
-    const totals = reports.reduce(
-      (acc, r) => ({
-        cyclesScanned: acc.cyclesScanned + r.cyclesScanned,
-        snapshotsCreated: acc.snapshotsCreated + r.snapshotsCreated,
-        alreadyHadSnapshot: acc.alreadyHadSnapshot + r.alreadyHadSnapshot,
-        skippedNotCompleted:
-          acc.skippedNotCompleted + r.skippedNotCompleted,
-        failed: acc.failed + r.failed,
-      }),
-      {
-        cyclesScanned: 0,
-        snapshotsCreated: 0,
-        alreadyHadSnapshot: 0,
-        skippedNotCompleted: 0,
-        failed: 0,
-      },
+    const trimmed =
+      typeof body.orgId === "string" ? body.orgId.trim() : "";
+    const orgId = trimmed.length > 0 ? trimmed : null;
+    const job = await ensureBackfillFunnelSnapshotsJobScheduled(orgId);
+    if (!job) {
+      // A backfill is already pending or running. Find and return it
+      // so the UI can poll instead of blocking the operator on a
+      // duplicate enqueue. Same shape as the cleanup endpoints.
+      const [existing] = await db
+        .select({ id: jobsTable.id, status: jobsTable.status })
+        .from(jobsTable)
+        .where(
+          and(
+            eq(jobsTable.kind, "backfill_funnel_snapshots"),
+            sql`${jobsTable.status} IN ('pending', 'running')`,
+          ),
+        )
+        .orderBy(desc(jobsTable.enqueuedAt))
+        .limit(1);
+      res.status(202).json({
+        jobId: existing?.id ?? null,
+        status: existing?.status ?? "pending",
+        reused: true,
+      });
+      req.log.info(
+        { jobId: existing?.id ?? null, requestedOrgId: orgId },
+        "Reused in-flight backfill_funnel_snapshots for manual request",
+      );
+      return;
+    }
+    req.log.info(
+      { jobId: job.id, orgId },
+      "Enqueued backfill_funnel_snapshots from manual request",
     );
+    res.status(202).json({
+      jobId: job.id,
+      status: job.status,
+      reused: false,
+    });
+  },
+);
+
+/**
+ * Backfill status — returns the most recent
+ * `backfill_funnel_snapshots` row (regardless of status) plus the id
+ * of any in-flight run, so the System page can render the per-tenant
+ * report from `lastJob.result` once the worker finishes and poll
+ * `activeJobId` while the job is still running. Mirrors the
+ * `/system/cleanup/funnel-snapshots/status` shape.
+ */
+router.get(
+  "/platform/funnel/backfill/status",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    const [last] = await db
+      .select()
+      .from(jobsTable)
+      .where(eq(jobsTable.kind, "backfill_funnel_snapshots"))
+      .orderBy(desc(jobsTable.enqueuedAt))
+      .limit(1);
+
+    const [active] = await db
+      .select({ id: jobsTable.id })
+      .from(jobsTable)
+      .where(
+        and(
+          eq(jobsTable.kind, "backfill_funnel_snapshots"),
+          sql`${jobsTable.status} IN ('pending', 'running')`,
+        ),
+      )
+      .limit(1);
+
     res.json({
-      tenants: reports,
-      totals,
-      durationMs: Date.now() - startedAt,
+      lastJob: last
+        ? {
+            id: last.id,
+            status: last.status,
+            enqueuedAt: last.enqueuedAt,
+            startedAt: last.startedAt,
+            completedAt: last.completedAt,
+            result: last.result ?? null,
+            error: last.error,
+            payload: last.payload ?? null,
+          }
+        : null,
+      activeJobId: active?.id ?? null,
     });
   },
 );

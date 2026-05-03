@@ -3412,6 +3412,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCleanupRunAccepted'
+  /platform/funnel/backfill:
+    post:
+      operationId: runFunnelBackfill
+      tags:
+      - system
+      summary: Enqueue a backfill_funnel_snapshots run on demand
+      description: 'Enqueues a `backfill_funnel_snapshots` job (or returns the
+
+        in-flight one if a backfill is already pending or running) and
+
+        returns 202 with the job id so the System page can poll for
+
+        progress. Per-tenant scoping is opt-in via `orgId`; absence
+
+        means "all tenants". Cross-tenant endpoint — gated by the
+
+        platform-admin token.
+
+        '
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FunnelBackfillRequest'
+      responses:
+        '202':
+          description: Backfill enqueued (or already in-flight)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemCleanupRunAccepted'
+  /platform/funnel/backfill/status:
+    get:
+      operationId: getFunnelBackfillStatus
+      tags:
+      - system
+      summary: Most-recent backfill_funnel_snapshots run + active job id
+      description: 'Returns the most recent `backfill_funnel_snapshots` row
+
+        (regardless of status) plus the id of any in-flight run, so
+
+        the System page can render the per-tenant report from
+
+        `lastJob.result` once the worker finishes and poll while the
+
+        job is still running. Cross-tenant endpoint — gated by the
+
+        platform-admin token.
+
+        '
+      responses:
+        '200':
+          description: Funnel backfill status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FunnelBackfillStatus'
   /system/csv-ingest/metrics:
     get:
       operationId: getSystemCsvIngestMetrics
@@ -9068,6 +9126,130 @@ components:
                 window get pruned on each daily run.
 
                 '
+    FunnelBackfillRequest:
+      type: object
+      properties:
+        orgId:
+          type: string
+          nullable: true
+          description: 'Optional tenant scope. When set, the backfill walks only
+            this tenant''s completed cycles; when omitted or null, every
+            tenant is processed.
+
+            '
+    FunnelBackfillTenantReport:
+      type: object
+      required:
+      - orgId
+      - cyclesScanned
+      - snapshotsCreated
+      - alreadyHadSnapshot
+      - skippedNotCompleted
+      - failed
+      properties:
+        orgId:
+          type: string
+        cyclesScanned:
+          type: integer
+        snapshotsCreated:
+          type: integer
+        alreadyHadSnapshot:
+          type: integer
+        skippedNotCompleted:
+          type: integer
+        failed:
+          type: integer
+    FunnelBackfillResult:
+      type: object
+      required:
+      - tenants
+      - totals
+      - durationMs
+      properties:
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/FunnelBackfillTenantReport'
+        totals:
+          type: object
+          required:
+          - cyclesScanned
+          - snapshotsCreated
+          - alreadyHadSnapshot
+          - skippedNotCompleted
+          - failed
+          properties:
+            cyclesScanned:
+              type: integer
+            snapshotsCreated:
+              type: integer
+            alreadyHadSnapshot:
+              type: integer
+            skippedNotCompleted:
+              type: integer
+            failed:
+              type: integer
+        durationMs:
+          type: integer
+    FunnelBackfillStatus:
+      type: object
+      required:
+      - lastJob
+      - activeJobId
+      properties:
+        lastJob:
+          nullable: true
+          type: object
+          required:
+          - id
+          - status
+          - enqueuedAt
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+              enum:
+              - pending
+              - running
+              - succeeded
+              - failed
+              - cancelled
+            enqueuedAt:
+              type: string
+              format: date-time
+            startedAt:
+              type: string
+              format: date-time
+              nullable: true
+            completedAt:
+              type: string
+              format: date-time
+              nullable: true
+            result:
+              nullable: true
+              allOf:
+              - $ref: '#/components/schemas/FunnelBackfillResult'
+            error:
+              type: string
+              nullable: true
+            payload:
+              type: object
+              additionalProperties: true
+              nullable: true
+              description: 'Job payload at enqueue. Contains an `orgId` string
+                when the backfill was scoped to a single tenant; empty
+                otherwise.
+
+                '
+        activeJobId:
+          type: string
+          nullable: true
+          description: 'ID of an in-flight `backfill_funnel_snapshots` row
+            (status pending or running), or null when no backfill is
+            scheduled.
+
+            '
     SystemCleanupRunAccepted:
       type: object
       required:

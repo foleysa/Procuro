@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getListJobsQueryKey,
   getListJobKindSettingsQueryKey,
   getGetSystemCleanupStatusQueryKey,
   getGetSystemFunnelSnapshotCleanupStatusQueryKey,
+  getGetFunnelBackfillStatusQueryKey,
   useListJobs,
   useListJobKindSettings,
   useRetryJob,
@@ -18,6 +19,8 @@ import {
   useRunSystemCleanup,
   useGetSystemFunnelSnapshotCleanupStatus,
   useRunSystemFunnelSnapshotCleanup,
+  useGetFunnelBackfillStatus,
+  useRunFunnelBackfill,
   useGetSystemCsvIngestMetrics,
   getGetSystemCsvIngestMetricsQueryKey,
   useGetSystemCsvThroughputHistory,
@@ -28,6 +31,8 @@ import {
   type ListJobsParams,
   type CsvIngestEntityTrend,
   type CsvJobThroughputBucket,
+  type FunnelBackfillResult,
+  type FunnelBackfillStatus,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -160,18 +165,47 @@ const KIND_DESCRIPTION: Record<string, string> = {
     "System scheduler — fans out one analysis cycle per tenant every 6h",
 };
 
-interface BackfillTenantReport {
-  orgId: string;
-  cyclesScanned: number;
-  snapshotsCreated: number;
-  alreadyHadSnapshot: number;
-  skippedNotCompleted: number;
-  failed: number;
-}
-interface BackfillResponse {
-  tenants: BackfillTenantReport[];
-  totals: Omit<BackfillTenantReport, "orgId">;
-  durationMs: number;
+function BackfillSummary({ result }: { result: FunnelBackfillResult }) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <div>
+          <div className="text-xs uppercase text-muted-foreground">
+            Snapshots created
+          </div>
+          <div data-testid="text-backfill-created">
+            {result.totals.snapshotsCreated}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-muted-foreground">
+            Already had snapshot
+          </div>
+          <div data-testid="text-backfill-skipped">
+            {result.totals.alreadyHadSnapshot}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-muted-foreground">
+            Cycles scanned
+          </div>
+          <div>{result.totals.cyclesScanned}</div>
+        </div>
+        <div>
+          <div className="text-xs uppercase text-muted-foreground">Failed</div>
+          <div
+            className={result.totals.failed > 0 ? "text-red-600" : ""}
+            data-testid="text-backfill-failed"
+          >
+            {result.totals.failed}
+          </div>
+        </div>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {result.tenants.length} tenant(s) processed in {result.durationMs}ms.
+      </div>
+    </div>
+  );
 }
 
 interface RetryBudgetRowProps {
@@ -530,44 +564,51 @@ export default function System() {
     },
   });
 
-  // ─── Funnel snapshot backfill (task #188) ───────────────────────────
+  // ─── Funnel snapshot backfill (task #188 / #195) ────────────────────
   // Cycles that completed before the funnel snapshot writer shipped
   // have no `funnel_snapshots` row, so the observability page is blank
   // for historical generations. This card lets a platform operator
   // backfill — per-tenant by id, or for every tenant when the field
   // is left blank. Idempotent: existing snapshots are skipped.
+  //
+  // Now routed through the job queue (task #195): the POST enqueues a
+  // `backfill_funnel_snapshots` job and we poll the status endpoint
+  // (same pattern as the cleanup card) so an established workspace
+  // with thousands of historical cycles doesn't time out the request.
+  // Concurrent requests coalesce — one in-flight backfill at a time.
   const [backfillOrgId, setBackfillOrgId] = useState<string>("");
-  const [backfillResult, setBackfillResult] = useState<
-    BackfillResponse | null
-  >(null);
-  const backfillM = useMutation<BackfillResponse, Error, string>({
-    mutationFn: async (orgId: string) => {
-      const res = await fetch("/api/platform/funnel/backfill", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(orgId ? { orgId } : {}),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`${res.status} ${text || res.statusText}`);
-      }
-      return (await res.json()) as BackfillResponse;
+  const backfillStatusKey = useMemo(
+    () => getGetFunnelBackfillStatusQueryKey(),
+    [],
+  );
+  const backfillStatusQuery = useGetFunnelBackfillStatus({
+    query: {
+      queryKey: backfillStatusKey,
+      refetchInterval: (query) => {
+        const data = query.state.data as FunnelBackfillStatus | undefined;
+        return data && data.activeJobId ? 5000 : false;
+      },
     },
-    onSuccess: (resp) => {
-      setBackfillResult(resp);
-      const created = resp.totals.snapshotsCreated;
-      const skipped = resp.totals.alreadyHadSnapshot;
-      toast({
-        title: "Backfill complete",
-        description: `${created} snapshot(s) created, ${skipped} already present across ${resp.tenants.length} tenant(s).`,
-      });
+  });
+  const backfillM = useRunFunnelBackfill({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: resp.reused
+            ? "Backfill already in flight"
+            : "Backfill queued",
+          description: `Job ${resp.jobId ?? "(unknown)"} is ${resp.status}.`,
+        });
+        qc.invalidateQueries({ queryKey: backfillStatusKey });
+        qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Backfill failed",
+          description: String(e),
+          variant: "destructive",
+        }),
     },
-    onError: (e: Error) =>
-      toast({
-        title: "Backfill failed",
-        description: String(e),
-        variant: "destructive",
-      }),
   });
 
   // Funnel-snapshot cleanup (#189). Same polling/refetch pattern as the
@@ -1068,78 +1109,117 @@ export default function System() {
                 placeholder="org_…"
                 value={backfillOrgId}
                 onChange={(e) => setBackfillOrgId(e.target.value.trim())}
-                disabled={backfillM.isPending}
+                disabled={
+                  backfillM.isPending ||
+                  backfillStatusQuery.data?.activeJobId != null
+                }
               />
             </div>
-            {backfillResult && (
+            {backfillStatusQuery.isLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading
+                backfill status…
+              </div>
+            )}
+            {backfillStatusQuery.isError && (
+              <div className="text-sm text-red-600">
+                Failed to load backfill status. You may not have
+                Platform Admin access.
+              </div>
+            )}
+            {backfillStatusQuery.data && (
               <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <div className="text-xs uppercase text-muted-foreground">
-                      Snapshots created
+                      Last backfill at
                     </div>
-                    <div data-testid="text-backfill-created">
-                      {backfillResult.totals.snapshotsCreated}
+                    <div data-testid="text-last-backfill-at">
+                      {backfillStatusQuery.data.lastJob?.completedAt
+                        ? formatDateTime(
+                            backfillStatusQuery.data.lastJob.completedAt,
+                          )
+                        : backfillStatusQuery.data.lastJob?.startedAt
+                          ? `${formatDateTime(backfillStatusQuery.data.lastJob.startedAt)} (in flight)`
+                          : "—"}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs uppercase text-muted-foreground">
-                      Already had snapshot
+                      Last status
                     </div>
-                    <div data-testid="text-backfill-skipped">
-                      {backfillResult.totals.alreadyHadSnapshot}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground">
-                      Cycles scanned
-                    </div>
-                    <div>{backfillResult.totals.cyclesScanned}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase text-muted-foreground">
-                      Failed
-                    </div>
-                    <div
-                      className={
-                        backfillResult.totals.failed > 0
-                          ? "text-red-600"
-                          : ""
-                      }
-                      data-testid="text-backfill-failed"
-                    >
-                      {backfillResult.totals.failed}
+                    <div>
+                      {backfillStatusQuery.data.lastJob ? (
+                        <Badge
+                          className={
+                            STATUS_BADGE[
+                              backfillStatusQuery.data.lastJob.status
+                            ]
+                          }
+                          data-testid="badge-last-backfill-status"
+                        >
+                          {backfillStatusQuery.data.lastJob.status}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          never run
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {backfillResult.tenants.length} tenant(s) processed in{" "}
-                  {backfillResult.durationMs}ms.
-                </div>
+                {backfillStatusQuery.data.lastJob?.result && (
+                  <BackfillSummary
+                    result={
+                      backfillStatusQuery.data.lastJob
+                        .result as FunnelBackfillResult
+                    }
+                  />
+                )}
+                {backfillStatusQuery.data.lastJob?.error && (
+                  <div
+                    className="text-xs text-red-600 break-words"
+                    data-testid="text-backfill-error"
+                  >
+                    {backfillStatusQuery.data.lastJob.error}
+                  </div>
+                )}
               </div>
             )}
             <div className="flex justify-end">
               <Button
                 size="sm"
                 data-testid="btn-run-backfill"
-                onClick={() => backfillM.mutate(backfillOrgId)}
-                disabled={backfillM.isPending}
+                onClick={() =>
+                  backfillM.mutate({
+                    data: backfillOrgId ? { orgId: backfillOrgId } : {},
+                  })
+                }
+                disabled={
+                  backfillM.isPending ||
+                  backfillStatusQuery.data?.activeJobId != null
+                }
                 title={
-                  backfillOrgId
-                    ? `Backfill snapshots for ${backfillOrgId}`
-                    : "Backfill snapshots for every tenant"
+                  backfillStatusQuery.data?.activeJobId
+                    ? `Backfill job ${backfillStatusQuery.data.activeJobId} is already in flight.`
+                    : backfillOrgId
+                      ? `Backfill snapshots for ${backfillOrgId}`
+                      : "Backfill snapshots for every tenant"
                 }
               >
-                {backfillM.isPending ? (
+                {backfillM.isPending ||
+                backfillStatusQuery.data?.activeJobId ? (
                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                 ) : (
                   <PlayCircle className="w-3 h-3 mr-1" />
                 )}
-                {backfillM.isPending
-                  ? "Running…"
-                  : backfillOrgId
-                    ? "Run backfill (tenant)"
-                    : "Run backfill (all tenants)"}
+                {backfillStatusQuery.data?.activeJobId
+                  ? "Backfill pending…"
+                  : backfillM.isPending
+                    ? "Queueing…"
+                    : backfillOrgId
+                      ? "Run backfill (tenant)"
+                      : "Run backfill (all tenants)"}
               </Button>
             </div>
           </CardContent>

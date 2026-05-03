@@ -41,6 +41,7 @@ import {
   ingestCsvHandler,
   ingestMockErpHandler,
   pruneFunnelSnapshotsHandler,
+  backfillFunnelSnapshotsHandler,
   pruneJobsHandler,
   runAnalysisCycleHandler,
   runAnalysisCycleFanoutHandler,
@@ -157,6 +158,10 @@ registerJobHandler("ingest_mock_erp", ingestMockErpHandler);
 registerJobHandler("run_collector", runCollectorHandler);
 registerJobHandler("prune_jobs", pruneJobsHandler);
 registerJobHandler("prune_funnel_snapshots", pruneFunnelSnapshotsHandler);
+registerJobHandler(
+  "backfill_funnel_snapshots",
+  backfillFunnelSnapshotsHandler,
+);
 registerJobHandler("sync_erp_connection", syncErpConnectionHandler);
 registerJobHandler("renewal_alert_scan", runRenewalAlertScanHandler);
 registerJobHandler("analysis_cycle_fanout", runAnalysisCycleFanoutHandler);

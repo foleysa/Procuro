@@ -51,6 +51,13 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // housekeeping, no upstream calls), so it gets the same default
   // retry budget for the same reasons.
   prune_funnel_snapshots: 3,
+  // Funnel-snapshot backfill (task #195). Walks every completed
+  // cycle for one tenant (or every tenant) and re-emits the
+  // snapshot. Pure DB work, no upstream API calls — same retry
+  // budget as the other system pruners. The work is idempotent
+  // (existing snapshots are skipped) so a retry after a transient
+  // DB blip simply resumes the scan.
+  backfill_funnel_snapshots: 3,
   // Daily renewal-alert scan does only DB work (no upstream API calls);
   // a transient retry budget of 3 mirrors the pruner.
   renewal_alert_scan: 3,
@@ -1272,6 +1279,64 @@ export async function ensureFunnelSnapshotPruneJobScheduled(): Promise<JobRow | 
     await tx.execute(sql`
       INSERT INTO jobs (id, kind, org_id, payload, status)
       VALUES (${jobId}, 'prune_funnel_snapshots', NULL, '{}'::jsonb, 'pending')
+    `);
+    inserted = true;
+  });
+
+  if (!inserted) return null;
+
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId));
+  return row ?? null;
+}
+
+/**
+ * Advisory-lock sub-key for the funnel-backfill enqueue helper.
+ * Distinct from the prune sub-keys so a backfill enqueue and a prune
+ * enqueue cannot accidentally serialize against each other.
+ */
+const FUNNEL_BACKFILL_SCHEDULE_LOCK_KEY = 0x46424b46; // "FBKF"
+
+/**
+ * Enqueue a `backfill_funnel_snapshots` job iff there isn't one
+ * already pending or running. Returns the new job row, or `null` if a
+ * backfill is already scheduled. Same advisory-lock-protected
+ * check-then-insert as `ensurePruneJobScheduled` so concurrent
+ * scheduler ticks / operator clicks across multiple worker processes
+ * cannot both observe "no active backfill" and both INSERT.
+ *
+ * Coalescing is intentionally kind-only (regardless of the optional
+ * `orgId` payload): the operator sees a single in-flight backfill at
+ * a time, mirroring the cleanup card pattern. If a per-tenant backfill
+ * is already running and the operator clicks "all tenants", the
+ * existing job is reused — they can re-trigger after it completes.
+ */
+export async function ensureBackfillFunnelSnapshotsJobScheduled(
+  orgId: string | null,
+): Promise<JobRow | null> {
+  const jobId = newId("job");
+  const payload = orgId ? { orgId } : {};
+  let inserted = false;
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(${JOB_ENQUEUE_LOCK_NS}, ${FUNNEL_BACKFILL_SCHEDULE_LOCK_KEY})`,
+    );
+
+    const existing = await tx.execute(sql`
+      SELECT 1 FROM jobs
+      WHERE kind = 'backfill_funnel_snapshots' AND status IN ('pending', 'running')
+      LIMIT 1
+    `);
+    if ((existing.rows?.length ?? 0) > 0) {
+      return; // inserted stays false; advisory lock released on tx end
+    }
+
+    await tx.execute(sql`
+      INSERT INTO jobs (id, kind, org_id, payload, status)
+      VALUES (${jobId}, 'backfill_funnel_snapshots', NULL, ${JSON.stringify(payload)}::jsonb, 'pending')
     `);
     inserted = true;
   });

@@ -100,6 +100,8 @@ import type {
   EscalationPolicy,
   EscalationPolicyList,
   ExportAdminAuditLogParams,
+  FunnelBackfillRequest,
+  FunnelBackfillStatus,
   GetCollectorCost200,
   GetCollectorCostParams,
   GetCollectorCostTimeseries200,
@@ -9572,6 +9574,182 @@ export const useRunSystemFunnelSnapshotCleanup = <
 > => {
   return useMutation(getRunSystemFunnelSnapshotCleanupMutationOptions(options));
 };
+
+/**
+ * Enqueues a `backfill_funnel_snapshots` job (or returns the
+in-flight one if a backfill is already pending or running) and
+returns 202 with the job id so the System page can poll for
+progress. Per-tenant scoping is opt-in via `orgId`; absence
+means "all tenants". Cross-tenant endpoint — gated by the
+platform-admin token.
+
+ * @summary Enqueue a backfill_funnel_snapshots run on demand
+ */
+export const getRunFunnelBackfillUrl = () => {
+  return `/api/platform/funnel/backfill`;
+};
+
+export const runFunnelBackfill = async (
+  funnelBackfillRequest?: FunnelBackfillRequest,
+  options?: RequestInit,
+): Promise<SystemCleanupRunAccepted> => {
+  return customFetch<SystemCleanupRunAccepted>(getRunFunnelBackfillUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(funnelBackfillRequest),
+  });
+};
+
+export const getRunFunnelBackfillMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runFunnelBackfill>>,
+    TError,
+    { data: BodyType<FunnelBackfillRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runFunnelBackfill>>,
+  TError,
+  { data: BodyType<FunnelBackfillRequest> },
+  TContext
+> => {
+  const mutationKey = ["runFunnelBackfill"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runFunnelBackfill>>,
+    { data: BodyType<FunnelBackfillRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return runFunnelBackfill(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunFunnelBackfillMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runFunnelBackfill>>
+>;
+export type RunFunnelBackfillMutationBody = BodyType<FunnelBackfillRequest>;
+export type RunFunnelBackfillMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Enqueue a backfill_funnel_snapshots run on demand
+ */
+export const useRunFunnelBackfill = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runFunnelBackfill>>,
+    TError,
+    { data: BodyType<FunnelBackfillRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runFunnelBackfill>>,
+  TError,
+  { data: BodyType<FunnelBackfillRequest> },
+  TContext
+> => {
+  return useMutation(getRunFunnelBackfillMutationOptions(options));
+};
+
+/**
+ * Returns the most recent `backfill_funnel_snapshots` row
+(regardless of status) plus the id of any in-flight run, so
+the System page can render the per-tenant report from
+`lastJob.result` once the worker finishes and poll while the
+job is still running. Cross-tenant endpoint — gated by the
+platform-admin token.
+
+ * @summary Most-recent backfill_funnel_snapshots run + active job id
+ */
+export const getGetFunnelBackfillStatusUrl = () => {
+  return `/api/platform/funnel/backfill/status`;
+};
+
+export const getFunnelBackfillStatus = async (
+  options?: RequestInit,
+): Promise<FunnelBackfillStatus> => {
+  return customFetch<FunnelBackfillStatus>(getGetFunnelBackfillStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFunnelBackfillStatusQueryKey = () => {
+  return [`/api/platform/funnel/backfill/status`] as const;
+};
+
+export const getGetFunnelBackfillStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFunnelBackfillStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFunnelBackfillStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFunnelBackfillStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFunnelBackfillStatus>>
+  > = ({ signal }) => getFunnelBackfillStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFunnelBackfillStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFunnelBackfillStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFunnelBackfillStatus>>
+>;
+export type GetFunnelBackfillStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Most-recent backfill_funnel_snapshots run + active job id
+ */
+
+export function useGetFunnelBackfillStatus<
+  TData = Awaited<ReturnType<typeof getFunnelBackfillStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFunnelBackfillStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFunnelBackfillStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the most recent CSV streaming uploads (newest first) plus per-entity 7-day rollups so the System page can chart rows/sec drift over time without scraping logs. Cross-tenant endpoint — gated by the platform-admin token.
