@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "QTJDXDSLVwD7SHLXqjEQ5"
+uri = "file://screenshots/direction-a-triage.jpg"
+type = "image"
+title = "Direction A — Triage-first"
+
+[[outputs]]
+id = "g1SKCykAVMzGmqp53OojJ"
+uri = "file://screenshots/direction-b-statusboard.jpg"
+type = "image"
+title = "Direction B — Status board"
+
+[[outputs]]
+id = "t9H3J1bG7-mtPs2wyw6h1"
+uri = "file://screenshots/direction-c-calmexec.jpg"
+type = "image"
+title = "Direction C — Calm exec brief"
