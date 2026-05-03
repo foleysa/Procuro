@@ -5,6 +5,9 @@ dist
 tmp
 out-tsc
 *.tsbuildinfo
+
+# test coverage reports
+coverage
 .expo
 .expo-shared
 
