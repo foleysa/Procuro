@@ -106,9 +106,14 @@ describe("<Today />", () => {
 
     // Wait for query to resolve.
     expect(await screen.findByTestId("today-card-alerts")).toBeTruthy();
-    expect(screen.getByTestId("today-card-opportunities")).toBeTruthy();
     expect(screen.getByTestId("today-card-jobs")).toBeTruthy();
     expect(screen.getByTestId("today-card-approvals")).toBeTruthy();
+    // #269 follow-up: "Proposed opportunities" card removed; it
+    // counted the same status='proposed' pool as the Pending
+    // approvals card. The server still emits
+    // `opportunities.proposed`; the client just no longer renders
+    // a card for it.
+    expect(screen.queryByTestId("today-card-opportunities")).toBeNull();
 
     // No partial badge when everything succeeded.
     expect(screen.queryByTestId("today-partial-badge")).toBeNull();

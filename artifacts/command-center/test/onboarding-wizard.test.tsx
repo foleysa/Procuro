@@ -122,6 +122,7 @@ const {
   STABLE_SPEND,
   STABLE_BILLING,
   STABLE_ALERTS_SUMMARY,
+  STABLE_DEAD_LETTER,
 } = vi.hoisted(() => {
   const state = {
     onboarding: undefined as OnboardingState | undefined,
@@ -147,6 +148,7 @@ const {
     bySeverity: Object.freeze({}),
     openCriticalOrHigh: 0,
   });
+  const stableDeadLetter = Object.freeze({ jobs: stableEmptyArray });
 
   // External-store plumbing so React renders pick up mutations to the
   // shared mockState immediately — same effect as a successful
@@ -178,6 +180,7 @@ const {
     STABLE_SPEND: stableSpend,
     STABLE_BILLING: stableBilling,
     STABLE_ALERTS_SUMMARY: stableAlerts,
+    STABLE_DEAD_LETTER: stableDeadLetter,
   };
 });
 
@@ -254,6 +257,30 @@ vi.mock("@workspace/api-client-react", () => {
 
     // ----- Readiness -----
     useGetReadiness: () => wrap(() => mockState.readiness),
+
+    // ----- Today feed (#269: composed into unified Dashboard) -----
+    useGetTodayFeed: () => wrap(() => undefined),
+
+    // ----- Dead-letter jobs (NeedsAttention card) -----
+    // The wrapped reader must return a stable reference, otherwise
+    // useSyncExternalStore re-fires on every commit and triggers
+    // "Maximum update depth exceeded".
+    useListDeadLetterJobs: () => wrap(() => STABLE_DEAD_LETTER),
+    getListDeadLetterJobsQueryKey: () => ["deadLetterJobs"],
+    useRetryJob: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: undefined,
+    }),
+    useDiscardJob: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: undefined,
+    }),
 
     // ----- Sample data -----
     useInstallSampleData: (opts?: {

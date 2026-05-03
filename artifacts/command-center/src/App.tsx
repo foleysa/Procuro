@@ -47,7 +47,6 @@ import OnboardingPage from "./pages/onboarding";
 import WatchedCompanies from "./pages/watched-companies";
 import WatchedUsSuppliers from "./pages/watched-us-suppliers";
 import Admin from "./pages/admin";
-import Today from "./pages/today";
 import Operations from "./pages/operations";
 import Engine from "./pages/engine";
 import TaxonomyQueue from "./pages/taxonomy-queue";
@@ -325,8 +324,16 @@ function AppRoutes() {
       <Route>
         <Layout>
           <Switch>
-            <Route path="/" component={Today} />
-            <Route path="/dashboard" component={Dashboard} />
+            <Route path="/" component={Dashboard} />
+            {/* #269: Today and Dashboard merged into one unified
+              * landing surface at `/`. Both legacy URLs redirect so
+              * bookmarks and email links keep resolving. */}
+            <Route path="/dashboard">
+              <Redirect to="/" />
+            </Route>
+            <Route path="/today">
+              <Redirect to="/" />
+            </Route>
             <Route path="/operations">
               <AdminGuard>
                 <Operations />

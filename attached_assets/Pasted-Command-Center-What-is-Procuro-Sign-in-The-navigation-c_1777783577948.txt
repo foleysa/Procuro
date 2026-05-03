@@ -1,0 +1,159 @@
+Command Center
+What is Procuro? →
+Sign in
+The navigation changed. See what moved →
+Dismiss
+Command Center
+SCIS Procurement · live view of every Procuro signal · auto‑refreshes every 30s
+
+Reviewing security? See your live Trust Center →
+
+Refresh
+Realized savings
+$8.3M
+Success fee $1.7M
+Pipeline value
+$584.4M
+205 open opps
+Capture rate
+1%
+$8.3M of $592.7M acted on
+Awaiting approval
+200
+$583.9M projected
+Showing the first 200 opportunities per status. Counts and totals may understate proposed. Open Opportunities to inspect all rows.
+Alerts
+Open
+0
+
+Open critical / high — 15 open total · top: “Contract CTR-1062 renewing in 87 days” · 10h ago
+
+Proposed opportunities
+Open
+5
+
+top: Supplier Consolidation · $5M projected
+
+Pending approvals
+Open
+147
+
+Need action today (new in last 24h or aged past 7 days) · 4,814 total pending · oldest 2d
+
+Operations health
+Open
+0
+
+Failed jobs in the last 24h · last cycle ran 7h ago
+
+Needs your attention
+3 items
+102 high‑confidence opportunities awaiting approval
+$215.5M projected · ≥70% confidence
+Review
+1 collector hasn't run in the last 24h
+Published Commodity Index
+Inspect
+16 enabled collectors have never run
+BLS PPI, CPI & ECI Index, ECB FX Reference Rates and 14 more · trigger a first run to start streaming signals
+Run
+Opportunity pipeline
+Proposed
+200 opps
+$583.9M projected
+Approved
+5 opps
+$532.4K projected
+Executing
+0 opps
+$0 projected
+Realized
+36 opps
+$8.3M realized
+Rejected
+8 opps
+$883.6K projected
+What changed since last cycle
+Open Engine
+Auto-annotations
+opps_persisted dropped 100% (0 vs trailing-5 mean 29.4)
+
+cycle #43
+
+Acknowledge
+Conversion-rate deltascycle #66 → #67
+drafts→post_exclusion
+100.0% → 100.0%
+0.0 pp
+post_exclusion→persisted
+0.0% → 0.0%
+0.0 pp
+approved_30d→realized_30d
+87.8% → 87.8%
+0.0 pp
+persisted→approved_30d
+no data yet
+Platform health
+data readiness · dead-letter jobs · system pulse
+Collapse
+Data readiness
+Lever-by-lever check of the fields each play needs.
+
+73%
+Contract Renegotiation Trigger
+0%
+Renewal alerts route to the contract owner — without one, alerts have no recipient. (80/80 rows missing Contract owner) Fix this
+Supplier FX Exposure
+0%
+FX exposure needs each supplier's billing currency (or a country code we can infer it from). (804/804 rows missing Supplier billing currency) Fix this
+Material-Index Arbitrage
+29%
+Index-arbitrage compares your contract escalator vs. the public index — set a reference index per contract. (57/80 rows missing Contract reference index) Fix this
+Dead-letter jobs
+718
+Open System / Jobs
+Kind	Sample error	Count	Actions
+Alert delivery
+most recent 1d ago
+Failed query: select "id", "org_id", "severity", "source", "kind", "title", "summary", "dedupe_key", "occurrences", "payload", "entity_uid",…	×18	Retry one
+Discard one
+Alert escalation
+most recent 1d ago
+Failed query:	×2	Retry one
+Discard one
+2 unique errors across 718 jobs. Bulk retry / discard in System / Jobs
+System pulse
+Last cycle
+Gen 70 · 4h ago
+Job queue (24h)
+0 pend · 0 run · 100 ok · 0 fail
+Collectors
+17/84 on · 1 stale
+Alerts inbox
+15 open · 0 crit/high
+Market signals (24h)
+0 new · last 3d ago
+Intelligence Fusion
+Signals · Entity 360 · Heatmap
+Addressable spend
+$490.9M · 770 suppliers
+Lever performance
+Run cycle
+Playbook
+Lever	Opps	Realized	Rate
+Supplier Consolidation
+132	$5M	1%
+SKU Price Benchmark
+833	$890.9K	0%
+Maverick Spend
+833	$591.7K	0%
+Missed Volume Threshold
+687	$527.4K	7%
+Contract Leakage
+668	$438.2K	0%
+Tail Spend Rationalization
+4	$305.2K	79%
+Duplicate Payment
+833	$286.1K	1%
+Payment Term Extension
+807	$226.6K	3%

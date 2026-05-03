@@ -1,6 +1,5 @@
 import { Link, useLocation } from "wouter";
 import {
-  LayoutDashboard,
   BarChart3,
   Sparkles,
   FileText,
@@ -68,8 +67,11 @@ type NavGroup = {
 const NAV_GROUPS: NavGroup[] = [
   {
     id: "today",
-    label: "Today",
-    items: [{ href: "/", label: "Today", icon: Sun }],
+    label: "Home",
+    // #269: Today and Dashboard collapsed into one unified landing
+    // page at `/`. Sidebar entry kept under the "Home" group so
+    // existing nav-today test ids and muscle memory still resolve.
+    items: [{ href: "/", label: "Home", icon: Sun }],
   },
   {
     id: "workspace",
@@ -118,7 +120,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: "org",
     label: "Org",
     items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      // #269: standalone /dashboard removed — merged into Home (`/`).
       { href: "/results", label: "Results & Billing", icon: TrendingUp },
       { href: "/playbook", label: "Playbook", icon: BookOpen },
       { href: "/trust", label: "Trust Center", icon: Shield },

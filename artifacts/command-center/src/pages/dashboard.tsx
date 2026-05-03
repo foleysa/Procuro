@@ -28,6 +28,7 @@ import type { Opportunity, OpportunityStatus } from "@workspace/api-client-react
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -41,7 +42,6 @@ import {
   Bell,
   CheckCircle2,
   CircleDot,
-  Clock,
   Loader2,
   Play,
   RefreshCw,
@@ -55,6 +55,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DataReadinessCard } from "@/components/data-readiness-card";
 import { NeedsAttention } from "@/features/dashboard/NeedsAttention";
+import { useGetTodayFeed } from "@workspace/api-client-react";
+import { TodayTriageRow, TodayDeltasCard } from "./today";
+import { useMyRole } from "@/lib/use-my-role";
 
 const POLL_MS = 30_000;
 
@@ -63,6 +66,17 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { data: me } = useGetMe();
+  const { isOrgAdmin } = useMyRole();
+  // #269: the unified landing page composes the Today triage cards
+  // and the funnel "what changed" deltas alongside the original KPI
+  // strip and pipeline. We fetch the Today feed once here and pass it
+  // into the reusable widgets exported from `./today`.
+  // The generated Orval hook fills in queryKey/queryFn for us, so we
+  // cast the partial options here. (Same pattern is used elsewhere in
+  // this file for the other useGet* hooks.)
+  const todayFeedQ = useGetTodayFeed({
+    query: { refetchInterval: POLL_MS } as never,
+  });
 
   // Auto-trigger the wizard on first visit when no data has been
   // ingested yet AND the actor hasn't dismissed/completed onboarding.
@@ -311,10 +325,10 @@ export default function Dashboard() {
     openAlertsTotal,
   });
 
-  // Top open opportunities (still actionable: proposed/approved/executing)
-  const topOpenOpps = [...proposedItems, ...approvedItems, ...executingItems]
-    .sort((a, b) => b.projectedSavingsUsd - a.projectedSavingsUsd)
-    .slice(0, 5);
+  // #269 follow-up: "Top open opportunities" list removed from the
+  // bottom of the page (the Today triage row's OpportunitiesCard
+  // already covers proposed-pipeline rollup). The intermediate
+  // topOpenOpps array is therefore no longer needed.
 
   const pipelineStages = [
     {
@@ -376,7 +390,23 @@ export default function Dashboard() {
             )}
           </h1>
           <p className="text-muted-foreground mt-1">
-            {me?.org.name ?? "—"} · live view of every Procuro signal · auto‑refreshes every 30s
+            {me?.org.name ?? "—"} · auto-refreshes every 30s
+          </p>
+          {/* #269 follow-up: 2-3 minute scan brief. The page reads
+              top-to-bottom as the operator's morning narrative — see
+              each section subtitle for the "what & why". */}
+          <p
+            className="text-sm text-muted-foreground mt-2 max-w-3xl"
+            data-testid="text-dashboard-brief"
+          >
+            <strong className="text-foreground">Your 2-minute brief.</strong>{" "}
+            Scan top-down: the KPIs say how much value the engine has
+            delivered to the client so far; the triage row is the
+            decisions waiting on you to keep that value flowing; the
+            funnel and deltas show what changed in the engine's read
+            of the client's business overnight; platform health is
+            only relevant if something is broken; lever performance
+            shows which plays are actually landing for the client.
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             Reviewing security?{" "}
@@ -399,17 +429,19 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* KPI strip — outcome metrics only. The "Awaiting approval"
+          KPI used to sit here but it counted the same proposed-status
+          pool as the "Pending approvals" triage card below, restating
+          queue depth in the outcomes strip. Dropped so this row
+          answers one question only: "how is the engine doing?"
+          (#269 follow-up). */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           label="Realized savings"
           value={formatUsd(billingQ.data?.totalRealizedUsd ?? 0, {
             compact: true,
           })}
-          sub={`Success fee ${formatUsd(
-            billingQ.data?.successFeeUsd ?? 0,
-            { compact: true },
-          )}`}
+          sub="Captured for the client this period"
           icon={TrendingUp}
           tone="green"
           href="/results"
@@ -447,15 +479,6 @@ export default function Dashboard() {
           href="/results"
           loading={billingQ.isLoading || oppsLoading}
         />
-        <KpiCard
-          label="Awaiting approval"
-          value={buckets.proposed.count.toLocaleString()}
-          sub={`${formatUsd(buckets.proposed.value, { compact: true })} projected`}
-          icon={Clock}
-          tone={buckets.proposed.count > 0 ? "amber" : "muted"}
-          href="/approvals"
-          loading={oppsLoading}
-        />
       </div>
 
       {cappedBuckets.length > 0 && (
@@ -472,277 +495,311 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Data readiness — persistent on the dashboard. Even at 100%
-          we keep the card mounted so the user can confirm at a glance
-          that every lever still has the data it needs. */}
-      <DataReadinessCard basePath={import.meta.env.BASE_URL.replace(/\/$/, "")} />
+      {/* #269 Band 2 — Triage + attention.
+          A single band that fuses the Today operator triage cards
+          (alerts, proposed opportunities, pending approvals, ops
+          health) with the legacy Dashboard "Needs your attention"
+          list. The triage cards each degrade independently (loading
+          / error / empty) and the attention list rolls up everything
+          else so one morning glance covers every actionable signal. */}
+      <section
+        className="space-y-3"
+        data-testid="dashboard-triage-attention-band"
+      >
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <h2 className="text-lg font-semibold">What needs you today</h2>
+          <p className="text-xs text-muted-foreground">
+            Decisions and fixes that won't unblock themselves before
+            the next cycle. Clear these first.
+          </p>
+        </div>
+        {todayFeedQ.isLoading ? (
+          <div
+            className="text-sm text-muted-foreground"
+            data-testid="today-triage-loading"
+          >
+            Loading triage…
+          </div>
+        ) : todayFeedQ.data ? (
+          <>
+            {todayFeedQ.data.partial && (
+              <div
+                className="text-xs text-amber-700"
+                data-testid="dashboard-today-partial-badge"
+              >
+                Today feed is partial — {todayFeedQ.data.errors.length}{" "}
+                source(s) unavailable. Each card shows what it could load.
+              </div>
+            )}
+            <TodayTriageRow data={todayFeedQ.data} isAdmin={isOrgAdmin} />
+          </>
+        ) : (
+          <div
+            className="text-sm text-destructive"
+            data-testid="today-triage-error"
+          >
+            Couldn't load the Today triage feed.
+          </div>
+        )}
 
-      {/* Dead-letter jobs (#183). Surfaces permanently-failed jobs
-          with one-click retry/discard so operators catch them
-          proactively instead of waiting for an end-user complaint. */}
-      <NeedsAttention />
-
-      {/* Attention + System pulse */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Attention (2 cols) */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      {/* Attention list — kept from the old Dashboard but de-duped
+          against the Today triage cards above (open alert and
+          proposed-backlog COUNTS are no longer repeated here, but
+          the high-confidence proposed signal IS preserved because it
+          is qualitatively different from a count). */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div className="space-y-1">
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-500" /> Needs your attention
             </CardTitle>
-            <span className="text-xs text-muted-foreground">
-              {attentionItems.length} {attentionItems.length === 1 ? "item" : "items"}
-            </span>
-          </CardHeader>
-          <CardContent>
-            {isLoading && attentionItems.length === 0 ? (
-              <div className="text-sm text-muted-foreground">Scanning…</div>
-            ) : attentionItems.length === 0 ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" /> All clear. Nothing needs human attention right now.
-              </div>
-            ) : (
-              <ul className="divide-y" data-testid="list-attention">
-                {attentionItems.map((it, i) => (
-                  <li
-                    key={i}
-                    className="py-3 flex items-start gap-3"
-                    data-testid={`row-attention-${it.id}`}
-                  >
-                    <SeverityDot severity={it.severity} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{it.title}</div>
-                      {it.detail && (
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {it.detail}
-                        </div>
-                      )}
-                    </div>
-                    <Link href={it.href}>
-                      <Button variant="ghost" size="sm" className="gap-1">
-                        {it.cta} <ArrowRight className="w-3 h-3" />
-                      </Button>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+            <CardDescription>
+              Things wrong with <em>your engine setup</em>, not the
+              outside world: stale collectors, missing data fields,
+              high-confidence proposals stuck in approval. Fix these
+              so the Alerts card above stays accurate.
+            </CardDescription>
+          </div>
+          <span className="text-xs text-muted-foreground shrink-0">
+            {attentionItems.length} {attentionItems.length === 1 ? "item" : "items"}
+          </span>
+        </CardHeader>
+        <CardContent>
+          {isLoading && attentionItems.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Scanning…</div>
+          ) : attentionItems.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" /> All clear. Nothing else needs human attention right now.
+            </div>
+          ) : (
+            <ul className="divide-y" data-testid="list-attention">
+              {attentionItems.map((it, i) => (
+                <li
+                  key={i}
+                  className="py-3 flex items-start gap-3"
+                  data-testid={`row-attention-${it.id}`}
+                >
+                  <SeverityDot severity={it.severity} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{it.title}</div>
+                    {it.detail && (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {it.detail}
+                      </div>
+                    )}
+                  </div>
+                  <Link href={it.href}>
+                    <Button variant="ghost" size="sm" className="gap-1">
+                      {it.cta} <ArrowRight className="w-3 h-3" />
+                    </Button>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+      </section>
 
-        {/* System pulse */}
+      {/* #269 Band 3 — Pipeline funnel + cycle deltas side-by-side. */}
+      <div className="space-y-3">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <h2 className="text-lg font-semibold">Where things stand</h2>
+          <p className="text-xs text-muted-foreground">
+            Funnel = current snapshot of every open opportunity.
+            Deltas = what shifted between the last two cycles.
+          </p>
+        </div>
+      <div
+        className="grid lg:grid-cols-2 gap-6"
+        data-testid="dashboard-funnel-deltas-band"
+      >
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Server className="w-5 h-5" /> System pulse
+              <Sparkles className="w-5 h-5" /> Opportunity pipeline
             </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <PulseRow
-              icon={Activity}
-              label="Last analysis cycle"
-              value={
-                lastCycle
-                  ? `Gen ${lastCycle.generation} · ${timeAgo(lastCycle.completedAt ?? lastCycle.startedAt)}`
-                  : "No cycles yet"
-              }
-              sub="Auto-runs every 6h"
-              href="/system"
-            />
-            <PulseRow
-              icon={Server}
-              label="Job queue (24h)"
-              value={
-                jobsQ.isLoading
-                  ? "…"
-                  : `${pendingJobs.length} pend · ${runningJobs.length} run · ${succeededJobs24h.length} ok · ${failedJobs24h.length} fail`
-              }
-              tone={
-                failedJobs24h.length > 0
-                  ? "red"
-                  : runningJobs.length > 0 || pendingJobs.length > 0
-                    ? "amber"
-                    : "green"
-              }
-              href="/system"
-            />
-            <PulseRow
-              icon={Radar}
-              label="Collectors"
-              value={
-                collectorsQ.isLoading
-                  ? "…"
-                  : `${enabledCollectors.length}/${collectors.length} enabled · ${staleCollectors.length} stale`
-              }
-              tone={staleCollectors.length > 0 ? "amber" : "green"}
-              href="/collectors"
-            />
-            <PulseRow
-              icon={Bell}
-              label="Alerts inbox"
-              value={
-                alertsSummaryQ.isLoading
-                  ? "…"
-                  : openAlertsTotal > 0
-                    ? `${openAlertsTotal} open · ${openCriticalOrHighAlerts} crit/high`
-                    : "All clear"
-              }
-              tone={
-                openCriticalOrHighAlerts > 0
-                  ? "red"
-                  : openAlertsTotal > 0
-                    ? "amber"
-                    : "green"
-              }
-              href="/alerts"
-            />
-            <PulseRow
-              icon={CircleDot}
-              label="Market signals (24h)"
-              value={
-                signalsQ.isLoading
-                  ? "…"
-                  : recentSignals24h.length > 0
-                    ? `${recentSignals24h.length} new · last ${timeAgo(lastSignal?.observedAt)}`
-                    : lastSignal
-                      ? `0 new · last ${timeAgo(lastSignal.observedAt)}`
-                      : "No signals yet"
-              }
-              tone={recentSignals24h.length > 0 ? "green" : "muted"}
-              href="/fusion"
-            />
-            <PulseRow
-              icon={Radar}
-              label="Intelligence Fusion"
-              value="Signals · Entity 360 · Heatmap · Events · Coverage"
-              href="/fusion"
-            />
-            <PulseRow
-              icon={BarChart3}
-              label="Total addressable spend"
-              value={formatUsd(spendQ.data?.totalSpendUsd ?? 0, {
-                compact: true,
-              })}
-              sub={`${spendQ.data?.concentration.activeSupplierCount ?? 0} suppliers`}
-              href="/spend"
-            />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Pipeline funnel */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5" /> Opportunity pipeline
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {pipelineStages.map((s) => (
-              <Link
-                key={s.key}
-                href={s.key === "rejected" ? "/approvals" : "/approvals"}
-                data-testid={`bar-pipeline-${s.key}`}
-              >
-                <div className="group cursor-pointer">
-                  <div className="flex items-baseline justify-between text-sm mb-1">
-                    <span className="flex items-center gap-2 font-medium">
-                      <StageDot tone={s.tone} />
-                      {s.label}
-                      <span className="text-xs text-muted-foreground">
-                        {s.count} {s.count === 1 ? "opp" : "opps"}
-                      </span>
-                    </span>
-                    <span className="tabular-nums text-sm text-muted-foreground group-hover:text-foreground">
-                      {formatUsd(s.value, { compact: true })}
-                      {s.key === "realized" ? " realized" : " projected"}
-                    </span>
-                  </div>
-                  <div className="h-2.5 bg-muted rounded overflow-hidden">
-                    <div
-                      className={`h-full rounded ${barClass(s.tone)}`}
-                      style={{
-                        width: `${(s.value / pipelineMaxValue) * 100}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Top opportunities + Lever performance */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5" /> Top open opportunities
-            </CardTitle>
-            <Link href="/opportunities">
-              <Button variant="ghost" size="sm" className="gap-1">
-                View all <ArrowRight className="w-3 h-3" />
-              </Button>
-            </Link>
+            <CardDescription>
+              Click any stage to see the underlying opportunities. A
+              big drop between Proposed and Approved usually means
+              the approval queue is the bottleneck.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {topOpenOpps.length === 0 ? (
-              <div className="text-sm text-muted-foreground">
-                No open opportunities. The next analysis cycle runs automatically every 6h, or click "Run now" below.
-              </div>
-            ) : (
-              <ul className="divide-y" data-testid="list-top-opps">
-                {topOpenOpps.map((o) => (
-                  <li key={o.id} className="py-3">
-                    <Link href={`/opportunities/${o.id}`}>
+            <div className="space-y-3">
+              {pipelineStages.map((s) => (
+                <Link
+                  key={s.key}
+                  href={s.key === "rejected" ? "/approvals" : "/approvals"}
+                  data-testid={`bar-pipeline-${s.key}`}
+                >
+                  <div className="group cursor-pointer">
+                    <div className="flex items-baseline justify-between text-sm mb-1">
+                      <span className="flex items-center gap-2 font-medium">
+                        <StageDot tone={s.tone} />
+                        {s.label}
+                        <span className="text-xs text-muted-foreground">
+                          {s.count} {s.count === 1 ? "opp" : "opps"}
+                        </span>
+                      </span>
+                      <span className="tabular-nums text-sm text-muted-foreground group-hover:text-foreground">
+                        {formatUsd(s.value, { compact: true })}
+                        {s.key === "realized" ? " realized" : " projected"}
+                      </span>
+                    </div>
+                    <div className="h-2.5 bg-muted rounded overflow-hidden">
                       <div
-                        className="flex items-start justify-between gap-3 cursor-pointer hover:bg-muted/40 -mx-2 px-2 py-1 rounded"
-                        data-testid={`row-top-opp-${o.id}`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium truncate">
-                            {o.title}
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
-                            <span>{leverLabel(o.leverId)}</span>
-                            {o.supplierName && (
-                              <>
-                                <span>·</span>
-                                <span className="truncate">{o.supplierName}</span>
-                              </>
-                            )}
-                            <StatusBadge status={o.status} />
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="text-sm font-semibold tabular-nums">
-                            {formatUsd(o.projectedSavingsUsd, { compact: true })}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {Math.round(o.confidence * 100)}% conf.
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
+                        className={`h-full rounded ${barClass(s.tone)}`}
+                        style={{
+                          width: `${(s.value / pipelineMaxValue) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
           </CardContent>
         </Card>
+        {todayFeedQ.data ? (
+          <TodayDeltasCard data={todayFeedQ.data} isAdmin={isOrgAdmin} />
+        ) : (
+          <Card data-testid="dashboard-deltas-fallback">
+            <CardHeader>
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                What changed since last cycle
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {todayFeedQ.isLoading ? (
+                <p
+                  className="text-sm text-muted-foreground"
+                  data-testid="dashboard-deltas-loading"
+                >
+                  Loading cycle deltas…
+                </p>
+              ) : (
+                <p
+                  className="text-sm text-destructive"
+                  data-testid="dashboard-deltas-error"
+                >
+                  Couldn't load cycle deltas. Try refreshing — the funnel
+                  on the left is unaffected.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      </div>
 
+      {/* #269 Band 4 — Platform health.
+          Lower-priority operational context (data readiness, dead-letter
+          jobs, system pulse) collapsed by default so the operator view
+          isn't crowded but everything stays one click away. */}
+      <details
+        open
+        className="group rounded-lg border bg-card"
+        data-testid="dashboard-platform-health"
+      >
+        <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-medium">
+          <span className="flex items-center gap-2 flex-wrap">
+            <Server className="w-4 h-4 text-muted-foreground" /> Platform health
+            <span className="text-xs text-muted-foreground font-normal">
+              Only matters if numbers above look wrong — check here
+              first for stale data, failed jobs, or missing fields.
+            </span>
+          </span>
+          <span className="text-xs text-muted-foreground group-open:hidden">
+            Expand
+          </span>
+          <span className="text-xs text-muted-foreground hidden group-open:inline">
+            Collapse
+          </span>
+        </summary>
+        <div className="border-t p-4 space-y-6">
+          <DataReadinessCard
+            basePath={import.meta.env.BASE_URL.replace(/\/$/, "")}
+          />
+          <NeedsAttention />
+          <SystemPulseCard
+            lastCycle={lastCycle}
+            jobsLoading={jobsQ.isLoading}
+            pendingJobs={pendingJobs}
+            runningJobs={runningJobs}
+            succeededJobs24h={succeededJobs24h}
+            failedJobs24h={failedJobs24h}
+            collectorsLoading={collectorsQ.isLoading}
+            enabledCollectors={enabledCollectors}
+            collectors={collectors}
+            staleCollectors={staleCollectors}
+            alertsLoading={alertsSummaryQ.isLoading}
+            openAlertsTotal={openAlertsTotal}
+            openCriticalOrHighAlerts={openCriticalOrHighAlerts}
+            signalsLoading={signalsQ.isLoading}
+            recentSignals24h={recentSignals24h}
+            lastSignal={lastSignal}
+            spendData={spendQ.data}
+          />
+        </div>
+      </details>
+
+
+      {/* #269 follow-up: "Top open opportunities" removed — the
+          Today triage row's OpportunitiesCard already shows the
+          actionable proposed-opportunity rollup with deep-links to
+          /approvals and /opportunities, so the duplicated list at
+          the bottom of the page was just visual noise.
+
+          "Recent analysis cycles" detail card removed — the System
+          Pulse row in Platform health (Band 4) already shows the
+          last cycle generation, age, and links to /system. The
+          "Run now" action moves up next to the Lever performance
+          header where it stays one click from the operator.
+
+          Lever performance is kept full-width because it surfaces
+          per-lever realization rates that aren't shown anywhere
+          else on the page. */}
+      <div className="grid grid-cols-1 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" /> Lever performance
-            </CardTitle>
-            <Link href="/playbook">
-              <Button variant="ghost" size="sm" className="gap-1">
-                Playbook <ArrowRight className="w-3 h-3" />
+            <div className="space-y-1">
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="w-5 h-5" /> Lever performance
+              </CardTitle>
+              <CardDescription>
+                Realized ÷ projected per play. Low rate = the
+                opportunities are surfacing but you're not capturing
+                them. High rate on low opp count = a play that works
+                but isn't being fed enough candidates.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {/* #269 follow-up: "Run now" promoted up here from the
+                  removed "Recent analysis cycles" card so on-demand
+                  cycle scheduling stays one click away. */}
+              <Button
+                data-testid="btn-run-cycle"
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => runCycleM.mutate({})}
+                disabled={runCycleM.isPending}
+              >
+                {runCycleM.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5" />
+                )}
+                Run cycle
               </Button>
-            </Link>
+              <Link href="/playbook">
+                <Button variant="ghost" size="sm" className="gap-1">
+                  Playbook <ArrowRight className="w-3 h-3" />
+                </Button>
+              </Link>
+            </div>
           </CardHeader>
           <CardContent>
             {!billingQ.data || billingQ.data.byLever.length === 0 ? (
@@ -803,118 +860,11 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Recent analysis cycles — auto-scheduled every 6h. Operators
-          can override with "Run now"; every run still shows up in
-          System / Jobs as a `run_analysis_cycle` row. */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="w-5 h-5" /> Recent analysis cycles
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button
-              data-testid="btn-run-cycle"
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={() => runCycleM.mutate({})}
-              disabled={runCycleM.isPending}
-            >
-              {runCycleM.isPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Play className="w-3.5 h-3.5" />
-              )}
-              Run now
-            </Button>
-            <Link href="/system">
-              <Button variant="ghost" size="sm" className="gap-1">
-                View jobs <ArrowRight className="w-3 h-3" />
-              </Button>
-            </Link>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="text-xs text-muted-foreground">
-            Cycles run automatically every 6 hours. Use{" "}
-            <span className="font-medium">Run now</span> to queue one
-            on demand.
-          </div>
-          {lastCycle && (
-            <div
-              className="border rounded-lg p-4 bg-muted/30"
-              data-testid="card-last-cycle"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Gen {lastCycle.generation}</Badge>
-                  <Badge
-                    variant={
-                      lastCycle.status === "completed" ? "default" : "secondary"
-                    }
-                  >
-                    {lastCycle.status}
-                  </Badge>
-                </div>
-                <span className="text-xs text-muted-foreground">
-                  {timeAgo(lastCycle.completedAt ?? lastCycle.startedAt)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Opportunities surfaced
-                  </div>
-                  <div className="text-lg font-semibold tabular-nums">
-                    {lastCycle.opportunitiesCreated}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    Projected savings
-                  </div>
-                  <div className="text-lg font-semibold tabular-nums">
-                    {formatUsd(lastCycle.totalProjectedUsd, { compact: true })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          {cycles.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No cycles yet — the next scheduled tick will queue one
-              automatically. You can also click{" "}
-              <span className="font-medium">Run now</span> to start
-              immediately.
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {cycles.slice(0, 4).map((c) => (
-                <Link
-                  key={c.id}
-                  href="/system"
-                  data-testid={`card-cycle-${c.generation}`}
-                >
-                  <div className="border rounded-lg p-3 hover:bg-muted/40 cursor-pointer">
-                    <div className="flex items-center justify-between">
-                      <Badge variant="outline">Gen {c.generation}</Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {timeAgo(c.completedAt ?? c.startedAt)}
-                      </span>
-                    </div>
-                    <div className="mt-2 text-sm font-medium tabular-nums">
-                      {formatUsd(c.totalProjectedUsd, { compact: true })}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {c.opportunitiesCreated} opps · {c.status}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* #269 follow-up: "Recent analysis cycles" big card removed.
+          Last cycle is already shown in the System Pulse row of the
+          Platform health band; "Run cycle" promoted to Lever
+          performance header above; full cycle history stays one
+          click away in /system. */}
     </div>
   );
 }
@@ -965,26 +915,13 @@ function buildAttentionItems(args: {
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
 
-  if (args.openCriticalOrHighAlerts > 0) {
-    items.push({
-      id: "open-critical-alerts",
-      severity: "danger",
-      title: `${args.openCriticalOrHighAlerts} critical or high‑severity alerts open`,
-      detail:
-        "Acknowledge or resolve in the alerts inbox so they stop escalating",
-      cta: "Open inbox",
-      href: "/alerts",
-    });
-  } else if (args.openAlertsTotal > 0) {
-    items.push({
-      id: "open-alerts",
-      severity: "warn",
-      title: `${args.openAlertsTotal} open alerts in the inbox`,
-      detail: "No criticals — but worth a triage pass",
-      cta: "Open inbox",
-      href: "/alerts",
-    });
-  }
+  // #269: Open alert and proposed-backlog COUNTS now live in the
+  // Today triage row above (AlertsCard / OpportunitiesCard /
+  // OpsHealthCard) — but we still surface attention items that are
+  // QUALITATIVELY different from a simple count: high-confidence
+  // proposed (a quality signal not visible from the count card),
+  // stale opportunities, job throughput, scheduler/collector
+  // freshness, and the empty-pipeline nudge.
 
   if (args.highConfProposed.length > 0) {
     const total = args.highConfProposed.reduce(
@@ -996,15 +933,6 @@ function buildAttentionItems(args: {
       severity: "warn",
       title: `${args.highConfProposed.length} high‑confidence opportunities awaiting approval`,
       detail: `${formatUsd(total, { compact: true })} projected · ≥70% confidence`,
-      cta: "Review",
-      href: "/approvals",
-    });
-  } else if (args.proposedCount > 0) {
-    items.push({
-      id: "proposed-backlog",
-      severity: "info",
-      title: `${args.proposedCount} proposed opportunities in queue`,
-      detail: `${formatUsd(args.proposedValue, { compact: true })} projected · review and approve to move forward`,
       cta: "Review",
       href: "/approvals",
     });
@@ -1021,16 +949,8 @@ function buildAttentionItems(args: {
     });
   }
 
-  if (args.failedJobs24h.length > 0) {
-    items.push({
-      id: "failed-jobs",
-      severity: "danger",
-      title: `${args.failedJobs24h.length} background jobs failed in the last 24h`,
-      detail: "Investigate and retry from System / Jobs",
-      cta: "Open jobs",
-      href: "/system",
-    });
-  }
+  // failed-jobs items removed in #269 — the Today "Operations health"
+  // triage card already surfaces failed-jobs-in-24h with deep link.
 
   if (args.runningJobs.length > 0 || args.pendingJobs.length > 0) {
     items.push({
@@ -1188,46 +1108,192 @@ function KpiCard({
   );
 }
 
+/**
+ * #269 — System Pulse extracted into its own component so the unified
+ * Dashboard can host it inside the collapsible Platform Health band
+ * without re-fetching anything. All data is passed down from the
+ * parent's existing query results.
+ */
+/**
+ * #269 follow-up — Compact System Pulse.
+ *
+ * The original full-width PulseRow stack burned a lot of vertical
+ * space for low-signal "all clear" rows. The condensed version
+ * renders each metric as a small label/value chip in a 2-column
+ * grid; everything still deep-links to its detail page on click,
+ * and the underlying tone (red/amber/green/muted) is preserved as
+ * a left-border accent.
+ */
+function SystemPulseCard(props: {
+  lastCycle: { generation: number; completedAt?: string | null; startedAt: string } | undefined;
+  jobsLoading: boolean;
+  pendingJobs: { id: string }[];
+  runningJobs: { id: string }[];
+  succeededJobs24h: { id: string }[];
+  failedJobs24h: { id: string }[];
+  collectorsLoading: boolean;
+  enabledCollectors: { id: string }[];
+  collectors: { id: string }[];
+  staleCollectors: { id: string }[];
+  alertsLoading: boolean;
+  openAlertsTotal: number;
+  openCriticalOrHighAlerts: number;
+  signalsLoading: boolean;
+  recentSignals24h: { observedAt: string }[];
+  lastSignal: { observedAt: string } | undefined;
+  spendData: { totalSpendUsd: number; concentration: { activeSupplierCount: number } } | undefined;
+}) {
+  const {
+    lastCycle,
+    jobsLoading,
+    pendingJobs,
+    runningJobs,
+    succeededJobs24h,
+    failedJobs24h,
+    collectorsLoading,
+    enabledCollectors,
+    collectors,
+    staleCollectors,
+    alertsLoading,
+    openAlertsTotal,
+    openCriticalOrHighAlerts,
+    signalsLoading,
+    recentSignals24h,
+    lastSignal,
+    spendData,
+  } = props;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Server className="w-5 h-5" /> System pulse
+        </CardTitle>
+        <CardDescription>
+          One-line health for every upstream feeder. A red or amber
+          accent means click through — green means leave it alone.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-sm">
+        <PulseRow
+          label="Last cycle"
+          value={
+            lastCycle
+              ? `Gen ${lastCycle.generation} · ${timeAgo(lastCycle.completedAt ?? lastCycle.startedAt)}`
+              : "No cycles yet"
+          }
+          href="/system"
+        />
+        <PulseRow
+          label="Job queue (24h)"
+          value={
+            jobsLoading
+              ? "…"
+              : `${pendingJobs.length} pend · ${runningJobs.length} run · ${succeededJobs24h.length} ok · ${failedJobs24h.length} fail`
+          }
+          tone={
+            failedJobs24h.length > 0
+              ? "red"
+              : runningJobs.length > 0 || pendingJobs.length > 0
+                ? "amber"
+                : "green"
+          }
+          href="/system"
+        />
+        <PulseRow
+          label="Collectors"
+          value={
+            collectorsLoading
+              ? "…"
+              : `${enabledCollectors.length}/${collectors.length} on · ${staleCollectors.length} stale`
+          }
+          tone={staleCollectors.length > 0 ? "amber" : "green"}
+          href="/collectors"
+        />
+        <PulseRow
+          label="Alerts inbox"
+          value={
+            alertsLoading
+              ? "…"
+              : openAlertsTotal > 0
+                ? `${openAlertsTotal} open · ${openCriticalOrHighAlerts} crit/high`
+                : "All clear"
+          }
+          tone={
+            openCriticalOrHighAlerts > 0
+              ? "red"
+              : openAlertsTotal > 0
+                ? "amber"
+                : "green"
+          }
+          href="/alerts"
+        />
+        <PulseRow
+          label="Market signals (24h)"
+          value={
+            signalsLoading
+              ? "…"
+              : recentSignals24h.length > 0
+                ? `${recentSignals24h.length} new · last ${timeAgo(lastSignal?.observedAt)}`
+                : lastSignal
+                  ? `0 new · last ${timeAgo(lastSignal.observedAt)}`
+                  : "No signals yet"
+          }
+          tone={recentSignals24h.length > 0 ? "green" : "muted"}
+          href="/fusion"
+        />
+        <PulseRow
+          label="Intelligence Fusion"
+          value="Signals · Entity 360 · Heatmap"
+          href="/fusion"
+        />
+        <PulseRow
+          label="Addressable spend"
+          value={`${formatUsd(spendData?.totalSpendUsd ?? 0, { compact: true })} · ${spendData?.concentration.activeSupplierCount ?? 0} suppliers`}
+          href="/spend"
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * #269 follow-up — Compact pulse chip.
+ *
+ * Tiny label-over-value tile sized for a 2/4-column grid. The
+ * left-edge tone bar replaces the old per-row icon + dot combo
+ * so each chip stays roughly two lines tall while still showing
+ * red/amber/green at a glance.
+ */
 function PulseRow({
-  icon: Icon,
   label,
   value,
-  sub,
   tone,
   href,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
-  sub?: string;
   tone?: "green" | "amber" | "red" | "muted";
   href: string;
 }) {
-  const dot: Record<string, string> = {
-    green: "bg-emerald-500",
-    amber: "bg-amber-500",
-    red: "bg-red-500",
-    muted: "bg-muted-foreground/30",
+  const accent: Record<string, string> = {
+    green: "border-l-emerald-500",
+    amber: "border-l-amber-500",
+    red: "border-l-red-500",
+    muted: "border-l-muted-foreground/30",
   };
+  const accentCls = tone ? accent[tone] : "border-l-transparent";
   return (
     <Link href={href}>
-      <div className="flex items-center justify-between gap-3 -mx-2 px-2 py-1.5 rounded hover:bg-muted/40 cursor-pointer">
-        <div className="flex items-center gap-2 min-w-0">
-          <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-          <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">{label}</div>
-            <div className="text-sm font-medium truncate flex items-center gap-2">
-              {tone && (
-                <span className={`w-1.5 h-1.5 rounded-full ${dot[tone]}`} />
-              )}
-              {value}
-            </div>
-            {sub && (
-              <div className="text-xs text-muted-foreground">{sub}</div>
-            )}
+      <div
+        className={`group border-l-2 ${accentCls} px-2 py-1.5 rounded-sm hover:bg-muted/40 cursor-pointer min-w-0`}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <div className="text-[11px] text-muted-foreground truncate">
+            {label}
           </div>
+          <ArrowRight className="w-3 h-3 text-muted-foreground/50 shrink-0 opacity-0 group-hover:opacity-100" />
         </div>
-        <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+        <div className="text-xs font-medium truncate">{value}</div>
       </div>
     </Link>
   );

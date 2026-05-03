@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { scrubError } from "@/lib/scrub-error";
 import { useMyRole } from "@/lib/use-my-role";
-import { leverLabel, formatUsd } from "@/lib/format";
+import { formatUsd } from "@/lib/format";
 
 /**
  * Today — operator landing page (#199 step 4 path b, extended in #204,
@@ -70,19 +70,6 @@ export default function Today() {
     );
   }
 
-  const itemBy = (kind: string) =>
-    data.items.find((i) => i.kind === kind);
-
-  const alerts = itemBy("alerts.summary");
-  const opps = itemBy("opportunities.proposed");
-  const jobs = itemBy("jobs.failed");
-  const approvals = itemBy("approvals.pending");
-  const annotations = itemBy("funnel.auto_annotations");
-  const conversionDeltas = itemBy("funnel.conversion_deltas");
-
-  const errFor = (source: string) =>
-    data.errors.find((e) => e.source === source)?.error;
-
   return (
     <div className="p-8 space-y-6" data-testid="today-page">
       <div className="flex items-baseline justify-between">
@@ -100,37 +87,92 @@ export default function Today() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <AlertsCard
-          item={alerts}
-          error={errFor("getAlertsSummary")}
-          isAdmin={isOrgAdmin}
-        />
-        <OpportunitiesCard
-          item={opps}
-          error={errFor("listOpportunities")}
-          isAdmin={isOrgAdmin}
-        />
-        <ApprovalsCard
-          item={approvals}
-          error={errFor("approvalsPending")}
-          isAdmin={isOrgAdmin}
-        />
-        <OpsHealthCard
-          item={jobs}
-          error={errFor("listJobs")}
-          isAdmin={isOrgAdmin}
-        />
-      </div>
+      <TodayTriageRow data={data} isAdmin={isOrgAdmin} />
 
-      <DeltasCard
-        annotations={annotations}
-        conversionDeltas={conversionDeltas}
-        annotationsError={errFor("funnelAutoAnnotations")}
-        conversionError={errFor("funnelConversionDeltas")}
-        isAdmin={isOrgAdmin}
+      <TodayDeltasCard data={data} isAdmin={isOrgAdmin} />
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Reusable widgets — exported so the unified Dashboard at `/` (#269)
+// can compose the same triage cards and "what changed" deltas section
+// alongside the KPI strip and pipeline funnel without duplicating the
+// fail-soft rendering logic.
+// ────────────────────────────────────────────────────────────────────
+
+interface TodayFeedShape {
+  items: Array<{
+    kind: string;
+    payload: Record<string, unknown>;
+    severity: "info" | "warn" | "error";
+  }>;
+  errors: Array<{ source: string; error: string }>;
+  partial: boolean;
+}
+
+export function TodayTriageRow({
+  data,
+  isAdmin,
+}: {
+  data: TodayFeedShape;
+  isAdmin: boolean;
+}) {
+  const itemBy = (kind: string) => data.items.find((i) => i.kind === kind);
+  const errFor = (source: string) =>
+    data.errors.find((e) => e.source === source)?.error;
+  return (
+    <div
+      className="grid grid-cols-1 md:grid-cols-3 gap-4"
+      data-testid="today-triage-row"
+    >
+      {/* #269 follow-up: "Proposed opportunities" card removed.
+          It counted the same status='proposed' pool as the
+          "Pending approvals" card below, so the operator was
+          looking at the same number twice. ApprovalsCard wins
+          because it splits the queue into "needs action today"
+          (new in 24h OR aged past 7d) vs structural backlog and
+          surfaces oldest age — strictly more decision-useful
+          than a flat count. The server still emits
+          `opportunities.proposed`; we just stop rendering it
+          here. */}
+      <AlertsCard
+        item={itemBy("alerts.summary")}
+        error={errFor("getAlertsSummary")}
+        isAdmin={isAdmin}
+      />
+      <ApprovalsCard
+        item={itemBy("approvals.pending")}
+        error={errFor("approvalsPending")}
+        isAdmin={isAdmin}
+      />
+      <OpsHealthCard
+        item={itemBy("jobs.failed")}
+        error={errFor("listJobs")}
+        isAdmin={isAdmin}
       />
     </div>
+  );
+}
+
+export function TodayDeltasCard({
+  data,
+  isAdmin,
+}: {
+  data: TodayFeedShape;
+  isAdmin: boolean;
+}) {
+  const itemBy = (kind: string) => data.items.find((i) => i.kind === kind);
+  const errFor = (source: string) =>
+    data.errors.find((e) => e.source === source)?.error;
+  return (
+    <DeltasCard
+      annotations={itemBy("funnel.auto_annotations")}
+      conversionDeltas={itemBy("funnel.conversion_deltas")}
+      annotationsError={errFor("funnelAutoAnnotations")}
+      conversionError={errFor("funnelConversionDeltas")}
+      isAdmin={isAdmin}
+    />
   );
 }
 
@@ -180,6 +222,7 @@ function AlertsCard({ item, error, isAdmin }: CardCommon) {
   return (
     <TriageCard
       title="Alerts"
+      subtitle="Outside-world events the engine caught — renewals, supplier risk, market moves."
       icon={AlertTriangle}
       severity={item?.severity ?? "info"}
       href={href}
@@ -194,76 +237,35 @@ function AlertsCard({ item, error, isAdmin }: CardCommon) {
             className="text-xs text-muted-foreground mt-1"
             data-testid="today-card-alerts-context"
           >
-            Open critical / high — {openTotal} open total
-            {payload.topAlert ? (
+            {openCH > 0 ? (
               <>
-                {" · top: "}
-                <span className="font-medium text-foreground/80">
-                  &ldquo;{payload.topAlert.title}&rdquo;
-                </span>
-                {" · "}
-                {formatAge(payload.topAlert.ageMs)} ago
-              </>
-            ) : null}
-          </p>
-        </>
-      ) : (
-        <p className="text-sm text-muted-foreground">No alerts data.</p>
-      )}
-    </TriageCard>
-  );
-}
-
-interface TopOpportunityPayload {
-  id: string;
-  title: string;
-  leverId: string;
-  projectedSavingsUsd: number;
-}
-
-function OpportunitiesCard({ item, error, isAdmin }: CardCommon) {
-  const payload = (item?.payload ?? {}) as {
-    count?: number;
-    topOpportunity?: TopOpportunityPayload;
-  };
-  const href = "/opportunities?filter=status:proposed";
-  return (
-    <TriageCard
-      title="Proposed opportunities"
-      icon={Sparkles}
-      severity={item?.severity ?? "info"}
-      href={href}
-      error={error}
-      isAdmin={isAdmin}
-      testId="today-card-opportunities"
-    >
-      {error ? null : item ? (
-        <>
-          <p className="text-3xl font-bold tabular-nums">
-            {payload.count ?? 0}
-          </p>
-          <p
-            className="text-xs text-muted-foreground mt-1"
-            data-testid="today-card-opportunities-context"
-          >
-            {payload.topOpportunity ? (
-              <>
-                top: {leverLabel(payload.topOpportunity.leverId)}
-                {" · "}
-                {formatUsd(payload.topOpportunity.projectedSavingsUsd, {
-                  compact: true,
-                })}{" "}
-                projected
+                critical / high open
+                {openTotal > openCH ? (
+                  <> · {openTotal} open total</>
+                ) : null}
+                {payload.topAlert ? (
+                  <>
+                    {" · top: "}
+                    <span className="font-medium text-foreground/80">
+                      &ldquo;{payload.topAlert.title}&rdquo;
+                    </span>
+                    {" · "}
+                    {formatAge(payload.topAlert.ageMs)} ago
+                  </>
+                ) : null}
               </>
             ) : (
-              "Top by projected savings"
+              <>
+                No critical or high alerts open
+                {openTotal > 0 ? (
+                  <> · {openTotal} lower-severity open</>
+                ) : null}
+              </>
             )}
           </p>
         </>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          No opportunity data.
-        </p>
+        <p className="text-sm text-muted-foreground">No alerts data.</p>
       )}
     </TriageCard>
   );
@@ -446,6 +448,21 @@ function DeltasCard({
   const recent = annPayload.recent ?? [];
   const transitions = cvPayload.transitions ?? [];
 
+  // #269 follow-up — Filter out non-signal rows.
+  // The card was reading as "100.0% → 100.0% — 0.0 pp" repeated four
+  // times because it dumped every transition the server emitted,
+  // including dead-flat ones and ones the server already flagged as
+  // `noisy` or `insufficient`. Operators called this out as having
+  // no value. We now keep only meaningful, non-flat shifts (>= 0.1
+  // pp absolute) and fall through to a "nothing material shifted"
+  // empty state when there's nothing to say.
+  const meaningfulTransitions = transitions.filter((t) => {
+    const sig = t.significance ?? "meaningful";
+    if (sig !== "meaningful") return false;
+    if (t.delta === null) return false;
+    return Math.abs(t.delta) >= 0.001; // >= 0.1 pp
+  });
+
   return (
     <Card data-testid="today-card-deltas">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -506,54 +523,33 @@ function DeltasCard({
               Need at least two cycles to compute conversion deltas. Check back
               after the next cycle completes.
             </p>
+          ) : meaningfulTransitions.length === 0 ? (
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="today-deltas-conversion-empty"
+            >
+              Funnel rates are stable — nothing moved more than 0.1 pp
+              between the last two cycles.
+            </p>
           ) : (
             <ul className="space-y-1.5">
-              {transitions.slice(0, 4).map((t) => {
-                // #211 — gray out rows the server flagged as `noisy`
-                // (small sample) or `insufficient` (no baseline) so
-                // they don't compete for attention with real shifts.
-                // Pre-#211 servers omit `significance`, in which case
-                // we fall back to the original full-color rendering.
-                const sig = t.significance ?? "meaningful";
-                const muted = sig !== "meaningful";
-                const annotation =
-                  sig === "noisy"
-                    ? `Sample too small to be meaningful (n=${Math.min(
-                        t.prevDenominator ?? 0,
-                        t.currentDenominator ?? 0,
-                      )})`
-                    : sig === "insufficient"
-                      ? "No baseline to compare against"
-                      : null;
-                return (
-                  <li
-                    key={t.transition}
-                    className={`flex items-center justify-between text-sm ${
-                      muted ? "opacity-60" : ""
-                    }`}
-                    data-testid={`today-deltas-transition-${t.transition}`}
-                    data-significance={sig}
-                    title={annotation ?? undefined}
-                  >
-                    <span className="text-foreground/90 inline-flex items-center gap-2">
-                      {t.transition}
-                      {sig === "noisy" && (
-                        <span
-                          className="text-[10px] uppercase tracking-wide text-muted-foreground border border-muted-foreground/30 rounded px-1 py-0.5"
-                          data-testid={`today-deltas-transition-${t.transition}-noisy-badge`}
-                        >
-                          noisy
-                        </span>
-                      )}
-                    </span>
-                    <DeltaPill
-                      prev={t.prevRate}
-                      curr={t.currentRate}
-                      delta={t.delta}
-                    />
-                  </li>
-                );
-              })}
+              {meaningfulTransitions.slice(0, 4).map((t) => (
+                <li
+                  key={t.transition}
+                  className="flex items-center justify-between text-sm"
+                  data-testid={`today-deltas-transition-${t.transition}`}
+                  data-significance={t.significance ?? "meaningful"}
+                >
+                  <span className="text-foreground/90">
+                    {transitionLabel(t.transition)}
+                  </span>
+                  <DeltaPill
+                    prev={t.prevRate}
+                    curr={t.currentRate}
+                    delta={t.delta}
+                  />
+                </li>
+              ))}
             </ul>
           )}
         </div>
@@ -597,7 +593,14 @@ function AnnotationRow({ annotation }: { annotation: AutoAnnotation }) {
         <Sparkles className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-sm leading-snug">{annotation.summary}</p>
+        {/* #269 follow-up: translate the engine's raw metric-name
+            summary ("opps_persisted dropped 100% (0 vs trailing-5
+            mean 29.4)") into one plain-English sentence the
+            operator can act on. Raw text is kept as the title
+            attribute for ops debugging. */}
+        <p className="text-sm leading-snug" title={annotation.summary}>
+          {humanizeAnnotation(annotation)}
+        </p>
         <p className="text-xs text-muted-foreground mt-0.5">
           cycle #{annotation.cycleGeneration}
           {annotation.targetLeverId ? ` · ${annotation.targetLeverId}` : ""}
@@ -620,6 +623,56 @@ function AnnotationRow({ annotation }: { annotation: AutoAnnotation }) {
   );
 }
 
+/**
+ * #269 follow-up — translate the engine's raw transition keys
+ * ("drafts→post_exclusion", "approved_30d→realized_30d") into
+ * operator language. Falls back to the raw key if we don't know
+ * the transition.
+ */
+const TRANSITION_LABEL: Record<string, string> = {
+  "drafts→post_exclusion": "Drafts kept after exclusion rules",
+  "post_exclusion→persisted": "Surfaced as opportunities",
+  "persisted→approved_30d": "Approved within 30 days",
+  "approved_30d→realized_30d": "Realized within 30 days of approval",
+};
+
+function transitionLabel(t: string): string {
+  return TRANSITION_LABEL[t] ?? t;
+}
+
+/**
+ * #269 follow-up — convert an auto-annotation's machine-generated
+ * summary into a sentence an operator can act on. The engine emits
+ * strings like "opps_persisted dropped 100% (0 vs trailing-5 mean
+ * 29.4)" using internal funnel-stage metric names; we translate
+ * the metric and direction into plain English.
+ */
+const METRIC_LABEL: Record<string, string> = {
+  opps_persisted: "Opportunities surfaced",
+  opps_approved_30d: "Opportunities approved (30d)",
+  opps_realized_30d: "Opportunities realized (30d)",
+  drafts: "Draft opportunities",
+  post_exclusion: "Opportunities after exclusion rules",
+};
+
+function humanizeAnnotation(a: AutoAnnotation): string {
+  const raw = a.summary ?? "";
+  // Match e.g. "opps_persisted dropped 100% (0 vs trailing-5 mean 29.4)"
+  const m = raw.match(
+    /^(\w+)\s+(dropped|spiked|rose|fell)\s+([\d.]+)%\s*\(([\d.]+)\s+vs\s+trailing-?\d*\s*mean\s+([\d.]+)\)/i,
+  );
+  if (m) {
+    const [, metric, direction, , current, baseline] = m;
+    const label = METRIC_LABEL[metric!] ?? metric!.replace(/_/g, " ");
+    const dir = /drop|fell/i.test(direction!) ? "dropped to" : "jumped to";
+    return `${label} ${dir} ${current} (typical: ${baseline}). Worth a look at the upstream collectors and recent ingest.`;
+  }
+  // Fallback: prefix with stage when we know it, otherwise return as-is.
+  if (a.kind === "stage_drop") return `Funnel drop: ${raw}`;
+  if (a.kind === "stage_spike") return `Funnel spike: ${raw}`;
+  return raw;
+}
+
 function DeltaPill({
   prev,
   curr,
@@ -629,38 +682,50 @@ function DeltaPill({
   curr: number | null;
   delta: number | null;
 }) {
+  // #269 follow-up: don't put a horizontal-dash icon directly before
+  // the prev percentage — it visually fuses with the digit and reads
+  // as "−100%". Trend icon moved into the (delta pp) chunk instead.
   const fmt = (r: number | null) =>
     r === null ? "—" : `${(r * 100).toFixed(1)}%`;
   if (delta === null) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-        <Minus className="w-3 h-3" />
-        {fmt(prev)} → {fmt(curr)}
+      <span className="text-xs text-muted-foreground tabular-nums">
+        no data yet
       </span>
     );
   }
   const positive = delta > 0;
   const flat = delta === 0;
   const Icon = flat ? Minus : positive ? TrendingUp : TrendingDown;
-  const cls = flat
+  const deltaCls = flat
     ? "text-muted-foreground"
     : positive
       ? "text-emerald-700"
       : "text-amber-700";
   const sign = positive ? "+" : "";
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-xs tabular-nums ${cls}`}
-    >
-      <Icon className="w-3 h-3" />
-      {fmt(prev)} → {fmt(curr)} ({sign}
-      {(delta * 100).toFixed(1)} pp)
+    <span className="inline-flex items-center gap-2 text-xs tabular-nums">
+      <span className="text-muted-foreground">
+        {fmt(prev)} → {fmt(curr)}
+      </span>
+      <span className={`inline-flex items-center gap-0.5 ${deltaCls}`}>
+        <Icon className="w-3 h-3" />
+        {sign}
+        {(delta * 100).toFixed(1)} pp
+      </span>
     </span>
   );
 }
 
 interface TriageCardProps {
   title: string;
+  /**
+   * #269 follow-up — short "what is this card actually telling me?"
+   * subtitle. Optional so older callers stay valid; used to
+   * distinguish the four triage cards from each other and from the
+   * "Needs your attention" engine-quality list below.
+   */
+  subtitle?: string;
   icon: React.ComponentType<{ className?: string }>;
   severity: "info" | "warn" | "error";
   href: string;
@@ -672,6 +737,7 @@ interface TriageCardProps {
 
 function TriageCard({
   title,
+  subtitle,
   icon: Icon,
   severity,
   href,
@@ -682,22 +748,29 @@ function TriageCard({
 }: TriageCardProps) {
   return (
     <Card data-testid={testId}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <Icon
-            className={
-              severity === "error"
-                ? "w-4 h-4 text-destructive"
-                : severity === "warn"
-                  ? "w-4 h-4 text-amber-600"
-                  : "w-4 h-4 text-muted-foreground"
-            }
-          />
-          {title}
-        </CardTitle>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2 gap-2">
+        <div className="space-y-1 min-w-0">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Icon
+              className={
+                severity === "error"
+                  ? "w-4 h-4 text-destructive"
+                  : severity === "warn"
+                    ? "w-4 h-4 text-amber-600"
+                    : "w-4 h-4 text-muted-foreground"
+              }
+            />
+            {title}
+          </CardTitle>
+          {subtitle && (
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              {subtitle}
+            </p>
+          )}
+        </div>
         <Link
           href={href}
-          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 shrink-0"
         >
           Open <ArrowRight className="w-3 h-3" />
         </Link>

@@ -11,8 +11,8 @@ import { Link } from "wouter";
 type Move = { from: string; to: string; note?: string };
 
 const MOVES: Move[] = [
-  { from: "/", to: "/dashboard", note: "Old dashboard moved aside." },
-  { from: "/dashboard", to: "/", note: "The new Today page is the root." },
+  { from: "/dashboard", to: "/", note: "Today and Dashboard merged into one unified landing page at /." },
+  { from: "/today", to: "/", note: "Today and Dashboard merged into one unified landing page at /." },
   {
     from: "/admin/funnel",
     to: "/engine",
