@@ -644,7 +644,8 @@ router.get(
     }
 
     const ROLLUP = "_all";
-    const cells: Array<{
+    type Tier = "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data";
+    interface Cell {
       leverId: string;
       categoryCode: string;
       n: number;
@@ -652,9 +653,18 @@ router.get(
       rawMedianAbsErrorUsd: number | null;
       rescaledMedianAbsErrorUsd: number | null;
       verdict: string;
-      tier: "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data";
-    }> = [];
-    const rollups: typeof cells = [];
+      tier: Tier;
+    }
+    interface Driver extends Cell {
+      sampleSharePct: number | null;
+      disagreesWithRollup: boolean;
+    }
+    interface RollupCell extends Cell {
+      drivers: Driver[];
+    }
+    const cells: Cell[] = [];
+    const rollupsByLever = new Map<string, RollupCell>();
+    const cellsByLever = new Map<string, Cell[]>();
     const leversSet = new Set<string>();
     const categoriesSet = new Set<string>();
 
@@ -667,7 +677,7 @@ router.get(
       if (parts.length !== 3) continue;
       const [leverId, categoryCode, w] = parts as [string, string, string];
       if (w !== window) continue;
-      const cell = {
+      const cell: Cell = {
         leverId,
         categoryCode,
         n: entry.n ?? 0,
@@ -686,12 +696,53 @@ router.get(
       };
       leversSet.add(leverId);
       if (categoryCode === ROLLUP) {
-        rollups.push(cell);
+        rollupsByLever.set(leverId, { ...cell, drivers: [] });
       } else {
         categoriesSet.add(categoryCode);
         cells.push(cell);
+        const arr = cellsByLever.get(leverId) ?? [];
+        arr.push(cell);
+        cellsByLever.set(leverId, arr);
       }
     }
+
+    // Driver breakdown (task #230): for each per-lever `_all` rollup,
+    // attach the per-(category, lever) cells that fed it ranked by
+    // sample count, including the share of the rollup's sample volume
+    // and a flag for cells whose decisive verdict disagrees with the
+    // rollup. Operators use this to spot the one bad category dragging
+    // an otherwise-helping lever to neutral. We cap at 10 drivers so
+    // the payload stays small; the matrix itself still carries every
+    // per-(category, lever) cell unfiltered.
+    const TOP_DRIVERS = 10;
+    // A driver "disagrees" with the rollup whenever both sides have a
+    // computed verdict (i.e. enough samples to escape
+    // `insufficient_evidence`) and those verdicts differ. This
+    // explicitly includes the motivating case from task #230 — a
+    // single hurting category dragging an otherwise-helping lever to
+    // `neutral` — by treating `neutral` as a real verdict to compare
+    // against, not as "no opinion".
+    for (const [leverId, rollup] of rollupsByLever.entries()) {
+      const driverCells = cellsByLever.get(leverId) ?? [];
+      const rollupHasVerdict =
+        rollup.verdict !== "insufficient_evidence";
+      const drivers: Driver[] = driverCells
+        .slice()
+        .sort((a, b) => b.n - a.n)
+        .slice(0, TOP_DRIVERS)
+        .map((c) => ({
+          ...c,
+          sampleSharePct:
+            rollup.n > 0 ? Math.round((c.n / rollup.n) * 1000) / 10 : null,
+          disagreesWithRollup:
+            rollupHasVerdict &&
+            c.verdict !== "insufficient_evidence" &&
+            c.verdict !== rollup.verdict,
+        }));
+      rollup.drivers = drivers;
+    }
+
+    const rollups = Array.from(rollupsByLever.values());
 
     return res.json({
       snapshot: {

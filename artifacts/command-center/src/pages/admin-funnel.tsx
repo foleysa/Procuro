@@ -639,6 +639,15 @@ interface TierMatrixCell {
   tier: "tier_a" | "tier_b" | "tier_c_or_d" | "insufficient_data";
 }
 
+interface TierMatrixDriver extends TierMatrixCell {
+  sampleSharePct: number | null;
+  disagreesWithRollup: boolean;
+}
+
+interface TierMatrixRollup extends TierMatrixCell {
+  drivers?: TierMatrixDriver[];
+}
+
 interface TierMatrixResp {
   snapshot: {
     id: string;
@@ -649,7 +658,7 @@ interface TierMatrixResp {
   levers: string[];
   categories: string[];
   cells: TierMatrixCell[];
-  rollups: TierMatrixCell[];
+  rollups: TierMatrixRollup[];
 }
 
 function tierBadgeVariant(
@@ -684,6 +693,7 @@ function tierLabel(tier: TierMatrixCell["tier"]): string {
 
 function TierMatrixCard() {
   const [window, setWindow] = useState<"30d" | "90d">("90d");
+  const [openRollup, setOpenRollup] = useState<TierMatrixRollup | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ["funnel", "tier-matrix", window],
     queryFn: () =>
@@ -768,6 +778,9 @@ function TierMatrixCard() {
                   const rollup = data.rollups.find(
                     (r) => r.leverId === leverId,
                   );
+                  const hasDisagreement =
+                    rollup?.drivers?.some((d) => d.disagreesWithRollup) ??
+                    false;
                   return (
                     <TableRow
                       key={leverId}
@@ -778,7 +791,23 @@ function TierMatrixCard() {
                       </TableCell>
                       <TableCell>
                         {rollup ? (
-                          <TierCell cell={rollup} />
+                          <button
+                            type="button"
+                            className="text-left hover-elevate active-elevate-2 rounded p-1 -m-1"
+                            onClick={() => setOpenRollup(rollup)}
+                            data-testid={`button-rollup-drivers-${leverId}`}
+                            title="View per-category drivers"
+                          >
+                            <TierCell cell={rollup} />
+                            {hasDisagreement && (
+                              <div
+                                className="mt-0.5 text-[10px] font-medium text-amber-600"
+                                data-testid={`indicator-disagreement-${leverId}`}
+                              >
+                                ⚠ driver disagrees
+                              </div>
+                            )}
+                          </button>
                         ) : (
                           <span className="text-xs text-muted-foreground">
                             —
@@ -806,7 +835,127 @@ function TierMatrixCard() {
             </Table>
           )}
       </CardContent>
+      <TierDriverDialog
+        rollup={openRollup}
+        onClose={() => setOpenRollup(null)}
+      />
     </Card>
+  );
+}
+
+function TierDriverDialog({
+  rollup,
+  onClose,
+}: {
+  rollup: TierMatrixRollup | null;
+  onClose: () => void;
+}) {
+  const drivers = rollup?.drivers ?? [];
+  return (
+    <Dialog open={rollup != null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        className="max-w-2xl"
+        data-testid="dialog-tier-drivers"
+      >
+        <DialogHeader>
+          <DialogTitle>
+            Drivers for{" "}
+            <span className="font-mono text-sm">{rollup?.leverId}</span>{" "}
+            <Badge
+              variant={
+                rollup ? tierBadgeVariant(rollup.tier) : "outline"
+              }
+              className="ml-1"
+            >
+              {rollup ? tierLabel(rollup.tier) : ""}
+            </Badge>
+          </DialogTitle>
+          <DialogDescription>
+            Top {drivers.length} categories by sample count contributing
+            to the <span className="font-mono">_all</span> rollup
+            (n={rollup?.n ?? 0}, verdict {rollup?.verdict ?? "—"}).
+            Categories whose decisive verdict disagrees with the rollup
+            are flagged so you can act on the outlier instead of the
+            aggregate.
+          </DialogDescription>
+        </DialogHeader>
+        {drivers.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No per-category cells fed this rollup — all samples for this
+            lever lack a resolved category.
+          </div>
+        ) : (
+          <Table data-testid="table-tier-drivers">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Category</TableHead>
+                <TableHead className="text-right">n</TableHead>
+                <TableHead className="text-right">Sample share</TableHead>
+                <TableHead className="text-right">Δ improvement</TableHead>
+                <TableHead>Tier</TableHead>
+                <TableHead>Verdict</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {drivers.map((d) => (
+                <TableRow
+                  key={d.categoryCode}
+                  data-testid={`row-driver-${d.categoryCode}`}
+                  className={
+                    d.disagreesWithRollup
+                      ? "bg-amber-50 dark:bg-amber-950/30"
+                      : undefined
+                  }
+                >
+                  <TableCell className="font-mono text-xs">
+                    {d.categoryCode}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {d.n}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {d.sampleSharePct != null
+                      ? `${d.sampleSharePct.toFixed(1)}%`
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {d.improvementUsd != null
+                      ? fmtUsd(d.improvementUsd)
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={tierBadgeVariant(d.tier)}>
+                      {tierLabel(d.tier)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {d.verdict}
+                    {d.disagreesWithRollup && (
+                      <span
+                        className="ml-1 font-medium text-amber-600"
+                        data-testid={`indicator-driver-disagrees-${d.categoryCode}`}
+                        title={`Disagrees with rollup verdict (${rollup?.verdict})`}
+                      >
+                        ⚠
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            data-testid="button-close-tier-drivers"
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
