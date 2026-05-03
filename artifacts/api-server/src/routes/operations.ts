@@ -18,7 +18,7 @@ import {
   erpConnectionsTable,
   funnelSnapshotFailuresTable,
 } from "@workspace/db";
-import { and, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requireRole } from "../lib/rbac";
 
@@ -95,8 +95,7 @@ router.get(
     errors,
   );
 
-  // 2. Jobs status mix in last 24h (org-scoped + global cross-tenant jobs
-  // surfaced via NULL org_id, which the platform admin sees too).
+  // 2. Jobs status mix in last 24h (org-scoped only).
   await safe(
     "listJobs",
     async () => {
@@ -108,7 +107,7 @@ router.get(
         .from(jobsTable)
         .where(
           and(
-            or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+            eq(jobsTable.orgId, orgId),
             gte(jobsTable.enqueuedAt, last24h),
           ),
         )

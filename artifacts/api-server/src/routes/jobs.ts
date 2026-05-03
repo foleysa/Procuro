@@ -6,7 +6,7 @@ import {
   type JobKind,
   type JobStatus,
 } from "@workspace/db";
-import { and, desc, eq, gte, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
@@ -93,7 +93,7 @@ router.get("/jobs", tenantMiddleware, async (req, res) => {
   );
 
   const filters: SQL[] = [
-    or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)) as SQL,
+    eq(jobsTable.orgId, orgId) as SQL,
   ];
 
   const kindParam = req.query["kind"];
@@ -332,10 +332,7 @@ router.get("/jobs/recently-failed", tenantMiddleware, async (req, res) => {
     .from(jobsTable)
     .where(
       and(
-        or(
-          eq(jobsTable.orgId, orgId),
-          isNull(jobsTable.orgId),
-        ) as SQL,
+        eq(jobsTable.orgId, orgId),
         eq(jobsTable.status, "failed"),
         gte(jobsTable.completedAt, cutoff),
       ),
@@ -361,8 +358,8 @@ router.get("/jobs/recently-failed", tenantMiddleware, async (req, res) => {
 //
 // Unlike `/jobs/recently-failed` this endpoint has no lookback window
 // and is offset-paginated so the dashboard drilldown can page through
-// the full backlog if needed. Tenant isolation matches the listing
-// endpoint above (own-org rows + system-scoped rows with NULL orgId).
+// the full backlog if needed. Only jobs owned by the caller's org are
+// returned — system-scoped jobs (org_id IS NULL) are excluded.
 //
 // IMPORTANT: declared BEFORE `/jobs/:id` so Express does not match
 // `/jobs/dead-letter` against the `:id` param.
@@ -378,11 +375,7 @@ router.get("/jobs/dead-letter", tenantMiddleware, async (req, res) => {
   const offsetRaw = parseInt(String(req.query["offset"] ?? "0"), 10);
   const offset = Math.max(Number.isFinite(offsetRaw) ? offsetRaw : 0, 0);
 
-  const tenantFilter = or(
-    eq(jobsTable.orgId, orgId),
-    isNull(jobsTable.orgId),
-  ) as SQL;
-  const where = and(tenantFilter, eq(jobsTable.status, "failed")) as SQL;
+  const where = and(eq(jobsTable.orgId, orgId), eq(jobsTable.status, "failed")) as SQL;
 
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -413,7 +406,7 @@ router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
     .where(
       and(
         eq(jobsTable.id, String(req.params.id)),
-        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+        eq(jobsTable.orgId, orgId),
       ),
     );
   if (!row) {
@@ -435,7 +428,7 @@ router.post("/jobs/:id/retry", tenantMiddleware, requirePermission("ingest:write
     .where(
       and(
         eq(jobsTable.id, String(req.params.id)),
-        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+        eq(jobsTable.orgId, orgId),
       ),
     );
   if (!row) {
@@ -470,7 +463,7 @@ router.post("/jobs/:id/discard", tenantMiddleware, requirePermission("ingest:wri
     .where(
       and(
         eq(jobsTable.id, id),
-        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+        eq(jobsTable.orgId, orgId),
       ),
     );
   if (!row) {
@@ -500,7 +493,7 @@ router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:writ
     .where(
       and(
         eq(jobsTable.id, id),
-        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+        eq(jobsTable.orgId, orgId),
       ),
     );
   if (!row) {
