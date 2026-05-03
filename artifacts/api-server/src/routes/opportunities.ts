@@ -20,6 +20,7 @@ import {
   gateSlaBreach,
   computeBreachingDoaSla,
   computeTimeInCurrentStageHours,
+  s2pForStatusTransition,
 } from "@workspace/db";
 import { and, eq, desc, sql, or, lt, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
@@ -199,30 +200,6 @@ function mapOpportunity(row: {
     breachingDoaSla,
     slaHours: slaBreach.slaHours,
   };
-}
-
-/**
- * Determine the canonical_stage + savings_type that should follow a given
- * status transition. Called from every approve/execute/realize/reject
- * endpoint to keep the S2P fields in sync with the status lifecycle.
- */
-function s2pForStatusTransition(newStatus: string): {
-  canonicalStage: CanonicalStage;
-  savingsType: SavingsType;
-} {
-  switch (newStatus) {
-    case "approved":
-      return { canonicalStage: "Awarded", savingsType: "Negotiated" };
-    case "executing":
-      return { canonicalStage: "In Implementation", savingsType: "Implemented" };
-    case "realized":
-      return { canonicalStage: "Realized", savingsType: "Realized" };
-    case "rejected":
-    case "expired":
-      return { canonicalStage: "Closed-No Action", savingsType: "Identified" };
-    default:
-      return { canonicalStage: "Identified", savingsType: "Identified" };
-  }
 }
 
 /**

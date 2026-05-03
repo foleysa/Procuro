@@ -5,13 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts"
+    "./schema": "./src/schema/index.ts",
+    "./test-fixtures": "./test/fixtures/factory.ts"
   },
   "scripts": {
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts",
     "sync": "node ./scripts/sync-schema.mjs",
-    "backfill-s2p": "node ./scripts/backfill-s2p-fields.mjs"
+    "backfill-s2p": "node ./scripts/backfill-s2p-fields.mjs",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",
@@ -20,8 +23,11 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.4.0",
     "@types/node": "catalog:",
     "@types/pg": "^8.18.0",
-    "drizzle-kit": "^0.31.9"
+    "@vitest/coverage-v8": "^4.1.5",
+    "drizzle-kit": "^0.31.9",
+    "vitest": "^4.1.5"
   }
 }

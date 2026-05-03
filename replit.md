@@ -35,6 +35,16 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **Bands routing model + 4-layer category resolution:** Implements a sophisticated category resolution system using `category_bands`, `lever_bands`, and a `synonym_registry`, with an `unmapped_category_queue` for fallback.
 - **Contracts UI + renewal alerts:** Provides a UI for listing and viewing contract details with pagination, filters, calendar view, and renewal alerts based on configurable thresholds.
 
+## Testing
+
+- **`lib/db`**: Vitest unit tests for S2P business logic (DOA tiers, gate SLA breach, backfill mapping, baseline validation). Run: `pnpm --filter @workspace/db run test`
+- **`api-server`**: Node native test runner with real dev DB for integration tests (stage transitions, CFO insurance gate, lifecycle). Run: `pnpm --filter @workspace/api-server run test`
+- **`command-center`**: Vitest for frontend component tests. Run: `pnpm --filter @workspace/command-center run test`
+- **All suites**: `pnpm run test` (filters `lib/**` and `artifacts/**`)
+- Key shared modules: `lib/db/src/s2p-helpers.ts` (backfill mapping, baseline validation), `lib/db/src/hard-savings.ts` (aggregate gate query)
+- Fixture factory: `lib/db/test/fixtures/factory.ts` (`makeOpportunity`, `makeBackfilledOpportunity`, `makeUser`)
+- See `tests/README.md` for full details.
+
 ## External Dependencies
 
 - **PostgreSQL:** Primary database.
