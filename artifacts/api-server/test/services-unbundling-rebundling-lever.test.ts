@@ -1,17 +1,20 @@
 /**
  * End-to-end spot check for the Tier-5 `unbundling_rebundling`
- * lever (#242).
+ * lever (#234).
  *
- * Two scenarios in one fixture:
+ * Two scenarios share an org:
  *
- *   1. **Rebundle.** Three suppliers each billing trailing-12 hours
- *      against the "Lawyers" SOC category (PROF_LEGAL) — combined
- *      spend $90k. Expect a single category-level draft sized at 7%
- *      with no `supplierId`.
- *   2. **Unbundle.** One supplier ("Generalist Co") billing across 5
- *      distinct mapped role categories with $300k combined spend
- *      (top-2 roles concentrated, bottom-3 long-tail). Expect a
- *      supplier-level draft sized at 5% of the long-tail spend.
+ *   - Rebundle: one category ("Consulting") with 3 t_and_m contracts
+ *     across 3 distinct suppliers totalling $600k baseline. Asserts a
+ *     draft sized at 5% of combined baseline ($30k) anchored to the
+ *     category.
+ *   - Unbundle: one supplier ("Generalist Co") holding 3 active
+ *     contracts in 3 distinct categories totalling $900k baseline.
+ *     Asserts a draft sized at 4% of combined baseline ($36k)
+ *     anchored to the supplier.
+ *
+ * Also seeds a no-op category (single contract / single supplier) to
+ * prove neither branch fires when the shape thresholds aren't met.
  */
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -21,14 +24,15 @@ import {
   db,
   orgsTable,
   suppliersTable,
-  timeEntriesTable,
+  categoriesTable,
+  contractsTable,
 } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
 
 import { unbundlingRebundlingLever } from "../src/lib/levers/services/unbundling-rebundling";
 import { toAnalyzeResult } from "../src/lib/levers/types";
 
-const RUN = `t242ub-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+const RUN = `t234ubr-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
 const SOURCE = "csv";
 
 function newId(prefix: string): string {
@@ -36,26 +40,19 @@ function newId(prefix: string): string {
 }
 
 let orgId: string;
-const lawyerSupplierIds: string[] = [];
+// Rebundle scenario
+let rebundleCategoryId: string;
+const rebundleSupplierIds: string[] = [];
+const REBUNDLE_BASELINE = 200_000; // 3 × $200k = $600k
+// Unbundle scenario
 let generalistSupplierId: string;
+const unbundleCategoryIds: string[] = [];
+const UNBUNDLE_BASELINE = 300_000; // 3 × $300k = $900k
+// Negative scenario
+let noopSupplierId: string;
+let noopCategoryId: string;
 
-const REBUNDLE_PER_SUPPLIER = 30_000; // x3 = $90k → above $25k threshold
-const UNBUNDLE_TOP_ROLE_SPEND = 100_000; // top-2 = $200k
-const UNBUNDLE_TAIL_ROLE_SPEND = 33_500; // bottom-3 = $100.5k → floor satisfied
-
-// Roles chosen so that mapRoleToScopeCategory produces 5 distinct
-// categories — all DISJOINT from the rebundle scenario's PROF_LEGAL
-// bucket so the two test fixtures don't cross-contaminate each
-// other's spend totals.
-const UNBUNDLE_ROLES: Array<{ role: string; spend: number }> = [
-  { role: "Senior Recruiter", spend: UNBUNDLE_TOP_ROLE_SPEND },
-  { role: "Tax Manager", spend: UNBUNDLE_TOP_ROLE_SPEND },
-  { role: "Management Consultant", spend: UNBUNDLE_TAIL_ROLE_SPEND },
-  { role: "Senior Software Engineer", spend: UNBUNDLE_TAIL_ROLE_SPEND },
-  { role: "Mechanical Engineer", spend: UNBUNDLE_TAIL_ROLE_SPEND },
-];
-
-describe("unbundling_rebundling Tier-5 lever (#242)", () => {
+describe("unbundling_rebundling Tier-5 lever (#234)", () => {
   before(async () => {
     orgId = newId("org");
     await db.insert(orgsTable).values({
@@ -65,142 +62,179 @@ describe("unbundling_rebundling Tier-5 lever (#242)", () => {
     });
 
     const today = new Date();
-    const recent = new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const inOneYear = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-    // Rebundle scenario: 3 suppliers all billing the same role.
-    for (let i = 0; i < 3; i++) {
-      const supId = newId("sup");
-      lawyerSupplierIds.push(supId);
+    const seedCategory = async (label: string, code: string) => {
+      const id = newId("cat");
+      await db.insert(categoriesTable).values({
+        id,
+        orgId,
+        code: `${RUN}-${code}`,
+        name: `${RUN} ${label}`,
+        class: "service",
+        sourceSystem: SOURCE,
+        sourceExternalId: `${RUN}-cat-${code}`,
+      });
+      return id;
+    };
+    const seedSupplier = async (label: string) => {
+      const id = newId("sup");
       await db.insert(suppliersTable).values({
-        id: supId,
+        id,
         orgId,
-        name: `${RUN} Law Firm ${i + 1}`,
-        normalizedName: `${RUN} law firm ${i + 1}`,
+        name: `${RUN} ${label}`,
+        normalizedName: `${RUN} ${label}`.toLowerCase(),
         sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-law-${i}`,
+        sourceExternalId: `${RUN}-sup-${label}`,
       });
-      await db.insert(timeEntriesTable).values({
-        id: newId("te"),
+      return id;
+    };
+    const seedContract = async (
+      supplierId: string,
+      categoryId: string,
+      label: string,
+      baseline: number,
+    ) => {
+      const id = newId("con");
+      await db.insert(contractsTable).values({
+        id,
         orgId,
-        supplierId: supId,
-        resource: `${RUN} attorney ${i + 1}`,
-        role: "Lawyer",
-        seniority: "Partner",
-        workDate: recent,
-        hours: "60",
-        billRateUsd: "500",
-        amountUsd: String(REBUNDLE_PER_SUPPLIER),
+        supplierId,
+        categoryId,
+        contractNumber: `${RUN}-${label}`,
+        title: `${RUN} ${label}`,
+        status: "active",
+        contractType: "t_and_m",
+        startDate: today,
+        endDate: inOneYear,
+        annualBaselineUsd: String(baseline),
         sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-te-law-${i}`,
+        sourceExternalId: `${RUN}-con-${label}`,
       });
+      return id;
+    };
+
+    // Rebundle: 1 category, 3 suppliers, 3 contracts.
+    rebundleCategoryId = await seedCategory("Consulting", "CONSULTING");
+    for (let i = 0; i < 3; i++) {
+      const sup = await seedSupplier(`RebundleSup${i + 1}`);
+      rebundleSupplierIds.push(sup);
+      await seedContract(
+        sup,
+        rebundleCategoryId,
+        `REB-${i + 1}`,
+        REBUNDLE_BASELINE,
+      );
     }
 
-    // Unbundle scenario: one supplier across 5 distinct roles.
-    generalistSupplierId = newId("sup");
-    await db.insert(suppliersTable).values({
-      id: generalistSupplierId,
-      orgId,
-      name: `${RUN} Generalist Co`,
-      normalizedName: `${RUN} generalist co`,
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-gen`,
-    });
-    for (const [i, { role, spend }] of UNBUNDLE_ROLES.entries()) {
-      await db.insert(timeEntriesTable).values({
-        id: newId("te"),
-        orgId,
-        supplierId: generalistSupplierId,
-        resource: `${RUN} resource ${i + 1}`,
-        role,
-        seniority: "Senior",
-        workDate: recent,
-        hours: "100",
-        billRateUsd: "200",
-        amountUsd: String(spend),
-        sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-te-gen-${i}`,
-      });
+    // Unbundle: 1 supplier, 3 categories, 3 contracts.
+    generalistSupplierId = await seedSupplier("Generalist");
+    for (let i = 0; i < 3; i++) {
+      const cat = await seedCategory(`Tower${i + 1}`, `TOWER-${i + 1}`);
+      unbundleCategoryIds.push(cat);
+      await seedContract(
+        generalistSupplierId,
+        cat,
+        `UNB-${i + 1}`,
+        UNBUNDLE_BASELINE,
+      );
     }
+
+    // Noop: a category with one supplier / one contract — too small
+    // for either branch.
+    noopSupplierId = await seedSupplier("Noop");
+    noopCategoryId = await seedCategory("NoopCat", "NOOP");
+    await seedContract(noopSupplierId, noopCategoryId, "NOOP-1", 100_000);
   });
 
-  it("emits a category-level rebundle draft when 3+ suppliers cover the same role", async () => {
+  it("emits a rebundle draft anchored to the consulting category", async () => {
     const result = toAnalyzeResult(
       await unbundlingRebundlingLever.analyze({
         orgId,
         cycleId: "test-cycle",
       }),
     );
-    const rebundle = result.drafts.find(
+    const ours = result.drafts.find(
       (d) =>
-        (d.inputs as Record<string, unknown>)["flavor"] === "rebundle" &&
-        (d.inputs as Record<string, unknown>)["scopeCategoryCode"] ===
-          "PROF_LEGAL",
+        d.categoryId === rebundleCategoryId &&
+        (d.inputs as { flavour?: string }).flavour === "rebundle",
     );
-    assert.ok(rebundle, "expected a rebundle draft for PROF_LEGAL");
-    assert.equal(rebundle.leverId, "unbundling_rebundling");
-    assert.equal(
-      rebundle.supplierId,
-      null,
-      "rebundle drafts are category-level (no supplierId)",
-    );
-    const totalSpend = REBUNDLE_PER_SUPPLIER * 3;
-    // Round to cents to dodge FP noise from `n * 0.07`.
-    assert.equal(
-      rebundle.rawProjectedSavingsUsd,
-      Math.round(totalSpend * 0.07 * 100) / 100,
-    );
-    const inputs = rebundle.inputs as Record<string, unknown>;
+    assert.ok(ours, "expected a rebundle draft for the consulting category");
+    assert.equal(ours.leverId, "unbundling_rebundling");
+    assert.equal(ours.supplierId ?? null, null);
+    assert.equal(ours.rawProjectedSavingsUsd, REBUNDLE_BASELINE * 3 * 0.05);
+    const inputs = ours.inputs as Record<string, unknown>;
+    assert.equal(Number(inputs["contractCount"]), 3);
     assert.equal(Number(inputs["supplierCount"]), 3);
-    assert.equal(Number(inputs["totalSpend12moUsd"]), totalSpend);
-    assert.equal(result.consultedSignalIds!.length, 0);
+    assert.equal(
+      Number(inputs["combinedBaselineUsd"]),
+      REBUNDLE_BASELINE * 3,
+    );
   });
 
-  it("emits an unbundle draft when one supplier covers 5+ role categories", async () => {
+  it("emits an unbundle draft anchored to the generalist supplier", async () => {
     const result = toAnalyzeResult(
       await unbundlingRebundlingLever.analyze({
         orgId,
         cycleId: "test-cycle",
       }),
     );
-    const unbundle = result.drafts.find(
+    const ours = result.drafts.find(
       (d) =>
-        (d.inputs as Record<string, unknown>)["flavor"] === "unbundle" &&
-        d.supplierId === generalistSupplierId,
+        d.supplierId === generalistSupplierId &&
+        (d.inputs as { flavour?: string }).flavour === "unbundle",
     );
-    assert.ok(
-      unbundle,
-      "expected an unbundle draft for the generalist supplier",
-    );
-    const inputs = unbundle.inputs as Record<string, unknown>;
-    assert.ok(
-      Number(inputs["distinctRoleCategoryCount"]) >= 5,
-      `expected >=5 distinct role categories, got ${inputs["distinctRoleCategoryCount"]}`,
-    );
-    const tailSpend = Number(inputs["longTailSpendUsd"]);
-    assert.ok(tailSpend > 0, "long-tail spend must be > 0");
-    // tailStart = ceil(5/2) = 3, so the long-tail is the bottom-2
-    // roles by spend = 2 × $33,500 = $67,000.
-    const expectedTail = UNBUNDLE_TAIL_ROLE_SPEND * 2;
-    assert.equal(tailSpend, expectedTail);
+    assert.ok(ours, "expected an unbundle draft for the generalist supplier");
+    assert.equal(ours.leverId, "unbundling_rebundling");
+    assert.equal(ours.rawProjectedSavingsUsd, UNBUNDLE_BASELINE * 3 * 0.04);
+    const inputs = ours.inputs as Record<string, unknown>;
+    assert.equal(Number(inputs["contractCount"]), 3);
+    assert.equal(Number(inputs["categoryCount"]), 3);
     assert.equal(
-      unbundle.rawProjectedSavingsUsd,
-      Math.round(expectedTail * 0.05 * 100) / 100,
+      Number(inputs["combinedBaselineUsd"]),
+      UNBUNDLE_BASELINE * 3,
     );
   });
 
-  it("produces stable cohortKeys for both flavours (idempotent)", async () => {
+  it("does not emit drafts for the small noop category / supplier", async () => {
+    const result = toAnalyzeResult(
+      await unbundlingRebundlingLever.analyze({
+        orgId,
+        cycleId: "test-cycle",
+      }),
+    );
+    const noopRebundle = result.drafts.find(
+      (d) => d.categoryId === noopCategoryId,
+    );
+    assert.equal(
+      noopRebundle,
+      undefined,
+      "noop category should not emit a rebundle draft",
+    );
+    const noopUnbundle = result.drafts.find(
+      (d) => d.supplierId === noopSupplierId,
+    );
+    assert.equal(
+      noopUnbundle,
+      undefined,
+      "noop supplier should not emit an unbundle draft",
+    );
+  });
+
+  it("produces stable cohortKeys on re-runs (idempotent)", async () => {
     const first = toAnalyzeResult(
       await unbundlingRebundlingLever.analyze({
         orgId,
-        cycleId: "c1",
+        cycleId: "test-cycle-1",
       }),
     );
     const second = toAnalyzeResult(
       await unbundlingRebundlingLever.analyze({
         orgId,
-        cycleId: "c2",
+        cycleId: "test-cycle-2",
       }),
     );
+    assert.equal(first.drafts.length, second.drafts.length);
     const keys1 = first.drafts
       .map((d) => unbundlingRebundlingLever.cohortKey!(d))
       .sort();
@@ -208,35 +242,11 @@ describe("unbundling_rebundling Tier-5 lever (#242)", () => {
       .map((d) => unbundlingRebundlingLever.cohortKey!(d))
       .sort();
     assert.deepEqual(keys2, keys1, "cohortKeys must be stable across re-runs");
-    // Rebundle key carries the category code; unbundle is the bare
-    // discriminator (supplierId is on draft.supplierId).
-    assert.ok(
-      keys1.some((k) => k.startsWith("rebundle:PROF_LEGAL")),
-      "expected a rebundle:PROF_LEGAL cohort key",
-    );
-    assert.ok(
-      keys1.some((k) => k === "unbundle"),
-      "expected an unbundle cohort key",
-    );
-  });
-
-  it("returns silently for an org with no time entries", async () => {
-    const otherOrgId = newId("org");
-    await db.insert(orgsTable).values({
-      id: otherOrgId,
-      name: `${RUN} Empty Org`,
-      slug: `${RUN}-empty`,
-    });
-    try {
-      const result = toAnalyzeResult(
-        await unbundlingRebundlingLever.analyze({
-          orgId: otherOrgId,
-          cycleId: "test-cycle",
-        }),
+    for (const k of keys1) {
+      assert.ok(
+        k === "rebundle" || k === "unbundle",
+        `cohortKey contribution must be the flavour string; got ${k}`,
       );
-      assert.equal(result.drafts.length, 0);
-    } finally {
-      await db.delete(orgsTable).where(eq(orgsTable.id, otherOrgId));
     }
   });
 
@@ -251,8 +261,13 @@ describe("unbundling_rebundling Tier-5 lever (#242)", () => {
     if (orgId) {
       await safe(
         db
-          .delete(timeEntriesTable)
-          .where(like(timeEntriesTable.sourceExternalId, `${RUN}-%`)),
+          .delete(contractsTable)
+          .where(like(contractsTable.sourceExternalId, `${RUN}-%`)),
+      );
+      await safe(
+        db
+          .delete(categoriesTable)
+          .where(like(categoriesTable.sourceExternalId, `${RUN}-%`)),
       );
       await safe(
         db

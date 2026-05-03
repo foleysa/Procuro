@@ -1,11 +1,16 @@
 /**
  * End-to-end spot check for the Tier-5 `outcome_based_contract`
- * lever (#242).
+ * lever (#234).
  *
- * Seeds an active T&M contract with a $200k annual baseline plus 3
- * completed SOWs (sow-cadence trigger). Asserts a draft is emitted
- * sized at 10% of the baseline and that the unrelated retainer
- * contract with no cadence evidence is skipped.
+ * Seeds:
+ *   - One eligible supplier with an active `t_and_m` contract,
+ *     $400k annual baseline, and 6 months of stable monthly time-
+ *     entry burn (~$30k/mo, low coefficient of variation). Asserts a
+ *     single draft sized at 8% of baseline.
+ *   - One ineligible supplier with the same baseline but volatile
+ *     burn (alternating $5k / $50k months). Asserts the lever skips
+ *     it because CoV exceeds the threshold.
+ *   - One ineligible contract that is already `outcome`-typed.
  */
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +21,6 @@ import {
   orgsTable,
   suppliersTable,
   contractsTable,
-  statementsOfWorkTable,
   timeEntriesTable,
 } from "@workspace/db";
 import { eq, like } from "drizzle-orm";
@@ -24,24 +28,23 @@ import { eq, like } from "drizzle-orm";
 import { outcomeBasedContractLever } from "../src/lib/levers/services/outcome-based-contract";
 import { toAnalyzeResult } from "../src/lib/levers/types";
 
-const RUN = `t242obc-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+const RUN = `t234obc-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
 const SOURCE = "csv";
+const BASELINE = 400_000;
 
 function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
 }
 
 let orgId: string;
-let supplierId: string;
-let contractId: string;
-let smallContractId: string;
-let tenureContractId: string;
-let tenureSupplierId: string;
+let stableSupplierId: string;
+let stableContractId: string;
+let volatileSupplierId: string;
+let volatileContractId: string;
+let alreadyOutcomeSupplierId: string;
+let alreadyOutcomeContractId: string;
 
-const BASELINE = 200_000;
-const SMALL_BASELINE = 10_000;
-
-describe("outcome_based_contract Tier-5 lever (#242)", () => {
+describe("outcome_based_contract Tier-5 lever (#234)", () => {
   before(async () => {
     orgId = newId("org");
     await db.insert(orgsTable).values({
@@ -50,229 +53,195 @@ describe("outcome_based_contract Tier-5 lever (#242)", () => {
       slug: `${RUN}-org`,
     });
 
-    supplierId = newId("sup");
-    await db.insert(suppliersTable).values({
-      id: supplierId,
-      orgId,
-      name: `${RUN} Stable Supplier`,
-      normalizedName: `${RUN} stable supplier`,
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-sup`,
-    });
-    tenureSupplierId = newId("sup");
-    await db.insert(suppliersTable).values({
-      id: tenureSupplierId,
-      orgId,
-      name: `${RUN} Tenure Supplier`,
-      normalizedName: `${RUN} tenure supplier`,
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-sup-tenure`,
-    });
-
     const today = new Date();
     const inOneYear = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-    // Eligible T&M contract with 3 SOWs (sow-cadence trigger).
-    contractId = newId("con");
-    await db.insert(contractsTable).values({
-      id: contractId,
-      orgId,
-      supplierId,
-      contractNumber: `${RUN}-TM-MSA`,
-      title: `${RUN} stable T&M MSA`,
-      status: "active",
-      contractType: "t_and_m",
-      startDate: today,
-      endDate: inOneYear,
-      annualBaselineUsd: String(BASELINE),
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-con-tm`,
-    });
-    for (let i = 0; i < 3; i++) {
-      await db.insert(statementsOfWorkTable).values({
-        id: newId("sow"),
+    const seedSupplier = async (label: string) => {
+      const id = newId("sup");
+      await db.insert(suppliersTable).values({
+        id,
         orgId,
-        contractId,
+        name: `${RUN} ${label}`,
+        normalizedName: `${RUN} ${label}`.toLowerCase(),
+        sourceSystem: SOURCE,
+        sourceExternalId: `${RUN}-sup-${label}`,
+      });
+      return id;
+    };
+
+    const seedContract = async (
+      supplierId: string,
+      label: string,
+      contractType: "t_and_m" | "outcome",
+    ) => {
+      const id = newId("con");
+      await db.insert(contractsTable).values({
+        id,
+        orgId,
         supplierId,
-        sowNumber: `${RUN}-SOW-${i + 1}`,
-        title: `${RUN} sow ${i + 1}`,
-        status: i === 0 ? "active" : "completed",
+        contractNumber: `${RUN}-${label}`,
+        title: `${RUN} ${label} engagement`,
+        status: "active",
+        contractType,
         startDate: today,
         endDate: inOneYear,
-        totalValueUsd: String(BASELINE / 3),
+        annualBaselineUsd: String(BASELINE),
         sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-sow-${i}`,
+        sourceExternalId: `${RUN}-con-${label}`,
       });
-    }
+      return id;
+    };
 
-    // Tenure-trigger T&M contract: no SOWs, but >9mo of time entries.
-    tenureContractId = newId("con");
-    await db.insert(contractsTable).values({
-      id: tenureContractId,
-      orgId,
-      supplierId: tenureSupplierId,
-      contractNumber: `${RUN}-TM-TENURE`,
-      title: `${RUN} tenure T&M`,
-      status: "active",
-      contractType: "t_and_m",
-      startDate: new Date(today.getTime() - 400 * 24 * 60 * 60 * 1000),
-      endDate: inOneYear,
-      annualBaselineUsd: String(BASELINE),
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-con-tenure`,
-    });
-    // Two entries spanning ~300 days.
-    for (const [i, daysAgo] of [310, 5].entries()) {
-      await db.insert(timeEntriesTable).values({
-        id: newId("te"),
-        orgId,
-        supplierId: tenureSupplierId,
-        contractId: tenureContractId,
-        resource: `${RUN} consultant`,
-        role: "Consultant",
-        seniority: "Senior",
-        workDate: new Date(today.getTime() - daysAgo * 24 * 60 * 60 * 1000),
-        hours: "40",
-        billRateUsd: "150",
-        amountUsd: "6000",
-        sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-te-tenure-${i}`,
-      });
-    }
+    stableSupplierId = await seedSupplier("Stable");
+    stableContractId = await seedContract(stableSupplierId, "STABLE", "t_and_m");
+    volatileSupplierId = await seedSupplier("Volatile");
+    volatileContractId = await seedContract(
+      volatileSupplierId,
+      "VOLATILE",
+      "t_and_m",
+    );
+    alreadyOutcomeSupplierId = await seedSupplier("AlreadyOutcome");
+    alreadyOutcomeContractId = await seedContract(
+      alreadyOutcomeSupplierId,
+      "OUTCOME",
+      "outcome",
+    );
 
-    // Small T&M contract with cadence but baseline below floor → skip.
-    smallContractId = newId("con");
-    await db.insert(contractsTable).values({
-      id: smallContractId,
-      orgId,
-      supplierId,
-      contractNumber: `${RUN}-TM-SMALL`,
-      title: `${RUN} small T&M`,
-      status: "active",
-      contractType: "t_and_m",
-      startDate: today,
-      endDate: inOneYear,
-      annualBaselineUsd: String(SMALL_BASELINE),
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-con-small`,
-    });
-    for (let i = 0; i < 3; i++) {
-      await db.insert(statementsOfWorkTable).values({
-        id: newId("sow"),
-        orgId,
-        contractId: smallContractId,
-        supplierId,
-        sowNumber: `${RUN}-SOW-SMALL-${i + 1}`,
-        title: `${RUN} small sow ${i + 1}`,
-        status: "completed",
-        startDate: today,
-        endDate: inOneYear,
-        totalValueUsd: String(SMALL_BASELINE / 3),
-        sourceSystem: SOURCE,
-        sourceExternalId: `${RUN}-sow-small-${i}`,
-      });
-    }
+    // Seed monthly time entries spanning the trailing ~6 months.
+    // Stable contract: ~$30k/mo with ±5% jitter (low CoV).
+    // Volatile contract: alternating $5k / $55k (high CoV).
+    // Already-outcome contract: $30k/mo (should still be skipped on
+    // type filter, not on cadence).
+    for (let monthOffset = 0; monthOffset < 6; monthOffset++) {
+      const day = new Date(today.getTime());
+      day.setMonth(day.getMonth() - monthOffset);
+      day.setDate(15);
+      const stableSpend = 30_000 + (monthOffset % 2 === 0 ? 1_000 : -1_000);
+      const volatileSpend = monthOffset % 2 === 0 ? 5_000 : 55_000;
+      const outcomeSpend = 30_000;
 
-    // Already-outcome contract → must be skipped even with cadence.
-    await db.insert(contractsTable).values({
-      id: newId("con"),
-      orgId,
-      supplierId,
-      contractNumber: `${RUN}-OUTCOME`,
-      title: `${RUN} already outcome`,
-      status: "active",
-      contractType: "outcome",
-      startDate: today,
-      endDate: inOneYear,
-      annualBaselineUsd: String(BASELINE),
-      sourceSystem: SOURCE,
-      sourceExternalId: `${RUN}-con-outcome`,
-    });
+      const insertEntry = async (
+        supplierId: string,
+        contractId: string,
+        amount: number,
+        label: string,
+      ) => {
+        await db.insert(timeEntriesTable).values({
+          id: newId("te"),
+          orgId,
+          supplierId,
+          contractId,
+          resource: `${RUN} consultant`,
+          role: "Consultant",
+          seniority: "Senior",
+          workDate: day,
+          hours: String(amount / 150),
+          billRateUsd: "150",
+          amountUsd: String(amount),
+          sourceSystem: SOURCE,
+          sourceExternalId: `${RUN}-te-${label}-${monthOffset}`,
+        });
+      };
+      await insertEntry(
+        stableSupplierId,
+        stableContractId,
+        stableSpend,
+        "stable",
+      );
+      await insertEntry(
+        volatileSupplierId,
+        volatileContractId,
+        volatileSpend,
+        "volatile",
+      );
+      await insertEntry(
+        alreadyOutcomeSupplierId,
+        alreadyOutcomeContractId,
+        outcomeSpend,
+        "outcome",
+      );
+    }
   });
 
-  it("emits a draft for the eligible T&M contract sized at the 10% uplift", async () => {
+  it("emits a draft for the stable engagement sized at 8% of baseline", async () => {
     const result = toAnalyzeResult(
       await outcomeBasedContractLever.analyze({
         orgId,
         cycleId: "test-cycle",
       }),
     );
-    const ours = result.drafts.find(
-      (d) => (d.inputs as { contractId?: string }).contractId === contractId,
-    );
-    assert.ok(ours, "expected a draft for the eligible T&M contract");
+    const ours = result.drafts.find((d) => d.supplierId === stableSupplierId);
+    assert.ok(ours, "expected a draft for the stable supplier");
     assert.equal(ours.leverId, "outcome_based_contract");
-    assert.equal(ours.supplierId, supplierId);
-    assert.equal(ours.rawProjectedSavingsUsd, BASELINE * 0.1);
+    assert.equal(ours.rawProjectedSavingsUsd, BASELINE * 0.08);
     const inputs = ours.inputs as Record<string, unknown>;
+    assert.equal(inputs["contractId"], stableContractId);
     assert.equal(Number(inputs["annualBaselineUsd"]), BASELINE);
-    assert.equal(Number(inputs["sowCount"]), 3);
-    assert.equal(inputs["triggerKind"], "sow_cadence");
+    assert.ok(
+      Number(inputs["coefficientOfVariation"]) < 0.35,
+      `CoV should be under threshold; got ${inputs["coefficientOfVariation"]}`,
+    );
     assert.equal(result.consultedSignalIds!.length, 0);
-
-    // Tenure-trigger contract should also fire.
-    const tenure = result.drafts.find(
-      (d) =>
-        (d.inputs as { contractId?: string }).contractId === tenureContractId,
-    );
-    assert.ok(tenure, "expected a draft for the tenure-trigger T&M contract");
-    assert.equal(
-      (tenure.inputs as Record<string, unknown>)["triggerKind"],
-      "engagement_tenure",
-    );
-
-    // Small-baseline contract should be skipped.
-    const small = result.drafts.find(
-      (d) =>
-        (d.inputs as { contractId?: string }).contractId === smallContractId,
-    );
-    assert.equal(
-      small,
-      undefined,
-      "contract under the baseline floor must be skipped",
-    );
-
-    // No draft for the outcome-typed contract.
-    for (const d of result.drafts) {
-      assert.notEqual(
-        (d.inputs as Record<string, unknown>)["contractType"],
-        "outcome",
-        "already-outcome contracts must never produce a draft",
-      );
-    }
   });
 
-  it("produces stable cohortKeys keyed on contractId (idempotent)", async () => {
+  it("skips volatile and already-outcome contracts", async () => {
+    const result = toAnalyzeResult(
+      await outcomeBasedContractLever.analyze({
+        orgId,
+        cycleId: "test-cycle",
+      }),
+    );
+    const volatile = result.drafts.find(
+      (d) => d.supplierId === volatileSupplierId,
+    );
+    assert.equal(
+      volatile,
+      undefined,
+      "volatile burn cadence should not produce a draft",
+    );
+    const outcomeAlready = result.drafts.find(
+      (d) => d.supplierId === alreadyOutcomeSupplierId,
+    );
+    assert.equal(
+      outcomeAlready,
+      undefined,
+      "contracts already typed as outcome should be skipped",
+    );
+  });
+
+  it("produces stable cohortKeys on re-runs (idempotent)", async () => {
     const first = toAnalyzeResult(
       await outcomeBasedContractLever.analyze({
         orgId,
-        cycleId: "c1",
+        cycleId: "test-cycle-1",
       }),
     );
     const second = toAnalyzeResult(
       await outcomeBasedContractLever.analyze({
         orgId,
-        cycleId: "c2",
+        cycleId: "test-cycle-2",
       }),
     );
-    const keys1 = first.drafts
+    const ours1 = first.drafts.filter((d) => d.supplierId === stableSupplierId);
+    const ours2 = second.drafts.filter((d) => d.supplierId === stableSupplierId);
+    assert.ok(ours1.length > 0, "expected at least one draft on first run");
+    assert.equal(ours1.length, ours2.length, "draft count should match");
+    const keys1 = ours1
       .map((d) => outcomeBasedContractLever.cohortKey!(d))
       .sort();
-    const keys2 = second.drafts
+    const keys2 = ours2
       .map((d) => outcomeBasedContractLever.cohortKey!(d))
       .sort();
-    assert.deepEqual(keys2, keys1, "cohortKeys must be stable");
+    assert.deepEqual(keys2, keys1, "cohortKeys must be stable across re-runs");
     for (const k of keys1) {
-      assert.ok(k.length > 0, "cohortKey must be non-empty (contractId)");
+      assert.ok(
+        typeof k === "string" && k.includes(stableContractId),
+        `cohortKey should reference the contract id; got ${k}`,
+      );
     }
-    assert.equal(
-      new Set(keys1).size,
-      keys1.length,
-      "expected one cohort per eligible contract",
-    );
   });
 
-  it("returns silently for an org with no contracts", async () => {
+  it("returns silently for an org with no eligible contracts", async () => {
     const otherOrgId = newId("org");
     await db.insert(orgsTable).values({
       id: otherOrgId,
@@ -305,11 +274,6 @@ describe("outcome_based_contract Tier-5 lever (#242)", () => {
         db
           .delete(timeEntriesTable)
           .where(like(timeEntriesTable.sourceExternalId, `${RUN}-%`)),
-      );
-      await safe(
-        db
-          .delete(statementsOfWorkTable)
-          .where(like(statementsOfWorkTable.sourceExternalId, `${RUN}-%`)),
       );
       await safe(
         db

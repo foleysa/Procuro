@@ -1,5 +1,5 @@
 /**
- * Tier-5 Services-band lever analyzers (tasks #216, #242).
+ * Tier-5 Services-band lever analyzers.
  *
  * Six levers route to the Services band per the bands seed
  * (`lib/db/seeds/taxonomy.sql`):
@@ -7,8 +7,8 @@
  *   - `scope_management`
  *   - `hours_audit`
  *   - `sow_to_msa_conversion`         (also dual-banded to Concentrated rank 2)
- *   - `outcome_based_contract`        (#242)
- *   - `unbundling_rebundling`         (#242)
+ *   - `outcome_based_contract`        (task #234)
+ *   - `unbundling_rebundling`         (task #234)
  */
 
 import type { LeverAnalyzer } from "../types";
