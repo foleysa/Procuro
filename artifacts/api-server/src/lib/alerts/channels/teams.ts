@@ -7,6 +7,7 @@
  */
 
 import type { AlertRow, AlertChannelRow } from "@workspace/db";
+import { assertSafeUrl, assertSafeUrlResolved, SsrfBlockedError } from "../../ssrf-guard";
 import {
   ChannelConfigError,
   type ChannelAdapter,
@@ -19,9 +20,18 @@ interface TeamsConfig {
 
 function readConfig(config: Record<string, unknown>): TeamsConfig {
   const url = config["webhookUrl"];
-  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+  if (typeof url !== "string" || !/^https:\/\//i.test(url)) {
     throw new ChannelConfigError(
-      "teams channel requires `webhookUrl` (https URL)",
+      "teams channel requires `webhookUrl` (HTTPS URL)",
+    );
+  }
+  try {
+    assertSafeUrl(url, { requireHttps: true });
+  } catch (err) {
+    throw new ChannelConfigError(
+      err instanceof SsrfBlockedError
+        ? `teams webhookUrl rejected: ${err.message}`
+        : "teams webhookUrl is not allowed",
     );
   }
   return { webhookUrl: url };
@@ -66,12 +76,29 @@ export const teamsChannelAdapter: ChannelAdapter = {
         },
       ],
     };
+    // DNS-resolution SSRF check: verify the destination hostname resolves
+    // only to public IP ranges. This catches DNS-indirection bypasses
+    // (e.g. attacker-controlled hostnames pointing to 10.x / 169.254.x)
+    // that the synchronous schema-validation check cannot detect.
+    try {
+      await assertSafeUrlResolved(cfg.webhookUrl, { requireHttps: true });
+    } catch (err) {
+      return {
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+        payload: { title: card.title },
+      };
+    }
+
     let res: Response;
     try {
       res = await fetch(cfg.webhookUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(card),
+        // Disable redirect-following so a public URL cannot redirect the
+        // backend to an internal address (redirect-based SSRF bypass).
+        redirect: "error",
         signal: AbortSignal.timeout(15_000),
       });
     } catch (err) {

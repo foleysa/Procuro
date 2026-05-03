@@ -6,6 +6,7 @@ import type {
   ErpFetchResult,
 } from "../erp-connector";
 import type { IngestPayload } from "../../adapters/ingest-writer";
+import { ssrfSafeRefine } from "../../ssrf-guard";
 import {
   buildIngestPayload,
   type AribaContract,
@@ -51,7 +52,7 @@ export const aribaSettingsSchema = z.object({
   /**
    * API instance URL — typically `https://openapi.ariba.com` for
    * production or `https://openapi-sandbox.ariba.com` for sandbox.
-   * No trailing slash.
+   * Must be an Ariba domain (*.ariba.com). No trailing slash.
    */
   instanceUrl: z
     .string()
@@ -59,6 +60,21 @@ export const aribaSettingsSchema = z.object({
     .refine(
       (u) => !u.endsWith("/"),
       "instanceUrl must not have a trailing slash",
+    )
+    .refine(
+      ssrfSafeRefine({ requireHttps: true }),
+      "instanceUrl must be a safe HTTPS URL (private/loopback addresses are not allowed)",
+    )
+    .refine(
+      (u) => {
+        try {
+          const host = new URL(u).hostname.toLowerCase();
+          return host.endsWith(".ariba.com");
+        } catch {
+          return false;
+        }
+      },
+      "instanceUrl must be an Ariba domain (*.ariba.com)",
     ),
   /** Realm / site identifier (`acme-prod`, `globex-test`, …). */
   realm: z
@@ -71,11 +87,27 @@ export const aribaSettingsSchema = z.object({
   /**
    * Optional authentication URL override. Defaults to
    * `https://api.ariba.com` (the global token endpoint).
+   * Must be an Ariba domain (*.ariba.com). No trailing slash.
    */
   authUrl: z
     .string()
     .url("authUrl must be a valid URL")
     .refine((u) => !u.endsWith("/"), "authUrl must not have a trailing slash")
+    .refine(
+      ssrfSafeRefine({ requireHttps: true }),
+      "authUrl must be a safe HTTPS URL (private/loopback addresses are not allowed)",
+    )
+    .refine(
+      (u) => {
+        try {
+          const host = new URL(u).hostname.toLowerCase();
+          return host.endsWith(".ariba.com");
+        } catch {
+          return false;
+        }
+      },
+      "authUrl must be an Ariba domain (*.ariba.com)",
+    )
     .default("https://api.ariba.com"),
   /** Page size used in `$top=`. Defaults to 200, capped at 500. */
   pageSize: z.number().int().min(1).max(500).default(200),

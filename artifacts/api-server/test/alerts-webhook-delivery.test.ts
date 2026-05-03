@@ -48,6 +48,14 @@
  *   - `DATABASE_URL` is set and the schema has been pushed
  *     (`pnpm --filter @workspace/db run push`).
  */
+// Test escape hatch: the webhook adapter's SSRF guard rejects HTTP and
+// loopback URLs in production. This integration test deliberately stands
+// up a real `node:http` receiver on 127.0.0.1, so we opt the adapter into
+// the test-only bypass at module-eval time. The adapter reads this env
+// var dynamically (per call), so it just needs to be set before
+// `deliverAlertsTick()` is invoked from `test.before`.
+process.env["ALERTS_WEBHOOK_TEST_BYPASS_SSRF"] = "1";
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";

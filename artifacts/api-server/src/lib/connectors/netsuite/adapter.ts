@@ -6,6 +6,7 @@ import type {
   ErpFetchResult,
 } from "../erp-connector";
 import type { IngestPayload } from "../../adapters/ingest-writer";
+import { ssrfSafeRefine } from "../../ssrf-guard";
 import {
   buildIngestPayload,
   type NetSuiteContract,
@@ -57,6 +58,7 @@ export const netsuiteSettingsSchema = z.object({
   /**
    * Optional explicit instance URL override. When omitted we derive
    * `https://<accountId-normalised>.suitetalk.api.netsuite.com`.
+   * When provided, must be a NetSuite domain (*.netsuite.com). No trailing slash.
    */
   instanceUrl: z
     .string()
@@ -64,6 +66,21 @@ export const netsuiteSettingsSchema = z.object({
     .refine(
       (u) => !u.endsWith("/"),
       "instanceUrl must not have a trailing slash",
+    )
+    .refine(
+      ssrfSafeRefine({ requireHttps: true }),
+      "instanceUrl must be a safe HTTPS URL (private/loopback addresses are not allowed)",
+    )
+    .refine(
+      (u) => {
+        try {
+          const host = new URL(u).hostname.toLowerCase();
+          return host.endsWith(".netsuite.com");
+        } catch {
+          return false;
+        }
+      },
+      "instanceUrl must be a NetSuite domain (*.netsuite.com)",
     )
     .optional(),
   /** Page size used in `?limit=`. Defaults to 200, capped at 1000. */

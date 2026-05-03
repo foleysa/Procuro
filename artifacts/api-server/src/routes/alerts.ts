@@ -112,21 +112,42 @@ function mapChannel(r: AlertChannelRow) {
 
 /**
  * Redact secret material from channel config before returning to the
- * client. Webhook signing secrets are particularly sensitive — we
- * surface only a 4-char hint so operators can verify they're looking
- * at the right channel without ever re-exposing the secret.
+ * client. Delivery credentials — webhook signing secrets, Slack/Teams
+ * incoming-webhook URLs — must never be echoed back to API consumers.
+ *
+ * Redacted keys per channel kind:
+ *   webhook — `secret` (used by the adapter), `signingSecret` (legacy alias)
+ *   slack   — `webhookUrl` (bearer-like incoming-webhook URL)
+ *   teams   — `webhookUrl` (bearer-like incoming-webhook URL)
  */
 function redactChannelConfig(
   kind: AlertChannelRow["kind"],
   config: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (kind === "webhook" && typeof config["signingSecret"] === "string") {
-    const s = config["signingSecret"] as string;
-    return {
-      ...config,
-      signingSecret:
-        s.length <= 4 ? "***" : `${s.slice(0, 2)}…${s.slice(-2)}`,
-    };
+  if (kind === "webhook") {
+    const redacted: Record<string, unknown> = { ...config };
+    // Destination URL is sensitive: it may be a proprietary endpoint and
+    // knowing it lets a caller craft signed requests outside Procuro's
+    // delivery controls.
+    if (typeof redacted["url"] === "string") {
+      redacted["url"] = "***";
+    }
+    if (typeof redacted["secret"] === "string") {
+      redacted["secret"] = "***";
+    }
+    if (typeof redacted["signingSecret"] === "string") {
+      redacted["signingSecret"] = "***";
+    }
+    return redacted;
+  }
+  if (kind === "slack" || kind === "teams") {
+    const redacted: Record<string, unknown> = { ...config };
+    // webhookUrl is a bearer-like secret — knowing it allows direct posting
+    // into the tenant's Slack/Teams channels outside Procuro's audit trail.
+    if (typeof redacted["webhookUrl"] === "string") {
+      redacted["webhookUrl"] = "***";
+    }
+    return redacted;
   }
   return config;
 }

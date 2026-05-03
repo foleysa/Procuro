@@ -23,6 +23,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AlertRow, AlertChannelRow } from "@workspace/db";
+import { assertSafeUrl, assertSafeUrlResolved, SsrfBlockedError } from "../../ssrf-guard";
 import {
   ChannelConfigError,
   type ChannelAdapter,
@@ -34,13 +35,36 @@ interface WebhookConfig {
   secret: string;
 }
 
+/**
+ * Test-only escape hatch. When set to "1" we accept HTTP + loopback URLs
+ * so the in-process webhook delivery test can spin up a real receiver on
+ * 127.0.0.1 and exercise the full sign/POST/parse path. Never set in
+ * production — guarded by an explicit non-default value.
+ */
+function ssrfBypassedForTesting(): boolean {
+  return process.env["ALERTS_WEBHOOK_TEST_BYPASS_SSRF"] === "1";
+}
+
 function readConfig(config: Record<string, unknown>): WebhookConfig {
   const url = config["url"];
   const secret = config["secret"];
-  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+  const bypass = ssrfBypassedForTesting();
+  const urlPattern = bypass ? /^https?:\/\//i : /^https:\/\//i;
+  if (typeof url !== "string" || !urlPattern.test(url)) {
     throw new ChannelConfigError(
-      "webhook channel requires `url` (http/https URL)",
+      "webhook channel requires `url` (HTTPS URL)",
     );
+  }
+  if (!bypass) {
+    try {
+      assertSafeUrl(url, { requireHttps: true });
+    } catch (err) {
+      throw new ChannelConfigError(
+        err instanceof SsrfBlockedError
+          ? `webhook url rejected: ${err.message}`
+          : "webhook url is not allowed",
+      );
+    }
   }
   if (typeof secret !== "string" || secret.length < 16) {
     throw new ChannelConfigError(
@@ -130,6 +154,24 @@ export const webhookChannelAdapter: ChannelAdapter = {
       timestampSec,
     );
 
+    // DNS-resolution SSRF check: verify the destination hostname resolves
+    // only to public IP ranges. This catches DNS-indirection bypasses
+    // (e.g. attacker-controlled hostnames pointing to 10.x / 169.254.x)
+    // that the synchronous schema-validation check cannot detect.
+    if (!ssrfBypassedForTesting()) {
+      try {
+        await assertSafeUrlResolved(url, { requireHttps: true });
+      } catch (err) {
+        return {
+          status: "failed",
+          error: err instanceof Error ? err.message : String(err),
+          // Deliberately omit `url` from payload — destination URLs are
+          // sensitive credentials and must not be disclosed to callers.
+          payload: {},
+        };
+      }
+    }
+
     let res: Response;
     try {
       res = await fetch(url, {
@@ -142,6 +184,9 @@ export const webhookChannelAdapter: ChannelAdapter = {
           "user-agent": "procuro-alerts/1.0",
         },
         body,
+        // Disable redirect-following so a public URL cannot redirect the
+        // backend to an internal address (redirect-based SSRF bypass).
+        redirect: "error",
         // Belt-and-braces: a misbehaving receiver shouldn't be able to
         // pin the worker thread waiting for a response forever.
         signal: AbortSignal.timeout(15_000),
@@ -150,8 +195,8 @@ export const webhookChannelAdapter: ChannelAdapter = {
       return {
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
+        // Deliberately omit `url` — destination URLs are sensitive credentials.
         payload: {
-          url,
           signature: `sha256=${signatureHex}`,
           timestamp: timestampSec,
         },
@@ -163,8 +208,8 @@ export const webhookChannelAdapter: ChannelAdapter = {
       status: ok ? "delivered" : "failed",
       httpStatus: res.status,
       error: ok ? undefined : `webhook returned HTTP ${res.status}`,
+      // Deliberately omit `url` — destination URLs are sensitive credentials.
       payload: {
-        url,
         signature: `sha256=${signatureHex}`,
         timestamp: timestampSec,
         bodySize: body.length,

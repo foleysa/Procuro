@@ -6,6 +6,7 @@ import type {
   ErpFetchResult,
 } from "../erp-connector";
 import type { IngestPayload } from "../../adapters/ingest-writer";
+import { ssrfSafeRefine } from "../../ssrf-guard";
 import {
   buildIngestPayload,
   type CoupaContract,
@@ -48,11 +49,29 @@ export const coupaCredentialsSchema = z.object({
 });
 
 export const coupaSettingsSchema = z.object({
-  /** e.g. `https://acme.coupahost.com`. No trailing slash. */
+  /**
+   * e.g. `https://acme.coupahost.com`. Must be a Coupa-hosted domain
+   * (*.coupahost.com or *.coupa.com). No trailing slash.
+   */
   instanceUrl: z
     .string()
     .url("instanceUrl must be a valid URL")
-    .refine((u) => !u.endsWith("/"), "instanceUrl must not have a trailing slash"),
+    .refine((u) => !u.endsWith("/"), "instanceUrl must not have a trailing slash")
+    .refine(
+      ssrfSafeRefine({ requireHttps: true }),
+      "instanceUrl must be a safe HTTPS URL (private/loopback addresses are not allowed)",
+    )
+    .refine(
+      (u) => {
+        try {
+          const host = new URL(u).hostname.toLowerCase();
+          return host.endsWith(".coupahost.com") || host.endsWith(".coupa.com");
+        } catch {
+          return false;
+        }
+      },
+      "instanceUrl must be a Coupa domain (*.coupahost.com or *.coupa.com)",
+    ),
   /** Page size used in `?limit=`. Defaults to 200, capped at 500. */
   pageSize: z.number().int().min(1).max(500).default(200),
   /** Optional override of the OAuth scope list. */
