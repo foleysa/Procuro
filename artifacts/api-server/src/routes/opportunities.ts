@@ -142,6 +142,7 @@ function mapOpportunity(row: {
     rejectedReasonText: o.rejectedReasonNote,
     realizedAt: o.realizedAt,
     snoozedUntil: o.snoozedUntil,
+    lastSeenAt: o.lastSeenAt,
     createdAt: o.createdAt,
   };
 }

@@ -804,6 +804,15 @@ automatically once this passes; clients can also clear it
 explicitly via `bulk-unsnooze`.
  */
   snoozedUntil?: string | null;
+  /** Last cycle timestamp at which the underlying signal
+was still present. Refreshed on every cycle that touches the
+row; used by the auto-expire job to flip rows to `expired`
+after a quiet-cycle threshold has elapsed without the signal
+re-firing. Surfaced so the Approvals "Expired" view can show
+why a row aged out (TTL vs went-quiet) by comparing this to
+`createdAt`.
+ */
+  lastSeenAt?: string | null;
   createdAt: string;
 }
 

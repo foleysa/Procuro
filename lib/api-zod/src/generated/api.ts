@@ -1606,6 +1606,12 @@ export const ListOpportunitiesResponse = zod.object({
         .describe(
           'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
         ),
+      lastSeenAt: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+        ),
       createdAt: zod.coerce.date(),
     }),
   ),
@@ -1948,6 +1954,12 @@ export const GetOpportunityResponse = zod
       .describe(
         'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
       ),
+    lastSeenAt: zod.coerce
+      .date()
+      .nullish()
+      .describe(
+        'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+      ),
     createdAt: zod.coerce.date(),
   })
   .and(
@@ -2097,6 +2109,12 @@ export const ApproveOpportunityResponse = zod.object({
     .describe(
       'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
     ),
+  lastSeenAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -2191,6 +2209,12 @@ export const RejectOpportunityResponse = zod.object({
     .describe(
       'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
     ),
+  lastSeenAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -2270,6 +2294,12 @@ export const ExecuteOpportunityResponse = zod.object({
     .nullish()
     .describe(
       'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
+  lastSeenAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
     ),
   createdAt: zod.coerce.date(),
 });
@@ -2355,6 +2385,12 @@ export const RealizeOpportunityResponse = zod.object({
     .nullish()
     .describe(
       'Snooze deadline. When set and in the future, the row is\n\"snoozed\": still in `proposed` status (audit lifecycle is\npreserved), but excluded from the Today page Pending approvals\ncard and from the default opportunities list. Rows reappear\nautomatically once this passes; clients can also clear it\nexplicitly via `bulk-unsnooze`.\n',
+    ),
+  lastSeenAt: zod.coerce
+    .date()
+    .nullish()
+    .describe(
+      'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
     ),
   createdAt: zod.coerce.date(),
 });
