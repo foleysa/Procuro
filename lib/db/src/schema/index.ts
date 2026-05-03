@@ -27,6 +27,7 @@ export * from "./appSettings";
 export * from "./csvIngestMetrics";
 export * from "./entityResolutionCache";
 export * from "./watchedIssuers";
+export * from "./watchedSuppliers";
 export * from "./erpConnections";
 export * from "./erpSyncRuns";
 export * from "./defensePacks";
