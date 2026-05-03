@@ -2,7 +2,7 @@
  * GDELT 2.0 Events collector — geocoded global event firehose.
  *
  * Pulls the latest 15-minute "events" CSV from
- *   http://data.gdeltproject.org/gdeltv2/lastupdate.txt
+ *   https://data.gdeltproject.org/gdeltv2/lastupdate.txt
  * which lists three current bundle URLs (events / mentions / gkg).
  * We only ingest the events file; each row is one geocoded event with
  * actor, action, location, and tone.
@@ -40,7 +40,7 @@ import { logger } from "../../logger";
 
 export const GDELT_EVENTS_COLLECTOR_ID = "gdelt-events";
 
-const GDELT_LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
+const GDELT_LASTUPDATE_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt";
 
 /** Hard ceiling on how many rows we keep per run, to stay cheap. */
 export const GDELT_MAX_EVENTS_PER_RUN = 500;
@@ -77,7 +77,14 @@ export function parseLastUpdateForEventsUrl(body: string): string | null {
     .find((l) => l.length > 0 && l.includes(".export.CSV"));
   if (!line) return null;
   const parts = line.split(/\s+/);
-  return parts[parts.length - 1] ?? null;
+  const url = parts[parts.length - 1] ?? null;
+  // GDELT's lastupdate.txt embeds http:// links even when served over
+  // https. Force https so the subsequent fetch is not downgraded
+  // (#320 — security baseline finding from #309 CI/CD scanning).
+  if (url && url.startsWith("http://")) {
+    return "https://" + url.slice("http://".length);
+  }
+  return url;
 }
 
 /**

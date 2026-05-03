@@ -25,7 +25,6 @@ import {
 import { and, eq, desc, sql, or, lt, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
-import { NotFoundError } from "../lib/api-errors";
 import { requirePermission, resolveRbacContext, roleHasPermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
 import { logger } from "../lib/logger";

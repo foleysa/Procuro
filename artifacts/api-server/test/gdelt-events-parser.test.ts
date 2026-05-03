@@ -18,14 +18,26 @@ import {
 } from "../src/lib/intelligence/collectors/gdelt-events";
 
 describe("parseLastUpdateForEventsUrl", () => {
-  it("returns the events URL (line containing .export.CSV)", () => {
+  it("returns the events URL (line containing .export.CSV), upgraded to https", () => {
+    // GDELT's lastupdate.txt embeds http:// links. The parser must
+    // upgrade them to https so the subsequent fetch is not downgraded
+    // (#320 — security baseline finding from #309 CI/CD scanning).
     const body =
       "139534 38918 http://data.gdeltproject.org/gdeltv2/20260430000000.export.CSV.zip\n" +
       "234443 12300 http://data.gdeltproject.org/gdeltv2/20260430000000.mentions.CSV.zip\n" +
       "98000 9000 http://data.gdeltproject.org/gdeltv2/20260430000000.gkg.csv.zip\n";
     assert.equal(
       parseLastUpdateForEventsUrl(body),
-      "http://data.gdeltproject.org/gdeltv2/20260430000000.export.CSV.zip",
+      "https://data.gdeltproject.org/gdeltv2/20260430000000.export.CSV.zip",
+    );
+  });
+
+  it("leaves an https URL unchanged", () => {
+    const body =
+      "139534 38918 https://data.gdeltproject.org/gdeltv2/20260430000000.export.CSV.zip\n";
+    assert.equal(
+      parseLastUpdateForEventsUrl(body),
+      "https://data.gdeltproject.org/gdeltv2/20260430000000.export.CSV.zip",
     );
   });
 

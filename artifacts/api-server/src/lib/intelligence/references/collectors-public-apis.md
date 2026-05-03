@@ -43,7 +43,7 @@ emits one geocoded event per row (event id in `scope_sku`, country code
 in `scope_lane_key`, EventCode numeric in `value`). Capped at
 `GDELT_MAX_EVENTS_PER_RUN` (~5k) per tick to stay polite.
 
-- **Endpoint:** `http://data.gdeltproject.org/gdeltv2/lastupdate.txt`
+- **Endpoint:** `https://data.gdeltproject.org/gdeltv2/lastupdate.txt`
 - **Backfill:** none (15-minute cadence already keeps history fresh).
 
 ### `government-sanctions` — combined OFAC + EU + UK + UN
