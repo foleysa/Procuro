@@ -33,6 +33,23 @@ pnpm --filter @workspace/db run test
 pnpm --filter @workspace/db run test:coverage
 ```
 
+**Coverage thresholds (enforced):**
+
+The `test:coverage` command fails if coverage drops below the Task #315
+baseline. Thresholds are configured in `lib/db/vitest.config.ts`:
+
+| Metric     | Threshold |
+|------------|-----------|
+| Statements | 60%       |
+| Branches   | 56%       |
+| Functions  | 72%       |
+| Lines      | 66%       |
+
+The root-level `pnpm run test:coverage` runs coverage across all `lib/*`
+and `artifacts/*` packages that define the script, so a regression in
+`lib/db` will fail the workspace-wide check. Raise these thresholds as new
+S2P tests land to ratchet the floor upward.
+
 ## api-server — Integration tests
 
 Integration tests that run against a real PostgreSQL database. The `pretest` hook
