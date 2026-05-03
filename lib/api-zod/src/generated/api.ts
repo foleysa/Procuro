@@ -11299,6 +11299,40 @@ export const GetOperationsHealthResponse = zod.object({
 });
 
 /**
+ * Server-side equivalent of the Command Center dashboard's
+SystemHealthStrip status. Returns the engine status (green /
+yellow / red), a one-line summary, and the raw inputs used to
+derive it. Replaces the client-side alert-firing path: the
+`engine_stalled` alert is now produced/deduplicated by the
+`synthesize_operational_alerts` scheduler job (task #296).
+
+ * @summary Per-tenant Engine Health rollup
+ */
+export const GetEngineHealthHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetEngineHealthResponse = zod.object({
+  orgId: zod.string(),
+  status: zod.enum(["green", "yellow", "red"]),
+  summary: zod.string(),
+  inputs: zod.object({
+    signals24h: zod.number(),
+    signals7dayAvg: zod.number(),
+    failedJobs24h: zod.number(),
+    pendingJobs: zod.number(),
+    runningJobs: zod.number(),
+    staleCollectors: zod.number(),
+  }),
+  evaluatedAt: zod.coerce.date(),
+});
+
+/**
  * Returns the orgId, email, and resolved role list for the current
 actor so the command-center UI can decide whether to render the
 Admin sidebar entry without round-tripping a 403.

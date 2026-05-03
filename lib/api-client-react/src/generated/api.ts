@@ -97,6 +97,7 @@ import type {
   DefensePackSummaryStats,
   DoaSummaryResponse,
   EngineAccessDenialList,
+  EngineHealth,
   ErpAdapterListResponse,
   ErpConnectionListResponse,
   ErpConnectionResponse,
@@ -15011,6 +15012,88 @@ export function useGetOperationsHealth<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetOperationsHealthQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Server-side equivalent of the Command Center dashboard's
+SystemHealthStrip status. Returns the engine status (green /
+yellow / red), a one-line summary, and the raw inputs used to
+derive it. Replaces the client-side alert-firing path: the
+`engine_stalled` alert is now produced/deduplicated by the
+`synthesize_operational_alerts` scheduler job (task #296).
+
+ * @summary Per-tenant Engine Health rollup
+ */
+export const getGetEngineHealthUrl = () => {
+  return `/api/engine-health`;
+};
+
+export const getEngineHealth = async (
+  options?: RequestInit,
+): Promise<EngineHealth> => {
+  return customFetch<EngineHealth>(getGetEngineHealthUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEngineHealthQueryKey = () => {
+  return [`/api/engine-health`] as const;
+};
+
+export const getGetEngineHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEngineHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEngineHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEngineHealthQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEngineHealth>>> = ({
+    signal,
+  }) => getEngineHealth({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEngineHealth>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEngineHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEngineHealth>>
+>;
+export type GetEngineHealthQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-tenant Engine Health rollup
+ */
+
+export function useGetEngineHealth<
+  TData = Awaited<ReturnType<typeof getEngineHealth>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEngineHealth>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEngineHealthQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

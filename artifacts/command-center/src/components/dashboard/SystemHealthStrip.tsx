@@ -6,19 +6,19 @@
  * drawer that contains the original diagnostic tiles (Cycle P50,
  * Recommendation Precision, Signals 24h, Collector Coverage, Data Pulse).
  *
- * When status evaluates to 🔴 Red the component fires — and deduplicates
- * via `dedupeKey` — an "Engine Stalled" high-severity alert so the
- * Critical Alerts counter in the status tiles stops showing a misleading
- * zero.
+ * Engine Stalled alert (task #296): firing was moved server-side. The
+ * `synthesize_operational_alerts` scheduled job now evaluates engine
+ * health per-tenant and creates/dedupes the `engine_stalled` alert.
+ * The previous client implementation raced across browser tabs and
+ * could queue concurrent inserts on rapid re-renders. The strip still
+ * computes its own colour locally for display, but never writes.
  */
 
-import { useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
-  useCreateManualAlert,
-  getGetAlertsSummaryQueryKey,
+  useGetEngineHealth,
+  getGetEngineHealthQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronUp,
@@ -115,61 +115,10 @@ export function buildHealthSummary(inputs: SystemHealthInputs, status: HealthSta
     : "Engine degraded — some thresholds breached.";
 }
 
-// ---------- Engine Stalled alert rule ----------
-
-const ENGINE_STALLED_DEDUPE = "engine_stalled";
-
-interface EngineStalledProps {
-  status: HealthStatus;
-  summary: string;
-  onOpenDrawer: () => void;
-}
-
-function useEngineStalledAlert({ status, summary, onOpenDrawer }: EngineStalledProps) {
-  const qc = useQueryClient();
-  const hasFiredfRef = useRef(false);
-
-  const createAlert = useCreateManualAlert({
-    mutation: {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: getGetAlertsSummaryQueryKey() });
-      },
-    },
-  });
-
-  useEffect(() => {
-    if (status !== "red") {
-      hasFiredfRef.current = false;
-      return;
-    }
-    // Fire once per status transition to red; dedupeKey prevents DB
-    // duplicates — subsequent calls just bump the occurrence counter.
-    if (!hasFiredfRef.current) {
-      hasFiredfRef.current = true;
-      void createAlert.mutateAsync({
-        data: {
-          severity: "high",
-          source: "manual",
-          kind: ENGINE_STALLED_DEDUPE,
-          title: "Engine intake has stopped — investigate collectors and job queue.",
-          summary,
-          dedupeKey: ENGINE_STALLED_DEDUPE,
-          payload: {
-            ctaLabel: "Open Engine Telemetry",
-            ctaUrl: "/?health=open",
-          },
-        },
-      }).catch(() => {
-        hasFiredfRef.current = false;
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, summary]);
-
-  void onOpenDrawer;
-}
-
 // ---------- Main component ----------
+// Engine Stalled alert firing is now owned by the
+// `synthesize_operational_alerts` scheduled job (task #296). The strip
+// no longer writes to the alerts table.
 
 export interface SystemHealthStripProps {
   // Telemetry inputs for status computation
@@ -221,11 +170,25 @@ export function SystemHealthStrip({
   isOpen,
   onToggle,
 }: SystemHealthStripProps) {
-  const inputs: SystemHealthInputs = { signals24h, signals7dayAvg, failedJobs, pendingJobs, runningJobs, staleCollectors, thresholds };
-  const status = computeHealthStatus(inputs);
-  const summary = buildHealthSummary(inputs, status);
+  // Server-canonical engine-health (#296). The `synthesize_operational_alerts`
+  // scheduler computes the same rollup and fires the engine_stalled alert,
+  // so consuming this endpoint keeps the strip's colour aligned with the
+  // alert state instead of duplicating threshold logic on the client.
+  // We still keep the local fallback so the strip renders before the
+  // first request lands and if the endpoint errors. The fallback honours
+  // the per-tenant `thresholds` from #295.
+  const engineHealthQ = useGetEngineHealth({
+    query: {
+      queryKey: getGetEngineHealthQueryKey(),
+      refetchInterval: 30_000,
+    },
+  });
+  const localInputs: SystemHealthInputs = { signals24h, signals7dayAvg, failedJobs, pendingJobs, runningJobs, staleCollectors, thresholds };
+  const localStatus = computeHealthStatus(localInputs);
+  const localSummary = buildHealthSummary(localInputs, localStatus);
+  const status: HealthStatus = engineHealthQ.data?.status ?? localStatus;
+  const summary = engineHealthQ.data?.summary ?? localSummary;
 
-  useEngineStalledAlert({ status, summary, onOpenDrawer: onToggle });
 
   const dot =
     status === "green"

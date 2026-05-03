@@ -69,6 +69,8 @@ export interface SynthesizeResult {
   collectorNeverRunAlerts: number;
   collectorIssuerListFlipAlerts: number;
   highConfidenceOpportunityAlerts: number;
+  /** Per-tenant `engine_stalled` alerts fired this tick (task #296). */
+  engineStalledAlerts: number;
 }
 
 interface SynthesizeOptions {
@@ -90,6 +92,7 @@ export async function synthesizeOperationalAlerts(
     collectorNeverRunAlerts: 0,
     collectorIssuerListFlipAlerts: 0,
     highConfidenceOpportunityAlerts: 0,
+    engineStalledAlerts: 0,
   };
 
   result.jobFailedAlerts = await synthesizeJobFailures(now);
@@ -99,9 +102,59 @@ export async function synthesizeOperationalAlerts(
   result.collectorIssuerListFlipAlerts = await synthesizeIssuerListFlips(now);
   result.highConfidenceOpportunityAlerts =
     await synthesizeHighConfidenceOpportunities(now);
+  result.engineStalledAlerts = await synthesizeEngineStalled(now);
 
   logger.info({ result }, "Operational alerts synthesized");
   return result;
+}
+
+/**
+ * Engine Stalled per-tenant alert (task #296).
+ *
+ * Walks every org and evaluates `computeEngineHealthForOrg`. If the
+ * status is `red`, fires/dedupes an `engine_stalled` alert with
+ * `dedupeKey = "engine_stalled"` (kept stable so any pre-existing
+ * client-fired open alerts get bumped instead of duplicated).
+ *
+ * Replaces the client-side `useEngineStalledAlert` hook in
+ * `SystemHealthStrip.tsx`, which raced across browser tabs and could
+ * queue concurrent inserts before dedupe took effect.
+ */
+async function synthesizeEngineStalled(now: Date): Promise<number> {
+  const { computeEngineHealthForOrg, listAllOrgIds } = await import(
+    "./engine-health"
+  );
+  const orgIds = await listAllOrgIds();
+  let count = 0;
+  for (const orgId of orgIds) {
+    let health;
+    try {
+      health = await computeEngineHealthForOrg(orgId, now);
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message, orgId },
+        "engine-health: per-org evaluation failed; skipping",
+      );
+      continue;
+    }
+    if (health.status !== "red") continue;
+    await createAlert({
+      orgId,
+      severity: "high",
+      source: "manual",
+      kind: "engine_stalled",
+      title: "Engine intake has stopped — investigate collectors and job queue.",
+      summary: health.summary,
+      dedupeKey: "engine_stalled",
+      payload: {
+        ctaLabel: "Open Engine Telemetry",
+        ctaUrl: "/?health=open",
+        inputs: health.inputs,
+      },
+    });
+    count += 1;
+  }
+  return count;
 }
 
 async function synthesizeJobFailures(now: Date): Promise<number> {

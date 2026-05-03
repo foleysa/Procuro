@@ -4844,6 +4844,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperationsHealth"
+  /engine-health:
+    get:
+      operationId: getEngineHealth
+      tags: [operations]
+      summary: Per-tenant Engine Health rollup
+      description: |
+        Server-side equivalent of the Command Center dashboard's
+        SystemHealthStrip status. Returns the engine status (green /
+        yellow / red), a one-line summary, and the raw inputs used to
+        derive it. Replaces the client-side alert-firing path: the
+        `engine_stalled` alert is now produced/deduplicated by the
+        `synthesize_operational_alerts` scheduler job (task #296).
+      parameters:
+        - $ref: "#/components/parameters/OrgIdHeader"
+      responses:
+        "200":
+          description: Engine health rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineHealth"
   /admin/whoami:
     get:
       operationId: getAdminWhoami
@@ -14118,6 +14139,49 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TodayFeedSourceError'
+    EngineHealthInputs:
+      type: object
+      required:
+        - signals24h
+        - signals7dayAvg
+        - failedJobs24h
+        - pendingJobs
+        - runningJobs
+        - staleCollectors
+      properties:
+        signals24h:
+          type: integer
+        signals7dayAvg:
+          type: number
+        failedJobs24h:
+          type: integer
+        pendingJobs:
+          type: integer
+        runningJobs:
+          type: integer
+        staleCollectors:
+          type: integer
+    EngineHealth:
+      type: object
+      required:
+        - orgId
+        - status
+        - summary
+        - inputs
+        - evaluatedAt
+      properties:
+        orgId:
+          type: string
+        status:
+          type: string
+          enum: [green, yellow, red]
+        summary:
+          type: string
+        inputs:
+          $ref: '#/components/schemas/EngineHealthInputs'
+        evaluatedAt:
+          type: string
+          format: date-time
     AdminUserRole:
       type: string
       enum:

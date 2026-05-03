@@ -5600,6 +5600,32 @@ export interface OperationsHealth {
   errors: TodayFeedSourceError[];
 }
 
+export interface EngineHealthInputs {
+  signals24h: number;
+  signals7dayAvg: number;
+  failedJobs24h: number;
+  pendingJobs: number;
+  runningJobs: number;
+  staleCollectors: number;
+}
+
+export type EngineHealthStatus =
+  (typeof EngineHealthStatus)[keyof typeof EngineHealthStatus];
+
+export const EngineHealthStatus = {
+  green: "green",
+  yellow: "yellow",
+  red: "red",
+} as const;
+
+export interface EngineHealth {
+  orgId: string;
+  status: EngineHealthStatus;
+  summary: string;
+  inputs: EngineHealthInputs;
+  evaluatedAt: string;
+}
+
 /**
  * Resolved RBAC role assignable to a tenant member or scopable to
 an API key. `platform_admin` is reserved for Procuro staff and
