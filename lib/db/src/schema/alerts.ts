@@ -74,6 +74,14 @@ export const alertSourceValues = [
    */
   "operational_collector_issuer_list_flip",
   "operational_high_confidence_opportunity",
+  /**
+   * A scheduled `data_integrity_check` run reported one or more
+   * failing reconciliation assertions (task #314). Deduped per
+   * (assertion-name, UTC day) so a persistent failure rolls up to a
+   * single bumped row instead of spamming the Slack channel every
+   * 15 minutes.
+   */
+  "operational_data_integrity_failed",
   "rule_match",
   "manual",
 ] as const;

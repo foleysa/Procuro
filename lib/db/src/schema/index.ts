@@ -34,3 +34,4 @@ export * from "./defensePacks";
 export * from "./taxonomy";
 export * from "./categoryLeverPriorScales";
 export * from "./methodsAndTools";
+export * from "./dataIntegrity";

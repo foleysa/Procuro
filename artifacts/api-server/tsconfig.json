@@ -18,6 +18,9 @@
     },
     {
       "path": "../../lib/integrations-gemini-ai"
+    },
+    {
+      "path": "../../lib/data-integrity"
     }
   ]
 }

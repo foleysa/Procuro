@@ -95,6 +95,11 @@ export const MAX_ATTEMPTS_BY_KIND: Record<JobKind, number> = {
   // Defense Pack staleness scan is internal DB work (no upstream
   // calls); same retry budget as the other system pruners.
   defense_pack_staleness_scan: 3,
+  // Data integrity assertions (task #314). Pure DB work, no upstream
+  // calls; we deliberately keep the retry budget tight (1) so a
+  // genuinely failing assertion surfaces on the next 15-minute tick
+  // rather than getting hidden by a retry-and-recover loop.
+  data_integrity_check: 1,
 };
 
 /** Hard upper bound to keep pathological values out of the DB. */

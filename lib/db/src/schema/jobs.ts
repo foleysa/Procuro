@@ -59,6 +59,13 @@ export const jobKindValues = [
   // configured threshold. The pack itself is never mutated; only the
   // staleness columns flip so the UI can surface a "Regenerate" CTA.
   "defense_pack_staleness_scan",
+  // Data integrity assertions (task #314 — CFO Insurance). Runs the
+  // eleven SQL reconciliation checks defined in
+  // `tests/data-integrity/assertions.ts` against the live DB every
+  // 15 minutes, persists every result to `data_integrity_audit_log`,
+  // and raises an `operational_data_integrity_failed` alert per
+  // failing assertion (deduped per assertion-name per UTC day).
+  "data_integrity_check",
 ] as const;
 export type JobKind = (typeof jobKindValues)[number];
 

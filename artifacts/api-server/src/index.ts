@@ -43,6 +43,10 @@ import {
   enqueueJob as _enqueueJob,
 } from "./lib/jobs/queue";
 import {
+  runDataIntegrityCheckHandler,
+  startDataIntegrityScheduler,
+} from "./lib/jobs/data-integrity";
+import {
   deliverAlertsHandler,
   escalateAlertsHandler,
   expireStaleOpportunitiesHandler,
@@ -213,6 +217,7 @@ registerJobHandler(
   "defense_pack_staleness_scan",
   runDefensePackStalenessScanHandler,
 );
+registerJobHandler("data_integrity_check", runDataIntegrityCheckHandler);
 
 // Register live ERP connectors. Same pattern as the intelligence
 // collectors above — registry is in-memory and adapter keys are
@@ -290,6 +295,7 @@ app.listen(port, async (err) => {
   startClearExpiredSnoozesScheduler();
   startRoutingHealthScheduler();
   startDefensePackStalenessScheduler();
+  startDataIntegrityScheduler();
   startErpSyncScheduler();
   logger.info(
     { port },
