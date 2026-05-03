@@ -9977,6 +9977,21 @@ components:
           items:
             type: object
             additionalProperties: true
+        statementsOfWork:
+          type: array
+          description: Task #232 — services-spend taxonomy.
+          items:
+            $ref: '#/components/schemas/IngestStatementOfWork'
+        rateCards:
+          type: array
+          description: Task #232 — services-spend taxonomy.
+          items:
+            $ref: '#/components/schemas/IngestRateCard'
+        timeEntries:
+          type: array
+          description: Task #232 — services-spend taxonomy.
+          items:
+            $ref: '#/components/schemas/IngestTimeEntry'
     MockErpIngestRequest:
       type: object
       required:
@@ -13635,3 +13650,255 @@ components:
           type: integer
           minimum: 30
           maximum: 3650
+    IngestSowMilestone:
+      type: object
+      description: 'Nested milestone on an `IngestStatementOfWork`. Mirrors the
+        services-spend taxonomy added in Task #214.'
+      required:
+      - milestoneNumber
+      - title
+      properties:
+        externalId:
+          type: string
+          maxLength: 255
+        milestoneNumber:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+        dueDate:
+          type: string
+          format: date
+        valueUsd:
+          type: number
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - pending
+          - in_progress
+          - delivered
+          - accepted
+          - invoiced
+          - paid
+          - cancelled
+        deliveredAt:
+          type: string
+          format: date
+        acceptedAt:
+          type: string
+          format: date
+    IngestSowChangeOrder:
+      type: object
+      description: Change order against a parent SOW.
+      required:
+      - changeOrderNumber
+      - title
+      properties:
+        externalId:
+          type: string
+          maxLength: 255
+        changeOrderNumber:
+          type: string
+          maxLength: 100
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+          - proposed
+          - approved
+          - rejected
+          - executed
+        valueDeltaUsd:
+          type: number
+        dateDeltaDays:
+          type: integer
+        proposedAt:
+          type: string
+          format: date
+        executedAt:
+          type: string
+          format: date
+    IngestStatementOfWork:
+      type: object
+      description: 'Statement of work payload row accepted by the JSON ingest path
+        (`POST /ingest/csv` and the connector → `writeIngestPayload`
+        path). Each SOW must reference an existing parent contract
+        (`contractExternalId`) and supplier (`supplierExternalId`)
+        that were upserted in the same payload or a prior sync.
+
+        Task #232 — services-spend taxonomy.'
+      required:
+      - externalId
+      - sowNumber
+      - title
+      - contractExternalId
+      - supplierExternalId
+      - startDate
+      - endDate
+      properties:
+        externalId:
+          type: string
+          maxLength: 255
+        sowNumber:
+          type: string
+          maxLength: 100
+        title:
+          type: string
+          maxLength: 500
+        contractExternalId:
+          type: string
+          description: External id of the parent MSA contract.
+        supplierExternalId:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - active
+          - completed
+          - cancelled
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        totalValueUsd:
+          type: number
+          minimum: 0
+        billingCurrency:
+          type: string
+          minLength: 3
+          maxLength: 8
+        scope:
+          description: Free-form scope description (string, structured object, or
+            null).
+          nullable: true
+        acceptanceCriteria:
+          type: string
+        milestones:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestSowMilestone'
+        changeOrders:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestSowChangeOrder'
+    IngestRateCardLine:
+      type: object
+      description: Single role/rate row inside an `IngestRateCard`.
+      required:
+      - role
+      properties:
+        role:
+          type: string
+          maxLength: 200
+        seniority:
+          type: string
+          maxLength: 100
+        hourlyRate:
+          type: number
+          minimum: 0
+        dailyRate:
+          type: number
+          minimum: 0
+        roleCode:
+          type: string
+          maxLength: 100
+    IngestRateCard:
+      type: object
+      description: 'Rate card payload row accepted by the JSON ingest path. Must
+        attach to either a contract or a SOW via `contractExternalId`
+        / `sowExternalId`; orphan rate cards are dropped at the
+        connector boundary.
+
+        Task #232 — services-spend taxonomy.'
+      required:
+      - externalId
+      - name
+      - supplierExternalId
+      - effectiveDate
+      properties:
+        externalId:
+          type: string
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 500
+        supplierExternalId:
+          type: string
+        contractExternalId:
+          type: string
+        sowExternalId:
+          type: string
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 8
+        effectiveDate:
+          type: string
+          format: date
+        expiryDate:
+          type: string
+          format: date
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestRateCardLine'
+    IngestTimeEntry:
+      type: object
+      description: 'Time entry payload row accepted by the JSON ingest path. Optional
+        `sowExternalId` / `rateCardExternalId` link the entry to its
+        parent SOW and the rate card used to price the hours.
+
+        Task #232 — services-spend taxonomy.'
+      required:
+      - externalId
+      - supplierExternalId
+      - resource
+      - workDate
+      - hours
+      properties:
+        externalId:
+          type: string
+          maxLength: 255
+        supplierExternalId:
+          type: string
+        contractExternalId:
+          type: string
+        sowExternalId:
+          type: string
+        rateCardExternalId:
+          type: string
+        resource:
+          type: string
+          maxLength: 200
+          description: Consultant name or vendor employee identifier.
+        role:
+          type: string
+          maxLength: 200
+        seniority:
+          type: string
+          maxLength: 100
+        workDate:
+          type: string
+          format: date
+        hours:
+          type: number
+          minimum: 0
+        billRateUsd:
+          type: number
+          minimum: 0
+        amountUsd:
+          type: number
+          minimum: 0
+        description:
+          type: string

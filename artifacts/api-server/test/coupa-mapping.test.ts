@@ -13,12 +13,18 @@ import {
   mapInvoice,
   mapPayment,
   mapPurchaseOrder,
+  mapRateCard,
+  mapStatementOfWork,
   mapSupplier,
+  mapTimeEntry,
   type CoupaContract,
   type CoupaInvoice,
   type CoupaPayment,
   type CoupaPurchaseOrder,
+  type CoupaRateCard,
+  type CoupaStatementOfWork,
   type CoupaSupplier,
+  type CoupaTimeEntry,
 } from "../src/lib/connectors/coupa/mapping";
 
 describe("coupa mapping", () => {
@@ -122,6 +128,15 @@ describe("coupa mapping", () => {
     assert.equal(mapped!.lines[1]!.spendClass, "service");
     assert.equal(mapped!.lines[0]!.unitPriceUsd, 100);
     assert.equal(mapped!.lines[0]!.qty, 10);
+    // Task #232 — categoryCodeFromCommodity wired into PO line mapping
+    // so the writer can resolve a category row by external code.
+    // "Raw Steel" doesn't match any conservative rule → omitted.
+    assert.equal(mapped!.lines[0]!.categoryExternalId, undefined);
+    // "Strategy Consulting" → PROF_CONSULTING_STRATEGY.
+    assert.equal(
+      mapped!.lines[1]!.categoryExternalId,
+      "PROF_CONSULTING_STRATEGY",
+    );
   });
 
   it("invoice mapper normalises status and embeds dedupKey", () => {
@@ -159,6 +174,148 @@ describe("coupa mapping", () => {
     assert.equal(out!.invoiceExternalId, "9001");
     assert.equal(out!.amountUsd, 1000);
     assert.equal(out!.paymentTermsDays, 25);
+  });
+
+  it("contract mapper forwards parentContractId as msaParentExternalId", () => {
+    const child: CoupaContract = {
+      id: 200,
+      number: "SOW-200",
+      supplierId: 7421,
+      parentContractId: 100,
+      startDate: "2026-02-01",
+      endDate: "2026-11-30",
+    };
+    const mapped = mapContract(child);
+    assert.ok(mapped);
+    assert.equal(mapped!.msaParentExternalId, "100");
+
+    const standalone = mapContract({ ...child, parentContractId: null });
+    assert.ok(standalone);
+    assert.equal(standalone!.msaParentExternalId, undefined);
+  });
+
+  it("SOW mapper attaches to parent contract and emits milestones/change orders", () => {
+    const wire: CoupaStatementOfWork = {
+      id: 501,
+      number: "SOW-501",
+      name: "Q2 Implementation",
+      contractId: 100,
+      supplierId: 7421,
+      status: "in_progress",
+      startDate: "2026-04-01",
+      endDate: "2026-09-30",
+      totalValue: { value: "120000", currencyCode: "USD" },
+      acceptanceCriteria: "All milestones signed off by sponsor",
+      milestones: [
+        {
+          id: 9001,
+          number: 1,
+          name: "Discovery",
+          dueDate: "2026-05-01",
+          value: { value: "30000", currencyCode: "USD" },
+          status: "delivered",
+          deliveredAt: "2026-05-02",
+        },
+        {
+          number: 2,
+          name: "Build",
+          dueDate: "2026-07-15",
+          status: "in_progress",
+        },
+      ],
+      changeOrders: [
+        {
+          id: 8001,
+          number: "CO-1",
+          name: "Add training",
+          status: "approved",
+          valueDelta: { value: "10000", currencyCode: "USD" },
+          dateDeltaDays: 14,
+        },
+      ],
+    };
+    const out = mapStatementOfWork(wire);
+    assert.ok(out);
+    assert.equal(out!.externalId, "501");
+    assert.equal(out!.contractExternalId, "100");
+    assert.equal(out!.supplierExternalId, "7421");
+    assert.equal(out!.status, "active");
+    assert.equal(out!.totalValueUsd, 120000);
+    assert.equal(out!.milestones?.length, 2);
+    assert.equal(out!.milestones![0]!.status, "delivered");
+    assert.equal(out!.milestones![0]!.valueUsd, 30000);
+    assert.equal(out!.changeOrders?.length, 1);
+    assert.equal(out!.changeOrders![0]!.status, "approved");
+    assert.equal(out!.changeOrders![0]!.valueDeltaUsd, 10000);
+  });
+
+  it("SOW mapper drops rows missing supplier, parent contract, or dates", () => {
+    const base: CoupaStatementOfWork = {
+      id: 600,
+      number: "SOW-600",
+      contractId: 100,
+      supplierId: 7421,
+      startDate: "2026-04-01",
+      endDate: "2026-09-30",
+    };
+    assert.ok(mapStatementOfWork(base));
+    assert.equal(mapStatementOfWork({ ...base, contractId: null }), null);
+    assert.equal(mapStatementOfWork({ ...base, supplierId: null }), null);
+    assert.equal(mapStatementOfWork({ ...base, startDate: null }), null);
+  });
+
+  it("rate card mapper requires supplier + contract/sow link and carries lines", () => {
+    const wire: CoupaRateCard = {
+      id: 7001,
+      name: "FY26 Consulting Rates",
+      supplierId: 7421,
+      sowId: 501,
+      currencyCode: "USD",
+      effectiveDate: "2026-04-01",
+      expiryDate: "2027-03-31",
+      lines: [
+        { role: "Senior Engineer", seniority: "Senior", hourlyRate: "275" },
+        { role: "Architect", hourlyRate: "350", roleCode: "ARCH-1" },
+      ],
+    };
+    const out = mapRateCard(wire);
+    assert.ok(out);
+    assert.equal(out!.sowExternalId, "501");
+    assert.equal(out!.lines?.length, 2);
+    assert.equal(out!.lines![0]!.hourlyRate, 275);
+
+    // Orphan rate cards (no sow + no contract) are dropped.
+    assert.equal(
+      mapRateCard({ ...wire, sowId: null, contractId: null }),
+      null,
+    );
+    assert.equal(mapRateCard({ ...wire, supplierId: null }), null);
+  });
+
+  it("time entry mapper requires supplier, work date, and finite hours", () => {
+    const wire: CoupaTimeEntry = {
+      id: 9101,
+      supplierId: 7421,
+      sowId: 501,
+      rateCardId: 7001,
+      resource: "Jane Consultant",
+      role: "Senior Engineer",
+      workDate: "2026-04-15",
+      hours: "8",
+      billRate: { value: "275", currencyCode: "USD" },
+      amount: { value: "2200", currencyCode: "USD" },
+    };
+    const out = mapTimeEntry(wire);
+    assert.ok(out);
+    assert.equal(out!.hours, 8);
+    assert.equal(out!.billRateUsd, 275);
+    assert.equal(out!.amountUsd, 2200);
+    assert.equal(out!.sowExternalId, "501");
+    assert.equal(out!.rateCardExternalId, "7001");
+
+    assert.equal(mapTimeEntry({ ...wire, supplierId: null }), null);
+    assert.equal(mapTimeEntry({ ...wire, workDate: null }), null);
+    assert.equal(mapTimeEntry({ ...wire, hours: null }), null);
   });
 
   it("buildIngestPayload reports per-entity drop counts", () => {

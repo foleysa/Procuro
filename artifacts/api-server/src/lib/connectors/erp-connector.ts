@@ -34,7 +34,14 @@ export type ErpEntity =
   | "contracts"
   | "purchase_orders"
   | "invoices"
-  | "payments";
+  | "payments"
+  // Task #232 — services-spend taxonomy. Connectors that support a
+  // services module (Coupa, Beeline, etc.) emit these alongside the
+  // base 5; connectors that only ship goods/POs simply omit them and
+  // the watermark map stays empty for those keys.
+  | "statements_of_work"
+  | "rate_cards"
+  | "time_entries";
 
 export interface ErpFetchProgress {
   entity: ErpEntity;

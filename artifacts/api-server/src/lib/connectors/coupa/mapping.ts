@@ -44,10 +44,110 @@ export interface CoupaContract {
   number: string;
   name?: string | null;
   supplierId?: number | string | null;
+  /**
+   * Coupa surfaces master/child contract relationships via either a
+   * `parent-id` or `master-agreement-id` field depending on tenant
+   * configuration. The adapter normalises both into this single
+   * camelCase key so the mapper can resolve MSA → SOW links without
+   * caring which variant the wire used.
+   */
+  parentContractId?: number | string | null;
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: { netDays?: number | null } | null;
   totalValue?: { value?: string | number | null; currencyCode?: string | null } | null;
+  updatedAt?: string | null;
+}
+
+// ---------- Services-spend wire shapes (Task #232) -------------------
+
+export interface CoupaSowMilestone {
+  id?: number | string;
+  number?: number | string | null;
+  name: string;
+  description?: string | null;
+  dueDate?: string | null;
+  value?: { value?: string | number | null; currencyCode?: string | null } | null;
+  status?: string | null;
+  deliveredAt?: string | null;
+  acceptedAt?: string | null;
+}
+
+export interface CoupaSowChangeOrder {
+  id?: number | string;
+  number: string;
+  name: string;
+  description?: string | null;
+  status?: string | null;
+  valueDelta?:
+    | { value?: string | number | null; currencyCode?: string | null }
+    | null;
+  dateDeltaDays?: number | string | null;
+  proposedAt?: string | null;
+  executedAt?: string | null;
+}
+
+export interface CoupaStatementOfWork {
+  id: number | string;
+  number: string;
+  name?: string | null;
+  /** Parent MSA contract id (Coupa contract this SOW rolls up to). */
+  contractId?: number | string | null;
+  supplierId?: number | string | null;
+  status?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  totalValue?:
+    | { value?: string | number | null; currencyCode?: string | null }
+    | null;
+  scope?: unknown;
+  acceptanceCriteria?: string | null;
+  milestones?: CoupaSowMilestone[];
+  changeOrders?: CoupaSowChangeOrder[];
+  updatedAt?: string | null;
+}
+
+export interface CoupaRateCardLine {
+  id?: number | string;
+  role: string;
+  seniority?: string | null;
+  hourlyRate?: number | string | null;
+  dailyRate?: number | string | null;
+  roleCode?: string | null;
+}
+
+export interface CoupaRateCard {
+  id: number | string;
+  name: string;
+  supplierId?: number | string | null;
+  contractId?: number | string | null;
+  sowId?: number | string | null;
+  currencyCode?: string | null;
+  effectiveDate?: string | null;
+  expiryDate?: string | null;
+  lines?: CoupaRateCardLine[];
+  updatedAt?: string | null;
+}
+
+export interface CoupaTimeEntry {
+  id: number | string;
+  supplierId?: number | string | null;
+  contractId?: number | string | null;
+  sowId?: number | string | null;
+  rateCardId?: number | string | null;
+  /** Free-form resource identifier (consultant name, vendor employee id). */
+  resource: string;
+  role?: string | null;
+  seniority?: string | null;
+  workDate?: string | null;
+  hours?: number | string | null;
+  billRate?:
+    | { value?: string | number | null; currencyCode?: string | null }
+    | null;
+  amount?:
+    | { value?: string | number | null; currencyCode?: string | null }
+    | null;
+  description?: string | null;
   updatedAt?: string | null;
 }
 
@@ -325,6 +425,103 @@ type ContractItem = NonNullable<IngestPayload["contracts"]>[number];
 type PurchaseOrderItem = NonNullable<IngestPayload["purchaseOrders"]>[number];
 type InvoiceItem = NonNullable<IngestPayload["invoices"]>[number];
 type PaymentItem = NonNullable<IngestPayload["payments"]>[number];
+type StatementOfWorkItem =
+  NonNullable<IngestPayload["statementsOfWork"]>[number];
+type RateCardItem = NonNullable<IngestPayload["rateCards"]>[number];
+type TimeEntryItem = NonNullable<IngestPayload["timeEntries"]>[number];
+
+function normalizeSowStatus(
+  s: string | null | undefined,
+): "draft" | "active" | "completed" | "cancelled" | undefined {
+  if (!s) return undefined;
+  const lower = s.toLowerCase();
+  switch (lower) {
+    case "draft":
+      return "draft";
+    case "active":
+    case "signed":
+    case "in_progress":
+    case "in-progress":
+      return "active";
+    case "completed":
+    case "closed":
+    case "done":
+      return "completed";
+    case "cancelled":
+    case "canceled":
+    case "void":
+    case "voided":
+      return "cancelled";
+    default:
+      return "active";
+  }
+}
+
+function normalizeMilestoneStatus(
+  s: string | null | undefined,
+):
+  | "pending"
+  | "in_progress"
+  | "delivered"
+  | "accepted"
+  | "invoiced"
+  | "paid"
+  | "cancelled"
+  | undefined {
+  if (!s) return undefined;
+  const lower = s.toLowerCase().replace(/[\s-]/g, "_");
+  switch (lower) {
+    case "pending":
+    case "open":
+    case "not_started":
+      return "pending";
+    case "in_progress":
+    case "started":
+    case "active":
+      return "in_progress";
+    case "delivered":
+    case "submitted":
+      return "delivered";
+    case "accepted":
+    case "approved":
+      return "accepted";
+    case "invoiced":
+    case "billed":
+      return "invoiced";
+    case "paid":
+      return "paid";
+    case "cancelled":
+    case "canceled":
+    case "void":
+      return "cancelled";
+    default:
+      return "pending";
+  }
+}
+
+function normalizeChangeOrderStatus(
+  s: string | null | undefined,
+): "proposed" | "approved" | "rejected" | "executed" | undefined {
+  if (!s) return undefined;
+  const lower = s.toLowerCase();
+  switch (lower) {
+    case "proposed":
+    case "pending":
+    case "draft":
+      return "proposed";
+    case "approved":
+      return "approved";
+    case "rejected":
+    case "denied":
+      return "rejected";
+    case "executed":
+    case "active":
+    case "signed":
+      return "executed";
+    default:
+      return "proposed";
+  }
+}
 
 export function mapSupplier(s: CoupaSupplier): SupplierItem {
   return {
@@ -350,6 +547,7 @@ export function mapContract(
   const startDate = dateStr(c.startDate);
   const endDate = dateStr(c.endDate);
   if (!startDate || !endDate) return null;
+  const parentExt = id(c.parentContractId);
   return {
     externalId: reqId(c.id),
     contractNumber: c.number,
@@ -363,7 +561,161 @@ export function mapContract(
     // Task #214 — pre-populate the commercial structure so downstream
     // analyzers (T&M utilization, milestone burn-down) can scope.
     contractType: contractTypeFromCoupa(c),
+    // Task #232 — when Coupa surfaces a parent/child contract link,
+    // forward it so the ingest writer's MSA second-pass resolves the
+    // child's `msa_parent_id` after the contract batch upsert.
+    ...(parentExt ? { msaParentExternalId: parentExt } : {}),
     items: [],
+  };
+}
+
+// ---------- Services-spend mappers (Task #232) -----------------------
+
+export function mapStatementOfWork(
+  s: CoupaStatementOfWork,
+): StatementOfWorkItem | null {
+  const supplierExternalId = id(s.supplierId);
+  const contractExternalId = id(s.contractId);
+  if (!supplierExternalId || !contractExternalId) return null;
+  const startDate = dateStr(s.startDate);
+  const endDate = dateStr(s.endDate);
+  if (!startDate || !endDate) return null;
+  const milestones = (s.milestones ?? []).map((m, idx) => ({
+    milestoneNumber:
+      typeof m.number === "number"
+        ? m.number
+        : m.number != null && Number.isFinite(Number(m.number))
+          ? Number(m.number)
+          : idx + 1,
+    title: m.name,
+    ...(m.description ? { description: m.description } : {}),
+    ...(m.dueDate ? { dueDate: dateStr(m.dueDate) ?? undefined } : {}),
+    ...(m.value?.value != null
+      ? { valueUsd: num(m.value.value, 0) }
+      : {}),
+    ...(m.status
+      ? { status: normalizeMilestoneStatus(m.status) ?? "pending" }
+      : {}),
+    ...(m.deliveredAt
+      ? { deliveredAt: dateStr(m.deliveredAt) ?? undefined }
+      : {}),
+    ...(m.acceptedAt
+      ? { acceptedAt: dateStr(m.acceptedAt) ?? undefined }
+      : {}),
+  }));
+  const changeOrders = (s.changeOrders ?? []).map((co) => ({
+    ...(co.id != null ? { externalId: id(co.id) ?? undefined } : {}),
+    changeOrderNumber: co.number,
+    title: co.name,
+    ...(co.description ? { description: co.description } : {}),
+    ...(co.status
+      ? { status: normalizeChangeOrderStatus(co.status) ?? "proposed" }
+      : {}),
+    ...(co.valueDelta?.value != null
+      ? { valueDeltaUsd: num(co.valueDelta.value, 0) }
+      : {}),
+    ...(co.dateDeltaDays != null
+      ? { dateDeltaDays: Number(co.dateDeltaDays) }
+      : {}),
+    ...(co.proposedAt
+      ? { proposedAt: dateStr(co.proposedAt) ?? undefined }
+      : {}),
+    ...(co.executedAt
+      ? { executedAt: dateStr(co.executedAt) ?? undefined }
+      : {}),
+  }));
+  return {
+    externalId: reqId(s.id),
+    sowNumber: s.number,
+    title: s.name ?? s.number,
+    contractExternalId,
+    supplierExternalId,
+    ...(s.status ? { status: normalizeSowStatus(s.status) ?? "active" } : {}),
+    startDate,
+    endDate,
+    ...(s.totalValue?.value != null
+      ? { totalValueUsd: num(s.totalValue.value, 0) }
+      : {}),
+    ...(s.totalValue?.currencyCode
+      ? { billingCurrency: s.totalValue.currencyCode }
+      : {}),
+    ...(s.scope !== undefined && s.scope !== null ? { scope: s.scope } : {}),
+    ...(s.acceptanceCriteria
+      ? { acceptanceCriteria: s.acceptanceCriteria }
+      : {}),
+    ...(milestones.length > 0 ? { milestones } : {}),
+    ...(changeOrders.length > 0 ? { changeOrders } : {}),
+  };
+}
+
+export function mapRateCard(rc: CoupaRateCard): RateCardItem | null {
+  const supplierExternalId = id(rc.supplierId);
+  if (!supplierExternalId) return null;
+  const contractExternalId = id(rc.contractId);
+  const sowExternalId = id(rc.sowId);
+  // The ingest writer requires either a contract or sow link — drop
+  // orphan rate cards at the connector boundary so the writer warning
+  // log isn't spammed with rows we already know are unattached.
+  if (!contractExternalId && !sowExternalId) return null;
+  const effectiveDate = dateStr(rc.effectiveDate);
+  if (!effectiveDate) return null;
+  const lines = (rc.lines ?? []).map((ln) => ({
+    role: ln.role,
+    ...(ln.seniority ? { seniority: ln.seniority } : {}),
+    ...(ln.hourlyRate != null
+      ? { hourlyRate: num(ln.hourlyRate, 0) }
+      : {}),
+    ...(ln.dailyRate != null
+      ? { dailyRate: num(ln.dailyRate, 0) }
+      : {}),
+    ...(ln.roleCode ? { roleCode: ln.roleCode } : {}),
+  }));
+  return {
+    externalId: reqId(rc.id),
+    name: rc.name,
+    supplierExternalId,
+    ...(contractExternalId ? { contractExternalId } : {}),
+    ...(sowExternalId ? { sowExternalId } : {}),
+    ...(rc.currencyCode ? { currency: rc.currencyCode } : {}),
+    effectiveDate,
+    ...(rc.expiryDate
+      ? { expiryDate: dateStr(rc.expiryDate) ?? undefined }
+      : {}),
+    ...(lines.length > 0 ? { lines } : {}),
+  };
+}
+
+export function mapTimeEntry(t: CoupaTimeEntry): TimeEntryItem | null {
+  const supplierExternalId = id(t.supplierId);
+  if (!supplierExternalId) return null;
+  const workDate = dateStr(t.workDate);
+  if (!workDate) return null;
+  const hours = num(t.hours, NaN);
+  if (!Number.isFinite(hours)) return null;
+  return {
+    externalId: reqId(t.id),
+    supplierExternalId,
+    ...(t.contractId != null
+      ? { contractExternalId: id(t.contractId) ?? undefined }
+      : {}),
+    ...(t.sowId != null
+      ? { sowExternalId: id(t.sowId) ?? undefined }
+      : {}),
+    ...(t.rateCardId != null
+      ? { rateCardExternalId: id(t.rateCardId) ?? undefined }
+      : {}),
+    resource: t.resource,
+    ...(t.role ? { role: t.role } : {}),
+    ...(t.seniority ? { seniority: t.seniority } : {}),
+    workDate,
+    hours,
+    ...(t.billRate?.value != null
+      ? { billRateUsd: num(t.billRate.value, 0) }
+      : {}),
+    ...(t.amount?.value != null
+      ? { amountUsd: num(t.amount.value, 0) }
+      : {}),
+    ...(t.description ? { description: t.description } : {}),
   };
 }
 
@@ -374,16 +726,26 @@ export function mapPurchaseOrder(
   if (!supplierExternalId) return null;
   const orderDate = dateStr(po.orderDate);
   if (!orderDate) return null;
-  const lines = (po.lines ?? []).map((ln, idx) => ({
-    externalId: id(ln.id) ?? undefined,
-    lineNumber: ln.lineNumber ?? idx + 1,
-    sku: ln.itemNumber ?? `${po.poNumber}-${idx + 1}`,
-    description: ln.description ?? "",
-    spendClass: spendClassFromCommodity(ln.commodity),
-    qty: num(ln.quantity, 1),
-    uom: ln.uom ?? undefined,
-    unitPriceUsd: num(ln.price?.value, 0),
-  }));
+  const lines = (po.lines ?? []).map((ln, idx) => {
+    // Task #232 — emit `categoryExternalId` derived from the commodity
+    // name so the ingest writer can resolve a category row by code on
+    // the upsert path. The category itself is not auto-created by the
+    // PO mapper (the writer drops the link if the code isn't already
+    // in the categories table) — this just lets a tenant that
+    // ingested categories first benefit from auto-linking.
+    const categoryExternalId = categoryCodeFromCommodity(ln.commodity);
+    return {
+      externalId: id(ln.id) ?? undefined,
+      lineNumber: ln.lineNumber ?? idx + 1,
+      sku: ln.itemNumber ?? `${po.poNumber}-${idx + 1}`,
+      description: ln.description ?? "",
+      spendClass: spendClassFromCommodity(ln.commodity),
+      qty: num(ln.quantity, 1),
+      uom: ln.uom ?? undefined,
+      unitPriceUsd: num(ln.price?.value, 0),
+      ...(categoryExternalId ? { categoryExternalId } : {}),
+    };
+  });
   return {
     externalId: reqId(po.id),
     poNumber: po.poNumber,
@@ -442,6 +804,10 @@ export interface CoupaBatch {
   purchaseOrders?: CoupaPurchaseOrder[];
   invoices?: CoupaInvoice[];
   payments?: CoupaPayment[];
+  // Task #232 — services-spend taxonomy.
+  statementsOfWork?: CoupaStatementOfWork[];
+  rateCards?: CoupaRateCard[];
+  timeEntries?: CoupaTimeEntry[];
 }
 
 /**
@@ -460,6 +826,9 @@ export function buildIngestPayload(
     purchase_orders: 0,
     invoices: 0,
     payments: 0,
+    statements_of_work: 0,
+    rate_cards: 0,
+    time_entries: 0,
   };
 
   const suppliers: SupplierItem[] = [];
@@ -499,6 +868,29 @@ export function buildIngestPayload(
     else dropped["payments"] = (dropped["payments"] ?? 0) + 1;
   }
 
+  const statementsOfWork: StatementOfWorkItem[] = [];
+  for (const s of batch.statementsOfWork ?? []) {
+    const mapped = mapStatementOfWork(s);
+    if (mapped) statementsOfWork.push(mapped);
+    else
+      dropped["statements_of_work"] =
+        (dropped["statements_of_work"] ?? 0) + 1;
+  }
+
+  const rateCards: RateCardItem[] = [];
+  for (const rc of batch.rateCards ?? []) {
+    const mapped = mapRateCard(rc);
+    if (mapped) rateCards.push(mapped);
+    else dropped["rate_cards"] = (dropped["rate_cards"] ?? 0) + 1;
+  }
+
+  const timeEntries: TimeEntryItem[] = [];
+  for (const t of batch.timeEntries ?? []) {
+    const mapped = mapTimeEntry(t);
+    if (mapped) timeEntries.push(mapped);
+    else dropped["time_entries"] = (dropped["time_entries"] ?? 0) + 1;
+  }
+
   return {
     payload: {
       suppliers,
@@ -506,6 +898,9 @@ export function buildIngestPayload(
       purchaseOrders,
       invoices,
       payments,
+      ...(statementsOfWork.length > 0 ? { statementsOfWork } : {}),
+      ...(rateCards.length > 0 ? { rateCards } : {}),
+      ...(timeEntries.length > 0 ? { timeEntries } : {}),
     },
     dropped,
   };

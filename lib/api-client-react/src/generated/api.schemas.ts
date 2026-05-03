@@ -2981,6 +2981,175 @@ export type CsvIngestRequestPaymentsItem = { [key: string]: unknown };
 
 export type CsvIngestRequestShipmentsItem = { [key: string]: unknown };
 
+export type IngestStatementOfWorkStatus =
+  (typeof IngestStatementOfWorkStatus)[keyof typeof IngestStatementOfWorkStatus];
+
+export const IngestStatementOfWorkStatus = {
+  draft: "draft",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+} as const;
+
+export type IngestSowMilestoneStatus =
+  (typeof IngestSowMilestoneStatus)[keyof typeof IngestSowMilestoneStatus];
+
+export const IngestSowMilestoneStatus = {
+  pending: "pending",
+  in_progress: "in_progress",
+  delivered: "delivered",
+  accepted: "accepted",
+  invoiced: "invoiced",
+  paid: "paid",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Nested milestone on an `IngestStatementOfWork`. Mirrors the services-spend taxonomy added in Task #214.
+ */
+export interface IngestSowMilestone {
+  /** @maxLength 255 */
+  externalId?: string;
+  /** @minimum 1 */
+  milestoneNumber: number;
+  /** @maxLength 500 */
+  title: string;
+  description?: string;
+  dueDate?: string;
+  /** @minimum 0 */
+  valueUsd?: number;
+  status?: IngestSowMilestoneStatus;
+  deliveredAt?: string;
+  acceptedAt?: string;
+}
+
+export type IngestSowChangeOrderStatus =
+  (typeof IngestSowChangeOrderStatus)[keyof typeof IngestSowChangeOrderStatus];
+
+export const IngestSowChangeOrderStatus = {
+  proposed: "proposed",
+  approved: "approved",
+  rejected: "rejected",
+  executed: "executed",
+} as const;
+
+/**
+ * Change order against a parent SOW.
+ */
+export interface IngestSowChangeOrder {
+  /** @maxLength 255 */
+  externalId?: string;
+  /** @maxLength 100 */
+  changeOrderNumber: string;
+  /** @maxLength 500 */
+  title: string;
+  description?: string;
+  status?: IngestSowChangeOrderStatus;
+  valueDeltaUsd?: number;
+  dateDeltaDays?: number;
+  proposedAt?: string;
+  executedAt?: string;
+}
+
+/**
+ * Statement of work payload row accepted by the JSON ingest path (`POST /ingest/csv` and the connector → `writeIngestPayload` path). Each SOW must reference an existing parent contract (`contractExternalId`) and supplier (`supplierExternalId`) that were upserted in the same payload or a prior sync.
+Task #232 — services-spend taxonomy.
+ */
+export interface IngestStatementOfWork {
+  /** @maxLength 255 */
+  externalId: string;
+  /** @maxLength 100 */
+  sowNumber: string;
+  /** @maxLength 500 */
+  title: string;
+  /** External id of the parent MSA contract. */
+  contractExternalId: string;
+  supplierExternalId: string;
+  status?: IngestStatementOfWorkStatus;
+  startDate: string;
+  endDate: string;
+  /** @minimum 0 */
+  totalValueUsd?: number;
+  /**
+   * @minLength 3
+   * @maxLength 8
+   */
+  billingCurrency?: string;
+  /** Free-form scope description (string, structured object, or null). */
+  scope?: unknown | null;
+  acceptanceCriteria?: string;
+  milestones?: IngestSowMilestone[];
+  changeOrders?: IngestSowChangeOrder[];
+}
+
+/**
+ * Single role/rate row inside an `IngestRateCard`.
+ */
+export interface IngestRateCardLine {
+  /** @maxLength 200 */
+  role: string;
+  /** @maxLength 100 */
+  seniority?: string;
+  /** @minimum 0 */
+  hourlyRate?: number;
+  /** @minimum 0 */
+  dailyRate?: number;
+  /** @maxLength 100 */
+  roleCode?: string;
+}
+
+/**
+ * Rate card payload row accepted by the JSON ingest path. Must attach to either a contract or a SOW via `contractExternalId` / `sowExternalId`; orphan rate cards are dropped at the connector boundary.
+Task #232 — services-spend taxonomy.
+ */
+export interface IngestRateCard {
+  /** @maxLength 255 */
+  externalId: string;
+  /** @maxLength 500 */
+  name: string;
+  supplierExternalId: string;
+  contractExternalId?: string;
+  sowExternalId?: string;
+  /**
+   * @minLength 3
+   * @maxLength 8
+   */
+  currency?: string;
+  effectiveDate: string;
+  expiryDate?: string;
+  lines?: IngestRateCardLine[];
+}
+
+/**
+ * Time entry payload row accepted by the JSON ingest path. Optional `sowExternalId` / `rateCardExternalId` link the entry to its parent SOW and the rate card used to price the hours.
+Task #232 — services-spend taxonomy.
+ */
+export interface IngestTimeEntry {
+  /** @maxLength 255 */
+  externalId: string;
+  supplierExternalId: string;
+  contractExternalId?: string;
+  sowExternalId?: string;
+  rateCardExternalId?: string;
+  /**
+   * Consultant name or vendor employee identifier.
+   * @maxLength 200
+   */
+  resource: string;
+  /** @maxLength 200 */
+  role?: string;
+  /** @maxLength 100 */
+  seniority?: string;
+  workDate: string;
+  /** @minimum 0 */
+  hours: number;
+  /** @minimum 0 */
+  billRateUsd?: number;
+  /** @minimum 0 */
+  amountUsd?: number;
+  description?: string;
+}
+
 export interface CsvIngestRequest {
   suppliers?: CsvIngestRequestSuppliersItem[];
   categories?: CsvIngestRequestCategoriesItem[];
@@ -2990,6 +3159,12 @@ export interface CsvIngestRequest {
   invoices?: CsvIngestRequestInvoicesItem[];
   payments?: CsvIngestRequestPaymentsItem[];
   shipments?: CsvIngestRequestShipmentsItem[];
+  /** Task */
+  statementsOfWork?: IngestStatementOfWork[];
+  /** Task */
+  rateCards?: IngestRateCard[];
+  /** Task */
+  timeEntries?: IngestTimeEntry[];
 }
 
 export type MockErpIngestRequestFeedItemType =

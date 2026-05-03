@@ -19,6 +19,9 @@ import type { CsvIngestRequestPaymentsItem } from "./csvIngestRequestPaymentsIte
 import type { CsvIngestRequestPurchaseOrdersItem } from "./csvIngestRequestPurchaseOrdersItem";
 import type { CsvIngestRequestShipmentsItem } from "./csvIngestRequestShipmentsItem";
 import type { CsvIngestRequestSuppliersItem } from "./csvIngestRequestSuppliersItem";
+import type { IngestRateCard } from "./ingestRateCard";
+import type { IngestStatementOfWork } from "./ingestStatementOfWork";
+import type { IngestTimeEntry } from "./ingestTimeEntry";
 
 export interface CsvIngestRequest {
   suppliers?: CsvIngestRequestSuppliersItem[];
@@ -29,4 +32,10 @@ export interface CsvIngestRequest {
   invoices?: CsvIngestRequestInvoicesItem[];
   payments?: CsvIngestRequestPaymentsItem[];
   shipments?: CsvIngestRequestShipmentsItem[];
+  /** Task */
+  statementsOfWork?: IngestStatementOfWork[];
+  /** Task */
+  rateCards?: IngestRateCard[];
+  /** Task */
+  timeEntries?: IngestTimeEntry[];
 }

@@ -4679,6 +4679,60 @@ export const IngestCsvBatchHeader = zod.object({
     ),
 });
 
+export const ingestCsvBatchBodyStatementsOfWorkItemExternalIdMax = 255;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemSowNumberMax = 100;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemTitleMax = 500;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemTotalValueUsdMin = 0;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemBillingCurrencyMin = 3;
+export const ingestCsvBatchBodyStatementsOfWorkItemBillingCurrencyMax = 8;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemExternalIdMax = 255;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemTitleMax = 500;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemValueUsdMin = 0;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemExternalIdMax = 255;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemChangeOrderNumberMax = 100;
+
+export const ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemTitleMax = 500;
+
+export const ingestCsvBatchBodyRateCardsItemExternalIdMax = 255;
+
+export const ingestCsvBatchBodyRateCardsItemNameMax = 500;
+
+export const ingestCsvBatchBodyRateCardsItemCurrencyMin = 3;
+export const ingestCsvBatchBodyRateCardsItemCurrencyMax = 8;
+
+export const ingestCsvBatchBodyRateCardsItemLinesItemRoleMax = 200;
+
+export const ingestCsvBatchBodyRateCardsItemLinesItemSeniorityMax = 100;
+
+export const ingestCsvBatchBodyRateCardsItemLinesItemHourlyRateMin = 0;
+
+export const ingestCsvBatchBodyRateCardsItemLinesItemDailyRateMin = 0;
+
+export const ingestCsvBatchBodyRateCardsItemLinesItemRoleCodeMax = 100;
+
+export const ingestCsvBatchBodyTimeEntriesItemExternalIdMax = 255;
+
+export const ingestCsvBatchBodyTimeEntriesItemResourceMax = 200;
+
+export const ingestCsvBatchBodyTimeEntriesItemRoleMax = 200;
+
+export const ingestCsvBatchBodyTimeEntriesItemSeniorityMax = 100;
+
+export const ingestCsvBatchBodyTimeEntriesItemHoursMin = 0;
+
+export const ingestCsvBatchBodyTimeEntriesItemBillRateUsdMin = 0;
+
+export const ingestCsvBatchBodyTimeEntriesItemAmountUsdMin = 0;
+
 export const IngestCsvBatchBody = zod.object({
   suppliers: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   categories: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
@@ -4688,6 +4742,219 @@ export const IngestCsvBatchBody = zod.object({
   invoices: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   payments: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
   shipments: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  statementsOfWork: zod
+    .array(
+      zod
+        .object({
+          externalId: zod
+            .string()
+            .max(ingestCsvBatchBodyStatementsOfWorkItemExternalIdMax),
+          sowNumber: zod
+            .string()
+            .max(ingestCsvBatchBodyStatementsOfWorkItemSowNumberMax),
+          title: zod
+            .string()
+            .max(ingestCsvBatchBodyStatementsOfWorkItemTitleMax),
+          contractExternalId: zod
+            .string()
+            .describe("External id of the parent MSA contract."),
+          supplierExternalId: zod.string(),
+          status: zod
+            .enum(["draft", "active", "completed", "cancelled"])
+            .optional(),
+          startDate: zod.coerce.date(),
+          endDate: zod.coerce.date(),
+          totalValueUsd: zod
+            .number()
+            .min(ingestCsvBatchBodyStatementsOfWorkItemTotalValueUsdMin)
+            .optional(),
+          billingCurrency: zod
+            .string()
+            .min(ingestCsvBatchBodyStatementsOfWorkItemBillingCurrencyMin)
+            .max(ingestCsvBatchBodyStatementsOfWorkItemBillingCurrencyMax)
+            .optional(),
+          scope: zod
+            .unknown()
+            .nullish()
+            .describe(
+              "Free-form scope description (string, structured object, or null).",
+            ),
+          acceptanceCriteria: zod.string().optional(),
+          milestones: zod
+            .array(
+              zod
+                .object({
+                  externalId: zod
+                    .string()
+                    .max(
+                      ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemExternalIdMax,
+                    )
+                    .optional(),
+                  milestoneNumber: zod.number().min(1),
+                  title: zod
+                    .string()
+                    .max(
+                      ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemTitleMax,
+                    ),
+                  description: zod.string().optional(),
+                  dueDate: zod.coerce.date().optional(),
+                  valueUsd: zod
+                    .number()
+                    .min(
+                      ingestCsvBatchBodyStatementsOfWorkItemMilestonesItemValueUsdMin,
+                    )
+                    .optional(),
+                  status: zod
+                    .enum([
+                      "pending",
+                      "in_progress",
+                      "delivered",
+                      "accepted",
+                      "invoiced",
+                      "paid",
+                      "cancelled",
+                    ])
+                    .optional(),
+                  deliveredAt: zod.coerce.date().optional(),
+                  acceptedAt: zod.coerce.date().optional(),
+                })
+                .describe(
+                  "Nested milestone on an `IngestStatementOfWork`. Mirrors the services-spend taxonomy added in Task #214.",
+                ),
+            )
+            .optional(),
+          changeOrders: zod
+            .array(
+              zod
+                .object({
+                  externalId: zod
+                    .string()
+                    .max(
+                      ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemExternalIdMax,
+                    )
+                    .optional(),
+                  changeOrderNumber: zod
+                    .string()
+                    .max(
+                      ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemChangeOrderNumberMax,
+                    ),
+                  title: zod
+                    .string()
+                    .max(
+                      ingestCsvBatchBodyStatementsOfWorkItemChangeOrdersItemTitleMax,
+                    ),
+                  description: zod.string().optional(),
+                  status: zod
+                    .enum(["proposed", "approved", "rejected", "executed"])
+                    .optional(),
+                  valueDeltaUsd: zod.number().optional(),
+                  dateDeltaDays: zod.number().optional(),
+                  proposedAt: zod.coerce.date().optional(),
+                  executedAt: zod.coerce.date().optional(),
+                })
+                .describe("Change order against a parent SOW."),
+            )
+            .optional(),
+        })
+        .describe(
+          "Statement of work payload row accepted by the JSON ingest path (`POST \/ingest\/csv` and the connector → `writeIngestPayload` path). Each SOW must reference an existing parent contract (`contractExternalId`) and supplier (`supplierExternalId`) that were upserted in the same payload or a prior sync.\nTask #232 — services-spend taxonomy.",
+        ),
+    )
+    .optional()
+    .describe("Task"),
+  rateCards: zod
+    .array(
+      zod
+        .object({
+          externalId: zod
+            .string()
+            .max(ingestCsvBatchBodyRateCardsItemExternalIdMax),
+          name: zod.string().max(ingestCsvBatchBodyRateCardsItemNameMax),
+          supplierExternalId: zod.string(),
+          contractExternalId: zod.string().optional(),
+          sowExternalId: zod.string().optional(),
+          currency: zod
+            .string()
+            .min(ingestCsvBatchBodyRateCardsItemCurrencyMin)
+            .max(ingestCsvBatchBodyRateCardsItemCurrencyMax)
+            .optional(),
+          effectiveDate: zod.coerce.date(),
+          expiryDate: zod.coerce.date().optional(),
+          lines: zod
+            .array(
+              zod
+                .object({
+                  role: zod
+                    .string()
+                    .max(ingestCsvBatchBodyRateCardsItemLinesItemRoleMax),
+                  seniority: zod
+                    .string()
+                    .max(ingestCsvBatchBodyRateCardsItemLinesItemSeniorityMax)
+                    .optional(),
+                  hourlyRate: zod
+                    .number()
+                    .min(ingestCsvBatchBodyRateCardsItemLinesItemHourlyRateMin)
+                    .optional(),
+                  dailyRate: zod
+                    .number()
+                    .min(ingestCsvBatchBodyRateCardsItemLinesItemDailyRateMin)
+                    .optional(),
+                  roleCode: zod
+                    .string()
+                    .max(ingestCsvBatchBodyRateCardsItemLinesItemRoleCodeMax)
+                    .optional(),
+                })
+                .describe("Single role\/rate row inside an `IngestRateCard`."),
+            )
+            .optional(),
+        })
+        .describe(
+          "Rate card payload row accepted by the JSON ingest path. Must attach to either a contract or a SOW via `contractExternalId` \/ `sowExternalId`; orphan rate cards are dropped at the connector boundary.\nTask #232 — services-spend taxonomy.",
+        ),
+    )
+    .optional()
+    .describe("Task"),
+  timeEntries: zod
+    .array(
+      zod
+        .object({
+          externalId: zod
+            .string()
+            .max(ingestCsvBatchBodyTimeEntriesItemExternalIdMax),
+          supplierExternalId: zod.string(),
+          contractExternalId: zod.string().optional(),
+          sowExternalId: zod.string().optional(),
+          rateCardExternalId: zod.string().optional(),
+          resource: zod
+            .string()
+            .max(ingestCsvBatchBodyTimeEntriesItemResourceMax)
+            .describe("Consultant name or vendor employee identifier."),
+          role: zod
+            .string()
+            .max(ingestCsvBatchBodyTimeEntriesItemRoleMax)
+            .optional(),
+          seniority: zod
+            .string()
+            .max(ingestCsvBatchBodyTimeEntriesItemSeniorityMax)
+            .optional(),
+          workDate: zod.coerce.date(),
+          hours: zod.number().min(ingestCsvBatchBodyTimeEntriesItemHoursMin),
+          billRateUsd: zod
+            .number()
+            .min(ingestCsvBatchBodyTimeEntriesItemBillRateUsdMin)
+            .optional(),
+          amountUsd: zod
+            .number()
+            .min(ingestCsvBatchBodyTimeEntriesItemAmountUsdMin)
+            .optional(),
+          description: zod.string().optional(),
+        })
+        .describe(
+          "Time entry payload row accepted by the JSON ingest path. Optional `sowExternalId` \/ `rateCardExternalId` link the entry to its parent SOW and the rate card used to price the hours.\nTask #232 — services-spend taxonomy.",
+        ),
+    )
+    .optional()
+    .describe("Task"),
 });
 
 export const IngestCsvBatchResponse = zod.object({

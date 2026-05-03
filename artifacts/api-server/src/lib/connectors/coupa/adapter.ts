@@ -12,7 +12,10 @@ import {
   type CoupaInvoice,
   type CoupaPayment,
   type CoupaPurchaseOrder,
+  type CoupaRateCard,
+  type CoupaStatementOfWork,
   type CoupaSupplier,
+  type CoupaTimeEntry,
 } from "./mapping";
 
 /**
@@ -56,7 +59,7 @@ export const coupaSettingsSchema = z.object({
   scope: z
     .string()
     .default(
-      "core.supplier.read core.contract.read core.purchase_order.read core.invoice.read core.payment.read",
+      "core.supplier.read core.contract.read core.purchase_order.read core.invoice.read core.payment.read core.sow.read core.rate_card.read core.time_entry.read",
     ),
 });
 
@@ -228,6 +231,12 @@ export const coupaConnector: ErpConnector<
     const allPos: CoupaPurchaseOrder[] = [];
     const allInvoices: CoupaInvoice[] = [];
     const allPayments: CoupaPayment[] = [];
+    // Task #232 — services-spend taxonomy. Pulled after the base
+    // entities so contracts/POs are already in the batch when SOWs
+    // reference them via `contract-id`.
+    const allSows: CoupaStatementOfWork[] = [];
+    const allRateCards: CoupaRateCard[] = [];
+    const allTimeEntries: CoupaTimeEntry[] = [];
 
     const checkpoint = async (): Promise<void> => {
       if (isCancelled && (await isCancelled())) {
@@ -249,14 +258,32 @@ export const coupaConnector: ErpConnector<
       await checkpoint();
     }
 
-    // Contracts
-    for await (const { rows, page } of pagedFetch<CoupaContract>({
+    // Contracts. Coupa surfaces the parent MSA link under one of two
+    // wire keys (`parent-id` on tenants on the procurement-contracts
+    // module, `master-agreement-id` on the legal-contracts module);
+    // generic kebab→camel only normalises them to `parentId` /
+    // `masterAgreementId`. Collapse both into the single
+    // `parentContractId` field that `mapContract` consumes so SOWs
+    // ingested in this same batch get their `msaParentExternalId`
+    // populated and `writeIngestPayload`'s second-pass MSA resolver
+    // can populate `msa_parent_id` on the child contract row.
+    for await (const { rows, page } of pagedFetch<
+      CoupaContract & {
+        parentId?: number | string | null;
+        masterAgreementId?: number | string | null;
+      }
+    >({
       fetchImpl: f,
       settings,
       token,
       resource: "contracts",
       since: watermarks.contracts,
     })) {
+      for (const r of rows) {
+        if (r.parentContractId == null) {
+          r.parentContractId = r.parentId ?? r.masterAgreementId ?? null;
+        }
+      }
       allContracts.push(...rows);
       pagesByEntity.contracts = page;
       recordsByEntity.contracts = (recordsByEntity.contracts ?? 0) + rows.length;
@@ -306,12 +333,63 @@ export const coupaConnector: ErpConnector<
       await checkpoint();
     }
 
+    // Statements of work (Task #232). The Coupa Services module
+    // exposes them at /api/statements_of_work; each row carries the
+    // parent `contract-id` (MSA), nested `milestones`, and
+    // `change-orders`.
+    for await (const { rows, page } of pagedFetch<CoupaStatementOfWork>({
+      fetchImpl: f,
+      settings,
+      token,
+      resource: "statements_of_work",
+      since: watermarks["statements_of_work"],
+    })) {
+      allSows.push(...rows);
+      pagesByEntity.statements_of_work = page;
+      recordsByEntity.statements_of_work =
+        (recordsByEntity.statements_of_work ?? 0) + rows.length;
+      await checkpoint();
+    }
+
+    // Rate cards (Task #232). Lines come back nested.
+    for await (const { rows, page } of pagedFetch<CoupaRateCard>({
+      fetchImpl: f,
+      settings,
+      token,
+      resource: "rate_cards",
+      since: watermarks["rate_cards"],
+    })) {
+      allRateCards.push(...rows);
+      pagesByEntity.rate_cards = page;
+      recordsByEntity.rate_cards =
+        (recordsByEntity.rate_cards ?? 0) + rows.length;
+      await checkpoint();
+    }
+
+    // Time entries (Task #232).
+    for await (const { rows, page } of pagedFetch<CoupaTimeEntry>({
+      fetchImpl: f,
+      settings,
+      token,
+      resource: "time_entries",
+      since: watermarks["time_entries"],
+    })) {
+      allTimeEntries.push(...rows);
+      pagesByEntity.time_entries = page;
+      recordsByEntity.time_entries =
+        (recordsByEntity.time_entries ?? 0) + rows.length;
+      await checkpoint();
+    }
+
     const { payload } = buildIngestPayload({
       suppliers: allSuppliers,
       contracts: allContracts,
       purchaseOrders: allPos,
       invoices: allInvoices,
       payments: allPayments,
+      statementsOfWork: allSows,
+      rateCards: allRateCards,
+      timeEntries: allTimeEntries,
     });
 
     const nextWatermarks: ErpWatermarks = {};
@@ -326,6 +404,18 @@ export const coupaConnector: ErpConnector<
     );
     setWm("invoices", maxWatermark(allInvoices, watermarks["invoices"]));
     setWm("payments", maxWatermark(allPayments, watermarks["payments"]));
+    setWm(
+      "statements_of_work",
+      maxWatermark(allSows, watermarks["statements_of_work"]),
+    );
+    setWm(
+      "rate_cards",
+      maxWatermark(allRateCards, watermarks["rate_cards"]),
+    );
+    setWm(
+      "time_entries",
+      maxWatermark(allTimeEntries, watermarks["time_entries"]),
+    );
 
     return {
       payload,
