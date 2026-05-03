@@ -1,0 +1,23 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for test/fixture/example files and known false positives"
+
+paths = [
+  '''(^|/)test[s]?/''',
+  '''(^|/)fixture[s]?/''',
+  '''(^|/)example[s]?/''',
+  '''(^|/)__test__/''',
+  '''(^|/)__mocks__/''',
+  '''\.test\.(ts|tsx|js|jsx)$''',
+  '''\.spec\.(ts|tsx|js|jsx)$''',
+  '''\.stories\.(ts|tsx|js|jsx)$''',
+  '''pnpm-lock\.yaml$''',
+  '''\.security-baseline\.md$''',
+  '''SECURITY\.md$''',
+  '''threat_model\.md$''',
+  '''HARDENING\.md$''',
+  '''attached_assets/''',
+  '''screenshots/''',
+]

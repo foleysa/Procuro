@@ -1,0 +1,35 @@
+name: Semgrep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: SAST scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/typescript \
+            --config p/react \
+            --config p/secrets \
+            --severity ERROR \
+            --error \
+            --baseline-commit ${{ github.event.pull_request.base.sha || github.event.before }}
+        env:
+          SEMGREP_RULES: p/owasp-top-ten p/typescript p/react p/secrets
