@@ -169,12 +169,15 @@ export async function resolveRbacContext(
         .catch(() => undefined);
       return ctx;
     }
-    // Bearer present but not an API key — fall through. The legacy
-    // org_api_tokens path acts as a system principal (platform_admin).
+    // Bearer present but not found in api_keys — this is a legacy
+    // org_api_tokens bearer. The legacy token table has no role column
+    // and these are per-tenant credentials with no platform authority.
+    // Grant the minimum viable scope (analyst) so ingest integrations
+    // continue to work without receiving platform_admin privileges.
     const ctx: RbacContext = {
       userId: null,
       email: req.actorEmail ?? "system@procuro.ai",
-      roles: ["platform_admin"],
+      roles: ["analyst"],
       viaApiKey: true,
     };
     req.rbac = ctx;

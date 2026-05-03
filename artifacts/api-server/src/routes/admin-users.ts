@@ -2,12 +2,14 @@ import { Router, type IRouter } from "express";
 import { db, userRolesTable, userRoleNames, type UserRoleName } from "@workspace/db";
 import { and, eq, desc, isNull } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
-import { requirePermission } from "../lib/rbac";
+import { requirePermission, resolveRbacContext } from "../lib/rbac";
 import { writeAdminAudit } from "../lib/admin-audit";
 import { newId } from "../lib/ids";
 import { z } from "zod";
 
 const router: IRouter = Router();
+
+const PLATFORM_ONLY_ROLES: ReadonlyArray<UserRoleName> = ["platform_admin"];
 
 const InviteUserBody = z.object({
   email: z.string().email(),
@@ -17,6 +19,15 @@ const InviteUserBody = z.object({
 const ChangeRoleBody = z.object({
   role: z.enum(userRoleNames),
 });
+
+/**
+ * Returns true when the request's RBAC context holds the platform_admin role.
+ * Used to gate assignment of platform-reserved roles in user management routes.
+ */
+async function callerIsPlatformAdmin(req: Parameters<typeof resolveRbacContext>[0]): Promise<boolean> {
+  const ctx = await resolveRbacContext(req);
+  return ctx.roles.includes("platform_admin");
+}
 
 router.get(
   "/admin/users",
@@ -62,6 +73,13 @@ router.post(
     const orgId = requireOrgId(req);
     const { email, role } = InviteUserBody.parse(req.body);
     const actor = req.actorEmail ?? "system@procuro.ai";
+
+    if (PLATFORM_ONLY_ROLES.includes(role as UserRoleName)) {
+      if (!(await callerIsPlatformAdmin(req))) {
+        res.status(403).json({ error: "Only platform administrators can assign the platform_admin role" });
+        return;
+      }
+    }
     const placeholderId = `pending:${email}`;
 
     const existing = await db
@@ -117,6 +135,13 @@ router.patch(
     const id = String(req.params.id);
     const { role } = ChangeRoleBody.parse(req.body);
     const actor = req.actorEmail ?? "system@procuro.ai";
+
+    if (PLATFORM_ONLY_ROLES.includes(role as UserRoleName)) {
+      if (!(await callerIsPlatformAdmin(req))) {
+        res.status(403).json({ error: "Only platform administrators can assign the platform_admin role" });
+        return;
+      }
+    }
 
     const [existing] = await db
       .select()
