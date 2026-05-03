@@ -89,7 +89,7 @@ const E2E_ITERATIONS = 3;
 const OBSERVE_P95_BUDGET_MS = 500;
 const LEARN_P95_BUDGET_MS = 750;
 const LEVER_P95_BUDGET_MS = 1500;
-const PERSIST_P95_BUDGET_MS = 2000;
+const PERSIST_P95_BUDGET_MS = 500;
 const E2E_P95_BUDGET_MS = 3000;
 
 function newId(prefix: string): string {
@@ -337,14 +337,17 @@ describe("OODA cycle perf budget", () => {
 
   it(`opportunity persist p95 stays under ${PERSIST_P95_BUDGET_MS}ms across ${PERSIST_ITERATIONS} runs`, async () => {
     // Each iteration persists PERSIST_BATCH opps the same way the
-    // cycle runner's Act step does (one INSERT per opp inside a
-    // tight loop) so per-row overhead is measured honestly.
+    // cycle runner's Act step does — one chunked bulk insert per
+    // cycle (task #203). Mirrors the runner's pattern so this budget
+    // tracks the real Act-step persist path, not a stale per-row
+    // shape.
     let iter = 0;
     const result = await runIterations(PERSIST_ITERATIONS, async () => {
       const tag = iter++;
+      const rows: InsertOpportunityRow[] = [];
       for (let i = 0; i < PERSIST_BATCH; i++) {
         const lever = ALL_LEVERS[i % ALL_LEVERS.length]!;
-        await db.insert(opportunitiesTable).values({
+        rows.push({
           id: newId("opp"),
           orgId,
           cycleId: previousCycleId,
@@ -361,6 +364,7 @@ describe("OODA cycle perf budget", () => {
           inputs: {},
         });
       }
+      await db.insert(opportunitiesTable).values(rows);
     });
     assert.ok(
       result.p95 < PERSIST_P95_BUDGET_MS,

@@ -181,8 +181,9 @@ export async function runAnalysisCycle(args: {
 
     await checkpoint();
     // --- 5. Act ---
-    // Each opportunity insert is its own DB round trip; checkpoint inside
-    // the loop so a 200-opportunity write doesn't ignore Cancel.
+    // Opportunity persistence runs as chunked bulk upserts (task #203),
+    // not per-row round trips. We still checkpoint inside the prep
+    // pass and between chunks so a long Act phase respects Cancel.
     //
     // Task #219 dedupe: each draft gets a stable `signalKey` from
     // `composeSignalKey(lever, draft)`, built from STABLE identity
@@ -212,6 +213,12 @@ export async function runAnalysisCycle(args: {
     const created: OpportunityRow[] = [];
     const refreshed: OpportunityRow[] = [];
     let totalProjected = 0;
+    // Chunk size for the bulk upsert below. Picked so a typical cycle
+    // (a few hundred opps) lands in 1–2 round trips while pathological
+    // cycles still chunk safely under Postgres' bind-parameter ceiling
+    // (each row binds ~18 parameters → 200 × 18 = 3,600, well under
+    // the 65,535 limit).
+    const OPPORTUNITY_INSERT_CHUNK_SIZE = 200;
     // Pre-resolve canonical category codes + tenant-supplied names for
     // every draft that has a categoryId so we only do one batched read
     // instead of N round trips. The `code` feeds routing provenance
@@ -318,11 +325,40 @@ export async function runAnalysisCycle(args: {
       );
     }
 
+    // Pre-compute every row's persisted shape in a single pass so the
+    // expensive part (the actual INSERT round trips) can be chunked
+    // into a few bulk upserts instead of N per-row trips. We also
+    // dedupe by (leverId, signalKey) within the prepared set: two
+    // drafts with the same non-null signal key collide on the partial
+    // unique index, and Postgres rejects "ON CONFLICT cannot affect
+    // row a second time" inside one statement. The previous per-row
+    // loop tolerated this only because each insert ran in its own
+    // statement (the second became a no-op refresh of the first).
+    // Drafts are already rank-sorted desc, so keeping the first
+    // occurrence preserves the highest-ranked variant.
+    interface PreparedRow {
+      id: string;
+      leverId: LeverId;
+      tier: number;
+      title: string;
+      rationale: string;
+      recommendedAction: string;
+      supplierId: string | null;
+      categoryId: string | null;
+      rawProjectedSavingsUsd: string;
+      projectedSavingsUsd: string;
+      confidence: string;
+      inputs: Record<string, unknown>;
+      signalKey: string | null;
+      mappedVia: OpportunityRow["mappedVia"];
+      sourceTenantCategoryString: string | null;
+    }
+    const prepared: PreparedRow[] = [];
+    const seenSignalKeys = new Set<string>();
     for (const { lever, draft } of filteredDrafts) {
       await checkpoint();
       const prior = priors[draft.leverId];
       const projected = draft.rawProjectedSavingsUsd * prior.projectionMultiplier;
-      totalProjected += projected;
       const tier = ALL_LEVERS.find((l) => l.leverId === draft.leverId)!.tier;
       // Routing provenance (task #213). Drafts without a category fall
       // back to the Fragmented band — tagged `unmapped_default` so
@@ -335,6 +371,12 @@ export async function runAnalysisCycle(args: {
       const mappedVia = await determineOpportunityMappedVia(canonicalCode);
       // Task #219 dedupe key — see header comment for the design.
       const signalKey = composeSignalKey(lever, draft);
+      if (signalKey !== null) {
+        const dedupeKey = `${draft.leverId}\u0000${signalKey}`;
+        if (seenSignalKeys.has(dedupeKey)) continue;
+        seenSignalKeys.add(dedupeKey);
+      }
+      totalProjected += projected;
       const inputsPayload = {
         ...draft.inputs,
         __priorApplied: {
@@ -342,43 +384,95 @@ export async function runAnalysisCycle(args: {
           confidenceWeight: prior.confidenceWeight,
         },
       };
-      // Raw SQL upsert because the partial unique index has a WHERE
-      // clause and we need the `(xmax = 0) AS inserted` flag in
-      // RETURNING — neither is supported by Drizzle's typed insert
-      // builder. We reuse the `cycleStartedAt` timestamp for
-      // `last_seen_at` so all refreshes within one cycle share one
-      // monotonic value the auto-expire job can compare against.
-      // Routing provenance (`mapped_via`, `source_tenant_category_string`)
-      // is preserved across refreshes so retroactive Layer-C resolutions
-      // can still find and audit-flag the historical rows.
-      interface UpsertRowSnake extends Record<string, unknown> {
-        id: string;
-        org_id: string;
-        cycle_id: string;
-        lever_id: LeverId;
-        tier: number;
-        title: string;
-        rationale: string;
-        recommended_action: string;
-        supplier_id: string | null;
-        category_id: string | null;
-        raw_projected_savings_usd: string;
-        projected_savings_usd: string;
-        confidence: string;
-        inputs: Record<string, unknown>;
-        status: OpportunityRow["status"];
-        realized_savings_usd: string;
-        realized_at: Date | null;
-        rejected_reason_code: OpportunityRow["rejectedReasonCode"];
-        rejected_reason_note: string | null;
-        signal_key: string | null;
-        last_seen_at: Date | null;
-        mapped_via: OpportunityRow["mappedVia"];
-        source_tenant_category_string: string | null;
-        re_categorized_after_persistence: number;
-        created_at: Date;
-        inserted: boolean;
-      }
+      prepared.push({
+        id: newId("opp"),
+        leverId: draft.leverId,
+        tier,
+        title: draft.title,
+        rationale: draft.rationale,
+        recommendedAction: draft.recommendedAction,
+        supplierId: draft.supplierId ?? null,
+        categoryId: draft.categoryId ?? null,
+        rawProjectedSavingsUsd: draft.rawProjectedSavingsUsd.toFixed(2),
+        projectedSavingsUsd: projected.toFixed(2),
+        confidence: prior.confidenceWeight.toFixed(4),
+        inputs: inputsPayload,
+        signalKey,
+        mappedVia,
+        sourceTenantCategoryString,
+      });
+    }
+
+    // Raw SQL upsert because the partial unique index has a WHERE
+    // clause and we need the `(xmax = 0) AS inserted` flag in
+    // RETURNING — neither is supported by Drizzle's typed insert
+    // builder. We reuse the `cycleStartedAt` timestamp for
+    // `last_seen_at` so all refreshes within one cycle share one
+    // monotonic value the auto-expire job can compare against.
+    // Routing provenance (`mapped_via`, `source_tenant_category_string`)
+    // is preserved across refreshes so retroactive Layer-C resolutions
+    // can still find and audit-flag the historical rows.
+    interface UpsertRowSnake extends Record<string, unknown> {
+      id: string;
+      org_id: string;
+      cycle_id: string;
+      lever_id: LeverId;
+      tier: number;
+      title: string;
+      rationale: string;
+      recommended_action: string;
+      supplier_id: string | null;
+      category_id: string | null;
+      raw_projected_savings_usd: string;
+      projected_savings_usd: string;
+      confidence: string;
+      inputs: Record<string, unknown>;
+      status: OpportunityRow["status"];
+      realized_savings_usd: string;
+      realized_at: Date | null;
+      rejected_reason_code: OpportunityRow["rejectedReasonCode"];
+      rejected_reason_note: string | null;
+      signal_key: string | null;
+      last_seen_at: Date | null;
+      mapped_via: OpportunityRow["mappedVia"];
+      source_tenant_category_string: string | null;
+      re_categorized_after_persistence: number;
+      created_at: Date;
+      inserted: boolean;
+    }
+
+    for (
+      let chunkStart = 0;
+      chunkStart < prepared.length;
+      chunkStart += OPPORTUNITY_INSERT_CHUNK_SIZE
+    ) {
+      await checkpoint();
+      const chunk = prepared.slice(
+        chunkStart,
+        chunkStart + OPPORTUNITY_INSERT_CHUNK_SIZE,
+      );
+      const valueTuples = chunk.map(
+        (r) => sql`(
+          ${r.id},
+          ${orgId},
+          ${cycleId},
+          ${r.leverId},
+          ${r.tier},
+          ${r.title},
+          ${r.rationale},
+          ${r.recommendedAction},
+          ${r.supplierId},
+          ${r.categoryId},
+          ${r.rawProjectedSavingsUsd},
+          ${r.projectedSavingsUsd},
+          ${r.confidence},
+          ${JSON.stringify(r.inputs)}::jsonb,
+          ${r.signalKey},
+          ${cycleStartedAt},
+          ${r.mappedVia},
+          ${r.sourceTenantCategoryString}
+        )`,
+      );
       const upsertRes = await db.execute<UpsertRowSnake>(sql`
         INSERT INTO opportunities (
           id, org_id, cycle_id, lever_id, tier, title, rationale,
@@ -386,26 +480,7 @@ export async function runAnalysisCycle(args: {
           raw_projected_savings_usd, projected_savings_usd, confidence,
           inputs, signal_key, last_seen_at,
           mapped_via, source_tenant_category_string
-        ) VALUES (
-          ${newId("opp")},
-          ${orgId},
-          ${cycleId},
-          ${draft.leverId},
-          ${tier},
-          ${draft.title},
-          ${draft.rationale},
-          ${draft.recommendedAction},
-          ${draft.supplierId ?? null},
-          ${draft.categoryId ?? null},
-          ${draft.rawProjectedSavingsUsd.toFixed(2)},
-          ${projected.toFixed(2)},
-          ${prior.confidenceWeight.toFixed(4)},
-          ${JSON.stringify(inputsPayload)}::jsonb,
-          ${signalKey},
-          ${cycleStartedAt},
-          ${mappedVia},
-          ${sourceTenantCategoryString}
-        )
+        ) VALUES ${sql.join(valueTuples, sql`, `)}
         ON CONFLICT (org_id, lever_id, signal_key)
           WHERE status IN ('proposed', 'approved', 'executing')
             AND signal_key IS NOT NULL
@@ -425,38 +500,38 @@ export async function runAnalysisCycle(args: {
           source_tenant_category_string = EXCLUDED.source_tenant_category_string
         RETURNING *, (xmax = 0) AS inserted
       `);
-      const raw = upsertRes.rows[0];
-      if (!raw) continue;
-      const row: OpportunityRow = {
-        id: raw.id,
-        orgId: raw.org_id,
-        cycleId: raw.cycle_id,
-        leverId: raw.lever_id,
-        tier: raw.tier,
-        title: raw.title,
-        rationale: raw.rationale,
-        recommendedAction: raw.recommended_action,
-        supplierId: raw.supplier_id,
-        categoryId: raw.category_id,
-        rawProjectedSavingsUsd: raw.raw_projected_savings_usd,
-        projectedSavingsUsd: raw.projected_savings_usd,
-        confidence: raw.confidence,
-        inputs: raw.inputs,
-        status: raw.status,
-        realizedSavingsUsd: raw.realized_savings_usd,
-        realizedAt: raw.realized_at,
-        rejectedReasonCode: raw.rejected_reason_code,
-        rejectedReasonNote: raw.rejected_reason_note,
-        signalKey: raw.signal_key,
-        lastSeenAt: raw.last_seen_at,
-        mappedVia: raw.mapped_via,
-        sourceTenantCategoryString: raw.source_tenant_category_string,
-        reCategorizedAfterPersistence: raw.re_categorized_after_persistence,
-        snoozedUntil: raw.snoozed_until as Date | null,
-        createdAt: raw.created_at,
-      };
-      if (raw.inserted) created.push(row);
-      else refreshed.push(row);
+      for (const raw of upsertRes.rows) {
+        const row: OpportunityRow = {
+          id: raw.id,
+          orgId: raw.org_id,
+          cycleId: raw.cycle_id,
+          leverId: raw.lever_id,
+          tier: raw.tier,
+          title: raw.title,
+          rationale: raw.rationale,
+          recommendedAction: raw.recommended_action,
+          supplierId: raw.supplier_id,
+          categoryId: raw.category_id,
+          rawProjectedSavingsUsd: raw.raw_projected_savings_usd,
+          projectedSavingsUsd: raw.projected_savings_usd,
+          confidence: raw.confidence,
+          inputs: raw.inputs,
+          status: raw.status,
+          realizedSavingsUsd: raw.realized_savings_usd,
+          realizedAt: raw.realized_at,
+          rejectedReasonCode: raw.rejected_reason_code,
+          rejectedReasonNote: raw.rejected_reason_note,
+          signalKey: raw.signal_key,
+          lastSeenAt: raw.last_seen_at,
+          mappedVia: raw.mapped_via,
+          sourceTenantCategoryString: raw.source_tenant_category_string,
+          reCategorizedAfterPersistence: raw.re_categorized_after_persistence,
+          snoozedUntil: raw.snoozed_until as Date | null,
+          createdAt: raw.created_at,
+        };
+        if (raw.inserted) created.push(row);
+        else refreshed.push(row);
+      }
     }
 
     const decidePayload = {
