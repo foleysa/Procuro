@@ -52,6 +52,7 @@ import {
   runUsdaNassEconomicIndexBackfill,
   runEpaEchoBackfill,
   runOshaInspectionsBackfill,
+  runUsgsMineralBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
@@ -63,6 +64,7 @@ import { COMPANIES_HOUSE_COLLECTOR_ID } from "../lib/intelligence/collectors/com
 import { USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/usda-nass-economic-index";
 import { EPA_ECHO_COLLECTOR_ID } from "../lib/intelligence/collectors/epa-echo";
 import { OSHA_COLLECTOR_ID } from "../lib/intelligence/collectors/osha-inspections";
+import { USGS_MINERAL_COLLECTOR_ID } from "../lib/intelligence/collectors/usgs-mineral";
 import { getWorkbenchMeta } from "../lib/intelligence/workbench-meta";
 import {
   buildLineageGraph,
@@ -640,6 +642,19 @@ mountBackfillRoute(
   OSHA_COLLECTOR_ID,
   runOshaInspectionsBackfill,
   (req) => SupplierRiskBackfillSchema.parse(req.body) ?? {},
+);
+
+const UsgsMineralBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/usgs-mineral/backfill",
+  USGS_MINERAL_COLLECTOR_ID,
+  runUsgsMineralBackfill,
+  (req) => UsgsMineralBackfillSchema.parse(req.body) ?? {},
 );
 
 /**

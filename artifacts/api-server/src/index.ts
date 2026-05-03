@@ -23,6 +23,7 @@ import { naturalHazardsCollector } from "./lib/intelligence/collectors/natural-h
 import { companiesHouseCollector } from "./lib/intelligence/collectors/companies-house";
 import { epaEchoCollector } from "./lib/intelligence/collectors/epa-echo";
 import { oshaInspectionsCollector } from "./lib/intelligence/collectors/osha-inspections";
+import { usgsMineralCollector } from "./lib/intelligence/collectors/usgs-mineral";
 import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
@@ -118,6 +119,10 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   // upstream record (EPA enforcement case / OSHA inspection).
   epaEchoCollector,
   oshaInspectionsCollector,
+  // USGS Mineral Resources — annual US unit-value (price) signals for
+  // a curated set of critical minerals (lithium, cobalt, nickel,
+  // copper, aluminum, rare earths, graphite). Task #245.
+  usgsMineralCollector,
 ];
 
 for (const c of COLLECTORS) {

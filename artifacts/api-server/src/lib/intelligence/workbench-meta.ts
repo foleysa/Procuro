@@ -146,6 +146,26 @@ const WORKBENCH_META: Record<string, CollectorWorkbenchMeta> = {
       "Fusion: Energy index pane",
     ],
   },
+  "usgs-mineral": {
+    flagEmoji: "🇺🇸",
+    tosUrl: "https://www.usgs.gov/information-policies-and-instructions",
+    licenseNote:
+      "U.S. Geological Survey National Minerals Information Center. Public-domain federal data; attribution encouraged.",
+    logoUrl:
+      "https://www.usgs.gov/themes/custom/usgs/img/dark-blue-usgs-logo.svg",
+    piiClassification: "none",
+    killCriteria:
+      "DS-140 workbook layout drift (header rows shift), per-mineral file URL drift across the curated list, or sustained 5xx >24h on USGS S3 distribution.",
+    outputSignalTypes: ["commodity_index"],
+    scopeKinds: ["material"],
+    cadenceLabel: "Annual (daily-poll, latest year per mineral)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_commodity_index_trend"],
+    downstreamConsumers: [
+      "spot_vs_contract lever (critical-mineral categories)",
+      "Fusion: Critical-mineral pane",
+    ],
+  },
   "world-bank-pink-sheet": {
     flagEmoji: "🌐",
     tosUrl: "https://data.worldbank.org/summary-terms-of-use",

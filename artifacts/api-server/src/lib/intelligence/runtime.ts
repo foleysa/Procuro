@@ -61,8 +61,8 @@ import {
 } from "./collectors/companies-house";
 import {
   USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID,
-  fetchUsdaNassBackfillDrafts,
   NASS_SERIES,
+  fetchUsdaNassBackfillDrafts,
 } from "./collectors/usda-nass-economic-index";
 import {
   EPA_ECHO_COLLECTOR_ID,
@@ -73,6 +73,11 @@ import {
   fetchOshaBackfillDrafts,
 } from "./collectors/osha-inspections";
 import type { WatchedUsSupplier } from "./collectors/_us-suppliers";
+import {
+  USGS_MINERAL_COLLECTOR_ID,
+  USGS_MINERALS,
+  fetchUsgsMineralBackfillDrafts,
+} from "./collectors/usgs-mineral";
 
 /**
  * Inference target matching the unique *index* defined in
@@ -1819,6 +1824,43 @@ export async function runOshaInspectionsBackfill(
         opts.suppliers ? { suppliers: opts.suppliers } : {},
       );
       return { drafts, extraSucceededMeta: { failed: failed.length } };
+    },
+  });
+}
+
+/**
+ * Backfill the USGS Mineral Resources commodity collector. Replays
+ * the full DS-140 historical statistics workbook for every curated
+ * mineral and inserts only the (mineral × year) rows that aren't
+ * already in `market_signals` — so re-runs are safe no-ops. Throws if
+ * every curated mineral fails so the audit log records
+ * `backfill_failed` instead of "succeeded with 0 inserts".
+ */
+export async function runUsgsMineralBackfill(
+  opts: { force?: boolean } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: USGS_MINERAL_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: {},
+    fetchDrafts: async () => {
+      const { drafts, failedMinerals } = await fetchUsgsMineralBackfillDrafts();
+      if (
+        drafts.length === 0 &&
+        failedMinerals.length === USGS_MINERALS.length
+      ) {
+        const sample = failedMinerals
+          .slice(0, 3)
+          .map((f) => f.error)
+          .join("; ");
+        throw new Error(
+          `USGS backfill: all ${USGS_MINERALS.length} minerals failed. Sample errors: ${sample}`,
+        );
+      }
+      return {
+        drafts,
+        extraSucceededMeta: { failedMinerals: failedMinerals.length },
+      };
     },
   });
 }

@@ -57,6 +57,9 @@ const { eiaEnergyCollector } = await import(
 const { worldBankPinkSheetCollector } = await import(
   "../src/lib/intelligence/collectors/world-bank-pink-sheet"
 );
+const { usgsMineralCollector } = await import(
+  "../src/lib/intelligence/collectors/usgs-mineral"
+);
 const { blsEconomicIndexCollector } = await import(
   "../src/lib/intelligence/collectors/bls-economic-index"
 );
@@ -66,6 +69,7 @@ for (const c of [
   fredEconomicIndexCollector,
   eiaEnergyCollector,
   worldBankPinkSheetCollector,
+  usgsMineralCollector,
   blsEconomicIndexCollector,
 ]) {
   registerCollector(c);
