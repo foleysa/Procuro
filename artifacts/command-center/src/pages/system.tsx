@@ -28,6 +28,8 @@ import {
   getGetSystemCsvIngestMetricsQueryKey,
   useGetSystemCsvThroughputHistory,
   getGetSystemCsvThroughputHistoryQueryKey,
+  useGetSystemEntityResolutionCoverage,
+  getGetSystemEntityResolutionCoverageQueryKey,
   ListJobsStatus,
   type Job,
   type JobKindSetting,
@@ -72,6 +74,7 @@ import {
   Activity,
   Gauge,
   Layers,
+  Link2,
 } from "lucide-react";
 
 const STATUS_OPTS: { v: string; l: string }[] = [
@@ -1642,6 +1645,8 @@ export default function System() {
 
       <CsvIngestPerformancePanel />
 
+      <EntityResolutionCoveragePanel />
+
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2423,4 +2428,218 @@ function formatDurationMs(ms: number): string {
   const min = Math.floor(ms / 60_000);
   const sec = Math.round((ms % 60_000) / 1000);
   return `${min}m ${sec}s`;
+}
+
+/**
+ * Supplier-entity resolver coverage. Reads from
+ * `/system/entity-resolution/coverage` (gated by the same
+ * platform-admin token as the cleanup / CSV cards above) and shows:
+ *   - the cluster-wide coverage % + raw counts
+ *   - a per-tenant breakdown so operators can target the
+ *     `backfill-supplier-entity-uid` script at the worst-covered
+ *     tenants instead of re-running it cluster-wide.
+ *
+ * Coverage is the operator's signal for "are we still falling back
+ * to `scope_supplier_name` ilike matching on the supplier
+ * intelligence read path?" — the route only drops the name fallback
+ * for suppliers whose `entity_uid` is populated.
+ */
+function EntityResolutionCoveragePanel() {
+  const { data, isLoading, isError, refetch, isFetching } =
+    useGetSystemEntityResolutionCoverage({
+      query: {
+        queryKey: getGetSystemEntityResolutionCoverageQueryKey(),
+        refetchInterval: 60_000,
+      },
+    });
+
+  const overallPct = data?.coveragePercent ?? 0;
+  // Bucket the headline number so the card reads at a glance:
+  // green ≥ 90 (rollout effectively complete), amber ≥ 50, red < 50.
+  const headlineColor =
+    overallPct >= 90
+      ? "text-green-600"
+      : overallPct >= 50
+        ? "text-amber-600"
+        : "text-red-600";
+
+  return (
+    <Card data-testid="card-entity-resolution-coverage">
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-muted-foreground" />
+              Supplier entity-resolver coverage
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Share of suppliers with a stored canonical{" "}
+              <code className="text-xs">entity_uid</code>. Once a
+              supplier is resolved, the supplier-intelligence read
+              path joins on the canonical id and stops falling back
+              to <code className="text-xs">scope_supplier_name</code>{" "}
+              ilike matching.
+            </p>
+          </div>
+          <Button
+            data-testid="btn-refresh-entity-resolution-coverage"
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw
+              className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading
+            entity-resolver coverage…
+          </div>
+        )}
+        {isError && (
+          <div className="text-sm text-red-600">
+            Failed to load entity-resolver coverage. You may not have
+            Platform Admin access.
+          </div>
+        )}
+        {data && data.totalSuppliers === 0 && (
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <Activity className="w-4 h-4" />
+            No suppliers in the cluster yet — the coverage metric
+            will populate after the first supplier upload.
+          </div>
+        )}
+        {data && data.totalSuppliers > 0 && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-md border p-3">
+                <div className="text-xs uppercase text-muted-foreground">
+                  Cluster coverage
+                </div>
+                <div
+                  className={`text-2xl font-semibold tabular-nums ${headlineColor}`}
+                  data-testid="text-entity-resolution-coverage-pct"
+                >
+                  {overallPct.toFixed(1)}%
+                </div>
+                <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+                  {data.resolvedSuppliers.toLocaleString()} /{" "}
+                  {data.totalSuppliers.toLocaleString()} suppliers
+                </div>
+              </div>
+              <div className="rounded-md border p-3">
+                <div className="text-xs uppercase text-muted-foreground">
+                  Resolved
+                </div>
+                <div
+                  className="text-2xl font-semibold tabular-nums"
+                  data-testid="text-entity-resolution-resolved"
+                >
+                  {data.resolvedSuppliers.toLocaleString()}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Suppliers with a stored canonical entity uid
+                </div>
+              </div>
+              <div className="rounded-md border p-3">
+                <div className="text-xs uppercase text-muted-foreground">
+                  Unresolved
+                </div>
+                <div
+                  className="text-2xl font-semibold tabular-nums"
+                  data-testid="text-entity-resolution-unresolved"
+                >
+                  {(
+                    data.totalSuppliers - data.resolvedSuppliers
+                  ).toLocaleString()}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Re-run{" "}
+                  <code className="text-xs">
+                    backfill-supplier-entity-uid
+                  </code>{" "}
+                  to resolve.
+                </div>
+              </div>
+            </div>
+            {data.tenants.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs uppercase text-muted-foreground">
+                  Per-tenant · largest first
+                </div>
+                <div
+                  className="rounded-md border overflow-hidden"
+                  data-testid="table-entity-resolution-tenants"
+                >
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="text-left font-medium px-3 py-2">
+                          Tenant
+                        </th>
+                        <th className="text-right font-medium px-3 py-2">
+                          Resolved
+                        </th>
+                        <th className="text-right font-medium px-3 py-2">
+                          Total
+                        </th>
+                        <th className="text-right font-medium px-3 py-2">
+                          Coverage
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.tenants.map((t) => {
+                        const tenantColor =
+                          t.coveragePercent >= 90
+                            ? "text-green-600"
+                            : t.coveragePercent >= 50
+                              ? "text-amber-600"
+                              : "text-red-600";
+                        return (
+                          <tr
+                            key={t.orgId}
+                            className="border-t"
+                            data-testid={`row-entity-resolution-${t.orgId}`}
+                          >
+                            <td className="px-3 py-2 font-medium">
+                              {t.orgName ?? t.orgId}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {t.resolvedSuppliers.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {t.totalSuppliers.toLocaleString()}
+                            </td>
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums font-medium ${tenantColor}`}
+                              data-testid={`text-entity-resolution-pct-${t.orgId}`}
+                            >
+                              {t.coveragePercent.toFixed(1)}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground">
+              Last computed{" "}
+              {data.generatedAt
+                ? formatDateTime(data.generatedAt)
+                : "—"}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }

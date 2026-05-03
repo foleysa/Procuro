@@ -486,6 +486,8 @@ export * from "./systemCleanupStatusLastJobStatus";
 export * from "./systemCleanupStatusRetention";
 export * from "./systemCsvIngestMetrics";
 export * from "./systemCsvThroughputHistory";
+export * from "./systemEntityResolutionCoverage";
+export * from "./systemEntityResolutionTenantCoverage";
 export * from "./systemFunnelSnapshotCleanupStatus";
 export * from "./systemFunnelSnapshotCleanupStatusLastJob";
 export * from "./systemFunnelSnapshotCleanupStatusLastJobResult";

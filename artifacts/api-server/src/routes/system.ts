@@ -1,5 +1,10 @@
 import { Router, type IRouter } from "express";
-import { db, jobsTable } from "@workspace/db";
+import {
+  db,
+  jobsTable,
+  orgsTable,
+  suppliersTable,
+} from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requirePlatformAdmin } from "../lib/platform-admin";
 import {
@@ -429,6 +434,76 @@ router.get(
       : 24;
     const history = await getCsvJobThroughputHistory({ windowHours });
     res.json(history);
+  },
+);
+
+/**
+ * Supplier-entity resolver coverage. Counts how many `suppliers` rows
+ * have a non-null `entity_uid` populated by the
+ * `backfill-supplier-entity-uid` script (or future inline-resolve
+ * writers) — both globally and per tenant.
+ *
+ * The supplier-intelligence read path joins on `metadata.entityUid`
+ * when this column is set and skips the `scope_supplier_name` ilike
+ * fallback entirely, so this number is the operator's signal for
+ * "are we still relying on fuzzy name matching to surface sanctions
+ * and corporate filings on the supplier page?".
+ *
+ * Cross-tenant by design (operators evaluate global rollout state
+ * and target the backfill at the worst-covered tenants), so this
+ * sits behind the same platform-admin guard as the cleanup endpoints.
+ */
+router.get(
+  "/system/entity-resolution/coverage",
+  requirePlatformAdmin,
+  async (_req, res) => {
+    // Single-pass tenant rollup. Left-joining `suppliers` to `orgs`
+    // would suppress orgs with zero suppliers; we don't care about
+    // those for coverage, so the inner join over `suppliers` is the
+    // right shape. `count(entity_uid)` excludes nulls, giving the
+    // resolved count directly without a `FILTER` clause.
+    const tenantRows = await db
+      .select({
+        orgId: suppliersTable.orgId,
+        orgName: orgsTable.name,
+        totalSuppliers: sql<number>`count(*)::int`,
+        resolvedSuppliers: sql<number>`count(${suppliersTable.entityUid})::int`,
+      })
+      .from(suppliersTable)
+      .innerJoin(orgsTable, eq(orgsTable.id, suppliersTable.orgId))
+      .groupBy(suppliersTable.orgId, orgsTable.name)
+      .orderBy(desc(sql`count(*)`));
+
+    let totalSuppliers = 0;
+    let resolvedSuppliers = 0;
+    const tenants = tenantRows.map((r) => {
+      totalSuppliers += r.totalSuppliers;
+      resolvedSuppliers += r.resolvedSuppliers;
+      const pct =
+        r.totalSuppliers > 0
+          ? Math.round((r.resolvedSuppliers / r.totalSuppliers) * 1000) / 10
+          : 0;
+      return {
+        orgId: r.orgId,
+        orgName: r.orgName,
+        totalSuppliers: r.totalSuppliers,
+        resolvedSuppliers: r.resolvedSuppliers,
+        coveragePercent: pct,
+      };
+    });
+
+    const coveragePercent =
+      totalSuppliers > 0
+        ? Math.round((resolvedSuppliers / totalSuppliers) * 1000) / 10
+        : 0;
+
+    res.json({
+      totalSuppliers,
+      resolvedSuppliers,
+      coveragePercent,
+      tenants,
+      generatedAt: new Date().toISOString(),
+    });
   },
 );
 

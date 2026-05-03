@@ -45,6 +45,40 @@ export const suppliersTable = pgTable(
      */
     billingCurrencyConfidence: text("billing_currency_confidence"),
     paymentTermsDays: text("payment_terms_days"),
+    /**
+     * Canonical entity identifier produced by the foundation entity
+     * resolver (`@workspace/intelligence/resolveEntity`). Persisting the
+     * resolution per supplier lets the supplier-intelligence join key on
+     * `metadata.entityUid` and stop relying on `scope_supplier_name`
+     * ilike fallback — which silently misses sanctions / corporate
+     * filings whenever a supplier is recorded under a name variant.
+     *
+     * Populated by:
+     *   - `pnpm --filter @workspace/scripts run backfill-supplier-entity-uid`
+     *     (one-time / periodic batch — calls `resolveDraftEntity` per
+     *     supplier with the stored identifiers below).
+     *   - The CSV ingest path could be wired to do this inline in a
+     *     follow-up; for now the backfill is the single writer.
+     *
+     * Null when the resolver returned `unresolved` (no identifier and
+     * no BQ-name match). Coverage is exposed on the System page so
+     * operators can see how many suppliers have a resolved entity.
+     */
+    entityUid: text("entity_uid"),
+    /** Match strategy that produced `entityUid` — see `MatchType` in `@workspace/intelligence`. */
+    entityMatchType: text("entity_match_type"),
+    /** When `entityUid` was last (re)written. Null when never resolved. */
+    entityResolvedAt: timestamp("entity_resolved_at", { withTimezone: true }),
+    /**
+     * Optional canonical identifiers operators can supply on the
+     * supplier CSV / detail page so the resolver can short-circuit to
+     * an authoritative match. Storing them per supplier means a re-run
+     * of the backfill produces the same `entityUid` deterministically
+     * even when BQ is offline.
+     */
+    lei: text("lei"),
+    cik: text("cik"),
+    companiesHouseNumber: text("companies_house_number"),
     isStrategic: boolean("is_strategic").notNull().default(false),
     isPreferred: boolean("is_preferred").notNull().default(false),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
@@ -66,6 +100,11 @@ export const suppliersTable = pgTable(
   (t) => [
     index("suppliers_org_idx").on(t.orgId),
     index("suppliers_name_idx").on(t.orgId, t.normalizedName),
+    // Lookup by canonical entity uid for the supplier-intelligence join
+    // and for the System-page coverage metric. Partial-equivalent: an
+    // ordinary btree is fine because most rows will have a non-null
+    // value once the backfill has run.
+    index("suppliers_entity_uid_idx").on(t.entityUid),
     uniqueIndex("suppliers_source_uq").on(
       t.orgId,
       t.sourceSystem,

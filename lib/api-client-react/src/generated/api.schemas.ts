@@ -2825,6 +2825,30 @@ export interface SystemCsvThroughputHistory {
   totalSampleCount: number;
 }
 
+export interface SystemEntityResolutionTenantCoverage {
+  orgId: string;
+  orgName?: string | null;
+  totalSuppliers: number;
+  resolvedSuppliers: number;
+  coveragePercent: number;
+}
+
+export interface SystemEntityResolutionCoverage {
+  /** Cross-tenant total `suppliers` row count. */
+  totalSuppliers: number;
+  /** Suppliers with a non-null `entity_uid` populated by the backfill or future inline-resolve writers.
+   */
+  resolvedSuppliers: number;
+  /** 100 × resolvedSuppliers ÷ totalSuppliers, or 0 when there are no suppliers. Rounded to 1 decimal place server-side.
+   */
+  coveragePercent: number;
+  /** Per-tenant breakdown ordered by `totalSuppliers` desc so the largest tenants surface first. Lets operators target the backfill at the tenants with the worst coverage rather than re-running it cluster-wide.
+   */
+  tenants: SystemEntityResolutionTenantCoverage[];
+  /** When the snapshot was computed (server time). */
+  generatedAt: string;
+}
+
 export interface SyncResultResponse {
   recordsProcessed: number;
   recordsCreated: number;

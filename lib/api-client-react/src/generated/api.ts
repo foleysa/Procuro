@@ -208,6 +208,7 @@ import type {
   SystemCleanupStatus,
   SystemCsvIngestMetrics,
   SystemCsvThroughputHistory,
+  SystemEntityResolutionCoverage,
   SystemFunnelSnapshotCleanupStatus,
   SystemFunnelSnapshotRetention,
   SystemFunnelSnapshotRetentionUpdate,
@@ -10145,6 +10146,89 @@ export function useGetSystemCsvThroughputHistory<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Counts of suppliers with a stored canonical `entity_uid` versus the org total. Drives the System page coverage card so operators can see how many suppliers can join risk and filings without falling back to `scope_supplier_name` ilike matching. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Supplier-entity resolver coverage by tenant
+ */
+export const getGetSystemEntityResolutionCoverageUrl = () => {
+  return `/api/system/entity-resolution/coverage`;
+};
+
+export const getSystemEntityResolutionCoverage = async (
+  options?: RequestInit,
+): Promise<SystemEntityResolutionCoverage> => {
+  return customFetch<SystemEntityResolutionCoverage>(
+    getGetSystemEntityResolutionCoverageUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSystemEntityResolutionCoverageQueryKey = () => {
+  return [`/api/system/entity-resolution/coverage`] as const;
+};
+
+export const getGetSystemEntityResolutionCoverageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSystemEntityResolutionCoverageQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>
+  > = ({ signal }) =>
+    getSystemEntityResolutionCoverage({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSystemEntityResolutionCoverageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>
+>;
+export type GetSystemEntityResolutionCoverageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Supplier-entity resolver coverage by tenant
+ */
+
+export function useGetSystemEntityResolutionCoverage<
+  TData = Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSystemEntityResolutionCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions =
+    getGetSystemEntityResolutionCoverageQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

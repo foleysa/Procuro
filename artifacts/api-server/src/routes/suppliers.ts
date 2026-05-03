@@ -880,6 +880,14 @@ router.get(
         billingCurrency: suppliersTable.billingCurrency,
         billingCurrencySource: suppliersTable.billingCurrencySource,
         billingCurrencyConfidence: suppliersTable.billingCurrencyConfidence,
+        // Persisted resolver output (populated by the
+        // `backfill-supplier-entity-uid` script). When present, we
+        // key the join on `metadata.entityUid` only and skip both
+        // the live `resolveEntity` call and the `scope_supplier_name`
+        // ilike fallback — eliminating the silent miss when a
+        // collector wrote the same entity under a name variant.
+        entityUid: suppliersTable.entityUid,
+        entityMatchType: suppliersTable.entityMatchType,
       })
       .from(suppliersTable)
       .where(
@@ -891,36 +899,41 @@ router.get(
       return;
     }
 
-    // Best-effort entity resolution. Without identifiers on the
-    // supplier row (no LEI/CIK columns yet), this falls back to BQ
-    // deterministic-name matching when BQ is configured, otherwise
-    // returns `{ entity_uid: null, match_type: "unresolved" }`. We
-    // still always run the name-based fallback below so a supplier
-    // with no resolved uid still surfaces matching `scope_supplier_name`
-    // signals.
-    let resolved: ResolvedEntity | null = null;
-    try {
-      resolved = await resolveEntity({
-        name: supplier.name,
-        ...(supplier.countryCode ? { country: supplier.countryCode } : {}),
-      });
-    } catch {
-      // resolveEntity already swallows BQ errors and returns
-      // `unresolved` for the deterministic-name path; this catch is
-      // belt-and-braces for the rare cache-write failure that does
-      // bubble out, so a transient DB hiccup never 500s the route.
-      resolved = null;
-    }
+    // Resolve the supplier's canonical entity uid. If the backfill
+    // already wrote one to `suppliers.entity_uid` we trust it (this
+    // is the steady-state path post-rollout). Otherwise we still
+    // call `resolveEntity` per request so an un-backfilled supplier
+    // doesn't degrade — the name-based fallback below will also kick
+    // in for that supplier only.
+    let resolvedEntityUid: string | null = supplier.entityUid;
+    let resolvedMatchType: ResolvedEntity["match_type"] | null =
+      (supplier.entityMatchType as ResolvedEntity["match_type"] | null) ?? null;
+    const fromStoredUid = resolvedEntityUid !== null;
 
-    const resolvedEntityUid =
-      resolved && resolved.entity_uid ? resolved.entity_uid : null;
-    const resolvedMatchType = resolved ? resolved.match_type : null;
+    if (!fromStoredUid) {
+      let resolved: ResolvedEntity | null = null;
+      try {
+        resolved = await resolveEntity({
+          name: supplier.name,
+          ...(supplier.countryCode ? { country: supplier.countryCode } : {}),
+        });
+      } catch {
+        // resolveEntity already swallows BQ errors and returns
+        // `unresolved` for the deterministic-name path; this catch is
+        // belt-and-braces for the rare cache-write failure that does
+        // bubble out, so a transient DB hiccup never 500s the route.
+        resolved = null;
+      }
+      resolvedEntityUid = resolved?.entity_uid ?? null;
+      resolvedMatchType = resolved?.match_type ?? null;
+    }
 
     // Build a single SQL pass that:
     //   - scopes by org (this org OR platform-wide null-org rows),
     //   - filters to the Phase-2 supplier-intelligence signal types,
     //   - matches on `metadata->>'entityUid' = <uid>` when we have one,
-    //     OR on case-insensitive `scopeSupplierName = supplier.name`,
+    //     OR on case-insensitive `scopeSupplierName = supplier.name`
+    //     (only when we did NOT use the stored uid — see below),
     //   - orders newest-first and caps the row count.
     const orgScope = or(
       eq(marketSignalsTable.orgId, orgId),
@@ -933,21 +946,28 @@ router.get(
       ).join(",")}]::text[]`,
     )})`;
 
-    // The match predicate — at least one of the two strategies must
-    // hold. We always include the name-based predicate (a no-cost
-    // ilike on the indexed-by-collector table is cheap at the row
-    // counts we expect) so a supplier with a resolved uid still picks
-    // up legacy rows that didn't carry an `entityUid`.
+    // Match predicate. Three cases:
+    //   - Stored uid: trust the backfill — drop the name fallback
+    //     entirely. This is the whole point of persisting entity_uid:
+    //     it stops us catching stray rows whose `scopeSupplierName`
+    //     happens to ilike-match this supplier's display name when
+    //     they actually belong to a different entity.
+    //   - Live-resolved uid: keep the name fallback so we still
+    //     surface legacy rows authored before the collectors were
+    //     stamping `entityUid` into metadata.
+    //   - No uid at all: name-only fallback (legacy behavior).
     const nameMatch = ilike(
       marketSignalsTable.scopeSupplierName,
       supplier.name,
     );
-    const matchPredicate = resolvedEntityUid
-      ? or(
-          sql`${marketSignalsTable.metadata}->>'entityUid' = ${resolvedEntityUid}`,
-          nameMatch,
-        )!
-      : nameMatch;
+    const uidMatch = resolvedEntityUid
+      ? sql`${marketSignalsTable.metadata}->>'entityUid' = ${resolvedEntityUid}`
+      : null;
+    const matchPredicate = fromStoredUid && uidMatch
+      ? uidMatch
+      : uidMatch
+        ? or(uidMatch, nameMatch)!
+        : nameMatch;
 
     // Federal-spend roll-up (trailing 12 months). Computed against the
     // same org/name/uid match predicate as the timeline so the totals

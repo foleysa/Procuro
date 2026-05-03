@@ -3597,6 +3597,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemCsvThroughputHistory'
+  /system/entity-resolution/coverage:
+    get:
+      operationId: getSystemEntityResolutionCoverage
+      tags:
+      - system
+      summary: Supplier-entity resolver coverage by tenant
+      description: 'Counts of suppliers with a stored canonical `entity_uid`
+        versus the org total. Drives the System page coverage card so
+        operators can see how many suppliers can join risk and filings
+        without falling back to `scope_supplier_name` ilike matching.
+        Cross-tenant endpoint — gated by the platform-admin token.
+
+        '
+      responses:
+        '200':
+          description: Entity-resolution coverage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemEntityResolutionCoverage'
   /defense-packs:
     get:
       operationId: listDefensePacks
@@ -9785,6 +9805,63 @@ components:
         totalSampleCount:
           type: integer
           description: Sum of `sampleCount` across all buckets in the window.
+    SystemEntityResolutionCoverage:
+      type: object
+      required:
+      - totalSuppliers
+      - resolvedSuppliers
+      - coveragePercent
+      - tenants
+      - generatedAt
+      properties:
+        totalSuppliers:
+          type: integer
+          description: Cross-tenant total `suppliers` row count.
+        resolvedSuppliers:
+          type: integer
+          description: 'Suppliers with a non-null `entity_uid` populated by the
+            backfill or future inline-resolve writers.
+
+            '
+        coveragePercent:
+          type: number
+          description: '100 × resolvedSuppliers ÷ totalSuppliers, or 0 when there
+            are no suppliers. Rounded to 1 decimal place server-side.
+
+            '
+        tenants:
+          type: array
+          description: 'Per-tenant breakdown ordered by `totalSuppliers` desc so the
+            largest tenants surface first. Lets operators target the
+            backfill at the tenants with the worst coverage rather than
+            re-running it cluster-wide.
+
+            '
+          items:
+            $ref: '#/components/schemas/SystemEntityResolutionTenantCoverage'
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the snapshot was computed (server time).
+    SystemEntityResolutionTenantCoverage:
+      type: object
+      required:
+      - orgId
+      - totalSuppliers
+      - resolvedSuppliers
+      - coveragePercent
+      properties:
+        orgId:
+          type: string
+        orgName:
+          type: string
+          nullable: true
+        totalSuppliers:
+          type: integer
+        resolvedSuppliers:
+          type: integer
+        coveragePercent:
+          type: number
     SyncResultResponse:
       type: object
       required:

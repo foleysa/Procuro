@@ -7851,6 +7851,43 @@ export const GetSystemCsvThroughputHistoryResponse = zod.object({
 });
 
 /**
+ * Counts of suppliers with a stored canonical `entity_uid` versus the org total. Drives the System page coverage card so operators can see how many suppliers can join risk and filings without falling back to `scope_supplier_name` ilike matching. Cross-tenant endpoint — gated by the platform-admin token.
+
+ * @summary Supplier-entity resolver coverage by tenant
+ */
+export const GetSystemEntityResolutionCoverageResponse = zod.object({
+  totalSuppliers: zod
+    .number()
+    .describe("Cross-tenant total `suppliers` row count."),
+  resolvedSuppliers: zod
+    .number()
+    .describe(
+      "Suppliers with a non-null `entity_uid` populated by the backfill or future inline-resolve writers.\n",
+    ),
+  coveragePercent: zod
+    .number()
+    .describe(
+      "100 × resolvedSuppliers ÷ totalSuppliers, or 0 when there are no suppliers. Rounded to 1 decimal place server-side.\n",
+    ),
+  tenants: zod
+    .array(
+      zod.object({
+        orgId: zod.string(),
+        orgName: zod.string().nullish(),
+        totalSuppliers: zod.number(),
+        resolvedSuppliers: zod.number(),
+        coveragePercent: zod.number(),
+      }),
+    )
+    .describe(
+      "Per-tenant breakdown ordered by `totalSuppliers` desc so the largest tenants surface first. Lets operators target the backfill at the tenants with the worst coverage rather than re-running it cluster-wide.\n",
+    ),
+  generatedAt: zod.coerce
+    .date()
+    .describe("When the snapshot was computed (server time)."),
+});
+
+/**
  * Returns the most recent Defense Packs created in the tenant,
 newest first. Pack `sections` and `evidenceSnapshot` are
 omitted from list rows for payload size — fetch
