@@ -180,6 +180,10 @@ describe("Today substrate readers (#204)", () => {
       assert.equal(r.transitions.length, 0, "single snapshot → no deltas");
       assert.equal(r.currentCycleGeneration, 1);
       assert.equal(r.prevCycleGeneration, null);
+      // #211: also covers the "missing baseline" → insufficient case at
+      // the result level — with no prev snapshot the reader can't emit
+      // any per-transition row, which the UI surfaces as "insufficient
+      // history" rather than misleadingly claiming "no change."
     } finally {
       await db.delete(orgsTable).where(eq(orgsTable.id, isolatedOrg));
     }
@@ -283,8 +287,175 @@ describe("Today substrate readers (#204)", () => {
       assert.equal(drafts?.prevRate, null);
       assert.equal(drafts?.currentRate, null);
       assert.equal(drafts?.delta, null);
+      // #211: a transition with a null delta has no baseline to
+      // compare against in either cycle, so its significance is
+      // `insufficient` (not `noisy`).
+      assert.equal(drafts?.significance, "insufficient");
     } finally {
       await db.delete(orgsTable).where(eq(orgsTable.id, zOrg));
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // #211 — significance flag on each conversion-rate transition.
+  // Pinning the three classification branches: low-denominator
+  // (noisy), healthy-denominator + real movement (meaningful), and
+  // missing-baseline (insufficient). The UI uses these to gray out
+  // noisy rows so a +/- pp swing on a tiny sample doesn't compete
+  // with real shifts for the operator's attention.
+  // ────────────────────────────────────────────────────────────────
+
+  it("getCycleConversionRateDeltas marks low-denominator transitions as 'noisy' (#211)", async () => {
+    const lowOrg = newId("org");
+    await db.insert(orgsTable).values({
+      id: lowOrg,
+      name: `${RUN} Low`,
+      slug: `${RUN}-low`,
+    });
+    try {
+      // Tiny tenant: 4 drafts → 2 post-ex → 1 persisted, then 4 → 4 → 2.
+      // Even though post_ex→persisted swings from 0.5 to 0.5 / 4→4 etc.,
+      // every denominator is far below the significance floor (30), so
+      // every transition should be flagged noisy regardless of |delta|.
+      await makeSnapshot({
+        orgId: lowOrg,
+        generation: 1,
+        stages: {
+          drafts_produced: { count: 4 },
+          drafts_post_exclusion: { count: 2 },
+          opps_persisted: { count: 1 },
+          opps_approved_30d: { count: 1 },
+          opps_realized_30d: { count: 0 },
+        },
+      });
+      await makeSnapshot({
+        orgId: lowOrg,
+        generation: 2,
+        stages: {
+          drafts_produced: { count: 4 },
+          drafts_post_exclusion: { count: 4 },
+          opps_persisted: { count: 2 },
+          opps_approved_30d: { count: 2 },
+          opps_realized_30d: { count: 1 },
+        },
+      });
+      const r = await getCycleConversionRateDeltas(lowOrg);
+      // Every transition with a computable delta must be `noisy`
+      // because each denominator (4, 2, 1, 1, 4, 2) is below 30.
+      for (const t of r.transitions) {
+        if (t.delta !== null) {
+          assert.equal(
+            t.significance,
+            "noisy",
+            `expected noisy for ${t.transition} (denoms ${t.prevDenominator}/${t.currentDenominator})`,
+          );
+        }
+      }
+    } finally {
+      await db.delete(orgsTable).where(eq(orgsTable.id, lowOrg));
+    }
+  });
+
+  it("getCycleConversionRateDeltas marks large deltas with healthy denominators as 'meaningful' (#211)", async () => {
+    const okOrg = newId("org");
+    await db.insert(orgsTable).values({
+      id: okOrg,
+      name: `${RUN} OK`,
+      slug: `${RUN}-ok`,
+    });
+    try {
+      // Healthy mid-volume tenant. drafts_post_exclusion goes from 80
+      // to 60 (still ≥ 30), and post_ex→persisted swings from 0.5 to
+      // 0.25 — a real -25pp move backed by a denominator that meets
+      // the significance floor in both cycles.
+      await makeSnapshot({
+        orgId: okOrg,
+        generation: 1,
+        stages: {
+          drafts_produced: { count: 100 },
+          drafts_post_exclusion: { count: 80 },
+          opps_persisted: { count: 40 },
+        },
+      });
+      await makeSnapshot({
+        orgId: okOrg,
+        generation: 2,
+        stages: {
+          drafts_produced: { count: 100 },
+          drafts_post_exclusion: { count: 60 },
+          opps_persisted: { count: 15 },
+        },
+      });
+      const r = await getCycleConversionRateDeltas(okOrg);
+      const postExToPersisted = r.transitions.find(
+        (t) => t.transition === "post_exclusion→persisted",
+      );
+      assert.ok(postExToPersisted, "transition present");
+      assert.equal(postExToPersisted?.prevDenominator, 80);
+      assert.equal(postExToPersisted?.currentDenominator, 60);
+      assert.equal(
+        postExToPersisted?.significance,
+        "meaningful",
+        "healthy denominators in both cycles → meaningful",
+      );
+
+      // drafts→post_exclusion: denominators 100/100, meaningful too.
+      const drafts = r.transitions.find(
+        (t) => t.transition === "drafts→post_exclusion",
+      );
+      assert.equal(drafts?.significance, "meaningful");
+    } finally {
+      await db.delete(orgsTable).where(eq(orgsTable.id, okOrg));
+    }
+  });
+
+  it("getCycleConversionRateDeltas marks missing-baseline transitions as 'insufficient' (#211)", async () => {
+    const mixOrg = newId("org");
+    await db.insert(orgsTable).values({
+      id: mixOrg,
+      name: `${RUN} Mix`,
+      slug: `${RUN}-mix`,
+    });
+    try {
+      // Two snapshots with healthy drafts but ZERO opps_persisted in
+      // the prev cycle — so the persisted→approved_30d transition has
+      // no baseline rate to compare against (denominator was 0). The
+      // reader must label that row `insufficient`, not `noisy`, even
+      // though the rest of the funnel is healthy.
+      await makeSnapshot({
+        orgId: mixOrg,
+        generation: 1,
+        stages: {
+          drafts_produced: { count: 100 },
+          drafts_post_exclusion: { count: 60 },
+          opps_persisted: { count: 0 },
+          opps_approved_30d: { count: 0 },
+        },
+      });
+      await makeSnapshot({
+        orgId: mixOrg,
+        generation: 2,
+        stages: {
+          drafts_produced: { count: 100 },
+          drafts_post_exclusion: { count: 60 },
+          opps_persisted: { count: 50 },
+          opps_approved_30d: { count: 25 },
+        },
+      });
+      const r = await getCycleConversionRateDeltas(mixOrg);
+      const persistedToApproved = r.transitions.find(
+        (t) => t.transition === "persisted→approved_30d",
+      );
+      assert.ok(persistedToApproved, "transition present");
+      assert.equal(persistedToApproved?.prevRate, null, "no prev baseline");
+      assert.equal(persistedToApproved?.delta, null);
+      assert.equal(
+        persistedToApproved?.significance,
+        "insufficient",
+        "missing baseline → insufficient (not noisy)",
+      );
+    } finally {
+      await db.delete(orgsTable).where(eq(orgsTable.id, mixOrg));
     }
   });
 });

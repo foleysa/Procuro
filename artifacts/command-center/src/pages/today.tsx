@@ -404,6 +404,12 @@ interface ConversionTransition {
   prevRate: number | null;
   currentRate: number | null;
   delta: number | null;
+  // #211 — significance gate. Optional on the wire so an older server
+  // (pre-#211) gracefully falls back to "meaningful" rendering and
+  // we don't gray out rows just because the field is missing.
+  significance?: "meaningful" | "noisy" | "insufficient";
+  currentDenominator?: number;
+  prevDenominator?: number;
 }
 
 interface ConversionDeltasPayload {
@@ -502,20 +508,52 @@ function DeltasCard({
             </p>
           ) : (
             <ul className="space-y-1.5">
-              {transitions.slice(0, 4).map((t) => (
-                <li
-                  key={t.transition}
-                  className="flex items-center justify-between text-sm"
-                  data-testid={`today-deltas-transition-${t.transition}`}
-                >
-                  <span className="text-foreground/90">{t.transition}</span>
-                  <DeltaPill
-                    prev={t.prevRate}
-                    curr={t.currentRate}
-                    delta={t.delta}
-                  />
-                </li>
-              ))}
+              {transitions.slice(0, 4).map((t) => {
+                // #211 — gray out rows the server flagged as `noisy`
+                // (small sample) or `insufficient` (no baseline) so
+                // they don't compete for attention with real shifts.
+                // Pre-#211 servers omit `significance`, in which case
+                // we fall back to the original full-color rendering.
+                const sig = t.significance ?? "meaningful";
+                const muted = sig !== "meaningful";
+                const annotation =
+                  sig === "noisy"
+                    ? `Sample too small to be meaningful (n=${Math.min(
+                        t.prevDenominator ?? 0,
+                        t.currentDenominator ?? 0,
+                      )})`
+                    : sig === "insufficient"
+                      ? "No baseline to compare against"
+                      : null;
+                return (
+                  <li
+                    key={t.transition}
+                    className={`flex items-center justify-between text-sm ${
+                      muted ? "opacity-60" : ""
+                    }`}
+                    data-testid={`today-deltas-transition-${t.transition}`}
+                    data-significance={sig}
+                    title={annotation ?? undefined}
+                  >
+                    <span className="text-foreground/90 inline-flex items-center gap-2">
+                      {t.transition}
+                      {sig === "noisy" && (
+                        <span
+                          className="text-[10px] uppercase tracking-wide text-muted-foreground border border-muted-foreground/30 rounded px-1 py-0.5"
+                          data-testid={`today-deltas-transition-${t.transition}-noisy-badge`}
+                        >
+                          noisy
+                        </span>
+                      )}
+                    </span>
+                    <DeltaPill
+                      prev={t.prevRate}
+                      curr={t.currentRate}
+                      delta={t.delta}
+                    />
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

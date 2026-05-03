@@ -1201,6 +1201,20 @@ const CONVERSION_TRANSITIONS: Array<[string, string, string]> = [
   ["approved_30d→realized_30d", "opps_approved_30d", "opps_realized_30d"],
 ];
 
+/**
+ * Minimum denominator (in either cycle) required to call a
+ * conversion-rate delta "meaningful". Below this we treat the
+ * transition as noisy: a single +/- pp swing on a tiny sample is
+ * within normal cycle-to-cycle variance and shouldn't compete with
+ * real shifts for the operator's attention.
+ *
+ * 30 matches the rule-of-thumb sample size where binomial proportion
+ * variance starts looking roughly normal — small enough to not gate
+ * out healthy mid-volume tenants, large enough that a ±X pp move
+ * isn't dominated by a single decision flipping the count.
+ */
+export const MIN_SIGNIFICANT_DENOMINATOR = 30;
+
 export interface ConversionRateDelta {
   transition: string;
   numeratorStage: string;
@@ -1213,6 +1227,26 @@ export interface ConversionRateDelta {
    * means the funnel got worse this cycle, positive means it improved.
    */
   delta: number | null;
+  /** Denominator-stage `count` from the current cycle's snapshot. */
+  currentDenominator: number;
+  /** Denominator-stage `count` from the previous cycle's snapshot. */
+  prevDenominator: number;
+  /**
+   * Whether this rate change is large enough vs sample size to be
+   * actionable (#211).
+   *
+   *   - `insufficient` — at least one cycle's denominator was 0 (no
+   *     rate to compare against; the UI surfaces this as "no signal"
+   *     rather than as a real change). Also used when the comparison
+   *     baseline is missing entirely (only one snapshot exists).
+   *   - `noisy` — both rates are computable but the smaller of the
+   *     two denominators is below `MIN_SIGNIFICANT_DENOMINATOR`, so
+   *     a single +/- pp swing is within normal variance.
+   *   - `meaningful` — both denominators meet the floor, so the
+   *     delta reflects a real cohort-level shift the operator can
+   *     act on.
+   */
+  significance: "meaningful" | "noisy" | "insufficient";
 }
 
 export interface ConversionRateDeltasResult {
@@ -1271,36 +1305,42 @@ export async function getCycleConversionRateDeltas(
     };
   }
 
-  const rateOf = (
+  const countOf = (
     stages: Record<string, unknown>,
-    numKey: string,
-    denKey: string,
-  ): number | null => {
-    const num = Number(
-      (stages?.[numKey] as { count?: number } | undefined)?.count ?? 0,
+    key: string,
+  ): number => {
+    const v = Number(
+      (stages?.[key] as { count?: number } | undefined)?.count ?? 0,
     );
-    const den = Number(
-      (stages?.[denKey] as { count?: number } | undefined)?.count ?? 0,
-    );
-    if (!isFinite(num) || !isFinite(den)) return null;
+    return isFinite(v) ? v : 0;
+  };
+  const rateOf = (num: number, den: number): number | null => {
     if (den === 0) return null;
     return num / den;
   };
 
   const transitions: ConversionRateDelta[] = CONVERSION_TRANSITIONS.map(
     ([name, denStage, numStage]) => {
-      const currRate = rateOf(
-        current.stages as Record<string, unknown>,
-        numStage,
-        denStage,
-      );
-      const prevRate = rateOf(
-        prev.stages as Record<string, unknown>,
-        numStage,
-        denStage,
-      );
+      const currStages = current.stages as Record<string, unknown>;
+      const prevStages = prev.stages as Record<string, unknown>;
+      const currDen = countOf(currStages, denStage);
+      const prevDen = countOf(prevStages, denStage);
+      const currRate = rateOf(countOf(currStages, numStage), currDen);
+      const prevRate = rateOf(countOf(prevStages, numStage), prevDen);
       const delta =
         currRate === null || prevRate === null ? null : currRate - prevRate;
+      let significance: ConversionRateDelta["significance"];
+      if (delta === null) {
+        // Either cycle had a 0 denominator → no rate to compare. The UI
+        // shows this as "no signal" rather than as a real change.
+        significance = "insufficient";
+      } else if (Math.min(currDen, prevDen) < MIN_SIGNIFICANT_DENOMINATOR) {
+        // Both rates exist but the smaller sample is too small to trust
+        // — a +/- pp swing here is within normal cycle variance.
+        significance = "noisy";
+      } else {
+        significance = "meaningful";
+      }
       return {
         transition: name,
         numeratorStage: numStage,
@@ -1308,6 +1348,9 @@ export async function getCycleConversionRateDeltas(
         prevRate: prevRate === null ? null : round4(prevRate),
         currentRate: currRate === null ? null : round4(currRate),
         delta: delta === null ? null : round4(delta),
+        currentDenominator: currDen,
+        prevDenominator: prevDen,
+        significance,
       };
     },
   );
