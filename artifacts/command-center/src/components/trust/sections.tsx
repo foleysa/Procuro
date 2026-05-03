@@ -780,7 +780,7 @@ export function DisclosureTierExplainer({ policy }: { policy: string }) {
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <div className="text-xs text-muted-foreground">
-          Every signal in Procuro carries a tier (T1–T4). Your active
+          Every signal in Atlas Procure carries a tier (T1–T4). Your active
           policy is{" "}
           <Badge variant="outline" className="font-mono uppercase">
             {policy}
@@ -836,7 +836,7 @@ export function TrustFooter({ generatedAt }: { generatedAt: string }) {
         Snapshot: {formatDateTime(generatedAt)}. Every figure is live —
         no nightly batch.
       </span>
-      <span>Procuro Trust Center · v1</span>
+      <span>Atlas Procure Trust Center · v1</span>
     </div>
   );
 }

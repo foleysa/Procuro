@@ -400,7 +400,7 @@ export default function OpportunityDetail() {
             <CardHeader><CardTitle className="text-green-700">Approve</CardTitle></CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-3">
-                Move into execution and signal Procuro to act.
+                Move into execution and signal Atlas Procure to act.
               </p>
               <Button
                 data-testid="btn-approve"

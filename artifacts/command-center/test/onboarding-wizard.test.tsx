@@ -596,7 +596,7 @@ describe("<OnboardingPage /> happy path", () => {
 
     // Page chrome.
     expect(screen.getByTestId("onboarding-page")).toBeInTheDocument();
-    expect(screen.getByText(/Get Procuro ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/Get Atlas Procure ready/i)).toBeInTheDocument();
     expect(screen.getByText(/Step 1 of 6/i)).toBeInTheDocument();
 
     // Every step has a navigable pill.
@@ -615,7 +615,7 @@ describe("<OnboardingPage /> happy path", () => {
     expect(screen.getByTestId("step-welcome")).toBeInTheDocument();
     expect(
       within(screen.getByTestId("step-welcome")).getByText(
-        /Procuro turns your spend, contract and supplier data/i,
+        /Atlas Procure turns your spend, contract and supplier data/i,
       ),
     ).toBeInTheDocument();
 

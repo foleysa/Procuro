@@ -54,7 +54,7 @@ interface StepDef {
 const STEPS: StepDef[] = [
   {
     key: "welcome",
-    title: "Welcome to Procuro",
+    title: "Welcome to Atlas Procure",
     blurb:
       "We'll wire up your data, map your categories, invite the team, set policy and run your first analysis cycle.",
     icon: Sparkles,
@@ -91,7 +91,7 @@ const STEPS: StepDef[] = [
     key: "run_first_cycle",
     title: "Run your first cycle",
     blurb:
-      "Kick off the OODA loop. Procuro will analyse your data and propose savings opportunities.",
+      "Kick off the OODA loop. Atlas Procure will analyse your data and propose savings opportunities.",
     icon: Play,
   },
 ];
@@ -152,7 +152,7 @@ export default function OnboardingPage() {
           onSuccess: () =>
             toast({
               title: "Setup complete",
-              description: "Procuro is ready — happy hunting!",
+              description: "Atlas Procure is ready — happy hunting!",
             }),
         },
       );
@@ -198,7 +198,7 @@ export default function OnboardingPage() {
       <header className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Get Procuro ready
+            Get Atlas Procure ready
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Six quick steps will turn your data into an active OODA loop.
@@ -357,7 +357,7 @@ function WelcomeStep({ readiness }: { readiness: ReadinessResponse | undefined }
   return (
     <div className="space-y-4">
       <p className="text-sm">
-        Procuro turns your spend, contract and supplier data into an OODA loop:
+        Atlas Procure turns your spend, contract and supplier data into an OODA loop:
         Observe → Orient → Decide → Act → Learn. Each step in this wizard
         wires up the inputs the loop needs.
       </p>
@@ -520,7 +520,7 @@ function MapCategoriesStep({
   return (
     <div className="space-y-3">
       <p className="text-sm">
-        Procuro buckets PO lines by category to power tail-spend, supplier
+        Atlas Procure buckets PO lines by category to power tail-spend, supplier
         consolidation and indirect-category plays. Categories whose code
         matches a canonical PPI/CPI series unlock the FRED-driven{" "}
         <em>spot-vs-contract</em> and <em>material index arbitrage</em>{" "}
@@ -655,7 +655,7 @@ function RunFirstCycleStep({
   return (
     <div className="space-y-3">
       <p className="text-sm">
-        Trigger the first OODA cycle. Procuro will run the lever analyzers,
+        Trigger the first OODA cycle. Atlas Procure will run the lever analyzers,
         score opportunities and surface them on the dashboard.
       </p>
       <Button

@@ -956,11 +956,11 @@ ${optionalList}`;
     })
     .join("\n\n---\n\n");
 
-  return `# Procuro CSV Templates
+  return `# Atlas Procure CSV Templates
 
 Generated: ${today}
 
-This zip contains a CSV template for each entity Procuro can ingest.
+This zip contains a CSV template for each entity Atlas Procure can ingest.
 Each file has a single header row matching the columns the importer
 expects, plus one example row to illustrate the expected format.
 Replace the example placeholders with your own data, or delete the
@@ -972,7 +972,7 @@ ${fileList}
 
 ## Recommended upload order
 
-Procuro entities reference each other (line items point at POs, POs
+Atlas Procure entities reference each other (line items point at POs, POs
 point at suppliers, etc). Loading them in the order below means every
 foreign-key reference resolves on the first try, so you avoid retry
 loops caused by missing parents.
@@ -986,7 +986,7 @@ ${uploadOrderList}
 2. Fill in one row per record. Keep the header row exactly as it is —
    the importer matches columns by name, not position.
 3. Save the file as UTF-8 CSV.
-4. In the Procuro Command Center, go to **Ingest**, pick the matching
+4. In the Atlas Procure Command Center, go to **Ingest**, pick the matching
    entity tab, and drop the file into the upload area (or click
    \`Choose file\` and select it).
 
@@ -1032,7 +1032,7 @@ async function downloadAllTemplates() {
   // own cover note explaining what each file is for.
   zip.file("README.md", buildTemplatesReadme());
   const blob = await zip.generateAsync({ type: "blob" });
-  triggerDownload(blob, "procuro-csv-templates.zip");
+  triggerDownload(blob, "atlas-procure-csv-templates.zip");
 }
 
 async function parseCsvFile(
@@ -1957,7 +1957,7 @@ export default function Ingest() {
         </h1>
         <p className="text-muted-foreground mt-1">
           Upload your own purchase orders, invoices, suppliers, and contracts
-          as CSV. Validate Procuro on real data without ERP integration.
+          as CSV. Validate Atlas Procure on real data without ERP integration.
         </p>
       </div>
 

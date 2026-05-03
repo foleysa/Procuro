@@ -34,7 +34,7 @@ export default function Results() {
           Results & Billing
         </h1>
         <p className="text-muted-foreground mt-1">
-          You only pay on realized savings. Procuro contingency = {formatPercent(data.successFeePct)}.
+          You only pay on realized savings. Atlas Procure contingency = {formatPercent(data.successFeePct)}.
         </p>
       </div>
 
@@ -66,7 +66,7 @@ export default function Results() {
               <span className="tabular-nums">{formatPercent(data.successFeePct)}</span>
             </div>
             <div className="border-t mt-2 pt-2 flex justify-between font-semibold">
-              <span>Procuro fee due</span>
+              <span>Atlas Procure fee due</span>
               <span data-testid="text-fee-due" className="tabular-nums text-primary">
                 {formatUsd(data.successFeeUsd)}
               </span>

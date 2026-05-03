@@ -83,7 +83,7 @@ function Bootstrap() {
       <div className="min-h-screen w-full flex flex-col items-center justify-center bg-background text-foreground">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         <p className="mt-4 text-sm text-muted-foreground font-medium">
-          Bootstrapping Procuro...
+          Bootstrapping Atlas Procure...
         </p>
       </div>
     );

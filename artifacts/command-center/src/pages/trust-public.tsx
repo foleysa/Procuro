@@ -50,7 +50,7 @@ export default function TrustPublicPage() {
   // descriptive in the tab.
   useEffect(() => {
     const previous = document.title;
-    document.title = "Trust Center (preview) · Procuro";
+    document.title = "Trust Center (preview) · Atlas Procure";
     return () => {
       document.title = previous;
     };
@@ -175,7 +175,7 @@ function GetLiveTenantCta() {
           Want this for your own tenant?
         </div>
         <p className="text-sm text-muted-foreground">
-          Spin up a Procuro workspace and your Trust Center page will
+          Spin up an Atlas Procure workspace and your Trust Center page will
           populate with your own collector matrix, citation coverage,
           and audit posture — no manual configuration.
         </p>

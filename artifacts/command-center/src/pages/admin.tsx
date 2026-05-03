@@ -787,7 +787,7 @@ function SsoTab() {
           Single Sign-On
         </CardTitle>
         <CardDescription>
-          Procuro federates SAML / OIDC through Clerk. Configure the connection
+          Atlas Procure federates SAML / OIDC through Clerk. Configure the connection
           in the Clerk Auth pane, then enable it here for your tenant.
         </CardDescription>
       </CardHeader>

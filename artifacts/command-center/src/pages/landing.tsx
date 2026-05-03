@@ -7,7 +7,7 @@ export default function Landing() {
       <div className="max-w-5xl mx-auto px-6 py-16">
         <div className="flex items-center gap-2 text-primary">
           <Workflow className="w-6 h-6" />
-          <span className="font-bold text-xl">Procuro</span>
+          <span className="font-bold text-xl">Atlas Procure</span>
         </div>
         <h1
           data-testid="text-hero"

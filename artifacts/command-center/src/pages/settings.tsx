@@ -972,7 +972,7 @@ function CreateChannelDialog({
                   data-testid="input-channel-from"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Defaults to a Procuro-managed sender if you skip this.
+                  Defaults to an Atlas Procure-managed sender if you skip this.
                 </p>
               </div>
             </>

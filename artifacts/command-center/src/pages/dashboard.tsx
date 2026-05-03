@@ -390,7 +390,7 @@ export default function Dashboard() {
             )}
           </h1>
           <p className="text-muted-foreground mt-1">
-            {me?.org.name ?? "—"} · auto-refreshes every 30s
+            {me?.org.name ?? "—"} · live view of every Atlas Procure signal · auto‑refreshes every 30s
           </p>
           {/* #269 follow-up: 2-3 minute scan brief. The page reads
               top-to-bottom as the operator's morning narrative — see

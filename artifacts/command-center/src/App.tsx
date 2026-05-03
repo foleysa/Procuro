@@ -218,13 +218,13 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
     // round-trip.
     const userEmail = data?.email ?? "";
     const subject = encodeURIComponent(
-      `Requesting access to Procuro ${blurb.name}`,
+      `Requesting access to Atlas Procure ${blurb.name}`,
     );
     const body = encodeURIComponent(
       [
         "Hi,",
         "",
-        `Could you grant me access to the ${blurb.name} area in Procuro? I need it for my work.`,
+        `Could you grant me access to the ${blurb.name} area in Atlas Procure? I need it for my work.`,
         "",
         userEmail ? `My account: ${userEmail}` : "",
         "",
@@ -424,13 +424,13 @@ function ClerkProviderWithRoutes() {
       localization={{
         signIn: {
           start: {
-            title: "Sign in to Procuro",
+            title: "Sign in to Atlas Procure",
             subtitle: "Procurement-as-a-Service control plane",
           },
         },
         signUp: {
           start: {
-            title: "Create your Procuro account",
+            title: "Create your Atlas Procure account",
             subtitle: "Spin up a tenant and invite your team",
           },
         },

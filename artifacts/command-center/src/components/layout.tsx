@@ -160,7 +160,7 @@ export function Layout({ children }: LayoutProps) {
             className="flex items-center gap-2 mb-6 px-2 text-sidebar-foreground font-bold"
           >
             <Workflow className="w-5 h-5 text-sidebar-primary" />
-            <span>Procuro</span>
+            <span>Atlas Procure</span>
           </Link>
           <OrgSwitcher />
         </div>
@@ -238,7 +238,7 @@ export function Layout({ children }: LayoutProps) {
               href="/landing"
               className="text-xs text-muted-foreground hover:text-foreground"
             >
-              What is Procuro? →
+              What is Atlas Procure? →
             </Link>
             <Show when="signed-in">
               <span
