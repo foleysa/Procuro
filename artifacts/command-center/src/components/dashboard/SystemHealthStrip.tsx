@@ -14,11 +14,17 @@
  * computes its own colour locally for display, but never writes.
  */
 
+import { useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   useGetEngineHealth,
   getGetEngineHealthQueryKey,
+  useListAlerts,
+  useTransitionAlert,
+  getGetAlertsSummaryQueryKey,
+  getListAlertsQueryKey,
 } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronUp,
@@ -115,10 +121,64 @@ export function buildHealthSummary(inputs: SystemHealthInputs, status: HealthSta
     : "Engine degraded — some thresholds breached.";
 }
 
+// ---------- Auto-resolve engine_stalled alerts on recovery (#294) ----------
+// Alert *creation* is now server-side (task #296). The strip only
+// auto-resolves open engine_stalled alerts when the engine recovers.
+
+const ENGINE_STALLED_KIND = "engine_stalled";
+
+function useAutoResolveEngineStalled(status: HealthStatus) {
+  const qc = useQueryClient();
+  const resolvingRef = useRef<Set<string>>(new Set());
+
+  const transitionAlert = useTransitionAlert({
+    mutation: {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getGetAlertsSummaryQueryKey() });
+        qc.invalidateQueries({ queryKey: getListAlertsQueryKey({ state: "open" }) });
+      },
+    },
+  });
+
+  const openAlertsQuery = useListAlerts(
+    { state: "open" },
+    {
+      query: {
+        queryKey: getListAlertsQueryKey({ state: "open" }),
+        enabled: status !== "red",
+      },
+    },
+  );
+
+  useEffect(() => {
+    if (status === "red") return;
+    const items = openAlertsQuery.data?.items;
+    if (!items || items.length === 0) return;
+    for (const alert of items) {
+      if (alert.kind !== ENGINE_STALLED_KIND) continue;
+      if (alert.state === "resolved") continue;
+      if (resolvingRef.current.has(alert.id)) continue;
+      resolvingRef.current.add(alert.id);
+      transitionAlert
+        .mutateAsync({
+          id: alert.id,
+          data: {
+            action: "resolve",
+            note: "Auto-resolved: engine recovered (System Health Strip).",
+          },
+        })
+        .catch(() => {
+          resolvingRef.current.delete(alert.id);
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, openAlertsQuery.data]);
+}
+
 // ---------- Main component ----------
 // Engine Stalled alert firing is now owned by the
 // `synthesize_operational_alerts` scheduled job (task #296). The strip
-// no longer writes to the alerts table.
+// no longer writes to the alerts table — only auto-resolves on recovery (#294).
 
 export interface SystemHealthStripProps {
   // Telemetry inputs for status computation
@@ -189,6 +249,7 @@ export function SystemHealthStrip({
   const status: HealthStatus = engineHealthQ.data?.status ?? localStatus;
   const summary = engineHealthQ.data?.summary ?? localSummary;
 
+  useAutoResolveEngineStalled(status);
 
   const dot =
     status === "green"
