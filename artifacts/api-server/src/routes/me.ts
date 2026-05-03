@@ -11,6 +11,7 @@ import { requirePermission } from "../lib/rbac";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { readRenewalAlertDays } from "../lib/contract-settings";
+import { readHealthThresholds } from "../lib/health-thresholds";
 import { getOrCreateUserByEmail } from "../lib/users";
 import { newId } from "../lib/ids";
 import { writeAdminAudit } from "../lib/admin-audit";
@@ -35,6 +36,7 @@ function serializeMe(
       successFeePct: Number(org.successFeePct),
       disclosurePolicy: readDisclosurePolicy(org.settings),
       contractRenewalAlertDays: readRenewalAlertDays(org.settings),
+      healthThresholds: readHealthThresholds(org.settings),
       createdAt: org.createdAt,
     },
     actorEmail: actorEmail ?? "system@procuro.ai",
@@ -70,6 +72,7 @@ router.get("/me", tenantMiddleware, async (req, res) => {
 const AUDITED_SETTINGS_KEYS = [
   "disclosurePolicy",
   "contractRenewalAlertDays",
+  "healthThresholds",
 ] as const;
 type AuditedSettingsKey = (typeof AUDITED_SETTINGS_KEYS)[number];
 
@@ -132,6 +135,33 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     nextSettings["contractRenewalAlertDays"] = newValue;
     if (oldValue !== newValue) {
       changes.push({ key: "contractRenewalAlertDays", oldValue, newValue });
+    }
+  }
+  if (body.healthThresholds !== undefined) {
+    // Resolve the *current* (defaults-applied) values so the audit
+    // entry shows what the operator was actually living with, then
+    // overlay only the keys the request specified — matching the
+    // partial-update contract on `HealthThresholdsUpdate`.
+    const oldValue = readHealthThresholds(currentSettings);
+    const newValue = {
+      ...oldValue,
+      ...(body.healthThresholds.minSignalsPerDay !== undefined
+        ? { minSignalsPerDay: body.healthThresholds.minSignalsPerDay }
+        : {}),
+      ...(body.healthThresholds.maxStaleCollectors !== undefined
+        ? { maxStaleCollectors: body.healthThresholds.maxStaleCollectors }
+        : {}),
+      ...(body.healthThresholds.maxQueuedJobs !== undefined
+        ? { maxQueuedJobs: body.healthThresholds.maxQueuedJobs }
+        : {}),
+    };
+    nextSettings["healthThresholds"] = newValue;
+    const drift =
+      oldValue.minSignalsPerDay !== newValue.minSignalsPerDay ||
+      oldValue.maxStaleCollectors !== newValue.maxStaleCollectors ||
+      oldValue.maxQueuedJobs !== newValue.maxQueuedJobs;
+    if (drift) {
+      changes.push({ key: "healthThresholds", oldValue, newValue });
     }
   }
 

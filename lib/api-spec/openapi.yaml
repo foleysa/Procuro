@@ -5426,6 +5426,7 @@ components:
       - createdAt
       - disclosurePolicy
       - contractRenewalAlertDays
+      - healthThresholds
       properties:
         id:
           type: string
@@ -5446,9 +5447,40 @@ components:
             Defaults to 90 when not explicitly set in `orgs.settings`.
 
             '
+        healthThresholds:
+          $ref: '#/components/schemas/HealthThresholds'
         createdAt:
           type: string
           format: date-time
+    HealthThresholds:
+      type: object
+      description: 'Per-tenant System Health Strip thresholds (Task #295). Operators
+        tune what counts as "Stalled" vs "Degraded" without code changes; values
+        are stored under `orgs.settings.healthThresholds` and audited via
+        `org_settings_audit_log`.'
+      required:
+      - minSignalsPerDay
+      - maxStaleCollectors
+      - maxQueuedJobs
+      properties:
+        minSignalsPerDay:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: Daily floor for signals24h. Strip turns red when fewer signals
+            arrive in the last 24h. Default 1.
+        maxStaleCollectors:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Maximum tolerated stale collectors before the strip stops
+            being green. Default 1.
+        maxQueuedJobs:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: Maximum pending jobs before the strip turns red when no jobs
+            are running. Default 5.
     DisclosurePolicy:
       type: string
       description: 'Per-tenant insight-citation disclosure policy. Controls which
@@ -5497,6 +5529,26 @@ components:
             to surface a contract as a renewal alert. Default 90.
 
             '
+        healthThresholds:
+          $ref: '#/components/schemas/HealthThresholdsUpdate'
+    HealthThresholdsUpdate:
+      type: object
+      description: 'Partial update for the per-tenant System Health Strip
+        thresholds. Every property is optional; unspecified keys keep their
+        previously stored value (or the default).'
+      properties:
+        minSignalsPerDay:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        maxStaleCollectors:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        maxQueuedJobs:
+          type: integer
+          minimum: 0
+          maximum: 100000
     OrgSettingsAuditEntry:
       type: object
       description: 'One entry in the `org_settings_audit_log` feed. Mirrors the

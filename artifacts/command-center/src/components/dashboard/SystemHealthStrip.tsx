@@ -38,6 +38,25 @@ import { formatPercent, formatUsd } from "@/lib/format";
 
 export type HealthStatus = "green" | "yellow" | "red";
 
+/**
+ * Per-tenant thresholds the strip uses to decide green/yellow/red.
+ * Default values match the original hardcoded behaviour so callers
+ * that don't pass thresholds see no change. Operators tune these
+ * from the Settings page (Task #295) and they ride through
+ * `GetMe.org.healthThresholds`.
+ */
+export interface HealthThresholds {
+  minSignalsPerDay: number;
+  maxStaleCollectors: number;
+  maxQueuedJobs: number;
+}
+
+export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
+  minSignalsPerDay: 1,
+  maxStaleCollectors: 1,
+  maxQueuedJobs: 5,
+};
+
 export interface SystemHealthInputs {
   signals24h: number;
   signals7dayAvg: number;
@@ -45,20 +64,22 @@ export interface SystemHealthInputs {
   pendingJobs: number;
   runningJobs: number;
   staleCollectors: number;
+  thresholds?: HealthThresholds;
 }
 
 export function computeHealthStatus(inputs: SystemHealthInputs): HealthStatus {
   const { signals24h, signals7dayAvg, failedJobs, pendingJobs, runningJobs, staleCollectors } = inputs;
+  const t = inputs.thresholds ?? DEFAULT_HEALTH_THRESHOLDS;
 
   // Tier 3 — Red: any hard-stop condition
-  if (signals24h === 0) return "red";
+  if (signals24h < t.minSignalsPerDay) return "red";
   if (failedJobs > 0) return "red";
-  if (pendingJobs > 5 && runningJobs === 0) return "red";
+  if (pendingJobs > t.maxQueuedJobs && runningJobs === 0) return "red";
 
   // Tier 1 — Green: all clear thresholds
   const sigOk = signals7dayAvg === 0 || signals24h >= signals7dayAvg * 0.5;
   const jobsOk = failedJobs === 0;
-  const collectorsOk = staleCollectors <= 1;
+  const collectorsOk = staleCollectors <= t.maxStaleCollectors;
   if (sigOk && jobsOk && collectorsOk) return "green";
 
   // Tier 2 — Yellow: any threshold breached but not hard-stop
@@ -67,12 +88,19 @@ export function computeHealthStatus(inputs: SystemHealthInputs): HealthStatus {
 
 export function buildHealthSummary(inputs: SystemHealthInputs, status: HealthStatus): string {
   const { signals24h, failedJobs, pendingJobs, runningJobs, staleCollectors } = inputs;
+  const t = inputs.thresholds ?? DEFAULT_HEALTH_THRESHOLDS;
   if (status === "green") {
     return `Engine healthy — ${signals24h} signals in 24h, no failed jobs, ${staleCollectors} stale collector${staleCollectors === 1 ? "" : "s"}.`;
   }
   if (status === "red") {
     const parts: string[] = [];
-    if (signals24h === 0) parts.push("0 signals in 24h");
+    if (signals24h < t.minSignalsPerDay) {
+      parts.push(
+        signals24h === 0
+          ? "0 signals in 24h"
+          : `${signals24h} signals in 24h (min ${t.minSignalsPerDay})`,
+      );
+    }
     if (failedJobs > 0) parts.push(`${failedJobs} failed job${failedJobs === 1 ? "" : "s"}`);
     if (pendingJobs > 0) parts.push(`${pendingJobs + runningJobs} jobs queued`);
     if (staleCollectors > 0) parts.push(`${staleCollectors} stale collector${staleCollectors === 1 ? "" : "s"}`);
@@ -80,7 +108,7 @@ export function buildHealthSummary(inputs: SystemHealthInputs, status: HealthSta
   }
   // yellow
   const warnings: string[] = [];
-  if (staleCollectors > 1) warnings.push(`${staleCollectors} stale collectors`);
+  if (staleCollectors > t.maxStaleCollectors) warnings.push(`${staleCollectors} stale collectors`);
   if (failedJobs > 0) warnings.push(`${failedJobs} failed jobs`);
   return warnings.length > 0
     ? `Engine degraded — ${warnings.join(", ")}.`
@@ -151,6 +179,9 @@ export interface SystemHealthStripProps {
   pendingJobs: number;
   runningJobs: number;
   staleCollectors: number;
+  // Per-tenant thresholds (Task #295). Optional — falls back to
+  // `DEFAULT_HEALTH_THRESHOLDS` so legacy callers keep working.
+  thresholds?: HealthThresholds;
   // Drawer diagnostic content
   cycleP50Hours: number | null;
   precisionRate: number | null;
@@ -175,6 +206,7 @@ export function SystemHealthStrip({
   pendingJobs,
   runningJobs,
   staleCollectors,
+  thresholds,
   cycleP50Hours,
   precisionRate,
   decidedCount,
@@ -189,7 +221,7 @@ export function SystemHealthStrip({
   isOpen,
   onToggle,
 }: SystemHealthStripProps) {
-  const inputs: SystemHealthInputs = { signals24h, signals7dayAvg, failedJobs, pendingJobs, runningJobs, staleCollectors };
+  const inputs: SystemHealthInputs = { signals24h, signals7dayAvg, failedJobs, pendingJobs, runningJobs, staleCollectors, thresholds };
   const status = computeHealthStatus(inputs);
   const summary = buildHealthSummary(inputs, status);
 

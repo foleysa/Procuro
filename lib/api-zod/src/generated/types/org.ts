@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { DisclosurePolicy } from "./disclosurePolicy";
+import type { HealthThresholds } from "./healthThresholds";
 
 export interface Org {
   id: string;
@@ -27,5 +28,6 @@ Defaults to 90 when not explicitly set in `orgs.settings`.
    * @minimum 1
    */
   contractRenewalAlertDays: number;
+  healthThresholds: HealthThresholds;
   createdAt: Date;
 }

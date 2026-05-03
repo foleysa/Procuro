@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { DisclosurePolicy } from "./disclosurePolicy";
+import type { HealthThresholdsUpdate } from "./healthThresholdsUpdate";
 
 /**
  * Partial update for `orgs.settings`. Every property is optional;
@@ -28,4 +29,5 @@ to surface a contract as a renewal alert. Default 90.
    * @maximum 365
    */
   contractRenewalAlertDays?: number;
+  healthThresholds?: HealthThresholdsUpdate;
 }

@@ -76,6 +76,7 @@ import {
   MessageSquare,
   History,
   CalendarClock,
+  Activity,
 } from "lucide-react";
 
 const POLICY_OPTIONS: ReadonlyArray<{
@@ -130,6 +131,9 @@ export default function Settings() {
           <TabsTrigger value="notifications" data-testid="tab-notifications">
             Notifications
           </TabsTrigger>
+          <TabsTrigger value="health" data-testid="tab-health">
+            System health
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="disclosure" className="space-y-4">
@@ -141,6 +145,11 @@ export default function Settings() {
           <RenewalAlertSection />
           <ChannelsSection />
           <SubscriptionsSection />
+        </TabsContent>
+
+        <TabsContent value="health" className="space-y-4">
+          <HealthThresholdsSection />
+          <SettingsHistorySection />
         </TabsContent>
       </Tabs>
     </div>
@@ -437,6 +446,239 @@ function RenewalAlertSection() {
   );
 }
 
+// ============================ System health thresholds ============================
+
+const HEALTH_THRESHOLD_LIMITS = {
+  minSignalsPerDay: { min: 0, max: 100_000, default: 1 },
+  maxStaleCollectors: { min: 0, max: 10_000, default: 1 },
+  maxQueuedJobs: { min: 0, max: 100_000, default: 5 },
+} as const;
+
+type HealthFieldKey = keyof typeof HEALTH_THRESHOLD_LIMITS;
+
+const HEALTH_FIELDS: ReadonlyArray<{
+  key: HealthFieldKey;
+  label: string;
+  testId: string;
+  blurb: string;
+}> = [
+  {
+    key: "minSignalsPerDay",
+    label: "Minimum signals per day",
+    testId: "input-health-min-signals",
+    blurb:
+      "The Engine strip turns red when signals in the last 24h drop below this floor. High-volume tenants raise this so a thin day still trips an alert.",
+  },
+  {
+    key: "maxStaleCollectors",
+    label: "Maximum tolerated stale collectors",
+    testId: "input-health-max-stale",
+    blurb:
+      "The strip stays green while at most this many collectors are stale. Tenants running many collectors typically allow more than the default of 1.",
+  },
+  {
+    key: "maxQueuedJobs",
+    label: "Maximum queued jobs before stalled",
+    testId: "input-health-max-queued",
+    blurb:
+      "When pending jobs exceed this and nothing is running, the strip turns red. Raise it on tenants whose batch loaders routinely queue dozens of jobs.",
+  },
+];
+
+/**
+ * Lets Org Admins tune the per-tenant System Health Strip thresholds
+ * (Task #295). Mirrors `RenewalAlertSection` — every field has the
+ * same bounded-integer parser so admins see a friendly inline error
+ * before the request is even attempted, and the Save button only
+ * lights up when every dirty field is valid and at least one value
+ * actually changed.
+ */
+function HealthThresholdsSection() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useGetMe();
+  const { isOrgAdmin, isLoading: roleLoading } = useMyRole();
+
+  const current = data?.org.healthThresholds;
+
+  const [drafts, setDrafts] = useState<Record<HealthFieldKey, string>>({
+    minSignalsPerDay: "",
+    maxStaleCollectors: "",
+    maxQueuedJobs: "",
+  });
+
+  useEffect(() => {
+    if (current) {
+      setDrafts({
+        minSignalsPerDay: String(current.minSignalsPerDay),
+        maxStaleCollectors: String(current.maxStaleCollectors),
+        maxQueuedJobs: String(current.maxQueuedJobs),
+      });
+    }
+  }, [current]);
+
+  const parseField = (
+    key: HealthFieldKey,
+  ): { value: number | null; error: string | null } => {
+    const raw = drafts[key].trim();
+    const limits = HEALTH_THRESHOLD_LIMITS[key];
+    if (raw === "") {
+      return {
+        value: null,
+        error: `Enter a whole number between ${limits.min} and ${limits.max}.`,
+      };
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      return { value: null, error: "Enter a whole number." };
+    }
+    if (n < limits.min || n > limits.max) {
+      return {
+        value: null,
+        error: `Pick a value between ${limits.min} and ${limits.max}.`,
+      };
+    }
+    return { value: n, error: null };
+  };
+
+  const fieldStates = HEALTH_FIELDS.map((f) => ({ ...f, ...parseField(f.key) }));
+  const anyError = fieldStates.some((f) => f.error !== null);
+
+  const patchM = usePatchMeSettings({
+    mutation: {
+      onSuccess: (resp) => {
+        toast({
+          title: "Health thresholds updated",
+          description: "The Engine strip will use these values immediately.",
+        });
+        qc.setQueryData(getGetMeQueryKey(), resp);
+        qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        qc.invalidateQueries({ queryKey: getListMeSettingsAuditQueryKey() });
+      },
+      onError: (e: Error) =>
+        toast({
+          title: "Could not save thresholds",
+          description: String(e),
+          variant: "destructive",
+        }),
+    },
+  });
+
+  const saving = patchM.isPending;
+  const dirtyKeys: HealthFieldKey[] = current
+    ? HEALTH_FIELDS.filter((f) => {
+        const parsed = parseField(f.key).value;
+        return parsed !== null && parsed !== current[f.key];
+      }).map((f) => f.key)
+    : [];
+
+  const canEdit = isOrgAdmin;
+  const canSave = canEdit && !saving && !anyError && dirtyKeys.length > 0;
+
+  return (
+    <Card data-testid="card-health-thresholds">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="w-5 h-5" />
+          System health thresholds
+        </CardTitle>
+        <CardDescription>
+          Tune what counts as Degraded vs Stalled on the dashboard's Engine
+          strip. Every tenant has different signal volumes and collector
+          counts — these knobs let you adapt the colour coding without a
+          code change.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading || !current ? (
+          <div className="flex items-center text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Loading current thresholds…
+          </div>
+        ) : (
+          <div className="grid gap-5 md:grid-cols-3">
+            {fieldStates.map((f) => {
+              const dirty = drafts[f.key] !== String(current[f.key]);
+              const limits = HEALTH_THRESHOLD_LIMITS[f.key];
+              return (
+                <div key={f.key} className="space-y-2">
+                  <Label htmlFor={`health-${f.key}`}>{f.label}</Label>
+                  <Input
+                    id={`health-${f.key}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={limits.min}
+                    max={limits.max}
+                    step={1}
+                    disabled={!canEdit || roleLoading}
+                    value={drafts[f.key]}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [f.key]: e.target.value }))
+                    }
+                    aria-invalid={dirty && f.error ? true : undefined}
+                    data-testid={f.testId}
+                  />
+                  {dirty && f.error ? (
+                    <p
+                      className="text-xs text-destructive"
+                      data-testid={`${f.testId}-error`}
+                    >
+                      {f.error}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {f.blurb} Default: {limits.default}.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <Button
+            data-testid="button-save-health-thresholds"
+            disabled={!canSave}
+            onClick={() => {
+              if (anyError || dirtyKeys.length === 0) return;
+              const payload: Record<HealthFieldKey, number> = {} as Record<
+                HealthFieldKey,
+                number
+              >;
+              for (const key of dirtyKeys) {
+                const parsed = parseField(key).value;
+                if (parsed !== null) payload[key] = parsed;
+              }
+              patchM.mutate({ data: { healthThresholds: payload } });
+            }}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save thresholds"
+            )}
+          </Button>
+          {dirtyKeys.length > 0 && !saving ? (
+            <span className="text-xs text-muted-foreground">
+              {dirtyKeys.length} unsaved change
+              {dirtyKeys.length === 1 ? "" : "s"}
+            </span>
+          ) : null}
+          {!canEdit && !roleLoading ? (
+            <span className="text-xs text-muted-foreground">
+              Only Org Admins can change tenant-wide thresholds.
+            </span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ============================ Settings history ============================
 
 /**
@@ -491,6 +733,7 @@ function SettingsHistorySection() {
 const SETTINGS_KEY_LABELS: Record<string, string> = {
   disclosurePolicy: "Disclosure policy",
   contractRenewalAlertDays: "Renewal alert window",
+  healthThresholds: "System health thresholds",
 };
 
 function labelForKey(key: string): string {

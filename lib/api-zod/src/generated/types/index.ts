@@ -248,6 +248,8 @@ export * from "./getSystemCsvThroughputHistoryParams";
 export * from "./goodsVsServicesBlock";
 export * from "./healthStatus";
 export * from "./healthStatusStatus";
+export * from "./healthThresholds";
+export * from "./healthThresholdsUpdate";
 export * from "./ingestCsvBatchParams";
 export * from "./ingestCsvStreamBodyOne";
 export * from "./ingestCsvStreamEntity";

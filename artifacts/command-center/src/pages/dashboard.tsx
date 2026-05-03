@@ -1082,6 +1082,7 @@ export default function Dashboard() {
         pendingJobs={pendingJobs.length}
         runningJobs={runningJobs.length}
         staleCollectors={staleCollectors.length}
+        thresholds={me?.org.healthThresholds}
         cycleP50Hours={cycleP50Hours}
         precisionRate={precisionRate}
         decidedCount={decidedCount}

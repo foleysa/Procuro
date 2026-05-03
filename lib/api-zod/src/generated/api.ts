@@ -25,6 +25,15 @@ export const HealthCheckResponse = zod.object({
  * @summary List tenants available to the active user
  */
 
+export const listOrgsResponseHealthThresholdsMinSignalsPerDayMin = 0;
+export const listOrgsResponseHealthThresholdsMinSignalsPerDayMax = 100000;
+
+export const listOrgsResponseHealthThresholdsMaxStaleCollectorsMin = 0;
+export const listOrgsResponseHealthThresholdsMaxStaleCollectorsMax = 10000;
+
+export const listOrgsResponseHealthThresholdsMaxQueuedJobsMin = 0;
+export const listOrgsResponseHealthThresholdsMaxQueuedJobsMax = 100000;
+
 export const ListOrgsResponseItem = zod.object({
   id: zod.string(),
   slug: zod.string(),
@@ -44,6 +53,33 @@ export const ListOrgsResponseItem = zod.object({
     .describe(
       "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
     ),
+  healthThresholds: zod
+    .object({
+      minSignalsPerDay: zod
+        .number()
+        .min(listOrgsResponseHealthThresholdsMinSignalsPerDayMin)
+        .max(listOrgsResponseHealthThresholdsMinSignalsPerDayMax)
+        .describe(
+          "Daily floor for signals24h. Strip turns red when fewer signals arrive in the last 24h. Default 1.",
+        ),
+      maxStaleCollectors: zod
+        .number()
+        .min(listOrgsResponseHealthThresholdsMaxStaleCollectorsMin)
+        .max(listOrgsResponseHealthThresholdsMaxStaleCollectorsMax)
+        .describe(
+          "Maximum tolerated stale collectors before the strip stops being green. Default 1.",
+        ),
+      maxQueuedJobs: zod
+        .number()
+        .min(listOrgsResponseHealthThresholdsMaxQueuedJobsMin)
+        .max(listOrgsResponseHealthThresholdsMaxQueuedJobsMax)
+        .describe(
+          "Maximum pending jobs before the strip turns red when no jobs are running. Default 5.",
+        ),
+    })
+    .describe(
+      'Per-tenant System Health Strip thresholds (Task #295). Operators tune what counts as \"Stalled\" vs \"Degraded\" without code changes; values are stored under `orgs.settings.healthThresholds` and audited via `org_settings_audit_log`.',
+    ),
   createdAt: zod.coerce.date(),
 });
 export const ListOrgsResponse = zod.array(ListOrgsResponseItem);
@@ -59,6 +95,15 @@ export const GetMeHeader = zod.object({
       "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
     ),
 });
+
+export const getMeResponseOrgHealthThresholdsMinSignalsPerDayMin = 0;
+export const getMeResponseOrgHealthThresholdsMinSignalsPerDayMax = 100000;
+
+export const getMeResponseOrgHealthThresholdsMaxStaleCollectorsMin = 0;
+export const getMeResponseOrgHealthThresholdsMaxStaleCollectorsMax = 10000;
+
+export const getMeResponseOrgHealthThresholdsMaxQueuedJobsMin = 0;
+export const getMeResponseOrgHealthThresholdsMaxQueuedJobsMax = 100000;
 
 export const GetMeResponse = zod.object({
   org: zod.object({
@@ -79,6 +124,33 @@ export const GetMeResponse = zod.object({
       .min(1)
       .describe(
         "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
+      ),
+    healthThresholds: zod
+      .object({
+        minSignalsPerDay: zod
+          .number()
+          .min(getMeResponseOrgHealthThresholdsMinSignalsPerDayMin)
+          .max(getMeResponseOrgHealthThresholdsMinSignalsPerDayMax)
+          .describe(
+            "Daily floor for signals24h. Strip turns red when fewer signals arrive in the last 24h. Default 1.",
+          ),
+        maxStaleCollectors: zod
+          .number()
+          .min(getMeResponseOrgHealthThresholdsMaxStaleCollectorsMin)
+          .max(getMeResponseOrgHealthThresholdsMaxStaleCollectorsMax)
+          .describe(
+            "Maximum tolerated stale collectors before the strip stops being green. Default 1.",
+          ),
+        maxQueuedJobs: zod
+          .number()
+          .min(getMeResponseOrgHealthThresholdsMaxQueuedJobsMin)
+          .max(getMeResponseOrgHealthThresholdsMaxQueuedJobsMax)
+          .describe(
+            "Maximum pending jobs before the strip turns red when no jobs are running. Default 5.",
+          ),
+      })
+      .describe(
+        'Per-tenant System Health Strip thresholds (Task #295). Operators tune what counts as \"Stalled\" vs \"Degraded\" without code changes; values are stored under `orgs.settings.healthThresholds` and audited via `org_settings_audit_log`.',
       ),
     createdAt: zod.coerce.date(),
   }),
@@ -118,6 +190,15 @@ export const PatchMeSettingsHeader = zod.object({
 
 export const patchMeSettingsBodyContractRenewalAlertDaysMax = 365;
 
+export const patchMeSettingsBodyHealthThresholdsMinSignalsPerDayMin = 0;
+export const patchMeSettingsBodyHealthThresholdsMinSignalsPerDayMax = 100000;
+
+export const patchMeSettingsBodyHealthThresholdsMaxStaleCollectorsMin = 0;
+export const patchMeSettingsBodyHealthThresholdsMaxStaleCollectorsMax = 10000;
+
+export const patchMeSettingsBodyHealthThresholdsMaxQueuedJobsMin = 0;
+export const patchMeSettingsBodyHealthThresholdsMaxQueuedJobsMax = 100000;
+
 export const PatchMeSettingsBody = zod
   .object({
     disclosurePolicy: zod
@@ -134,10 +215,41 @@ export const PatchMeSettingsBody = zod
       .describe(
         "Days-to-expiry threshold the daily renewal-alert worker uses\nto surface a contract as a renewal alert. Default 90.\n",
       ),
+    healthThresholds: zod
+      .object({
+        minSignalsPerDay: zod
+          .number()
+          .min(patchMeSettingsBodyHealthThresholdsMinSignalsPerDayMin)
+          .max(patchMeSettingsBodyHealthThresholdsMinSignalsPerDayMax)
+          .optional(),
+        maxStaleCollectors: zod
+          .number()
+          .min(patchMeSettingsBodyHealthThresholdsMaxStaleCollectorsMin)
+          .max(patchMeSettingsBodyHealthThresholdsMaxStaleCollectorsMax)
+          .optional(),
+        maxQueuedJobs: zod
+          .number()
+          .min(patchMeSettingsBodyHealthThresholdsMaxQueuedJobsMin)
+          .max(patchMeSettingsBodyHealthThresholdsMaxQueuedJobsMax)
+          .optional(),
+      })
+      .optional()
+      .describe(
+        "Partial update for the per-tenant System Health Strip thresholds. Every property is optional; unspecified keys keep their previously stored value (or the default).",
+      ),
   })
   .describe(
     "Partial update for `orgs.settings`. Every property is optional;\nunspecified keys are left untouched on the stored JSONB.\n",
   );
+
+export const patchMeSettingsResponseOrgHealthThresholdsMinSignalsPerDayMin = 0;
+export const patchMeSettingsResponseOrgHealthThresholdsMinSignalsPerDayMax = 100000;
+
+export const patchMeSettingsResponseOrgHealthThresholdsMaxStaleCollectorsMin = 0;
+export const patchMeSettingsResponseOrgHealthThresholdsMaxStaleCollectorsMax = 10000;
+
+export const patchMeSettingsResponseOrgHealthThresholdsMaxQueuedJobsMin = 0;
+export const patchMeSettingsResponseOrgHealthThresholdsMaxQueuedJobsMax = 100000;
 
 export const PatchMeSettingsResponse = zod.object({
   org: zod.object({
@@ -158,6 +270,33 @@ export const PatchMeSettingsResponse = zod.object({
       .min(1)
       .describe(
         "Days-to-expiry threshold used by the renewal-alert worker.\nDefaults to 90 when not explicitly set in `orgs.settings`.\n",
+      ),
+    healthThresholds: zod
+      .object({
+        minSignalsPerDay: zod
+          .number()
+          .min(patchMeSettingsResponseOrgHealthThresholdsMinSignalsPerDayMin)
+          .max(patchMeSettingsResponseOrgHealthThresholdsMinSignalsPerDayMax)
+          .describe(
+            "Daily floor for signals24h. Strip turns red when fewer signals arrive in the last 24h. Default 1.",
+          ),
+        maxStaleCollectors: zod
+          .number()
+          .min(patchMeSettingsResponseOrgHealthThresholdsMaxStaleCollectorsMin)
+          .max(patchMeSettingsResponseOrgHealthThresholdsMaxStaleCollectorsMax)
+          .describe(
+            "Maximum tolerated stale collectors before the strip stops being green. Default 1.",
+          ),
+        maxQueuedJobs: zod
+          .number()
+          .min(patchMeSettingsResponseOrgHealthThresholdsMaxQueuedJobsMin)
+          .max(patchMeSettingsResponseOrgHealthThresholdsMaxQueuedJobsMax)
+          .describe(
+            "Maximum pending jobs before the strip turns red when no jobs are running. Default 5.",
+          ),
+      })
+      .describe(
+        'Per-tenant System Health Strip thresholds (Task #295). Operators tune what counts as \"Stalled\" vs \"Degraded\" without code changes; values are stored under `orgs.settings.healthThresholds` and audited via `org_settings_audit_log`.',
       ),
     createdAt: zod.coerce.date(),
   }),

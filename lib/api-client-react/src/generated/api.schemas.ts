@@ -45,6 +45,30 @@ export const DisclosurePolicy = {
   analyst: "analyst",
 } as const;
 
+/**
+ * Per-tenant System Health Strip thresholds (Task #295). Operators tune what counts as "Stalled" vs "Degraded" without code changes; values are stored under `orgs.settings.healthThresholds` and audited via `org_settings_audit_log`.
+ */
+export interface HealthThresholds {
+  /**
+   * Daily floor for signals24h. Strip turns red when fewer signals arrive in the last 24h. Default 1.
+   * @minimum 0
+   * @maximum 100000
+   */
+  minSignalsPerDay: number;
+  /**
+   * Maximum tolerated stale collectors before the strip stops being green. Default 1.
+   * @minimum 0
+   * @maximum 10000
+   */
+  maxStaleCollectors: number;
+  /**
+   * Maximum pending jobs before the strip turns red when no jobs are running. Default 5.
+   * @minimum 0
+   * @maximum 100000
+   */
+  maxQueuedJobs: number;
+}
+
 export interface Org {
   id: string;
   slug: string;
@@ -59,6 +83,7 @@ Defaults to 90 when not explicitly set in `orgs.settings`.
    * @minimum 1
    */
   contractRenewalAlertDays: number;
+  healthThresholds: HealthThresholds;
   createdAt: string;
 }
 
@@ -93,6 +118,27 @@ export interface MeResponse {
 }
 
 /**
+ * Partial update for the per-tenant System Health Strip thresholds. Every property is optional; unspecified keys keep their previously stored value (or the default).
+ */
+export interface HealthThresholdsUpdate {
+  /**
+   * @minimum 0
+   * @maximum 100000
+   */
+  minSignalsPerDay?: number;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  maxStaleCollectors?: number;
+  /**
+   * @minimum 0
+   * @maximum 100000
+   */
+  maxQueuedJobs?: number;
+}
+
+/**
  * Partial update for `orgs.settings`. Every property is optional;
 unspecified keys are left untouched on the stored JSONB.
 
@@ -107,6 +153,7 @@ to surface a contract as a renewal alert. Default 90.
    * @maximum 365
    */
   contractRenewalAlertDays?: number;
+  healthThresholds?: HealthThresholdsUpdate;
 }
 
 /**
