@@ -140,11 +140,15 @@ router.get("/rate-cards", tenantMiddleware, async (req, res) => {
   const lineCounts = new Map<string, number>();
   const offCardSpend = new Map<string, number>();
   if (cardIds.length > 0) {
+    // See `routes/sows.ts` for the rationale: drizzle's tagged-template
+    // splats a JS array into `(p0, p1, …)`, which Postgres cannot cast
+    // to `text[]`. The string-split form sends a single parameter.
+    const cardIdsCsv = cardIds.join(",");
     const lc = await db.execute(sql`
       SELECT rate_card_id, COUNT(*) AS n
       FROM rate_card_lines
       WHERE org_id = ${orgId}
-        AND rate_card_id = ANY(${cardIds}::text[])
+        AND rate_card_id = ANY(string_to_array(${cardIdsCsv}, ','))
       GROUP BY rate_card_id
     `);
     for (const r of lc.rows as Array<{ rate_card_id: string; n: string }>) {
@@ -157,7 +161,7 @@ router.get("/rate-cards", tenantMiddleware, async (req, res) => {
              COALESCE(SUM(amount_usd::numeric), 0) AS spend
       FROM time_entries
       WHERE org_id = ${orgId}
-        AND rate_card_id = ANY(${cardIds}::text[])
+        AND rate_card_id = ANY(string_to_array(${cardIdsCsv}, ','))
         AND rate_card_line_id IS NULL
         AND work_date >= NOW() - INTERVAL '365 days'
       GROUP BY rate_card_id
@@ -260,6 +264,10 @@ router.get("/rate-cards/:id", tenantMiddleware, async (req, res) => {
   };
   const benchmarks = new Map<string, BenchmarkRow>();
   if (roles.length > 0) {
+    // See the list-route comment on `string_to_array(...)` for the
+    // rationale; lowercased role names contain spaces (e.g. "software
+    // engineer") so we delimit on `|` to stay safe.
+    const rolesCsv = roles.map((r) => r.toLowerCase()).join("|");
     const rows = await db.execute(sql`
       SELECT DISTINCT ON (LOWER(scope_material_code))
         LOWER(scope_material_code) AS role,
@@ -271,7 +279,7 @@ router.get("/rate-cards/:id", tenantMiddleware, async (req, res) => {
       FROM market_signals
       WHERE signal_type = 'oews_wage'
         AND (org_id = ${orgId} OR org_id IS NULL)
-        AND LOWER(scope_material_code) = ANY(${roles.map((r) => r.toLowerCase())}::text[])
+        AND LOWER(scope_material_code) = ANY(string_to_array(${rolesCsv}, '|'))
       ORDER BY LOWER(scope_material_code), observed_at DESC
     `);
     for (const r of rows.rows as BenchmarkRow[]) {

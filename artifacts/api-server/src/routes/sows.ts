@@ -220,6 +220,13 @@ router.get("/sows", tenantMiddleware, async (req, res) => {
   >();
   const changeOrderCounts = new Map<string, number>();
   if (sowIds.length > 0) {
+    // Pass IDs as a single comma-joined string param and split server-side
+    // with `string_to_array(...)`. Drizzle's tagged template treats a JS
+    // array template value as nested chunks `(p0, p1, …)`, which Postgres
+    // cannot cast to `text[]`; the string-split form sends a single
+    // parameter and lets Postgres do the splitting. SOW IDs are
+    // `sow_…`-prefixed UUID slugs, so a comma delimiter is safe.
+    const sowIdsCsv = sowIds.join(",");
     const [counts, coCounts] = await Promise.all([
       db.execute(sql`
         SELECT sow_id,
@@ -232,14 +239,14 @@ router.get("/sows", tenantMiddleware, async (req, res) => {
                ), 0)::text AS earned_usd
         FROM sow_milestones
         WHERE org_id = ${orgId}
-          AND sow_id = ANY(${sowIds}::text[])
+          AND sow_id = ANY(string_to_array(${sowIdsCsv}, ','))
         GROUP BY sow_id
       `),
       db.execute(sql`
         SELECT sow_id, COUNT(*) AS n
         FROM sow_change_orders
         WHERE org_id = ${orgId}
-          AND sow_id = ANY(${sowIds}::text[])
+          AND sow_id = ANY(string_to_array(${sowIdsCsv}, ','))
         GROUP BY sow_id
       `),
     ]);
