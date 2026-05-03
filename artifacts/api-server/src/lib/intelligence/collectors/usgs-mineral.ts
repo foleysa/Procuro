@@ -46,7 +46,7 @@
  * rate limit.
  */
 
-import xlsx from "node-xlsx";
+import { parseXlsxBuffer } from "./xlsx-parser";
 import { z } from "zod";
 import { logger } from "../../logger";
 import type {
@@ -328,11 +328,11 @@ export function buildUsgsDraftForObservation(
  * layout cannot be recognised — that lets the per-mineral failure
  * path skip the workbook without aborting the whole run.
  */
-export function parseUsgsWorkbook(
+export async function parseUsgsWorkbook(
   buf: Buffer,
   mineral: UsgsMineralRef,
-): Array<{ year: number; value: number }> {
-  const wb = xlsx.parse(buf);
+): Promise<Array<{ year: number; value: number }>> {
+  const wb = await parseXlsxBuffer(buf);
   for (const sheet of wb) {
     const rows = sheet.data as Row[];
     if (rows.length === 0) continue;
@@ -423,7 +423,7 @@ export async function collectUsgsDrafts(opts: {
       );
       continue;
     }
-    const observations = parseUsgsWorkbook(buf, mineral);
+    const observations = await parseUsgsWorkbook(buf, mineral);
     if (observations.length === 0) continue;
     if (opts.mode === "backfill") {
       for (const o of observations) {

@@ -51,7 +51,7 @@
  * since Pink Sheet values are monthly averages rather than spot prices.
  */
 
-import xlsx from "node-xlsx";
+import { parseXlsxBuffer } from "./xlsx-parser";
 import type {
   IntelligenceCollector,
   MarketSignalDraft,
@@ -186,8 +186,8 @@ interface ParsedSheet {
   dataStart: number;
 }
 
-function parseMonthlyPricesSheet(buf: Buffer): ParsedSheet {
-  const wb = xlsx.parse(buf);
+async function parseMonthlyPricesSheet(buf: Buffer): Promise<ParsedSheet> {
+  const wb = await parseXlsxBuffer(buf);
   const sheet = wb.find((s) => s.name === SHEET_NAME);
   if (!sheet) {
     throw new Error(
@@ -262,7 +262,7 @@ export const worldBankPinkSheetCollector: IntelligenceCollector<
   },
   async collect({ since: _since, signal }): Promise<MarketSignalDraft[]> {
     const { buffer, lastModified } = await fetchPinkSheetWorkbook(signal);
-    const { rows, headers, units, dataStart } = parseMonthlyPricesSheet(buffer);
+    const { rows, headers, units, dataStart } = await parseMonthlyPricesSheet(buffer);
 
     // Build a header-name → column-index lookup (trim + lowercase).
     const headerIdx = new Map<string, number>();
