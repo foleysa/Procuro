@@ -40,12 +40,10 @@ import {
   BarChart3,
   CheckCircle2,
   CheckSquare,
-  CircleDot,
   Loader2,
   Minus,
   Play,
   RefreshCw,
-  Sparkles,
   TrendingDown,
   TrendingUp,
   Activity,
@@ -62,6 +60,17 @@ import { NeedsAttention } from "@/features/dashboard/NeedsAttention";
 import { useGetTodayFeed } from "@workspace/api-client-react";
 import { TodayTriageRow, TodayDeltasCard } from "./today";
 import { useMyRole } from "@/lib/use-my-role";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { OutcomesHeader } from "@/components/dashboard/OutcomesHeader";
+import { SourcingPlaysInFlight } from "@/components/dashboard/SourcingPlaysInFlight";
+import { StageGateBottlenecks } from "@/components/dashboard/StageGateBottlenecks";
+import { MethodsAndTools } from "@/components/dashboard/MethodsAndTools";
+import { DOAApprovalQueue } from "@/components/dashboard/DOAApprovalQueue";
 
 const POLL_MS = 30_000;
 
@@ -340,30 +349,35 @@ export default function Dashboard() {
       label: "Proposed",
       ...buckets.proposed,
       tone: "muted",
+      savingsTypeTag: "IDENTIFIED" as const,
     },
     {
       key: "approved" as const,
       label: "Approved",
       ...buckets.approved,
       tone: "blue",
+      savingsTypeTag: "NEGOTIATED" as const,
     },
     {
       key: "executing" as const,
       label: "Executing",
       ...buckets.executing,
       tone: "amber",
+      savingsTypeTag: "IMPLEMENTED" as const,
     },
     {
       key: "realized" as const,
       label: "Realized",
       ...buckets.realized,
       tone: "green",
+      savingsTypeTag: "REALIZED" as const,
     },
     {
       key: "rejected" as const,
       label: "Rejected",
       ...buckets.rejected,
       tone: "red",
+      savingsTypeTag: null,
     },
   ];
   const pipelineMaxValue = Math.max(
@@ -424,65 +438,6 @@ export default function Dashboard() {
         )[0]
       : null;
 
-  // Live queue — fold the most-pressing items from triage + attention
-  // into a single ranked list so the operator's eye lands on one row.
-  type QueueItem = {
-    id: string;
-    severity: "critical" | "high" | "medium" | "low";
-    title: string;
-    age: string;
-    href: string;
-  };
-  const liveQueue: QueueItem[] = [];
-  if (openCriticalOrHighAlerts > 0) {
-    liveQueue.push({
-      id: "alerts-crit",
-      severity: "critical",
-      title: `${openCriticalOrHighAlerts} critical / high alert${openCriticalOrHighAlerts === 1 ? "" : "s"} open`,
-      age: openAlertsTotal > openCriticalOrHighAlerts ? `${openAlertsTotal} total` : "now",
-      href: "/alerts?filter=state:open",
-    });
-  }
-  if (highConfProposed.length > 0) {
-    const projected = highConfProposed.reduce(
-      (s, o) => s + o.projectedSavingsUsd,
-      0,
-    );
-    liveQueue.push({
-      id: "high-conf",
-      severity: "high",
-      title: `${highConfProposed.length} high-confidence opportunit${highConfProposed.length === 1 ? "y" : "ies"} awaiting sign-off`,
-      age: `${formatUsd(projected, { compact: true })} projected`,
-      href: "/approvals",
-    });
-  }
-  if (failedJobs24h.length > 0) {
-    liveQueue.push({
-      id: "failed-jobs",
-      severity: "high",
-      title: `${failedJobs24h.length} job${failedJobs24h.length === 1 ? "" : "s"} failed in the last 24h`,
-      age: "24h",
-      href: "/operations",
-    });
-  }
-  if (staleProposed.length > 0) {
-    liveQueue.push({
-      id: "stale-proposed",
-      severity: "medium",
-      title: `${staleProposed.length} opportunit${staleProposed.length === 1 ? "y has" : "ies have"} aged >7 days in proposed`,
-      age: ">7d",
-      href: "/approvals",
-    });
-  }
-  if (staleCollectors.length > 0) {
-    liveQueue.push({
-      id: "stale-collectors",
-      severity: "medium",
-      title: `${staleCollectors.length} collector${staleCollectors.length === 1 ? "" : "s"} stale (no run in 24h)`,
-      age: "stale",
-      href: "/collectors",
-    });
-  }
   // Tone for the four headline status tiles
   const systemTone: TileTone =
     daysSinceLastCycle === null || daysSinceLastCycle >= 1
@@ -669,61 +624,128 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Row 2 — Hero outcome KPIs. Three big cards: realized $,
-          pipeline $, capture rate. Each shows value + target bar
-          where derivable, deep-links to its source page. */}
+      {/* Tier 1 — OUTCOMES HEADER. Three tiles: Realized Savings
+          (hero), Identified Pipeline, Gap to Goal. Replaces the
+          old BigKpi row; the separate Capture Rate tile is absorbed
+          into Gap to Goal. */}
+      <OutcomesHeader
+        realizedSavingsUsd={billingQ.data?.totalRealizedUsd ?? 0}
+        pipelineCount={
+          buckets.proposed.count +
+          buckets.approved.count +
+          buckets.executing.count
+        }
+        pipelineValue={activePipelineValue}
+        addressableSpendUsd={spendQ.data?.totalSpendUsd ?? 0}
+        activeSupplierCount={
+          spendQ.data?.concentration.activeSupplierCount ?? 0
+        }
+        captureRateDenominator={captureDenominator}
+        loading={billingQ.isLoading || oppsLoading}
+      />
+
+      {/* Tier 2a — Sourcing Plays In Flight. Active opportunities in
+          Awarded / In Contracting / In Implementation stages. */}
+      <SourcingPlaysInFlight
+        approvedItems={approvedItems}
+        executingItems={executingItems}
+        loading={oppsLoading}
+      />
+
+      {/* Tier 2b — Stage Gate Bottlenecks + Pipeline funnel side by side.
+          Bottlenecks table (replaces old Live Queue) on the left;
+          funnel snapshot on the right. */}
       <div
-        className="grid grid-cols-1 md:grid-cols-3 gap-4"
-        data-testid="dashboard-kpi-hero"
+        className="grid grid-cols-1 lg:grid-cols-12 gap-4"
+        data-testid="dashboard-queue-funnel-band"
       >
-        <BigKpi
-          label="Realized savings"
-          value={formatUsd(billingQ.data?.totalRealizedUsd ?? 0, { compact: true })}
-          progress={
-            captureDenominator > 0
-              ? (billingQ.data?.totalRealizedUsd ?? 0) / captureDenominator
-              : null
-          }
-          targetText={`of ${formatUsd(captureDenominator, { compact: true })} acted on`}
-          icon={TrendingUp}
-          href="/results"
-          testId="kpi-realized"
-          loading={billingQ.isLoading}
-        />
-        <BigKpi
-          label="Pipeline value"
-          value={formatUsd(activePipelineValue, { compact: true })}
-          progress={null}
-          targetText={`${
-            buckets.proposed.count + buckets.approved.count + buckets.executing.count
-          } open · ${formatUsd(spendQ.data?.totalSpendUsd ?? 0, { compact: true })} addressable`}
-          icon={Sparkles}
-          href="/opportunities"
-          testId="kpi-pipeline"
-          loading={oppsLoading}
-        />
-        <BigKpi
-          label="Capture rate"
-          value={formatPercent(captureRate)}
-          progress={captureRate}
-          targetText={`target 60% · ${formatUsd(buckets.realized.value, { compact: true })} captured`}
-          icon={Target}
-          href="/results"
-          testId="kpi-capture"
-          loading={billingQ.isLoading || oppsLoading}
-          tone={
-            captureRate >= 0.6
-              ? "ok"
-              : captureRate >= 0.3
-                ? "warn"
-                : "critical"
-          }
-        />
+        <div className="lg:col-span-7">
+          <StageGateBottlenecks />
+        </div>
+
+        <Card className="lg:col-span-5">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <BarChart3 className="w-4 h-4 text-blue-500" />
+              Pipeline
+            </CardTitle>
+            <CardDescription>
+              Every open opportunity by stage — click any bar to triage.
+              Hover a stage label for the S2P definition.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TooltipProvider delayDuration={300}>
+              <div className="space-y-2.5">
+                {pipelineStages.map((s) => (
+                  <Link
+                    key={s.key}
+                    href={s.key === "rejected" ? "/approvals" : "/approvals"}
+                    data-testid={`bar-pipeline-${s.key}`}
+                  >
+                    <div className="group cursor-pointer">
+                      <div className="flex items-baseline justify-between text-xs mb-1">
+                        <span className="flex items-center gap-2 font-medium">
+                          <StageDot tone={s.tone} />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="cursor-help underline decoration-dotted underline-offset-2 decoration-muted-foreground/40">
+                                {s.label}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              className="max-w-[240px] text-left"
+                              side="right"
+                            >
+                              <p className="font-semibold mb-0.5">
+                                {STAGE_GLOSSARY[s.key]?.title ?? s.label}
+                              </p>
+                              <p className="text-xs opacity-90">
+                                {STAGE_GLOSSARY[s.key]?.body ?? ""}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <span className="text-muted-foreground font-normal">
+                            {s.count}
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-1.5 tabular-nums text-muted-foreground group-hover:text-foreground">
+                          {formatUsd(s.value, { compact: true })}
+                          {s.savingsTypeTag && (
+                            <span className="text-[9px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-400">
+                              {s.savingsTypeTag}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-muted rounded overflow-hidden">
+                        <div
+                          className={`h-full rounded ${barClass(s.tone)}`}
+                          style={{
+                            width: `${(s.value / pipelineMaxValue) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </TooltipProvider>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Row 3 — Supporting KPI strip. Smaller engine-quality
-          metrics. We only render targets/direction we can compute
-          honestly from the data on hand. */}
+      {/* Tier 2c — Methods & Tools registry. Static reference table. */}
+      <MethodsAndTools />
+
+      {/* Tier 2d — DOA Approval Queue. Per-tier approval workload.
+          Data is fetched internally via the dedicated server-side
+          doa-summary endpoint so counts are never pagination-limited. */}
+      <DOAApprovalQueue />
+
+      {/* Supporting KPI strip — engine-quality metrics. Placed below
+          all Tier 2 components so the strategic S2P tier sequence
+          (Tier 1 → 2a → 2b → 2c → 2d) reads uninterrupted. */}
       <div
         className="grid grid-cols-2 md:grid-cols-4 gap-3"
         data-testid="dashboard-kpi-supporting"
@@ -792,105 +814,6 @@ export default function Dashboard() {
           testId="kpi-coverage"
           tone={staleCollectors.length > 0 ? "warn" : undefined}
         />
-      </div>
-
-      {/* Row 4 — Live queue + Pipeline funnel side by side. Queue on
-          the left is the ranked "do this next" list folded from
-          alerts, approvals, ops, and engine-setup signals. Funnel on
-          the right is the snapshot of every open opportunity. */}
-      <div
-        className="grid grid-cols-1 lg:grid-cols-12 gap-4"
-        data-testid="dashboard-queue-funnel-band"
-      >
-        <Card className="lg:col-span-7">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CircleDot className="w-4 h-4 text-amber-500" />
-              Live queue
-            </CardTitle>
-            <CardDescription>
-              Ranked decisions and fixes. Clearing these keeps the
-              numbers above moving.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {liveQueue.length === 0 ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                Queue is clear. Nothing waiting on you right now.
-              </div>
-            ) : (
-              <ul className="divide-y" data-testid="dashboard-live-queue">
-                {liveQueue.map((q) => (
-                  <li
-                    key={q.id}
-                    data-testid={`queue-row-${q.id}`}
-                    className="py-2.5"
-                  >
-                    <Link href={q.href}>
-                      <div className="group flex items-center gap-3 cursor-pointer">
-                        <SeverityChip severity={q.severity} />
-                        <span className="flex-1 text-sm text-foreground/90 truncate group-hover:text-foreground">
-                          {q.title}
-                        </span>
-                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                          {q.age}
-                        </span>
-                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover:text-foreground shrink-0" />
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-5">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <BarChart3 className="w-4 h-4 text-blue-500" />
-              Pipeline
-            </CardTitle>
-            <CardDescription>
-              Every open opportunity by stage — click any bar to triage.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2.5">
-              {pipelineStages.map((s) => (
-                <Link
-                  key={s.key}
-                  href={s.key === "rejected" ? "/approvals" : "/approvals"}
-                  data-testid={`bar-pipeline-${s.key}`}
-                >
-                  <div className="group cursor-pointer">
-                    <div className="flex items-baseline justify-between text-xs mb-1">
-                      <span className="flex items-center gap-2 font-medium">
-                        <StageDot tone={s.tone} />
-                        {s.label}
-                        <span className="text-muted-foreground font-normal">
-                          {s.count}
-                        </span>
-                      </span>
-                      <span className="tabular-nums text-muted-foreground group-hover:text-foreground">
-                        {formatUsd(s.value, { compact: true })}
-                      </span>
-                    </div>
-                    <div className="h-2 bg-muted rounded overflow-hidden">
-                      <div
-                        className={`h-full rounded ${barClass(s.tone)}`}
-                        style={{
-                          width: `${(s.value / pipelineMaxValue) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Row 5 — Telemetry + Cycle delta + Top lever. The bottom
@@ -1513,6 +1436,41 @@ function Telemetry({
   );
 }
 
+
+// ---------- Pipeline stage glossary (S2P mapping) ----------
+
+/**
+ * Glossary tooltips for pipeline stage labels.
+ *
+ * Keys match the internal `status` value (proposed/approved/executing/
+ * realized/rejected). The title is the S2P canonical stage name;
+ * the body gives the savings-type definition at that stage.
+ */
+const STAGE_GLOSSARY: Record<
+  string,
+  { title: string; body: string }
+> = {
+  proposed: {
+    title: "Identified Opportunity",
+    body: "Identified Opportunity — analytically surfaced, pre-supplier engagement. Savings type: Identified.",
+  },
+  approved: {
+    title: "Awarded",
+    body: "Awarded — supplier selected and terms agreed. Savings type: Negotiated.",
+  },
+  executing: {
+    title: "In Implementation",
+    body: "In Implementation — contract being signed and rolled out. Savings type: Implemented.",
+  },
+  realized: {
+    title: "Realized",
+    body: "Realized — Finance-validated against baseline. Savings type: Realized.",
+  },
+  rejected: {
+    title: "Closed — No Action",
+    body: "Closed — No Action. Evaluated and declined; reason code required.",
+  },
+};
 
 // ---------- Helpers ----------
 

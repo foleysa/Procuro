@@ -1194,6 +1194,50 @@ export interface PatchOpportunityClassificationRequest {
 }
 
 /**
+ * Pipeline metrics for one S2P stage gate.
+ */
+export interface GateSummaryItem {
+  /** S2P canonical stage: Identified | Awarded | In Contracting | In Implementation */
+  canonicalStage: string;
+  /** Number of open opportunities currently in this stage (server-aggregated). */
+  count: number;
+  /** Sum of projected_savings_usd for opportunities in this stage. */
+  valueUsd: number;
+  /** Average hours opportunities have spent in this stage. Null when no stage_entered_at data is available. */
+  avgHoursInStage?: number | null;
+  /** Count of opportunities exceeding the gate SLA for this stage. */
+  breachingCount: number;
+}
+
+/**
+ * Per-stage-gate pipeline summary.
+ */
+export interface GateSummaryResponse {
+  gates: GateSummaryItem[];
+}
+
+/**
+ * Queue metrics for one DOA tier.
+ */
+export interface DoaTierSummaryItem {
+  /** DOA tier number (1=Strategic, 2=Major, 3=Significant, 4=Standard). null means tier not yet assigned. */
+  doaTier: number | null;
+  /** Count of proposed+approved opportunities in this tier (server-side, not pagination-limited). */
+  inQueue: number;
+  /** Subset of inQueue whose DOA SLA has been exceeded in the Identified stage. */
+  breachingCount: number;
+  /** Sum of projected_savings_usd for the in-queue items. */
+  valueUsd: number;
+}
+
+/**
+ * Per-DOA-tier approval queue summary.
+ */
+export interface DoaSummaryResponse {
+  tiers: DoaTierSummaryItem[];
+}
+
+/**
  * Outcome of a bulk action. The server processes every requested
 id and bucketises each into exactly one of the four counts.
 `succeeded` rows changed state and wrote a `decisions` audit

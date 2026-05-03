@@ -2038,6 +2038,99 @@ export const BulkUnsnoozeOpportunitiesResponse = zod
   );
 
 /**
+ * Server-side aggregation of open opportunities grouped by canonical S2P stage (Identified, Awarded, In Contracting, In Implementation). Each row includes count, value at stake, average hours in stage, and SLA breach count. Computed across all matching rows — not limited by pagination.
+ * @summary Per-stage-gate pipeline summary
+ */
+export const GetOpportunitiesGateSummaryHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetOpportunitiesGateSummaryResponse = zod
+  .object({
+    gates: zod.array(
+      zod
+        .object({
+          canonicalStage: zod
+            .string()
+            .describe(
+              "S2P canonical stage: Identified | Awarded | In Contracting | In Implementation",
+            ),
+          count: zod
+            .number()
+            .describe(
+              "Number of open opportunities currently in this stage (server-aggregated).",
+            ),
+          valueUsd: zod
+            .number()
+            .describe(
+              "Sum of projected_savings_usd for opportunities in this stage.",
+            ),
+          avgHoursInStage: zod
+            .number()
+            .nullish()
+            .describe(
+              "Average hours opportunities have spent in this stage. Null when no stage_entered_at data is available.",
+            ),
+          breachingCount: zod
+            .number()
+            .describe(
+              "Count of opportunities exceeding the gate SLA for this stage.",
+            ),
+        })
+        .describe("Pipeline metrics for one S2P stage gate."),
+    ),
+  })
+  .describe("Per-stage-gate pipeline summary.");
+
+/**
+ * Server-side aggregation of the open approval queue (proposed + approved) grouped by DOA tier. Each row includes the count of items in queue, items breaching their DOA SLA, and total projected value. Breach is computed server-side across all rows (not limited by pagination) so the metric is authoritative.
+ * @summary DOA tier queue summary
+ */
+export const GetOpportunitiesDoaSummaryHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetOpportunitiesDoaSummaryResponse = zod
+  .object({
+    tiers: zod.array(
+      zod
+        .object({
+          doaTier: zod
+            .number()
+            .nullable()
+            .describe(
+              "DOA tier number (1=Strategic, 2=Major, 3=Significant, 4=Standard). null means tier not yet assigned.",
+            ),
+          inQueue: zod
+            .number()
+            .describe(
+              "Count of proposed+approved opportunities in this tier (server-side, not pagination-limited).",
+            ),
+          breachingCount: zod
+            .number()
+            .describe(
+              "Subset of inQueue whose DOA SLA has been exceeded in the Identified stage.",
+            ),
+          valueUsd: zod
+            .number()
+            .describe("Sum of projected_savings_usd for the in-queue items."),
+        })
+        .describe("Queue metrics for one DOA tier."),
+    ),
+  })
+  .describe("Per-DOA-tier approval queue summary.");
+
+/**
  * @summary Opportunity detail
  */
 export const GetOpportunityParams = zod.object({

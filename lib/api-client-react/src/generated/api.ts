@@ -94,6 +94,7 @@ import type {
   DefensePackListResponse,
   DefensePackOutcome,
   DefensePackSummaryStats,
+  DoaSummaryResponse,
   EngineAccessDenialList,
   ErpAdapterListResponse,
   ErpConnectionListResponse,
@@ -105,6 +106,7 @@ import type {
   ExportAdminAuditLogParams,
   FunnelBackfillRequest,
   FunnelBackfillStatus,
+  GateSummaryResponse,
   GetCollectorCost200,
   GetCollectorCostParams,
   GetCollectorCostTimeseries200,
@@ -2031,6 +2033,161 @@ export const useBulkUnsnoozeOpportunities = <
 > => {
   return useMutation(getBulkUnsnoozeOpportunitiesMutationOptions(options));
 };
+
+/**
+ * Server-side aggregation of open opportunities grouped by canonical S2P stage (Identified, Awarded, In Contracting, In Implementation). Each row includes count, value at stake, average hours in stage, and SLA breach count. Computed across all matching rows — not limited by pagination.
+ * @summary Per-stage-gate pipeline summary
+ */
+export const getGetOpportunitiesGateSummaryUrl = () => {
+  return `/api/opportunities/gate-summary`;
+};
+
+export const getOpportunitiesGateSummary = async (
+  options?: RequestInit,
+): Promise<GateSummaryResponse> => {
+  return customFetch<GateSummaryResponse>(getGetOpportunitiesGateSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpportunitiesGateSummaryQueryKey = () => {
+  return [`/api/opportunities/gate-summary`] as const;
+};
+
+export const getGetOpportunitiesGateSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpportunitiesGateSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesGateSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOpportunitiesGateSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpportunitiesGateSummary>>
+  > = ({ signal }) =>
+    getOpportunitiesGateSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesGateSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpportunitiesGateSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpportunitiesGateSummary>>
+>;
+export type GetOpportunitiesGateSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Per-stage-gate pipeline summary
+ */
+
+export function useGetOpportunitiesGateSummary<
+  TData = Awaited<ReturnType<typeof getOpportunitiesGateSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesGateSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpportunitiesGateSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Server-side aggregation of the open approval queue (proposed + approved) grouped by DOA tier. Each row includes the count of items in queue, items breaching their DOA SLA, and total projected value. Breach is computed server-side across all rows (not limited by pagination) so the metric is authoritative.
+ * @summary DOA tier queue summary
+ */
+export const getGetOpportunitiesDoaSummaryUrl = () => {
+  return `/api/opportunities/doa-summary`;
+};
+
+export const getOpportunitiesDoaSummary = async (
+  options?: RequestInit,
+): Promise<DoaSummaryResponse> => {
+  return customFetch<DoaSummaryResponse>(getGetOpportunitiesDoaSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpportunitiesDoaSummaryQueryKey = () => {
+  return [`/api/opportunities/doa-summary`] as const;
+};
+
+export const getGetOpportunitiesDoaSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOpportunitiesDoaSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>
+  > = ({ signal }) => getOpportunitiesDoaSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpportunitiesDoaSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>
+>;
+export type GetOpportunitiesDoaSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary DOA tier queue summary
+ */
+
+export function useGetOpportunitiesDoaSummary<
+  TData = Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpportunitiesDoaSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpportunitiesDoaSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Opportunity detail

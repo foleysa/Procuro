@@ -390,6 +390,138 @@ function decodeOppCursor(
   }
 }
 
+/**
+ * GET /opportunities/gate-summary
+ *
+ * Server-side per-gate pipeline metrics for the active tenant.
+ * Groups open opportunities by canonical_stage and computes
+ * authoritative count, value, avg cycle time, and SLA breach count
+ * — never limited by the 200-row pagination cap.
+ */
+router.get(
+  "/opportunities/gate-summary",
+  tenantMiddleware,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+
+    const rows = await db.execute(sql`
+      SELECT
+        canonical_stage,
+        COUNT(*)::int                                                    AS count,
+        COALESCE(SUM(projected_savings_usd::numeric), 0)::numeric       AS value_usd,
+        AVG(
+          CASE WHEN stage_entered_at IS NOT NULL
+            THEN EXTRACT(EPOCH FROM (now() - stage_entered_at)) / 3600
+          END
+        )::numeric                                                       AS avg_hours_in_stage,
+        COUNT(*) FILTER (
+          WHERE stage_entered_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (now() - stage_entered_at)) / 3600 >
+              CASE canonical_stage
+                WHEN 'Identified' THEN
+                  CASE doa_tier
+                    WHEN 1 THEN 24
+                    WHEN 2 THEN 48
+                    WHEN 3 THEN 72
+                    WHEN 4 THEN 168
+                    ELSE 72
+                  END
+                WHEN 'Awarded'           THEN 120
+                WHEN 'In Contracting'    THEN 168
+                WHEN 'In Implementation' THEN 720
+              END
+        )::int                                                           AS breaching_count
+      FROM opportunities
+      WHERE org_id = ${orgId}
+        AND status IN ('proposed', 'approved', 'executing')
+        AND canonical_stage IN (
+          'Identified', 'Awarded', 'In Contracting', 'In Implementation'
+        )
+        AND (snoozed_until IS NULL OR snoozed_until <= now())
+      GROUP BY canonical_stage
+    `);
+
+    const gates = (
+      rows.rows as Array<{
+        canonical_stage: string;
+        count: number;
+        value_usd: string;
+        avg_hours_in_stage: string | null;
+        breaching_count: number;
+      }>
+    ).map((r) => ({
+      canonicalStage: r.canonical_stage,
+      count: Number(r.count),
+      valueUsd: Number(r.value_usd),
+      avgHoursInStage:
+        r.avg_hours_in_stage != null ? Number(r.avg_hours_in_stage) : null,
+      breachingCount: Number(r.breaching_count),
+    }));
+
+    res.json({ gates });
+  },
+);
+
+/**
+ * GET /opportunities/doa-summary
+ *
+ * Returns per-DOA-tier queue metrics for the active tenant:
+ *   - inQueue:        opportunities in `proposed` or `approved` status
+ *   - breachingCount: subset whose DOA SLA has been exceeded in `Identified`
+ *   - valueUsd:       sum of projected_savings_usd for the queue
+ *
+ * Rows are grouped and breach-computed server-side so the result is
+ * authoritative regardless of client-side pagination limits.
+ */
+router.get(
+  "/opportunities/doa-summary",
+  tenantMiddleware,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+
+    const rows = await db.execute(sql`
+      SELECT
+        doa_tier,
+        COUNT(*)::int                                               AS in_queue,
+        COUNT(*) FILTER (
+          WHERE
+            canonical_stage = 'Identified'
+            AND stage_entered_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (now() - stage_entered_at)) / 3600 >
+              CASE doa_tier
+                WHEN 1 THEN 24
+                WHEN 2 THEN 48
+                WHEN 3 THEN 72
+                ELSE          168
+              END
+        )::int                                                      AS breaching_count,
+        COALESCE(SUM(projected_savings_usd::numeric), 0)::numeric  AS value_usd
+      FROM opportunities
+      WHERE org_id = ${orgId}
+        AND status IN ('proposed', 'approved')
+        AND (snoozed_until IS NULL OR snoozed_until <= now())
+      GROUP BY doa_tier
+      ORDER BY doa_tier NULLS LAST
+    `);
+
+    const tiers = (
+      rows.rows as Array<{
+        doa_tier: number | null;
+        in_queue: number;
+        breaching_count: number;
+        value_usd: string;
+      }>
+    ).map((r) => ({
+      doaTier: r.doa_tier,
+      inQueue: Number(r.in_queue),
+      breachingCount: Number(r.breaching_count),
+      valueUsd: Number(r.value_usd),
+    }));
+
+    res.json({ tiers });
+  },
+);
+
 router.get("/opportunities/:id", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const id = String(req.params.id);
