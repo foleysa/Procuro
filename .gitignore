@@ -38,6 +38,11 @@ node_modules
 npm-debug.log
 yarn-error.log
 testem.log
+
+# Playwright / a11y scan artifacts — generated on each run, not for VCS
+test-results/
+playwright-report/
+.playwright/
 /typings
 
 # System Files
