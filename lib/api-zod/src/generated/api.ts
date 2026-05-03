@@ -1612,6 +1612,12 @@ export const ListOpportunitiesResponse = zod.object({
         .describe(
           'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
         ),
+      expiryReason: zod
+        .enum(["ttl", "quiet_cycles"])
+        .nullish()
+        .describe(
+          "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
+        ),
       createdAt: zod.coerce.date(),
     }),
   ),
@@ -1960,6 +1966,12 @@ export const GetOpportunityResponse = zod
       .describe(
         'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
       ),
+    expiryReason: zod
+      .enum(["ttl", "quiet_cycles"])
+      .nullish()
+      .describe(
+        "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
+      ),
     createdAt: zod.coerce.date(),
   })
   .and(
@@ -2115,6 +2127,12 @@ export const ApproveOpportunityResponse = zod.object({
     .describe(
       'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
     ),
+  expiryReason: zod
+    .enum(["ttl", "quiet_cycles"])
+    .nullish()
+    .describe(
+      "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -2215,6 +2233,12 @@ export const RejectOpportunityResponse = zod.object({
     .describe(
       'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
     ),
+  expiryReason: zod
+    .enum(["ttl", "quiet_cycles"])
+    .nullish()
+    .describe(
+      "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
+    ),
   createdAt: zod.coerce.date(),
 });
 
@@ -2300,6 +2324,12 @@ export const ExecuteOpportunityResponse = zod.object({
     .nullish()
     .describe(
       'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+    ),
+  expiryReason: zod
+    .enum(["ttl", "quiet_cycles"])
+    .nullish()
+    .describe(
+      "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
 });
@@ -2391,6 +2421,12 @@ export const RealizeOpportunityResponse = zod.object({
     .nullish()
     .describe(
       'Last cycle timestamp at which the underlying signal\nwas still present. Refreshed on every cycle that touches the\nrow; used by the auto-expire job to flip rows to `expired`\nafter a quiet-cycle threshold has elapsed without the signal\nre-firing. Surfaced so the Approvals \"Expired\" view can show\nwhy a row aged out (TTL vs went-quiet) by comparing this to\n`createdAt`.\n',
+    ),
+  expiryReason: zod
+    .enum(["ttl", "quiet_cycles"])
+    .nullish()
+    .describe(
+      "Reason the auto-expire job flipped this row from\n`proposed` to `expired` (task #222). `ttl` means the absolute\n`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the\nunderlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`\nconsecutive cycles. NULL for any non-`expired` row and for\nlegacy expirations that pre-date the per-row attribution.\n",
     ),
   createdAt: zod.coerce.date(),
 });

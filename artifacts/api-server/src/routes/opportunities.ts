@@ -143,6 +143,7 @@ function mapOpportunity(row: {
     realizedAt: o.realizedAt,
     snoozedUntil: o.snoozedUntil,
     lastSeenAt: o.lastSeenAt,
+    expiryReason: o.expiryReason,
     createdAt: o.createdAt,
   };
 }

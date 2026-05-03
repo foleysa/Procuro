@@ -12,6 +12,7 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 import type { LeverId } from "./leverId";
+import type { OpportunityExpiryReason } from "./opportunityExpiryReason";
 import type { OpportunityStatus } from "./opportunityStatus";
 import type { RejectionReasonCode } from "./rejectionReasonCode";
 
@@ -56,5 +57,13 @@ why a row aged out (TTL vs went-quiet) by comparing this to
 `createdAt`.
  */
   lastSeenAt?: Date | null;
+  /** Reason the auto-expire job flipped this row from
+`proposed` to `expired` (task #222). `ttl` means the absolute
+`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the
+underlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`
+consecutive cycles. NULL for any non-`expired` row and for
+legacy expirations that pre-date the per-row attribution.
+ */
+  expiryReason?: OpportunityExpiryReason;
   createdAt: Date;
 }

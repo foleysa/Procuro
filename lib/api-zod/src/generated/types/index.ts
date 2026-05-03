@@ -353,6 +353,7 @@ export * from "./operationsHealth";
 export * from "./opportunity";
 export * from "./opportunityDetail";
 export * from "./opportunityDetailInputs";
+export * from "./opportunityExpiryReason";
 export * from "./opportunityListResponse";
 export * from "./opportunityStatus";
 export * from "./org";

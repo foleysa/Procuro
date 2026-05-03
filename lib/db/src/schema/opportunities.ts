@@ -234,6 +234,23 @@ export const opportunitiesTable = pgTable(
      * trail is preserved.
      */
     snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    /**
+     * Reason an opportunity was auto-expired by the
+     * `expire_stale_opportunities` job (task #222). Populated when the
+     * job flips a `proposed` row to `expired`:
+     *   - `ttl`           — the absolute `OPPORTUNITY_TTL_DAYS` cap fired
+     *   - `quiet_cycles`  — the underlying signal went quiet for
+     *                       `OPPORTUNITY_QUIET_CYCLES` cycles
+     *
+     * NULL for rows that reached `expired` by some other means (legacy
+     * pre-#222 expirations, or any future manual/import path) and for
+     * every non-`expired` row. The job's per-cause counts on the System
+     * / Jobs page are still derived from the per-statement RETURNING
+     * counts, so this column is purely the per-row complement that
+     * lets the Approvals "Expired" view tell operators WHY a single
+     * row aged out.
+     */
+    expiryReason: text("expiry_reason").$type<"ttl" | "quiet_cycles">(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

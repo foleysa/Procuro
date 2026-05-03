@@ -782,6 +782,19 @@ export function OppRow({
               Snoozed {formatSnoozeBadge(opp.snoozedUntil)}
             </Badge>
           )}
+          {opp.status === "expired" && opp.expiryReason && (
+            <Badge
+              variant="outline"
+              data-testid={`expiry-reason-${opp.id}`}
+              title={
+                opp.expiryReason === "ttl"
+                  ? "Aged out: hit the absolute TTL cap (default 30 days since creation)."
+                  : "Aged out: the underlying signal went quiet for the configured number of cycles."
+              }
+            >
+              {opp.expiryReason === "ttl" ? "TTL" : "Quiet cycles"}
+            </Badge>
+          )}
           <StatusBadge status={opp.status} />
           <div className="text-right tabular-nums">
             <div className="font-semibold">

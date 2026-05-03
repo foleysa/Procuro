@@ -6316,6 +6316,25 @@ components:
             `createdAt`.
 
             '
+        expiryReason:
+          type: string
+          enum:
+          - ttl
+          - quiet_cycles
+          nullable: true
+          description: 'Reason the auto-expire job flipped this row from
+
+            `proposed` to `expired` (task #222). `ttl` means the absolute
+
+            `OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the
+
+            underlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`
+
+            consecutive cycles. NULL for any non-`expired` row and for
+
+            legacy expirations that pre-date the per-row attribution.
+
+            '
         createdAt:
           type: string
           format: date-time

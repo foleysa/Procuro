@@ -205,15 +205,26 @@ async function seed(): Promise<void> {
   );
 }
 
-async function statusesById(): Promise<Map<string, string>> {
+interface RowSnapshot {
+  status: string;
+  expiryReason: "ttl" | "quiet_cycles" | null;
+}
+
+async function rowsById(): Promise<Map<string, RowSnapshot>> {
   const rows = await db
     .select({
       id: opportunitiesTable.id,
       status: opportunitiesTable.status,
+      expiryReason: opportunitiesTable.expiryReason,
     })
     .from(opportunitiesTable)
     .where(inArray(opportunitiesTable.id, ROW_IDS));
-  return new Map(rows.map((r) => [r.id, r.status]));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { status: r.status, expiryReason: r.expiryReason },
+    ]),
+  );
 }
 
 test("expireStaleOpportunities flips TTL-stale and quiet-cycle-stale rows; leaves the rest", async (t) => {
@@ -256,41 +267,66 @@ test("expireStaleOpportunities flips TTL-stale and quiet-cycle-stale rows; leave
   );
   assert.ok(result.orgsScanned >= 1);
 
-  const after = await statusesById();
+  const after = await rowsById();
   assert.equal(
-    after.get(`${RUN_TAG}-row-ttl-old`),
+    after.get(`${RUN_TAG}-row-ttl-old`)?.status,
     "expired",
     "60d-old proposed row must be TTL-expired",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-legacy-ttl`),
+    after.get(`${RUN_TAG}-row-ttl-old`)?.expiryReason,
+    "ttl",
+    "TTL-expired row must carry expiryReason='ttl' for the Approvals view",
+  );
+  assert.equal(
+    after.get(`${RUN_TAG}-row-legacy-ttl`)?.status,
     "expired",
     "90d-old legacy proposed row must be TTL-expired",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-quiet-stale`),
+    after.get(`${RUN_TAG}-row-legacy-ttl`)?.expiryReason,
+    "ttl",
+    "Legacy TTL-expired row must also carry expiryReason='ttl'",
+  );
+  assert.equal(
+    after.get(`${RUN_TAG}-row-quiet-stale`)?.status,
     "expired",
     "12d-stale proposed row must be quiet-cycles-expired",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-fresh-kept`),
+    after.get(`${RUN_TAG}-row-quiet-stale`)?.expiryReason,
+    "quiet_cycles",
+    "Quiet-cycles-expired row must carry expiryReason='quiet_cycles'",
+  );
+  assert.equal(
+    after.get(`${RUN_TAG}-row-fresh-kept`)?.status,
     "proposed",
     "fresh, recently-seen row must NOT be expired",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-legacy-fresh`),
+    after.get(`${RUN_TAG}-row-fresh-kept`)?.expiryReason,
+    null,
+    "non-expired row must NOT carry an expiryReason",
+  );
+  assert.equal(
+    after.get(`${RUN_TAG}-row-legacy-fresh`)?.status,
     "proposed",
     "legacy NULL-last_seen_at fresh row must NOT be expired (only TTL can touch legacy)",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-approved`),
+    after.get(`${RUN_TAG}-row-approved`)?.status,
     "approved",
     "approved row must NEVER be touched by the expiry job",
   );
   assert.equal(
-    after.get(`${RUN_TAG}-row-already-expired`),
+    after.get(`${RUN_TAG}-row-already-expired`)?.status,
     "expired",
     "already-expired row must remain expired (and not be re-counted)",
+  );
+  assert.equal(
+    after.get(`${RUN_TAG}-row-already-expired`)?.expiryReason,
+    null,
+    "pre-existing expired row must NOT be back-filled with an expiryReason — the column is populated by the sweep itself, not retroactively",
   );
 });
 

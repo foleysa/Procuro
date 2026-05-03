@@ -527,6 +527,7 @@ export async function runAnalysisCycle(args: {
           sourceTenantCategoryString: raw.source_tenant_category_string,
           reCategorizedAfterPersistence: raw.re_categorized_after_persistence,
           snoozedUntil: raw.snoozed_until as Date | null,
+          expiryReason: raw.expiry_reason as "ttl" | "quiet_cycles" | null,
           createdAt: raw.created_at,
         };
         if (raw.inserted) created.push(row);

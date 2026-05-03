@@ -2147,7 +2147,8 @@ export async function expireStaleOpportunities(
   // any cycle lookup.
   const ttlRes = await db.execute(sql`
     UPDATE opportunities
-    SET status = 'expired'
+    SET status = 'expired',
+        expiry_reason = 'ttl'
     WHERE status = 'proposed'
       AND created_at < ${ttlCutoff}
     RETURNING id
@@ -2168,7 +2169,8 @@ export async function expireStaleOpportunities(
     const offset = quietCycles - 1;
     const res = await db.execute(sql`
       UPDATE opportunities
-      SET status = 'expired'
+      SET status = 'expired',
+          expiry_reason = 'quiet_cycles'
       WHERE org_id = ${org.id}
         AND status = 'proposed'
         AND last_seen_at IS NOT NULL

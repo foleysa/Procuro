@@ -772,6 +772,24 @@ export const OpportunityStatus = {
   expired: "expired",
 } as const;
 
+/**
+ * Reason the auto-expire job flipped this row from
+`proposed` to `expired` (task #222). `ttl` means the absolute
+`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the
+underlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`
+consecutive cycles. NULL for any non-`expired` row and for
+legacy expirations that pre-date the per-row attribution.
+
+ */
+export type OpportunityExpiryReason =
+  | (typeof OpportunityExpiryReason)[keyof typeof OpportunityExpiryReason]
+  | null;
+
+export const OpportunityExpiryReason = {
+  ttl: "ttl",
+  quiet_cycles: "quiet_cycles",
+} as const;
+
 export interface Opportunity {
   id: string;
   orgId: string;
@@ -813,6 +831,14 @@ why a row aged out (TTL vs went-quiet) by comparing this to
 `createdAt`.
  */
   lastSeenAt?: string | null;
+  /** Reason the auto-expire job flipped this row from
+`proposed` to `expired` (task #222). `ttl` means the absolute
+`OPPORTUNITY_TTL_DAYS` cap fired; `quiet_cycles` means the
+underlying signal went quiet for `OPPORTUNITY_QUIET_CYCLES`
+consecutive cycles. NULL for any non-`expired` row and for
+legacy expirations that pre-date the per-row attribution.
+ */
+  expiryReason?: OpportunityExpiryReason;
   createdAt: string;
 }
 
