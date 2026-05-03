@@ -16,6 +16,7 @@ import {
   MAX_ATTEMPTS_LIMIT,
 } from "../lib/jobs/queue";
 import { redactJobPayload } from "../lib/jobs/redact-payload";
+import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -218,6 +219,19 @@ router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings
     "Updated per-tenant retry budget override",
   );
 
+  try {
+    await writeAdminAudit({
+      orgId,
+      actor: actor ?? "system@procuro.ai",
+      action: "jobs.retry_budget_update",
+      targetId: kind,
+      targetLabel: `retry budget for ${kind}`,
+      metadata: { kind, maxAttempts: n },
+    });
+  } catch (err) {
+    req.log.warn({ err }, "Failed to write admin audit row");
+  }
+
   const defaultMaxAttempts = MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
   res.json({
     kind,
@@ -252,6 +266,19 @@ router.delete("/jobs/settings/:kind", tenantMiddleware, requirePermission("setti
     { orgId, kind, actor: req.actorEmail ?? null },
     "Cleared per-tenant retry budget override",
   );
+
+  try {
+    await writeAdminAudit({
+      orgId,
+      actor: req.actorEmail ?? "system@procuro.ai",
+      action: "jobs.retry_budget_clear",
+      targetId: kind,
+      targetLabel: `retry budget for ${kind}`,
+      metadata: { kind },
+    });
+  } catch (err) {
+    req.log.warn({ err }, "Failed to write admin audit row");
+  }
 
   const defaultMaxAttempts = MAX_ATTEMPTS_BY_KIND[kind] ?? 3;
   res.json({

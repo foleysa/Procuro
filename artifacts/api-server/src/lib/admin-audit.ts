@@ -68,5 +68,31 @@ export const ADMIN_AUDIT_ACTIONS = [
   // Surfaced on the Org Admin page as a callout listing teammates
   // who keep hitting locked admin pages.
   "engine.access_denied",
+  // Opportunity decisions (task #272 — close the audit gap that left
+  // approve/reject/snooze invisible to external auditors). One audit
+  // row per action; bulk endpoints emit a single row covering the
+  // whole batch with the affected ids in metadata to keep the log
+  // tractable when an operator approves hundreds of rows in one click.
+  "opportunity.approve",
+  "opportunity.reject",
+  "opportunity.bulk_approve",
+  "opportunity.bulk_reject",
+  "opportunity.bulk_snooze",
+  "opportunity.bulk_unsnooze",
+  // Per-tenant retry-budget overrides (System / Jobs page). Both the
+  // upsert and the clear paths emit so an auditor can reconstruct who
+  // raised the budget for a particular kind and when it was reverted.
+  "jobs.retry_budget_update",
+  "jobs.retry_budget_clear",
+  // ERP integration lifecycle. Connect/disconnect are the
+  // compliance-relevant events ("you started/stopped sending data
+  // upstream"); update covers credential rotation and pause/resume.
+  "integration.connect",
+  "integration.update",
+  "integration.disconnect",
+  // Taxonomy synonym resolution from the Routing admin page. Operator
+  // mappings persist tenant-wide (or globally for platform admins) so
+  // every resolve event must land in the audit log.
+  "taxonomy.synonym_resolve",
 ] as const;
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

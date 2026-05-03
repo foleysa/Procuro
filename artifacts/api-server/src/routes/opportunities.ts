@@ -18,6 +18,7 @@ import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission, resolveRbacContext, roleHasPermission } from "../lib/rbac";
 import { newId } from "../lib/ids";
 import { extractSourcesFromInputs } from "../lib/insight-sources";
+import { writeAdminAudit, type AdminAuditAction } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -531,6 +532,69 @@ async function callerHasOppApprove(req: Request): Promise<boolean> {
 }
 
 /**
+ * Append a single admin-audit row summarising a bulk opportunity
+ * action. We deliberately emit ONE row per batch (with the affected
+ * ids in metadata) instead of one row per opportunity — operators
+ * routinely approve hundreds of rows in a single click and a 1:N
+ * fan-out would drown the audit log without telling auditors anything
+ * the per-batch row does not. Failures here are logged and swallowed
+ * so a downstream audit-log issue can never hold up the actual
+ * state-changing transaction the operator triggered.
+ */
+async function recordBulkOpportunityAudit(
+  req: Request,
+  args: {
+    orgId: string;
+    action: AdminAuditAction;
+    succeededIds: string[];
+    requested: number;
+    extra?: Record<string, unknown>;
+  },
+): Promise<void> {
+  if (args.succeededIds.length === 0) return;
+  try {
+    await writeAdminAudit({
+      orgId: args.orgId,
+      actor: actorOf(req),
+      action: args.action,
+      targetId: args.succeededIds[0] ?? null,
+      targetLabel: `${args.succeededIds.length} opportunit${args.succeededIds.length === 1 ? "y" : "ies"}`,
+      metadata: {
+        succeededIds: args.succeededIds,
+        requested: args.requested,
+        ...(args.extra ?? {}),
+      },
+    });
+  } catch (err) {
+    req.log.warn({ err, action: args.action }, "Failed to write admin audit row");
+  }
+}
+
+async function recordSingleOpportunityAudit(
+  req: Request,
+  args: {
+    orgId: string;
+    action: AdminAuditAction;
+    opportunityId: string;
+    label: string;
+    extra?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await writeAdminAudit({
+      orgId: args.orgId,
+      actor: actorOf(req),
+      action: args.action,
+      targetId: args.opportunityId,
+      targetLabel: args.label,
+      metadata: args.extra ?? {},
+    });
+  } catch (err) {
+    req.log.warn({ err, action: args.action }, "Failed to write admin audit row");
+  }
+}
+
+/**
  * Bucketise the requested ids. Anything not present in the loaded set
  * is `skippedNoPermission` (cross-tenant or non-existent — both look
  * the same to the caller, which prevents tenant-id enumeration).
@@ -615,6 +679,12 @@ router.post(
         succeededIds = [];
       }
     }
+    await recordBulkOpportunityAudit(req, {
+      orgId,
+      action: "opportunity.bulk_approve",
+      succeededIds,
+      requested: ids.length,
+    });
     const result: BulkOpportunityActionResult = {
       requested: ids.length,
       succeeded: succeededIds.length,
@@ -681,6 +751,13 @@ router.post(
         succeededIds = [];
       }
     }
+    await recordBulkOpportunityAudit(req, {
+      orgId,
+      action: "opportunity.bulk_reject",
+      succeededIds,
+      requested: ids.length,
+      extra: { reasonCode, reasonText },
+    });
     const result: BulkOpportunityActionResult = {
       requested: ids.length,
       succeeded: succeededIds.length,
@@ -743,6 +820,13 @@ router.post(
         succeededIds = [];
       }
     }
+    await recordBulkOpportunityAudit(req, {
+      orgId,
+      action: "opportunity.bulk_snooze",
+      succeededIds,
+      requested: ids.length,
+      extra: { snoozedUntil: snoozedUntil.toISOString() },
+    });
     const result: BulkOpportunityActionResult = {
       requested: ids.length,
       succeeded: succeededIds.length,
@@ -803,6 +887,12 @@ router.post(
         succeededIds = [];
       }
     }
+    await recordBulkOpportunityAudit(req, {
+      orgId,
+      action: "opportunity.bulk_unsnooze",
+      succeededIds,
+      requested: ids.length,
+    });
     const result: BulkOpportunityActionResult = {
       requested: ids.length,
       succeeded: succeededIds.length,
@@ -842,6 +932,12 @@ router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("o
     actor: req.actorEmail ?? "system@procuro.ai",
   });
   await updateCycleAggregates(orgId, opp.cycleId);
+  await recordSingleOpportunityAudit(req, {
+    orgId,
+    action: "opportunity.approve",
+    opportunityId: opp.id,
+    label: opp.title,
+  });
   const [updated] = await db
     .select()
     .from(opportunitiesTable)
@@ -888,6 +984,13 @@ router.post("/opportunities/:id/reject", tenantMiddleware, requirePermission("op
     rejectedReasonNote: reasonText,
   });
   await updateCycleAggregates(orgId, opp.cycleId);
+  await recordSingleOpportunityAudit(req, {
+    orgId,
+    action: "opportunity.reject",
+    opportunityId: opp.id,
+    label: opp.title,
+    extra: { reasonCode, reasonText },
+  });
   const [updated] = await db
     .select()
     .from(opportunitiesTable)

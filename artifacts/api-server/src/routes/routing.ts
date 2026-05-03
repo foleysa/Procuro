@@ -23,6 +23,7 @@ import {
   checkRoutingHealth,
   suggestCategoryMappings,
 } from "../lib/intelligence/routing";
+import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -126,6 +127,25 @@ router.post(
           error: "synonym_collision",
           existing: result.existing,
         });
+      }
+      try {
+        await writeAdminAudit({
+          orgId,
+          actor: actingUserId,
+          action: "taxonomy.synonym_resolve",
+          targetId: result.registryId,
+          targetLabel: parsed.data.canonicalCode,
+          metadata: {
+            queueId,
+            canonicalCode: parsed.data.canonicalCode,
+            scope: parsed.data.scope,
+            decision: result.collisionDecision ?? null,
+            reCategorizedOpportunityCount:
+              result.reCategorizedOpportunityCount,
+          },
+        });
+      } catch (auditErr) {
+        req.log.warn({ err: auditErr }, "Failed to write admin audit row");
       }
       return res.json({
         ok: true,

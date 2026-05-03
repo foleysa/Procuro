@@ -21,6 +21,7 @@ import {
   listErpConnectors,
 } from "../lib/connectors/erp-connector";
 import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -250,6 +251,18 @@ router.post(
           nextScheduledSyncAt: nextSyncAtFromNow(interval),
         })
         .returning();
+      try {
+        await writeAdminAudit({
+          orgId,
+          actor: req.actorEmail ?? "system@procuro.ai",
+          action: "integration.connect",
+          targetId: id,
+          targetLabel: label,
+          metadata: { adapterKey, syncIntervalMinutes: interval },
+        });
+      } catch (auditErr) {
+        req.log.warn({ err: auditErr }, "Failed to write admin audit row");
+      }
       res.status(201).json({ connection: toView(row!) });
     } catch (err) {
       const code = (err as { code?: string }).code;
@@ -377,6 +390,23 @@ router.patch(
         ),
       )
       .returning();
+    try {
+      await writeAdminAudit({
+        orgId,
+        actor: req.actorEmail ?? "system@procuro.ai",
+        action: "integration.update",
+        targetId: id,
+        targetLabel: row?.label ?? existing.label,
+        metadata: {
+          adapterKey: existing.adapterKey,
+          changedKeys: Object.keys(parsed.data),
+          credentialsRotated: parsed.data.credentials !== undefined,
+          status: row?.status ?? existing.status,
+        },
+      });
+    } catch (auditErr) {
+      req.log.warn({ err: auditErr }, "Failed to write admin audit row");
+    }
     res.json({ connection: toView(row!) });
   },
 );
@@ -390,6 +420,20 @@ router.delete(
   async (req, res) => {
     const orgId = requireOrgId(req);
     const id = String(req.params["id"] ?? "");
+    // Read the row before deleting so the audit row can carry the
+    // human-friendly label / adapter key the operator just removed.
+    const [existing] = await db
+      .select({
+        label: erpConnectionsTable.label,
+        adapterKey: erpConnectionsTable.adapterKey,
+      })
+      .from(erpConnectionsTable)
+      .where(
+        and(
+          eq(erpConnectionsTable.orgId, orgId),
+          eq(erpConnectionsTable.id, id),
+        ),
+      );
     const result = await db
       .delete(erpConnectionsTable)
       .where(
@@ -402,6 +446,18 @@ router.delete(
     if (result.length === 0) {
       res.status(404).json({ error: "Connection not found" });
       return;
+    }
+    try {
+      await writeAdminAudit({
+        orgId,
+        actor: req.actorEmail ?? "system@procuro.ai",
+        action: "integration.disconnect",
+        targetId: id,
+        targetLabel: existing?.label ?? id,
+        metadata: { adapterKey: existing?.adapterKey ?? null },
+      });
+    } catch (auditErr) {
+      req.log.warn({ err: auditErr }, "Failed to write admin audit row");
     }
     res.status(204).end();
   },

@@ -13,6 +13,7 @@ import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { readRenewalAlertDays } from "../lib/contract-settings";
 import { getOrCreateUserByEmail } from "../lib/users";
 import { newId } from "../lib/ids";
+import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
 
@@ -178,6 +179,29 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
       },
       "me.settings.patch",
     );
+    // Mirror the per-key change set into the cross-cutting admin audit
+    // log so the auditor view in the Org Admin UI surfaces the
+    // disclosure-policy switch alongside SSO / SCIM / API-key events
+    // (task #272). The detailed per-field history continues to live in
+    // org_settings_audit_log; this is a single summary row.
+    try {
+      await writeAdminAudit({
+        orgId,
+        actor,
+        action: "tenant.settings_update",
+        targetId: orgId,
+        targetLabel: updated.name,
+        metadata: {
+          changes: changes.map((c) => ({
+            key: c.key,
+            oldValue: c.oldValue,
+            newValue: c.newValue,
+          })),
+        },
+      });
+    } catch (err) {
+      req.log.warn({ err }, "Failed to write admin audit row");
+    }
   }
 
   const user = await getOrCreateUserByEmail(orgId, actor);
