@@ -1,0 +1,41 @@
+# Step 4d (re-run after seeding Tenant B) — cross-tenant isolation
+## A. Tenant B endpoint with Tenant A header
+HTTP/1.1 404 Not Found
+Access-Control-Allow-Origin: *
+Content-Length: 33
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:51:27 GMT
+Etag: W/"21-Fi56k6Tr6xt9lBSr+OrnbM5GoXo"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"error":"Opportunity not found"}
+## B. Tenant B endpoint with Tenant B header (sanity)
+HTTP/1.1 404 Not Found
+Access-Control-Allow-Origin: *
+Content-Length: 33
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:51:27 GMT
+Etag: W/"21-Fi56k6Tr6xt9lBSr+OrnbM5GoXo"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"error":"Opportunity not found"}
+## C. Tenant A list with Tenant B header — should NOT see Tenant A opps
+{"items":[{"id":"opp_2e47534657c645ca9e","orgId":"org_scis_proc","cycleId":"cyc_3dbdda083b7e4decaa","leverId":"supplier_consolidation","tier":2,"status":"approved","title":"Consolidate 357 MRO Industrial suppliers","rationale":"MRO Industrial indirect spend of $83836024 is fragmented across 357 active suppliers. Consolidating to the top 2 typically captures 5–8% via volume leverage.","recommendedAction":"Run a sourcing event on MRO Industrial; award to the top 2 suppliers with a primary/secondary split.","supplierId":null,"supplierName":null,"categoryId":"cat_70ee0f766cef482998","categoryName":"MRO Industrial","rawProjectedSavingsUsd":5030161.44,"projectedSavingsUsd":5030161.44,"confidence":0.5,"realizedSavingsUsd":0,"rejectedReasonCode":null,"rejectedReasonText":null,"realizedAt":null,"snoozedUntil":null,"lastSeenAt":null,"expiryReason":null,"createdAt":"2026-05-01T00:16:05.426Z"},{"id":"opp_303e2cd6395842ffaa","orgId":"org_scis_proc","cycleId":"cyc_e3d50089396d4d47b1","leverId":"supplier_consolidation","tier":2,"status":"proposed","title":"Consolidate 357 MRO Industrial suppliers","rationale":"MRO Industrial indirect spend of $83836024 is fragmented across 357 active suppliers. Consolidating to the top 2 typically captures 5–8% via volume leverage.","recommendedAction":"Run a sourcing event on MRO Industrial; award to the top 2 suppliers with a primary/secondary split.","supplierId":null,"supplierName":null,"categoryId":"cat_70ee0f766cef482998","categoryName":"MRO Indus
+## D. Tenant A list with Tenant A header (baseline)
+{"items":[{"id":"opp_2e47534657c645ca9e","orgId":"org_scis_proc","cycleId":"cyc_3dbdda083b7e4decaa","leverId":"supplier_consolidation","tier":2,"status":"approved","title":"Consolidate 357 MRO Industrial suppliers","rationale":"MRO Industrial indirect spend of $83836024 is fragmented across 357 active suppliers. Consolidating to the top 2 typically captures 5–8% via volume leverage.","recommendedAction":"Run a sourcing event on MRO Industrial; award to the top 2 suppliers with a primary/secondary split.","supplierId":null,"supplierName":null,"categoryId":"cat_70ee0f766cef482998","categoryName":"MRO Industrial","rawProjectedSavingsUsd":5030161.44,"projectedSavingsUsd":5030161.44,"confidence":0.5,"realizedSavingsUsd":0,"rejectedReasonCode":null,"rejectedReasonText":null,"realizedAt":null,"snoozedUntil":null,"lastSeenAt":null,"expiryReason":null,"createdAt":"2026-05-01T00:16:05.426Z"},{"id":"opp_303e2cd6395842ffaa","orgId":"org_scis_proc","cycleId":"cyc_e3d50089396d4d47b1","leverId":"supplier_consolidation","tier":2,"status":"proposed","title":"Consolidate 357 MRO Industrial suppliers","rationale":"MRO Industrial indirect spend of $83836024 is fragmented across 357 active suppliers. Consolidating to the top 2 typically captures 5–8% via volume leverage.","recommendedAction":"Run a sourcing event on MRO Industrial; award to the top 2 suppliers with a primary/secondary split.","supplierId":null,"supplierName":null,"categoryId":"cat_70ee0f766cef482998","categoryName":"MRO Indus
+## E. /api/admin/whoami with bogus tenant header (D-15 confirmation)
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 124
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:51:28 GMT
+Etag: W/"7c-OYHvFgYS63iXlYh0iXPdrpuyDAc"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"orgId":"org_scis_proc","email":"system@procuro.ai","roles":["platform_admin"],"viaApiKey":false,"authMode":"dev-fallback"}

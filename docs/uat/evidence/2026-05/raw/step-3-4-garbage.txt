@@ -1,0 +1,10 @@
+# Step 3.4 — garbage body
+HTTP/1.1 500 Internal Server Error
+Access-Control-Allow-Origin: *
+Content-Length: 47
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"2f-SLKSb7V8tRct2BuWCTkGw9hCy7A"
+X-Powered-By: Express
+
+{"error":"Internal server error during import"}

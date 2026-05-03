@@ -1,0 +1,12 @@
+# Step 4d — cross-tenant tamper
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 124
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"7c-OYHvFgYS63iXlYh0iXPdrpuyDAc"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"orgId":"org_scis_proc","email":"system@procuro.ai","roles":["platform_admin"],"viaApiKey":false,"authMode":"dev-fallback"}

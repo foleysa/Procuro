@@ -1,0 +1,12 @@
+# Step 4f.1 — CSV/Formula injection
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 130
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"82-gL4CdtYlbsmESOJOEG938wxY/vo"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"recordsProcessed":1,"recordsCreated":1,"recordsUpdated":0,"recordsDeleted":0,"cursor":"2026-05-03T04:40:01.550Z","durationMs":6}

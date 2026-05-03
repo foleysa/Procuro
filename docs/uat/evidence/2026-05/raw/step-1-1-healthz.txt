@@ -1,0 +1,12 @@
+# Step 1.1 — health
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 54
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:00 GMT
+Etag: W/"36-7lRXaKx+hTJ+qp2/a07827LxCKs"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"status":"ok","timestamp":"2026-05-03T04:40:00.984Z"}

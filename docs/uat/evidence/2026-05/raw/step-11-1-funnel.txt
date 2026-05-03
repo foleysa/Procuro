@@ -1,0 +1,12 @@
+# Step 11.1 — funnel snapshots
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 1026
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"402-JF931w1+nGskKqbgaQY9xC1lGT8"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"snapshots":[{"id":"fnl_aaf39364dbf74da394","cycleId":"cyc_953223248c604cf1bc","cycleGeneration":67,"totalDraftsProduced":147,"totalDraftsPostExclusion":147,"totalOppsPersisted":0,"totalProjectedUsd":"0.00","captureDurationMs":4,"hasAutoAnnotation":0,"source":"live","createdAt":"2026-05-02T21:10:38.856Z"},{"id":"fnl_b6c9cf5aec04447087","cycleId":"cyc_1bfd6a77d8894a7d9b","cycleGeneration":66,"totalDraftsProduced":147,"totalDraftsPostExclusion":147,"totalOppsPersisted":0,"totalProjectedUsd":"0.00","captureDurationMs":11,"hasAutoAnnotation":0,"source":"live","createdAt":"2026-05-02T20:52:21.018Z"},{"id":"fnl_9dc91e287eca4d3c94","cycleId":"cyc_351668661c64442f8e","cycleGeneration":65,"totalDraftsProduced":147,"totalDraftsPostExclusion":147,"totalOppsPersisted":0,"totalProjectedUsd":"0.00","captureDurationMs":5,"hasAutoAnnotation":0,"source":"live","createdAt":"2026-05-02T20:52:02.978Z"}],"warmupComplete":true,"totalSnapshotCount":27,"retention":{"snapshotsOlderThanMs":31536000000,"failuresOlderThanMs":7776000000}}

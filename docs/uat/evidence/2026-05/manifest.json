@@ -1,0 +1,144 @@
+{
+  "captured_at": "2026-05-03T04:55:00Z",
+  "tester": "Replit Agent (task-268, second pass after code-review rejection)",
+  "raw": [
+    {
+      "file": "step-1-1-healthz.txt",
+      "sha256": "3fdc42113da8abbb2bd1c084c86fb0be64aa6d88b936ba166430ae8a1685a576",
+      "bytes": 371
+    },
+    {
+      "file": "step-11-1-funnel.txt",
+      "sha256": "b86c4f666e774900f64db5414c5c1778c42cb43ac08e5193b1b7a24226491321",
+      "bytes": 1357
+    },
+    {
+      "file": "step-13-cleanup-recheck.txt",
+      "sha256": "0fe889fd13755ea8396c74539a59fe6cf178be4fc39909f77b242a46abdfd984",
+      "bytes": 4189
+    },
+    {
+      "file": "step-13-d-recheck.txt",
+      "sha256": "5ab8b231beef8d922523b5815b0f43e7bacd5fc26244a41baa01ad3f4f22b4a6",
+      "bytes": 1150
+    },
+    {
+      "file": "step-2-2-onboarding.txt",
+      "sha256": "4c121d92ff149b5ed95fa8dd01494eb975e7bf58bfb5e6006b87e95ed4591e7d",
+      "bytes": 525
+    },
+    {
+      "file": "step-3-3-missing-extid.txt",
+      "sha256": "8becc3e7e8752cf966a2b31f9af449a755c0e31a31e4cca6531203e9a9544087",
+      "bytes": 461
+    },
+    {
+      "file": "step-3-4-garbage.txt",
+      "sha256": "d9cb41278c2e5da76d87da802d064235d127309927f03aaa9918a6ef910adabb",
+      "bytes": 314
+    },
+    {
+      "file": "step-4a-audit-immut.txt",
+      "sha256": "45701fea2bad238bcb6a5ccd250ba7884b720750df693bae6f09fcb2d4155961",
+      "bytes": 1096
+    },
+    {
+      "file": "step-4d-cross-tenant.txt",
+      "sha256": "4e43ebfd65afac09e6f456034a26f3a7ee081a2a5788e908ef3dc5d476db3e1a",
+      "bytes": 454
+    },
+    {
+      "file": "step-4d-rerun-tenantB.txt",
+      "sha256": "9fc9d241f0dd30615b071268c8eb9aa7c127cb28f00c3637f8019786c0ea7db2",
+      "bytes": 4457
+    },
+    {
+      "file": "step-4f-1-csv-inj.txt",
+      "sha256": "48fbeccce0f5a582173903bccce54e3d91e9d399cfd807a7e0b6459e1e64d724",
+      "bytes": 464
+    },
+    {
+      "file": "step-4f-2-xss.txt",
+      "sha256": "6817e62cc965d74f9abb6f952e9adafb10b5da368c807c92c861abae78a5effd",
+      "bytes": 455
+    },
+    {
+      "file": "step-4f-4-sqli.txt",
+      "sha256": "2c512a3e4e0cd88c418990112c798108d741ab8fcbdd0f862444a9b92ddc376f",
+      "bytes": 13497
+    },
+    {
+      "file": "step-4f-5-csrf.txt",
+      "sha256": "9c7b053376de29bbe56721d3ec85ee91f225a9b11631cc772b5fb3680a17d6e0",
+      "bytes": 516
+    },
+    {
+      "file": "step-4f-8-double-approve.txt",
+      "sha256": "bb3bf7c3349867bbce5ce1a3f295f235921e9f73196399c94ea37e59dfc9fee0",
+      "bytes": 732
+    },
+    {
+      "file": "step-4i-rerun-tenantC.txt",
+      "sha256": "66e8017e8faa09606c43b417f5194ce3537d6767b72b038ec9d2a1ae2ef1d5bd",
+      "bytes": 443
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "step-10-1-operations.jpeg",
+      "sha256": "0550d56c8cf88785f4bfd8d58ee703081cc3a382a6d392ffb4bf24a60f118039",
+      "bytes": 49794
+    },
+    {
+      "file": "step-10-2-system.jpeg",
+      "sha256": "2e60aaa3338558a25077e5bbc02f9f91edd4a29d941e7dbcfa8c561f90fb067c",
+      "bytes": 87909
+    },
+    {
+      "file": "step-11-1-engine.jpeg",
+      "sha256": "90bfadaada3f5787c7ebbcd8f00291e0560242244b156ea1a24628cc77042610",
+      "bytes": 97664
+    },
+    {
+      "file": "step-2-1-onboarding.jpeg",
+      "sha256": "1bbfaae9ce4496bc705670e7696d858115d243b59fc36f1f4e3b277a867d721d",
+      "bytes": 80057
+    },
+    {
+      "file": "step-3-1-ingest.jpeg",
+      "sha256": "462963cf8d9d05d390f5f577a72a5d4bd93b7751d02639357fd2f0738088a1fe",
+      "bytes": 86241
+    },
+    {
+      "file": "step-5-1-today.jpeg",
+      "sha256": "968c9bc8e9453e58b1058e69258a4074edc0cc504f8ddee0e51c791bf0e26ed5",
+      "bytes": 74290
+    },
+    {
+      "file": "step-6-1-opportunities.jpeg",
+      "sha256": "ef8deaf135f8f7528fe160ebd2670d920001a34b74b188bd5d8448001c98fdba",
+      "bytes": 86812
+    },
+    {
+      "file": "step-7-1-fusion.jpeg",
+      "sha256": "905da393fb48c4112b477ea9457ae7cb337f1a7d91fbdff2fc66b06727e6cf68",
+      "bytes": 86639
+    },
+    {
+      "file": "step-7-3-collectors.jpeg",
+      "sha256": "be646a74a387eec5b3b234316458a1257ae85a630d2f25a9a5d32581ec4a9aa4",
+      "bytes": 92129
+    },
+    {
+      "file": "step-8-2-trust-public.jpeg",
+      "sha256": "751b3fd56c468b9877258ac139516dff36a0a6a79d1bc69989f8f12b61323ad1",
+      "bytes": 66939
+    },
+    {
+      "file": "step-9-1-admin.jpeg",
+      "sha256": "f88718e2b5d24e4abce4655cd8b41863a4f082713f8dc21c71243b0eb1f74231",
+      "bytes": 68365
+    }
+  ],
+  "console_logs_dir": "docs/uat/evidence/2026-05/console/"
+}

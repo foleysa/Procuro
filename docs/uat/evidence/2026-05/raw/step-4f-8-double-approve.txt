@@ -1,0 +1,23 @@
+# Step 4f.8 — double-approve
+HTTP/1.1 409 Conflict
+Access-Control-Allow-Origin: *
+Content-Length: 49
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"31-ui8/2pP8yIr30raMO5b5iaXhX7Q"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"error":"Cannot approve from status 'approved'"}
+HTTP/1.1 409 Conflict
+Access-Control-Allow-Origin: *
+Content-Length: 49
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"31-ui8/2pP8yIr30raMO5b5iaXhX7Q"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"error":"Cannot approve from status 'approved'"}

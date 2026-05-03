@@ -1,0 +1,12 @@
+# Step 3.3 — missing externalId
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Content-Length: 131
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+Etag: W/"83-YNLxn0D+i+2fU0TdJv/58ORjxyo"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"recordsProcessed":1,"recordsCreated":1,"recordsUpdated":0,"recordsDeleted":0,"cursor":"2026-05-03T04:40:01.123Z","durationMs":50}

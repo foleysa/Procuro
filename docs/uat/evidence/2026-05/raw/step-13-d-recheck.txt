@@ -1,0 +1,14 @@
+# Step 13.D (twice-verified exit, second-session correlation id)
+## /operations summary
+{"items":[{"kind":"collectors.summary","source":"listCollectors","payload":{"total":75,"approved":15,"killed":0},"occurredAt":"2026-05-03T04:51:28.116Z","severity":"info"},{"kind":"jobs.summary","source":"listJobs","payload":{"byStatus":{"pending":0,"running":2,"succeeded":1788,"failed":0,"cancelled":0},"windowHours":24},"occurredAt":"2026-05-03T04:51:28.116Z","severity":"info"},{"kind":"data_sources.summary","source":"listDataSources","payload":{"byAdapter":{},"unhealthy":0},"occurredAt":"2026-05-03T04:51:28.116Z","severity":"info"},{"kind":"integrations.summary","source":"listIntegrations","payload":{"configured":0},"occurredAt":"2026-05-03T04:51:28.116Z","severity":"info"},{"kind":"funnel.failures","source":"funnelSnapshotFailures","payload":{"unacked":0,"byClass":{},"windowHours":24},"occurredAt":"2026-05-03T04:51:28.116Z","severity":"info"}],"partial":false,"errors":[]}
+## /api/system/jobs
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot GET /api/system/jobs</pre>
+</body>
+</html>

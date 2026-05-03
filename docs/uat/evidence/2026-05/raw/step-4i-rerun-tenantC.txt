@@ -1,0 +1,13 @@
+# Step 4i (re-run after seeding Tenant C) — v(n-1) snapshot deep-equal
+## v(n-1) opp from snapshot tenant
+HTTP/1.1 404 Not Found
+Access-Control-Allow-Origin: *
+Content-Length: 33
+Content-Type: application/json; charset=utf-8
+Date: Sun, 03 May 2026 04:51:28 GMT
+Etag: W/"21-Fi56k6Tr6xt9lBSr+OrnbM5GoXo"
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Powered-By: Express
+
+{"error":"Opportunity not found"}

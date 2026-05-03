@@ -1,0 +1,61 @@
+{
+  "captured_at_utc": "2026-05-03T04:35:40Z",
+  "build": {
+    "git_head_sha": "579c196a27bfaec72e4e8d37cadf9d8b3cfc4379",
+    "git_head_committed_at": "2026-05-03T04:33:13Z",
+    "branch": "task-268",
+    "image_digest": "n/a (dev container, no immutable image)",
+    "node_version": "v24.13.0"
+  },
+  "schema": {
+    "head_migration": "n/a (drizzle push-based dev DB; no migration ledger surfaced)",
+    "tables_present_sample": ["opportunities", "suppliers", "contracts", "audit_log", "funnel_snapshots", "cycles"]
+  },
+  "feature_flags": {
+    "source_of_truth": "no /api/admin/feature-flags endpoint exists (HTTP 404)",
+    "uat_flags_observed": {
+      "ALLOW_DEV_TENANT_HEADER": "true (dev-fallback auth honors x-dev-tenant)",
+      "CLERK_PROXY_PATH": "configured",
+      "ENV": "development"
+    },
+    "diff_vs_pilot_documented_flags": "UNKNOWN — pilot flag set is not documented anywhere in repo. Treat as Blocker per Step 3 of the v2 spec (see report §5 D-18)."
+  },
+  "seed": {
+    "script": "scripts/src/seed.ts",
+    "sha256": "9085254bf99085b39cb310dac460eb459c6da890188b9228c7bb39ee1225d515",
+    "applied": true,
+    "tenant_a": {
+      "org_id": "org_scis_proc",
+      "suppliers": 50,
+      "contracts": 50,
+      "opportunities": 100,
+      "cycles": 70,
+      "alerts_open": 15,
+      "scale_alignment": "UNKNOWN — no design-partner intake survey on file; per v2 spec Step 3, this is a Risk-Accepted finding (Q14)."
+    },
+    "tenant_b": {
+      "org_id": "n/a",
+      "status": "NOT SEEDED — Tenant B with `opp-B-001` does not exist; cross-tenant isolation step (4d) cannot be executed as specified. Documented as Blocked-Test-data → counts as Fail per the go/no-go rule."
+    },
+    "tenant_c": {
+      "org_id": "n/a",
+      "status": "NOT SEEDED — no v(n-1) snapshot artifact exists in the repo; migration test (4i) cannot be executed. Blocked-Test-data → Fail."
+    }
+  },
+  "browser_os_tz": {
+    "browser": "n/a (UAT executed via curl from the dev container shell, not a browser session — see report §1 honesty disclosure)",
+    "os": "NixOS container (Linux)",
+    "tz": "UTC",
+    "ntp_delta_seconds": 0,
+    "ntp_source": "container clock; server Date header == local clock to second resolution at 2026-05-03T04:35:40Z"
+  },
+  "tester": {
+    "identity": "Replit Agent (LLM-driven autonomous task runner) executing task #268",
+    "structural_independence_check": {
+      "named_in_writing_by_exec_sponsor": false,
+      "no_commits_to_api_server_command_center_scripts_in_30d": false,
+      "result": "FAIL — tester is the same agent that has authored implementation code in the trailing 30 days; no human exec sponsor has named a tester. Per v2 spec §Tester independence, this is a Risk-Accepted answer to Q1 and counts toward the 5-question cap."
+    }
+  },
+  "correlation_id_root": "uat-2026-05-v2"
+}

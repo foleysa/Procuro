@@ -1,0 +1,45 @@
+# Step 4a — audit immutability
+first audit id: aud_0efc7f7921ef4c22b7
+HTTP/1.1 404 Not Found
+Access-Control-Allow-Origin: *
+Content-Length: 179
+Content-Security-Policy: default-src 'none'
+Content-Type: text/html; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Content-Type-Options: nosniff
+X-Powered-By: Express
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot PATCH /api/admin/audit/aud_0efc7f7921ef4c22b7</pre>
+</body>
+</html>
+
+HTTP/1.1 404 Not Found
+Access-Control-Allow-Origin: *
+Content-Length: 180
+Content-Security-Policy: default-src 'none'
+Content-Type: text/html; charset=utf-8
+Date: Sun, 03 May 2026 04:40:01 GMT
+X-Clerk-Auth-Reason: dev-browser-missing
+X-Clerk-Auth-Status: signed-out
+X-Content-Type-Options: nosniff
+X-Powered-By: Express
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot DELETE /api/admin/audit/aud_0efc7f7921ef4c22b7</pre>
+</body>
+</html>
