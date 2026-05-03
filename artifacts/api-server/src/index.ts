@@ -24,6 +24,8 @@ import { companiesHouseCollector } from "./lib/intelligence/collectors/companies
 import { epaEchoCollector } from "./lib/intelligence/collectors/epa-echo";
 import { oshaInspectionsCollector } from "./lib/intelligence/collectors/osha-inspections";
 import { usgsMineralCollector } from "./lib/intelligence/collectors/usgs-mineral";
+import { usaspendingCollector } from "./lib/intelligence/collectors/usaspending";
+import { samGovCollector } from "./lib/intelligence/collectors/sam-gov";
 import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
@@ -123,6 +125,10 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   // a curated set of critical minerals (lithium, cobalt, nickel,
   // copper, aluminum, rare earths, graphite). Task #245.
   usgsMineralCollector,
+  // Federal procurement (Task #247) — USAspending.gov awards (no key)
+  // and SAM.gov entity registrations + exclusions (SAM_GOV_API_KEY).
+  usaspendingCollector,
+  samGovCollector,
 ];
 
 for (const c of COLLECTORS) {

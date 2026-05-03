@@ -71,7 +71,7 @@ interface FanoutSpec {
   buildSummary: (d: CollectorFanoutDraft) => string;
 }
 
-const FANOUT_BY_SIGNAL_TYPE: Record<string, FanoutSpec> = {
+export const FANOUT_BY_SIGNAL_TYPE: Record<string, FanoutSpec> = {
   sanctions_match: {
     source: "sanctions",
     severity: "critical",

@@ -40,6 +40,9 @@ export const SUPPLIER_INTELLIGENCE_SIGNAL_TYPES = [
   "event_geocoded",
   "environmental_violation",
   "workplace_safety_incident",
+  // Task #247 — USAspending.gov federal awards surface as
+  // public_bid_award rows on a supplier 360 timeline.
+  "public_bid_award",
 ] as const satisfies readonly MarketSignalType[];
 
 export type SupplierIntelligenceSignalType =
@@ -65,6 +68,10 @@ const SANCTIONS_LIST_LABELS: Record<number, string> = {
   2: "EU consolidated",
   3: "UK OFSI",
   4: "UN consolidated",
+  // Task #247 — SAM.gov federal-procurement exclusions ride the
+  // sanctions_match channel with list code 5 so they inherit the same
+  // critical-severity alert fan-out and supplier-detail rendering.
+  5: "SAM.gov exclusion",
 };
 
 const EPA_STATUTE_LABELS: Record<number, string> = {
@@ -92,6 +99,18 @@ const HAZARD_SOURCE_LABELS: Record<number, string> = {
   2: "NOAA NWS alert",
   3: "NASA EONET event",
   4: "GDACS alert",
+};
+
+/**
+ * SAM.gov registration-status codes persisted on `entity_registry`
+ * rows from the `sam-gov` collector. See
+ * `collectors/sam-gov.ts → SAM_REGISTRATION_STATUS_CODES`.
+ */
+const SAM_REGISTRATION_STATUS_LABELS: Record<number, string> = {
+  1: "Active",
+  2: "Expired",
+  3: "Inactive",
+  4: "Other",
 };
 
 const GLEIF_REGISTRATION_STATUS_LABELS: Record<number, string> = {
@@ -209,11 +228,38 @@ export function renderSupplierIntelligenceHeadline(
       };
     }
     case "entity_registry": {
+      // The collector id disambiguates the registry source: GLEIF
+      // surfaces LEI lifecycle, SAM.gov surfaces federal-procurement
+      // registration status. Both persist a numeric `value` we map to
+      // a human label per source.
+      if (row.collectorId === "sam-gov") {
+        const status =
+          SAM_REGISTRATION_STATUS_LABELS[row.value] ?? "Status";
+        const uei = str(row.metadata, "ueiSAM") ?? row.scopeSku;
+        return {
+          headline: `SAM.gov registration — ${status}`,
+          detail: uei,
+        };
+      }
       const status = GLEIF_REGISTRATION_STATUS_LABELS[row.value] ?? "Update";
       const lei = row.scopeSku ?? str(row.metadata, "lei");
       return {
         headline: `LEI registry — ${status}`,
         detail: lei,
+      };
+    }
+    case "public_bid_award": {
+      // USAspending.gov federal contract / IDV award. `value` is the
+      // obligation in USD; metadata carries the awarding agency and
+      // award type for the sub-headline.
+      const usd = Number.isFinite(row.value)
+        ? `$${Math.round(row.value).toLocaleString("en-US")}`
+        : null;
+      const agency = str(row.metadata, "awardingAgency");
+      const awardType = str(row.metadata, "awardType");
+      return {
+        headline: `Federal award${usd ? ` — ${usd}` : ""}`,
+        detail: [agency, awardType].filter(Boolean).join(" · ") || null,
       };
     }
     case "facility_emissions": {

@@ -225,6 +225,44 @@ const WORKBENCH_META: Record<string, CollectorWorkbenchMeta> = {
       "Fusion: Supplier-risk pane",
     ],
   },
+  "usaspending": {
+    flagEmoji: "🇺🇸",
+    tosUrl: "https://api.usaspending.gov/",
+    licenseNote:
+      "USAspending.gov is a US Treasury public-domain data source under federal open-data policy. No API key required; no attribution required.",
+    logoUrl: "https://www.usaspending.gov/img/usaspending-logo.svg",
+    piiClassification: "none",
+    killCriteria:
+      "Persistent 5xx for >24h on the spending_by_award endpoint, USAspending API ToS revocation, or schema drift in the documented response columns.",
+    outputSignalTypes: ["public_bid_award"],
+    scopeKinds: ["supplier"],
+    cadenceLabel: "Daily (per watched supplier name)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_supplier_intelligence"],
+    downstreamConsumers: [
+      "Supplier 360: federal-spend timeline",
+      "Fusion: federal-procurement exposure pane",
+    ],
+  },
+  "sam-gov": {
+    flagEmoji: "🇺🇸",
+    tosUrl: "https://sam.gov/content/about/terms-of-use",
+    licenseNote:
+      "SAM.gov public APIs (Entity Information v3 + Exclusions v1). Free with a SAM_GOV_API_KEY; data is US federal public record.",
+    logoUrl: "https://sam.gov/themes/custom/sam_govt/logo.svg",
+    piiClassification: "none",
+    killCriteria:
+      "SAM.gov API key revocation, persistent 5xx >24h on either entity-information or exclusions endpoint, or schema drift in the documented response shape.",
+    outputSignalTypes: ["entity_registry", "sanctions_match"],
+    scopeKinds: ["supplier"],
+    cadenceLabel: "Daily (per watched supplier name)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_supplier_intelligence"],
+    downstreamConsumers: [
+      "Supplier 360: registration & exclusions card",
+      "Alerts inbox: SAM exclusion → critical (mirrors sanctions hits)",
+    ],
+  },
   "published-commodity-index": {
     flagEmoji: "🌐",
     tosUrl: "https://www.lme.com/en/about/legal/terms-and-conditions",
