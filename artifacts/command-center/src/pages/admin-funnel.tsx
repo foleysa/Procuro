@@ -52,6 +52,16 @@ interface SnapshotListRow {
   totalProjectedUsd: string;
   captureDurationMs: number;
   hasAutoAnnotation: number;
+  /**
+   * Provenance discriminator. `live` snapshots came from a real cycle
+   * and carry full stage 1–5 detail. `backfill` rows were
+   * reconstructed post-hoc from persisted opportunities only — stages
+   * 1–5 are zeroed by construction. The list view badges these
+   * distinctly so a real "0 signals" cycle can't be confused with a
+   * backfilled gap-filler. Defaults to `live` for older API responses
+   * that pre-date this field.
+   */
+  source?: "live" | "backfill";
   createdAt: string;
 }
 
@@ -262,7 +272,19 @@ function SnapshotsTab({
                   data-testid={`row-snapshot-${s.cycleGeneration}`}
                   data-state={selected === s.id ? "selected" : undefined}
                 >
-                  <TableCell className="font-mono">#{s.cycleGeneration}</TableCell>
+                  <TableCell className="font-mono">
+                    <span>#{s.cycleGeneration}</span>
+                    {s.source === "backfill" && (
+                      <Badge
+                        variant="outline"
+                        className="ml-2 font-sans text-[10px] uppercase tracking-wide"
+                        data-testid={`badge-backfilled-${s.cycleGeneration}`}
+                        title="Reconstructed post-hoc from persisted opportunities; stages 1–5 are zeroed and excluded from delta-detection baselines."
+                      >
+                        backfilled
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{s.totalDraftsProduced}</TableCell>
                   <TableCell>{s.totalDraftsPostExclusion}</TableCell>
                   <TableCell>{s.totalOppsPersisted}</TableCell>

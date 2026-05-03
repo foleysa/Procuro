@@ -443,6 +443,11 @@ async function backfillOrg(
           totalOppsPersisted: built.totalOppsPersisted,
           totalProjectedUsd: built.totalProjectedUsd.toFixed(2),
           captureDurationMs: 0,
+          // Provenance: marks this row as a post-hoc reconstruction.
+          // The admin UI badges these visibly and the trailing-baseline
+          // delta detector excludes them so zeroed stages 1–5 don't
+          // pollute the live cycle baseline.
+          source: "backfill",
         })
         // The unique index on `cycle_id` makes this insert idempotent
         // even when two backfill runs race or when a real cycle wrote

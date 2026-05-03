@@ -116,6 +116,18 @@ export const funnelSnapshotsTable = pgTable(
     captureDurationMs: integer("capture_duration_ms").notNull().default(0),
     /** Set when a behavioural delta detector fires (so admin can filter). */
     hasAutoAnnotation: integer("has_auto_annotation").notNull().default(0),
+    /**
+     * Provenance discriminator. `live` snapshots are written by
+     * `captureFunnelSnapshot` from the actual cycle runner inputs and
+     * carry full stage 1–5 (signals/drafts/exclusions) detail.
+     * `backfill` snapshots are reconstructed after the fact from
+     * persisted opportunities + decisions only — stages 1–5 are zeroed
+     * because the analyzer outputs aren't replayable. The admin UI
+     * badges these visibly and the trailing-baseline delta detector
+     * skips them so a backfilled "0 signals" doesn't masquerade as a
+     * real cycle that produced no signals.
+     */
+    source: text("source").$type<FunnelSnapshotSource>().notNull().default("live"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -126,6 +138,9 @@ export const funnelSnapshotsTable = pgTable(
     index("funnel_snapshots_created_at_idx").on(t.orgId, t.createdAt),
   ],
 );
+
+export const funnelSnapshotSourceValues = ["live", "backfill"] as const;
+export type FunnelSnapshotSource = (typeof funnelSnapshotSourceValues)[number];
 
 export type FunnelSnapshotRow = typeof funnelSnapshotsTable.$inferSelect;
 export type InsertFunnelSnapshotRow =

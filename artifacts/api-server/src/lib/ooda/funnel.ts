@@ -119,6 +119,14 @@ export interface CycleSnapshotInputs {
   refreshedOpps?: OpportunityRow[];
   /** Prior deltas the Learn step applied this cycle. */
   priorDeltas: PriorDelta[];
+  /**
+   * Provenance discriminator. Defaults to `live` for normal cycle
+   * runner captures. Set to `backfill` by the historical reconstruction
+   * paths so the row is badged in the admin UI and excluded from
+   * trailing-baseline delta detection (its zeroed stages 1–5 would
+   * otherwise drag the baseline down).
+   */
+  source?: "live" | "backfill";
 }
 
 interface StagePayload {
@@ -212,18 +220,25 @@ export async function captureFunnelSnapshot(
       totalOppsPersisted: stages["opps_persisted"]?.count ?? 0,
       totalProjectedUsd: totalProjected.toFixed(2),
       captureDurationMs: Date.now() - t0,
+      source: inputs.source ?? "live",
     });
 
     // Delta detection runs AFTER the snapshot persists so the snapshot
     // row id is stable for annotation FK. Errors here are logged but
     // don't fail the snapshot — annotations are nice-to-have lineage.
+    // Backfilled snapshots are skipped entirely: their stages 1–5 are
+    // zeroed by construction, so any "delta" against the live baseline
+    // is an artifact of reconstruction, not a real behavioural change.
     try {
       stage = "deltas";
-      const fired = await detectAndAnnotateDeltas({
-        orgId: inputs.orgId,
-        snapshotId,
-        currentStages: stages,
-      });
+      const fired =
+        (inputs.source ?? "live") === "backfill"
+          ? 0
+          : await detectAndAnnotateDeltas({
+              orgId: inputs.orgId,
+              snapshotId,
+              currentStages: stages,
+            });
       if (fired > 0) {
         await db
           .update(funnelSnapshotsTable)
@@ -786,13 +801,25 @@ export async function detectAndAnnotateDeltas(args: {
   snapshotId: string;
   currentStages: Record<string, StagePayload>;
 }): Promise<number> {
+  // Backfilled snapshots zero stages 1–5 because the analyzer outputs
+  // aren't reconstructible from persisted state. Including them in the
+  // trailing baseline would drag the mean toward zero and either fire
+  // spurious "stage spiked" annotations on the next live cycle or mask
+  // a real drop. Skip them at the SQL layer so the baseline is built
+  // exclusively from live snapshots.
   const prior = await db
     .select({
       stages: funnelSnapshotsTable.stages,
       cycleGeneration: funnelSnapshotsTable.cycleGeneration,
+      source: funnelSnapshotsTable.source,
     })
     .from(funnelSnapshotsTable)
-    .where(eq(funnelSnapshotsTable.orgId, args.orgId))
+    .where(
+      and(
+        eq(funnelSnapshotsTable.orgId, args.orgId),
+        eq(funnelSnapshotsTable.source, "live"),
+      ),
+    )
     .orderBy(desc(funnelSnapshotsTable.cycleGeneration))
     .limit(WARMUP_CYCLES + 1);
 
@@ -1043,6 +1070,7 @@ export async function backfillFunnelSnapshotsForOrg(
       draftsPostExclusion: [],
       persistedOpps,
       priorDeltas: [],
+      source: "backfill",
     });
     if (result.failed) {
       report.failed += 1;

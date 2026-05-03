@@ -94,6 +94,7 @@ router.get(
         totalProjectedUsd: funnelSnapshotsTable.totalProjectedUsd,
         captureDurationMs: funnelSnapshotsTable.captureDurationMs,
         hasAutoAnnotation: funnelSnapshotsTable.hasAutoAnnotation,
+        source: funnelSnapshotsTable.source,
         createdAt: funnelSnapshotsTable.createdAt,
       })
       .from(funnelSnapshotsTable)
@@ -297,6 +298,12 @@ router.post(
       draftsPostExclusion: [],
       persistedOpps,
       priorDeltas: [],
+      // Recompute can only re-derive stages 6–10 from persisted state;
+      // stages 1–5 (analyzer outputs) are zeroed exactly like the
+      // backfill path. Tag the row as `backfill` so the admin badge
+      // reflects that and trailing-baseline delta detection still
+      // excludes it.
+      source: "backfill",
     });
     if (result.failed) {
       return res.status(500).json({ error: "snapshot_capture_failed" });
