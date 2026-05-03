@@ -31,7 +31,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  NASS_NATIONAL_SERIES,
   NASS_SERIES,
+  NASS_STATE_PAIRS,
+  NASS_STATE_SERIES,
   buildNassDraftForObservation,
   fetchUsdaNassBackfillDrafts,
   normalizeNassUnit,
@@ -217,7 +220,7 @@ describe("NASS_SERIES guardrail (task #244 curated list)", () => {
     // (milk + cheese + butter), beef, pork, poultry, cotton. Pinning
     // the codes here means a future refactor that silently drops one
     // fails CI loudly — same pattern as the task #69 guardrail.
-    const codes = new Set(NASS_SERIES.map((s) => s.materialCode));
+    const codes = new Set(NASS_NATIONAL_SERIES.map((s) => s.materialCode));
     for (const required of [
       "CORN",
       "WHEAT",
@@ -234,9 +237,9 @@ describe("NASS_SERIES guardrail (task #244 curated list)", () => {
     }
   });
 
-  it("has unique material codes", () => {
+  it("national series have unique material codes", () => {
     const seen = new Set<string>();
-    for (const s of NASS_SERIES) {
+    for (const s of NASS_NATIONAL_SERIES) {
       assert.ok(
         !seen.has(s.materialCode),
         `duplicate material code ${s.materialCode}`,
@@ -253,6 +256,137 @@ describe("NASS_SERIES guardrail (task #244 curated list)", () => {
         `series ${s.materialCode} should be USD-denominated`,
       );
     }
+  });
+
+  it("national series leave regionCode unset (so scope_region_code stays NULL)", () => {
+    for (const s of NASS_NATIONAL_SERIES) {
+      assert.equal(
+        s.regionCode,
+        undefined,
+        `national series ${s.materialCode} should not declare a regionCode`,
+      );
+      assert.equal(s.query["agg_level_desc"], "NATIONAL");
+      assert.equal(s.query["state_alpha"], undefined);
+    }
+  });
+});
+
+describe("NASS_STATE_PAIRS / NASS_STATE_SERIES guardrail (task #254)", () => {
+  it("every pair points at a known national series materialCode", () => {
+    const known = new Set(NASS_NATIONAL_SERIES.map((s) => s.materialCode));
+    for (const pair of NASS_STATE_PAIRS) {
+      assert.ok(
+        known.has(pair.materialCode),
+        `state pair ${pair.materialCode}/${pair.stateAlpha} references unknown national series`,
+      );
+      assert.match(
+        pair.stateAlpha,
+        /^[A-Z]{2}$/,
+        `stateAlpha must be a 2-letter USPS code, got ${pair.stateAlpha}`,
+      );
+    }
+  });
+
+  it("includes the regional examples from the task brief", () => {
+    const has = (m: string, s: string): boolean =>
+      NASS_STATE_PAIRS.some(
+        (p) => p.materialCode === m && p.stateAlpha === s,
+      );
+    assert.ok(has("MILK", "CA"), "task brief calls out California dairy");
+    assert.ok(has("BEEF_CATTLE", "TX"), "task brief calls out Texas beef");
+    assert.ok(has("CORN", "IA"), "task brief calls out Iowa corn");
+  });
+
+  it("derived state series carry a US-XX regionCode and STATE agg_level", () => {
+    for (const s of NASS_STATE_SERIES) {
+      assert.match(
+        s.regionCode ?? "",
+        /^US-[A-Z]{2}$/,
+        `state series ${s.materialCode} regionCode must look like US-XX`,
+      );
+      assert.equal(s.query["agg_level_desc"], "STATE");
+      assert.match(s.query["state_alpha"] ?? "", /^[A-Z]{2}$/);
+    }
+  });
+
+  it("(materialCode, regionCode) is unique across the full series list", () => {
+    // Material code alone is no longer unique once state slices land,
+    // but the (material, region) pair must be, otherwise two queries
+    // would race for the same natural-key row.
+    const seen = new Set<string>();
+    for (const s of NASS_SERIES) {
+      const key = `${s.materialCode}|${s.regionCode ?? "NATIONAL"}`;
+      assert.ok(!seen.has(key), `duplicate series for key ${key}`);
+      seen.add(key);
+    }
+  });
+
+  it("NASS_SERIES is the concatenation of national + state series", () => {
+    assert.equal(
+      NASS_SERIES.length,
+      NASS_NATIONAL_SERIES.length + NASS_STATE_SERIES.length,
+    );
+  });
+});
+
+describe("buildNassDraftForObservation (state-scoped, task #254)", () => {
+  it("threads regionCode onto scopeRegionCode for state-level series", () => {
+    const stateSeries: NassSeriesRef = {
+      materialCode: "MILK",
+      label: "Milk — California test",
+      expectedUnit: "USD/cwt",
+      regionCode: "US-CA",
+      query: {
+        commodity_desc: "MILK",
+        agg_level_desc: "STATE",
+        state_alpha: "CA",
+      },
+    };
+    const draft = buildNassDraftForObservation(
+      stateSeries,
+      { year: "2025", reference_period_desc: "MAR", value: "22.40" },
+      "nass_latest_observation",
+    );
+    assert.ok(draft);
+    assert.equal(draft.scopeRegionCode, "US-CA");
+    assert.equal(draft.scopeMaterialCode, "MILK");
+    assert.equal(draft.metadata?.["regionCode"], "US-CA");
+    assert.equal(draft.metadata?.["stateAlpha"], "CA");
+    assert.equal(draft.metadata?.["aggLevel"], "STATE");
+  });
+
+  it("national + state drafts for the same commodity/month dedupe to distinct rows", () => {
+    const stateSeries: NassSeriesRef = {
+      materialCode: "CORN",
+      label: "Corn — Iowa test",
+      expectedUnit: "USD/bu",
+      regionCode: "US-IA",
+      query: {
+        commodity_desc: "CORN",
+        agg_level_desc: "STATE",
+        state_alpha: "IA",
+      },
+    };
+    const national = buildNassDraftForObservation(
+      SAMPLE_SERIES,
+      { year: "2025", reference_period_desc: "MAR", value: "4.25" },
+      "nass_latest_observation",
+    );
+    const state = buildNassDraftForObservation(
+      stateSeries,
+      { year: "2025", reference_period_desc: "MAR", value: "4.40" },
+      "nass_latest_observation",
+    );
+    assert.ok(national && state);
+    // Same material + observed month, but the region scope diverges
+    // so the runtime's natural-key dedupe keeps both rows.
+    assert.equal(national.scopeMaterialCode, state.scopeMaterialCode);
+    assert.equal(
+      national.observedAt.toISOString(),
+      state.observedAt.toISOString(),
+    );
+    assert.equal(national.scopeRegionCode, undefined);
+    assert.equal(state.scopeRegionCode, "US-IA");
   });
 });
 

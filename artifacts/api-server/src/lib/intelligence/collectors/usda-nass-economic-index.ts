@@ -75,22 +75,34 @@ export interface NassSeriesRef {
   materialCode: string;
   label: string;
   expectedUnit: string;
+  /**
+   * Optional region scope for state-level Prices Received series
+   * (task #254). National rollups omit this; state slices set it to
+   * the canonical "US-XX" code that lands on `scope_region_code` so a
+   * state-scoped row never collides with the national series for the
+   * same (commodity, month) tuple in the runtime's natural-key dedupe.
+   */
+  regionCode?: string;
   query: Readonly<Record<string, string>>;
 }
 
 /**
- * Curated agricultural commodities tracked by this collector.
+ * Curated national agricultural commodities tracked by this collector.
  *
  * Per task #244 scope: corn, wheat, soybeans, dairy (milk + cheese +
  * butter), beef, pork, poultry, cotton. We pin the most-aggregated
  * national monthly Prices Received series for each so the analytical
- * surface gets a single time series per material code.
+ * surface gets a single national time series per material code.
+ *
+ * State-level slices for regional procurement (task #254) are derived
+ * from these in {@link NASS_STATE_PAIRS} below — adding a state slice
+ * does not require duplicating the underlying query.
  *
  * Adding or changing a series: extend this list and the
  * `usda-nass-curated-list` guardrail test will pin the new series id
  * against silent removal.
  */
-export const NASS_SERIES: readonly NassSeriesRef[] = [
+export const NASS_NATIONAL_SERIES: readonly NassSeriesRef[] = [
   // Grains & oilseeds
   {
     materialCode: "CORN",
@@ -223,6 +235,132 @@ export const NASS_SERIES: readonly NassSeriesRef[] = [
   },
 ];
 
+/**
+ * Curated (commodity, state) pairs for regional Prices Received slices
+ * (task #254). Each pair derives a state-level series from the matching
+ * `NASS_NATIONAL_SERIES` entry — the same `query` is reused with
+ * `agg_level_desc: STATE` and a `state_alpha` filter, so the resulting
+ * row carries the same unit and statisticcat as the national series and
+ * downstream analyzers can compare them apples-to-apples.
+ *
+ * The list focuses on each commodity's top producing/consuming states
+ * so procurement teams sourcing regionally (e.g. California dairy,
+ * Texas beef, Iowa corn) get a market signal pinned to the geography
+ * their suppliers actually negotiate against.
+ *
+ * Adding or removing a pair is a single-line change — the
+ * `usda-nass-state-pairs` guardrail test asserts every pair points at
+ * a known national series so a typo can't silently produce a series
+ * NASS won't honour.
+ */
+export interface NassStatePair {
+  materialCode: string;
+  /** USPS / NASS 2-letter state code (e.g. "CA", "TX", "IA"). */
+  stateAlpha: string;
+  /** Display name used in the derived series label. */
+  stateName: string;
+}
+
+export const NASS_STATE_PAIRS: readonly NassStatePair[] = [
+  // Corn — Midwest belt.
+  { materialCode: "CORN", stateAlpha: "IA", stateName: "Iowa" },
+  { materialCode: "CORN", stateAlpha: "IL", stateName: "Illinois" },
+  { materialCode: "CORN", stateAlpha: "NE", stateName: "Nebraska" },
+  { materialCode: "CORN", stateAlpha: "MN", stateName: "Minnesota" },
+  { materialCode: "CORN", stateAlpha: "IN", stateName: "Indiana" },
+  // Wheat — Plains states.
+  { materialCode: "WHEAT", stateAlpha: "KS", stateName: "Kansas" },
+  { materialCode: "WHEAT", stateAlpha: "ND", stateName: "North Dakota" },
+  { materialCode: "WHEAT", stateAlpha: "MT", stateName: "Montana" },
+  { materialCode: "WHEAT", stateAlpha: "OK", stateName: "Oklahoma" },
+  // Soybeans — Midwest belt.
+  { materialCode: "SOYBEANS", stateAlpha: "IA", stateName: "Iowa" },
+  { materialCode: "SOYBEANS", stateAlpha: "IL", stateName: "Illinois" },
+  { materialCode: "SOYBEANS", stateAlpha: "MN", stateName: "Minnesota" },
+  { materialCode: "SOYBEANS", stateAlpha: "IN", stateName: "Indiana" },
+  // Milk — top dairy producing states.
+  { materialCode: "MILK", stateAlpha: "CA", stateName: "California" },
+  { materialCode: "MILK", stateAlpha: "WI", stateName: "Wisconsin" },
+  { materialCode: "MILK", stateAlpha: "NY", stateName: "New York" },
+  { materialCode: "MILK", stateAlpha: "ID", stateName: "Idaho" },
+  { materialCode: "MILK", stateAlpha: "TX", stateName: "Texas" },
+  // Beef cattle — top feedlot states.
+  { materialCode: "BEEF_CATTLE", stateAlpha: "TX", stateName: "Texas" },
+  { materialCode: "BEEF_CATTLE", stateAlpha: "KS", stateName: "Kansas" },
+  { materialCode: "BEEF_CATTLE", stateAlpha: "NE", stateName: "Nebraska" },
+  { materialCode: "BEEF_CATTLE", stateAlpha: "CO", stateName: "Colorado" },
+  // Hogs — top hog states.
+  { materialCode: "HOGS", stateAlpha: "IA", stateName: "Iowa" },
+  { materialCode: "HOGS", stateAlpha: "NC", stateName: "North Carolina" },
+  { materialCode: "HOGS", stateAlpha: "MN", stateName: "Minnesota" },
+  { materialCode: "HOGS", stateAlpha: "IL", stateName: "Illinois" },
+  // Broilers — top poultry states.
+  { materialCode: "BROILERS", stateAlpha: "GA", stateName: "Georgia" },
+  { materialCode: "BROILERS", stateAlpha: "AR", stateName: "Arkansas" },
+  { materialCode: "BROILERS", stateAlpha: "AL", stateName: "Alabama" },
+  { materialCode: "BROILERS", stateAlpha: "NC", stateName: "North Carolina" },
+  { materialCode: "BROILERS", stateAlpha: "MS", stateName: "Mississippi" },
+  // Cotton — top upland cotton states.
+  { materialCode: "COTTON", stateAlpha: "TX", stateName: "Texas" },
+  { materialCode: "COTTON", stateAlpha: "GA", stateName: "Georgia" },
+  { materialCode: "COTTON", stateAlpha: "MS", stateName: "Mississippi" },
+  { materialCode: "COTTON", stateAlpha: "AR", stateName: "Arkansas" },
+];
+
+/**
+ * Build the state-level series list from {@link NASS_STATE_PAIRS}. Each
+ * pair reuses its base national series's `query` with two overrides:
+ * `agg_level_desc: STATE` and `state_alpha: <USPS>`. The label is
+ * rewritten so the state name surfaces in the UI; the material code
+ * and expected unit are preserved so downstream analyzers route the
+ * state row to the same material as the national row.
+ */
+function expandStateSeries(): readonly NassSeriesRef[] {
+  const byMaterial = new Map<string, NassSeriesRef>();
+  for (const s of NASS_NATIONAL_SERIES) {
+    byMaterial.set(s.materialCode, s);
+  }
+  const out: NassSeriesRef[] = [];
+  for (const pair of NASS_STATE_PAIRS) {
+    const base = byMaterial.get(pair.materialCode);
+    if (!base) {
+      throw new Error(
+        `NASS_STATE_PAIRS references unknown materialCode ${pair.materialCode}`,
+      );
+    }
+    // Strip the trailing " — US monthly price received" tail when
+    // present so the state suffix reads cleanly.
+    const head = base.label.split(" — ")[0] ?? base.label;
+    out.push({
+      materialCode: base.materialCode,
+      label: `${head} — ${pair.stateName} monthly price received`,
+      expectedUnit: base.expectedUnit,
+      regionCode: `US-${pair.stateAlpha}`,
+      query: {
+        ...base.query,
+        agg_level_desc: "STATE",
+        state_alpha: pair.stateAlpha,
+      },
+    });
+  }
+  return out;
+}
+
+/** State-level Prices Received series, derived from `NASS_STATE_PAIRS`. */
+export const NASS_STATE_SERIES: readonly NassSeriesRef[] = expandStateSeries();
+
+/**
+ * The full curated series list — national rollups followed by the
+ * state slices. Both the live collector and the historical backfill
+ * iterate this single list so a state row dedupes against itself
+ * (via `scopeRegionCode` in the natural key) the same way a national
+ * row dedupes against the prior month's national row.
+ */
+export const NASS_SERIES: readonly NassSeriesRef[] = [
+  ...NASS_NATIONAL_SERIES,
+  ...NASS_STATE_SERIES,
+];
+
 /** Raw row shape returned by NASS QuickStats `/api_GET/`. */
 export interface NassRow {
   short_desc?: string;
@@ -326,7 +464,7 @@ export function buildNassDraftForObservation(
   const observedAt = parseNassMonthEnd(row.year, row.reference_period_desc);
   if (!observedAt) return null;
   const unit = normalizeNassUnit(row.unit_desc) ?? series.expectedUnit;
-  return {
+  const draft: MarketSignalDraft = {
     signalType: "commodity_index" as const,
     scopeMaterialCode: series.materialCode,
     value: +value.toFixed(6),
@@ -340,9 +478,20 @@ export function buildNassDraftForObservation(
       commodityDesc: row.commodity_desc ?? series.query["commodity_desc"] ?? null,
       year: row.year ?? null,
       referencePeriod: row.reference_period_desc ?? null,
+      aggLevel: series.query["agg_level_desc"] ?? null,
+      stateAlpha: series.query["state_alpha"] ?? null,
+      regionCode: series.regionCode ?? null,
       basis,
     },
   };
+  // Only state-level series carry `regionCode` — leaving it unset on
+  // the national rollups means `scope_region_code` stays NULL there
+  // and the runtime's natural-key dedupe treats the national row and
+  // any state row for the same (commodity, month) as distinct signals.
+  if (series.regionCode !== undefined) {
+    draft.scopeRegionCode = series.regionCode;
+  }
+  return draft;
 }
 
 /**
