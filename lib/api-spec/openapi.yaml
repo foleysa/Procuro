@@ -794,6 +794,45 @@ paths:
                 $ref: '#/components/schemas/OpportunityDetail'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchOpportunityClassification
+      tags:
+      - opportunities
+      summary: Edit baseline, sourcing strategy, and savings classification
+      description: 'Update the buyer-editable classification fields on an opportunity:
+        baseline_value, baseline_method, baseline_source, sourcing_strategy, and
+        savings_classification. Setting any of these fields automatically clears
+        classification_needs_review. Every call writes one row to
+        opportunity_stage_history with transition_reason=CLASSIFICATION_UPDATE
+        for auditability.
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchOpportunityClassificationRequest'
+      responses:
+        '200':
+          description: Updated opportunity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
   /opportunities/{id}/approve:
     post:
       operationId: approveOpportunity
@@ -6863,6 +6902,42 @@ components:
           type: number
         notes:
           type: string
+    PatchOpportunityClassificationRequest:
+      type: object
+      description: 'Buyer-editable classification fields. All fields are optional
+        and sent as a partial update. Providing at least one field automatically
+        clears classificationNeedsReview on the row.
+        '
+      properties:
+        baselineValue:
+          type: number
+          nullable: true
+          description: Numeric baseline value (e.g. prior unit price).
+        baselineMethod:
+          type: string
+          nullable: true
+          enum:
+          - Prior Unit Price
+          - Market Index
+          - Should-Cost Model
+          - Supplier Proposed Increase
+          - Internal Estimate
+          - N/A — Soft
+          description: How the benchmark price/cost was established.
+        baselineSource:
+          type: string
+          nullable: true
+          description: Free-text provenance of baselineValue.
+        sourcingStrategy:
+          nullable: true
+          allOf:
+          - $ref: '#/components/schemas/OpportunitySourcingStrategy'
+          description: How the saving is or will be captured.
+        savingsClassification:
+          nullable: true
+          allOf:
+          - $ref: '#/components/schemas/OpportunitySavingsClassification'
+          description: Finance classification for savings reporting.
     BulkOpportunityActionResult:
       type: object
       description: 'Outcome of a bulk action. The server processes every requested

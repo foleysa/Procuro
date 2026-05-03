@@ -7,6 +7,8 @@ import {
   suppliersTable,
   categoriesTable,
   rejectionReasonCodes,
+  savingsClassificationValues,
+  sourcingStrategyValues,
   type LeverId,
   type OpportunityStatus,
   type DecisionEventType,
@@ -1286,5 +1288,131 @@ router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("o
     .where(eq(opportunitiesTable.id, opp.id));
   res.json(mapOpportunity({ opp: updated! }));
 });
+
+const baselineMethodValues = [
+  "Prior Unit Price",
+  "Market Index",
+  "Should-Cost Model",
+  "Supplier Proposed Increase",
+  "Internal Estimate",
+  "N/A — Soft",
+] as const;
+
+export const patchOpportunityClassificationBodySchema = z.object({
+  baselineValue: z
+    .union([z.number().finite(), z.null()])
+    .optional(),
+  baselineMethod: z
+    .enum(baselineMethodValues)
+    .nullable()
+    .optional(),
+  baselineSource: z
+    .string()
+    .nullable()
+    .optional(),
+  sourcingStrategy: z
+    .enum(sourcingStrategyValues)
+    .nullable()
+    .optional(),
+  savingsClassification: z
+    .enum(savingsClassificationValues)
+    .nullable()
+    .optional(),
+});
+
+router.patch(
+  "/opportunities/:id",
+  tenantMiddleware,
+  requirePermission("opp:approve"),
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+    const id = String(req.params.id);
+    const body = patchOpportunityClassificationBodySchema.parse(req.body);
+
+    const opp = await loadOppOrThrow(orgId, id);
+    if (!opp) {
+      res.status(404).json({ error: "Opportunity not found" });
+      return;
+    }
+
+    const hasAnyField =
+      body.baselineValue !== undefined ||
+      body.baselineMethod !== undefined ||
+      body.baselineSource !== undefined ||
+      body.sourcingStrategy !== undefined ||
+      body.savingsClassification !== undefined;
+
+    if (!hasAnyField) {
+      res.status(400).json({ error: "At least one field must be provided" });
+      return;
+    }
+
+    const patch: Partial<typeof opportunitiesTable.$inferInsert> = {
+      classificationNeedsReview: false,
+    };
+    if (body.baselineValue !== undefined) {
+      patch.baselineValue =
+        body.baselineValue !== null ? String(body.baselineValue) : null;
+    }
+    if (body.baselineMethod !== undefined) {
+      patch.baselineMethod = body.baselineMethod ?? null;
+    }
+    if (body.baselineSource !== undefined) {
+      patch.baselineSource = body.baselineSource ?? null;
+    }
+    if (body.sourcingStrategy !== undefined) {
+      patch.sourcingStrategy = body.sourcingStrategy ?? "Unclassified";
+    }
+    if (body.savingsClassification !== undefined) {
+      patch.savingsClassification = body.savingsClassification ?? null;
+    }
+
+    await db
+      .update(opportunitiesTable)
+      .set(patch)
+      .where(
+        and(eq(opportunitiesTable.orgId, orgId), eq(opportunitiesTable.id, id)),
+      );
+
+    await writeStageHistory({
+      opportunityId: opp.id,
+      orgId,
+      fromStage: opp.canonicalStage ?? null,
+      toStage: opp.canonicalStage ?? "Identified",
+      actor: req.actorEmail ?? null,
+      reason: "CLASSIFICATION_UPDATE",
+    });
+
+    await recordSingleOpportunityAudit(req, {
+      orgId,
+      action: "opportunity.classify",
+      opportunityId: opp.id,
+      label: opp.title,
+      extra: {
+        baselineMethod: body.baselineMethod,
+        sourcingStrategy: body.sourcingStrategy,
+        savingsClassification: body.savingsClassification,
+      },
+    });
+
+    const [updated] = await db
+      .select({
+        opp: opportunitiesTable,
+        supplierName: suppliersTable.name,
+        categoryName: categoriesTable.name,
+      })
+      .from(opportunitiesTable)
+      .leftJoin(
+        suppliersTable,
+        eq(opportunitiesTable.supplierId, suppliersTable.id),
+      )
+      .leftJoin(
+        categoriesTable,
+        eq(opportunitiesTable.categoryId, categoriesTable.id),
+      )
+      .where(eq(opportunitiesTable.id, opp.id));
+    res.json(mapOpportunity(updated!));
+  },
+);
 
 export default router;

@@ -1146,6 +1146,38 @@ export interface RealizeOpportunityRequest {
 }
 
 /**
+ * How the benchmark price/cost was established.
+ */
+export type PatchOpportunityClassificationRequestBaselineMethod =
+  | (typeof PatchOpportunityClassificationRequestBaselineMethod)[keyof typeof PatchOpportunityClassificationRequestBaselineMethod]
+  | null;
+
+export const PatchOpportunityClassificationRequestBaselineMethod = {
+  Prior_Unit_Price: "Prior Unit Price",
+  Market_Index: "Market Index",
+  "Should-Cost_Model": "Should-Cost Model",
+  Supplier_Proposed_Increase: "Supplier Proposed Increase",
+  Internal_Estimate: "Internal Estimate",
+  "N/A_—_Soft": "N/A — Soft",
+} as const;
+
+/**
+ * Buyer-editable classification fields. All fields are optional and sent as a partial update. Providing at least one field automatically clears classificationNeedsReview on the row.
+ */
+export interface PatchOpportunityClassificationRequest {
+  /** Numeric baseline value (e.g. prior unit price). */
+  baselineValue?: number | null;
+  /** How the benchmark price/cost was established. */
+  baselineMethod?: PatchOpportunityClassificationRequestBaselineMethod;
+  /** Free-text provenance of baselineValue. */
+  baselineSource?: string | null;
+  /** How the saving is or will be captured. */
+  sourcingStrategy?: OpportunitySourcingStrategy | null;
+  /** Finance classification for savings reporting. */
+  savingsClassification?: OpportunitySavingsClassification | null;
+}
+
+/**
  * Outcome of a bulk action. The server processes every requested
 id and bucketises each into exactly one of the four counts.
 `succeeded` rows changed state and wrote a `decisions` audit
@@ -5847,6 +5879,10 @@ export const ListOpportunitiesSnoozed = {
   only: "only",
   all: "all",
 } as const;
+
+export type PatchOpportunityClassification400 = {
+  error?: string;
+};
 
 export type RunNextCycleParams = {
   /**

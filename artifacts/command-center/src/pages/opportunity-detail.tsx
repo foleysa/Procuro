@@ -1,5 +1,5 @@
 import { useParams, Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useGetOpportunity,
   useApproveOpportunity,
@@ -8,7 +8,11 @@ import {
   useRealizeOpportunity,
   useBulkSnoozeOpportunities,
   useBulkUnsnoozeOpportunities,
+  usePatchOpportunityClassification,
   RejectionReasonCode,
+  OpportunitySavingsClassification,
+  OpportunitySourcingStrategy,
+  PatchOpportunityClassificationRequestBaselineMethod,
   getGetOpportunityQueryKey,
   getListOpportunitiesQueryKey,
 } from "@workspace/api-client-react";
@@ -48,6 +52,8 @@ import {
   Clock,
   RotateCcw,
   History,
+  Pencil,
+  AlertTriangle,
 } from "lucide-react";
 import { StatusBadge } from "./opportunities";
 import { InsightCitations } from "@/components/insight-citations";
@@ -70,6 +76,7 @@ export default function OpportunityDetail() {
   const [rejectNote, setRejectNote] = useState("");
   const [realizedAmount, setRealizedAmount] = useState("");
   const [snoozeDays, setSnoozeDays] = useState<number>(7);
+  const [classifyOpen, setClassifyOpen] = useState(false);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: getGetOpportunityQueryKey(id) });
@@ -132,6 +139,17 @@ export default function OpportunityDetail() {
       },
       onError: (e: Error) =>
         toast({ title: "Unsnooze failed", description: String(e), variant: "destructive" }),
+    },
+  });
+  const classifyM = usePatchOpportunityClassification({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "Classification updated" });
+        setClassifyOpen(false);
+        invalidate();
+      },
+      onError: (e: Error) =>
+        toast({ title: "Update failed", description: String(e), variant: "destructive" }),
     },
   });
 
@@ -259,6 +277,14 @@ export default function OpportunityDetail() {
           Open source contract
         </Link>
       )}
+
+      <ClassificationCard
+        opp={opp}
+        open={classifyOpen}
+        onOpenChange={setClassifyOpen}
+        onSave={(data) => classifyM.mutate({ id, data })}
+        isPending={classifyM.isPending}
+      />
 
       {decisions.length > 0 && (
         <Card data-testid="card-decision-history">
@@ -549,6 +575,225 @@ function Kpi({ label, value }: { label: string; value: string }) {
       </div>
       <div className="text-xl font-bold mt-1 tabular-nums">{value}</div>
     </div>
+  );
+}
+
+const SAVINGS_CLASSIFICATION_OPTIONS = Object.values(OpportunitySavingsClassification);
+const SOURCING_STRATEGY_OPTIONS = Object.values(OpportunitySourcingStrategy);
+const BASELINE_METHOD_OPTIONS = Object.values(PatchOpportunityClassificationRequestBaselineMethod);
+
+function ClassificationCard({
+  opp,
+  open,
+  onOpenChange,
+  onSave,
+  isPending,
+}: {
+  opp: OpportunityDetail;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSave: (data: {
+    savingsClassification?: typeof SAVINGS_CLASSIFICATION_OPTIONS[number] | null;
+    sourcingStrategy?: typeof SOURCING_STRATEGY_OPTIONS[number] | null;
+    baselineMethod?: typeof BASELINE_METHOD_OPTIONS[number] | null;
+    baselineValue?: number | null;
+    baselineSource?: string | null;
+  }) => void;
+  isPending: boolean;
+}) {
+  const [savingsClassification, setSavingsClassification] = useState<string>(
+    opp.savingsClassification ?? "",
+  );
+  const [sourcingStrategy, setSourcingStrategy] = useState<string>(
+    opp.sourcingStrategy ?? "",
+  );
+  const [baselineMethod, setBaselineMethod] = useState<string>(
+    opp.baselineMethod ?? "",
+  );
+  const [baselineValue, setBaselineValue] = useState<string>(
+    opp.baselineValue != null ? String(opp.baselineValue) : "",
+  );
+  const [baselineSource, setBaselineSource] = useState<string>(
+    opp.baselineSource ?? "",
+  );
+
+  useEffect(() => {
+    if (open) {
+      setSavingsClassification(opp.savingsClassification ?? "");
+      setSourcingStrategy(opp.sourcingStrategy ?? "");
+      setBaselineMethod(opp.baselineMethod ?? "");
+      setBaselineValue(opp.baselineValue != null ? String(opp.baselineValue) : "");
+      setBaselineSource(opp.baselineSource ?? "");
+    }
+  }, [open, opp]);
+
+  const handleSave = () => {
+    onSave({
+      savingsClassification: savingsClassification
+        ? (savingsClassification as typeof SAVINGS_CLASSIFICATION_OPTIONS[number])
+        : null,
+      sourcingStrategy: sourcingStrategy
+        ? (sourcingStrategy as typeof SOURCING_STRATEGY_OPTIONS[number])
+        : null,
+      baselineMethod: baselineMethod
+        ? (baselineMethod as typeof BASELINE_METHOD_OPTIONS[number])
+        : null,
+      baselineValue: baselineValue !== "" ? Number(baselineValue) : null,
+      baselineSource: baselineSource || null,
+    });
+  };
+
+  return (
+    <Card data-testid="card-classification">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Pencil className="w-4 h-4" />
+            Classification
+          </CardTitle>
+          {opp.classificationNeedsReview && (
+            <span
+              className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800"
+              data-testid="badge-needs-review"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              Needs review
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!open ? (
+          <div className="space-y-2 text-sm">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+              <span className="text-muted-foreground">Savings classification</span>
+              <span data-testid="text-savings-classification">
+                {opp.savingsClassification ?? <span className="italic text-muted-foreground">Unset</span>}
+              </span>
+              <span className="text-muted-foreground">Sourcing strategy</span>
+              <span data-testid="text-sourcing-strategy">
+                {opp.sourcingStrategy ?? <span className="italic text-muted-foreground">Unset</span>}
+              </span>
+              <span className="text-muted-foreground">Baseline method</span>
+              <span data-testid="text-baseline-method">
+                {opp.baselineMethod ?? <span className="italic text-muted-foreground">Unset</span>}
+              </span>
+              <span className="text-muted-foreground">Baseline value</span>
+              <span data-testid="text-baseline-value">
+                {opp.baselineValue != null
+                  ? opp.baselineValue.toLocaleString()
+                  : <span className="italic text-muted-foreground">Unset</span>}
+              </span>
+              <span className="text-muted-foreground">Baseline source</span>
+              <span data-testid="text-baseline-source">
+                {opp.baselineSource ?? <span className="italic text-muted-foreground">Unset</span>}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(true)}
+              data-testid="btn-edit-classification"
+            >
+              <Pencil className="w-3 h-3 mr-1" />
+              Edit
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="savings-classification">Savings classification</Label>
+                <Select
+                  value={savingsClassification}
+                  onValueChange={setSavingsClassification}
+                >
+                  <SelectTrigger id="savings-classification" data-testid="select-savings-classification">
+                    <SelectValue placeholder="Select…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SAVINGS_CLASSIFICATION_OPTIONS.map((v) => (
+                      <SelectItem key={v} value={v}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="sourcing-strategy">Sourcing strategy</Label>
+                <Select
+                  value={sourcingStrategy}
+                  onValueChange={setSourcingStrategy}
+                >
+                  <SelectTrigger id="sourcing-strategy" data-testid="select-sourcing-strategy">
+                    <SelectValue placeholder="Select…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SOURCING_STRATEGY_OPTIONS.map((v) => (
+                      <SelectItem key={v} value={v}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="baseline-method">Baseline method</Label>
+                <Select
+                  value={baselineMethod}
+                  onValueChange={setBaselineMethod}
+                >
+                  <SelectTrigger id="baseline-method" data-testid="select-baseline-method">
+                    <SelectValue placeholder="Select…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BASELINE_METHOD_OPTIONS.map((v) => (
+                      <SelectItem key={v} value={v}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="baseline-value">Baseline value</Label>
+                <Input
+                  id="baseline-value"
+                  data-testid="input-baseline-value"
+                  type="number"
+                  value={baselineValue}
+                  onChange={(e) => setBaselineValue(e.target.value)}
+                  placeholder="e.g. 42.50"
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="baseline-source">Baseline source</Label>
+                <Input
+                  id="baseline-source"
+                  data-testid="input-baseline-source"
+                  value={baselineSource}
+                  onChange={(e) => setBaselineSource(e.target.value)}
+                  placeholder="e.g. PO-2024-1234 or Market Index XYZ"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                data-testid="btn-save-classification"
+                onClick={handleSave}
+                disabled={isPending}
+              >
+                {isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={isPending}
+                data-testid="btn-cancel-classification"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

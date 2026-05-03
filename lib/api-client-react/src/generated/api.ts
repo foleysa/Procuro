@@ -179,6 +179,8 @@ import type {
   PatchEscalationPolicyRequest,
   PatchMeSettingsRequest,
   PatchOnboardingStateRequest,
+  PatchOpportunityClassification400,
+  PatchOpportunityClassificationRequest,
   PatchSupplierRequest,
   PatchWatchlistRequest,
   RateCardDetail,
@@ -2116,6 +2118,97 @@ export function useGetOpportunity<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Update the buyer-editable classification fields on an opportunity: baseline_value, baseline_method, baseline_source, sourcing_strategy, and savings_classification. Setting any of these fields automatically clears classification_needs_review. Every call writes one row to opportunity_stage_history with transition_reason=CLASSIFICATION_UPDATE for auditability.
+ * @summary Edit baseline, sourcing strategy, and savings classification
+ */
+export const getPatchOpportunityClassificationUrl = (id: string) => {
+  return `/api/opportunities/${id}`;
+};
+
+export const patchOpportunityClassification = async (
+  id: string,
+  patchOpportunityClassificationRequest: PatchOpportunityClassificationRequest,
+  options?: RequestInit,
+): Promise<Opportunity> => {
+  return customFetch<Opportunity>(getPatchOpportunityClassificationUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(patchOpportunityClassificationRequest),
+  });
+};
+
+export const getPatchOpportunityClassificationMutationOptions = <
+  TError = ErrorType<PatchOpportunityClassification400 | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchOpportunityClassification>>,
+    TError,
+    { id: string; data: BodyType<PatchOpportunityClassificationRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof patchOpportunityClassification>>,
+  TError,
+  { id: string; data: BodyType<PatchOpportunityClassificationRequest> },
+  TContext
+> => {
+  const mutationKey = ["patchOpportunityClassification"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof patchOpportunityClassification>>,
+    { id: string; data: BodyType<PatchOpportunityClassificationRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return patchOpportunityClassification(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PatchOpportunityClassificationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof patchOpportunityClassification>>
+>;
+export type PatchOpportunityClassificationMutationBody =
+  BodyType<PatchOpportunityClassificationRequest>;
+export type PatchOpportunityClassificationMutationError = ErrorType<
+  PatchOpportunityClassification400 | NotFoundResponse
+>;
+
+/**
+ * @summary Edit baseline, sourcing strategy, and savings classification
+ */
+export const usePatchOpportunityClassification = <
+  TError = ErrorType<PatchOpportunityClassification400 | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof patchOpportunityClassification>>,
+    TError,
+    { id: string; data: BodyType<PatchOpportunityClassificationRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof patchOpportunityClassification>>,
+  TError,
+  { id: string; data: BodyType<PatchOpportunityClassificationRequest> },
+  TContext
+> => {
+  return useMutation(getPatchOpportunityClassificationMutationOptions(options));
+};
 
 /**
  * @summary Approve a pending opportunity

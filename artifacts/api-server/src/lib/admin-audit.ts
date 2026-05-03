@@ -79,6 +79,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   "opportunity.bulk_reject",
   "opportunity.bulk_snooze",
   "opportunity.bulk_unsnooze",
+  "opportunity.classify",
   // Per-tenant retry-budget overrides (System / Jobs page). Both the
   // upsert and the clear paths emit so an auditor can reconstruct who
   // raised the budget for a particular kind and when it was reverted.
