@@ -8,7 +8,6 @@ import {
   csvSourceAdapter,
   streamCsvEntity,
   CsvIngestAbortedError,
-  CsvBatchDuplicateError,
   CsvExistingDuplicateError,
   type CsvPayload,
   type CsvEntity,
@@ -608,8 +607,7 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
       // path that strips the conflicting value (Task #182).
       //
       // Echoing the conflict values is safe here because the response
-      // only flows back to the org that uploaded the file — same
-      // trust boundary as `CsvBatchDuplicateError` above.
+      // only flows back to the org that uploaded the file.
       req.log.warn(
         {
           entity,
@@ -627,32 +625,6 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
         rowNumber: err.rowNumber,
         conflictKey: err.conflictKey,
         constraint: err.constraint,
-      });
-    } else if (err instanceof CsvBatchDuplicateError) {
-      // In-batch duplicate detected by `flushBatch` BEFORE we handed
-      // the chunk to Postgres, so we can tell the operator exactly
-      // which lines collided and on which key — instead of letting
-      // the request fall through to a sanitized "Database error 21000
-      // on table ..." message that strips the offending value (Task #89).
-      // The response only flows back to the org that uploaded the file,
-      // so it's safe to echo the conflict value (`err.conflictValue`)
-      // and the duplicate row/line locations: they came from this
-      // tenant's own upload.
-      req.log.warn(
-        {
-          entity,
-          orgId,
-          conflictKey: err.conflictKey,
-          duplicateLines: err.duplicates.map((d) => d.line),
-          duplicateRowCount: err.duplicates.length,
-        },
-        "Streaming CSV ingest rejected: in-batch duplicate conflict-target key",
-      );
-      writeEvent({
-        type: "error",
-        error: `CSV stream ingest failed: ${err.message}`,
-        conflictKey: err.conflictKey,
-        duplicates: err.duplicates,
       });
     } else {
       req.log.error(

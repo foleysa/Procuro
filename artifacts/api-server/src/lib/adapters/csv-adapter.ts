@@ -317,86 +317,6 @@ export class CsvIngestAbortedError extends Error {
 }
 
 /**
- * Where a single duplicate-key row lives inside the upload. Both numbers
- * are 1-based and assume the header is line 1, so the first data row is
- * `row=1, line=2`. `line` honours quoted multi-line cells (the value
- * comes straight from `csv-parse`'s per-record `info.lines`) so an
- * operator opening the file in their editor lands on the offending row.
- */
-export interface CsvDuplicateRowLocation {
-  /** 1-based index of the data row, header excluded. */
-  row: number;
-  /** 1-based source CSV line number (header is line 1). */
-  line: number;
-}
-
-/**
- * Thrown by `flushBatch` when two or more rows in the same batch share
- * the conflict-target key of an `INSERT ... ON CONFLICT DO UPDATE`
- * upsert. Postgres rejects that statement with SQLSTATE 21000
- * ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
- * but the sanitizer scrubs the offending value from the surfaced
- * message because Postgres' `detail` text can contain any tenant's
- * data — leaving the operator with `Database error 21000 on table
- * "suppliers", constraint "suppliers_org_external_id_uq"` and no
- * way to find the bad rows in their CSV.
- *
- * Catching the duplicate ourselves before we ever hand the batch to
- * Drizzle lets us tell the uploader *which lines* collided and on
- * what key, without leaking the value to anyone else (the response
- * body only flows back to the org that uploaded the file).
- *
- * The class is branded `unrecoverable: true` so the job worker's
- * `wrapStructuralError` path treats it as a permanent input error and
- * fails the job on attempt #1 instead of burning the retry budget on a
- * problem the user has to fix in their CSV before re-uploading.
- */
-export class CsvBatchDuplicateError extends Error {
-  readonly unrecoverable = true as const;
-  readonly entity: CsvEntity;
-  /**
-   * Human-readable name of the column(s) that drive the conflict
-   * target — `"externalId"` for the per-source-system natural-key
-   * tables, `"code"` for `categories`, `"rateCardExternalId+role+seniority"`
-   * for `rate_card_lines`. Always a developer-facing identifier; never
-   * contains caller-supplied data.
-   */
-  readonly conflictKey: string;
-  /**
-   * The actual value the duplicate rows shared (e.g. the externalId
-   * `SUP-001`). Echoed back in the error message because the only
-   * recipient is the org that uploaded the file.
-   */
-  readonly conflictValue: string;
-  readonly duplicates: CsvDuplicateRowLocation[];
-
-  constructor(args: {
-    entity: CsvEntity;
-    conflictKey: string;
-    conflictValue: string;
-    duplicates: CsvDuplicateRowLocation[];
-  }) {
-    const lines = args.duplicates.map((d) => d.line);
-    const lineList = formatLineList(lines);
-    super(
-      `${args.duplicates.length} rows share ${args.conflictKey} '${args.conflictValue}' (${lines.length === 1 ? "line" : "lines"} ${lineList}). ` +
-        `Each ${args.conflictKey} can appear only once per upload — ` +
-        `remove or merge the duplicate rows and try again.`,
-    );
-    this.name = "CsvBatchDuplicateError";
-    this.entity = args.entity;
-    this.conflictKey = args.conflictKey;
-    this.conflictValue = args.conflictValue;
-    this.duplicates = args.duplicates;
-  }
-}
-
-function formatLineList(lines: number[]): string {
-  if (lines.length <= 2) return lines.join(" and ");
-  return `${lines.slice(0, -1).join(", ")}, and ${lines[lines.length - 1]}`;
-}
-
-/**
  * Thrown by `flushBatch` when an `INSERT ... ON CONFLICT DO UPDATE`
  * upsert is rejected by Postgres with SQLSTATE 23505 because a
  * uploaded row collides with an *existing* DB row on a unique
@@ -423,8 +343,8 @@ function formatLineList(lines: number[]): string {
  *
  * The conflict key is only echoed back to the org that uploaded the
  * file, so it is safe to include the tenant's own values verbatim
- * — the same trust boundary that justifies `CsvBatchDuplicateError`'s
- * value echo above.
+ * — safe to echo back because the response only flows to the org that
+ * uploaded the file.
  *
  * Branded `unrecoverable: true` so the job worker fails the job on
  * attempt #1 instead of burning the retry budget on user input that
@@ -625,10 +545,9 @@ interface BufferedRow {
  * a single `info` log line records the collapse so an operator can
  * audit which CSV lines were superseded.
  *
- * Rationale: previously this function THREW `CsvBatchDuplicateError`
- * which surfaced as a structured error event and aborted the entire
- * upload — extremely punishing for multi-million-row feeds where the
- * tail of the file might re-state a header row already present in
+ * Rationale: previously this function threw an error and aborted the
+ * entire upload — extremely punishing for multi-million-row feeds where
+ * the tail of the file might re-state a header row already present in
  * the same batch. Postgres' own `INSERT ... ON CONFLICT DO UPDATE`
  * across separate statements has the same last-write-wins effect on
  * the DB row; the pre-check just makes the in-batch case match.
