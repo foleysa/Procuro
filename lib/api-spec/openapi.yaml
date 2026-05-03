@@ -1856,6 +1856,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecentlyFailedJobs'
+  /jobs/dead-letter:
+    get:
+      operationId: listDeadLetterJobs
+      tags:
+      - jobs
+      summary: List permanently-failed (dead-letter) jobs for the active tenant
+      description: 'Returns jobs whose `status` is `failed` — i.e. they have either
+
+        exhausted their auto-retry budget or thrown an unrecoverable error
+        on their first attempt. Powers the "Needs attention" dashboard
+        card so operators can find dead-letter jobs proactively without
+        digging through the System / Jobs page.
+
+        Unlike `/jobs/recently-failed` this endpoint has no lookback
+        window and is offset-paginated so the dashboard drilldown can
+        page through the full backlog.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - in: query
+        name: offset
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      responses:
+        '200':
+          description: Page of dead-letter jobs (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetterJobs'
   /jobs/settings:
     get:
       operationId: listJobKindSettings
@@ -2004,6 +2044,39 @@ paths:
           description: Job not found
         '409':
           description: Job is not in a retryable state
+  /jobs/{id}/discard:
+    post:
+      operationId: discardJob
+      tags:
+      - jobs
+      summary: Discard (delete) a permanently-failed job from the dead-letter list
+      description: 'Removes a permanently-failed job row from the queue table so it
+
+        stops surfacing on the "Needs attention" dashboard card. Intended
+        as the operator escape hatch for dead-letter rows that have been
+        triaged and do not need to be retried (e.g. the upstream
+        condition is known to be transient and a follow-up scheduled
+        run will pick the work back up).
+
+        Only jobs in the `failed` state may be discarded. Active rows
+        (`pending`, `running`) must be cancelled first via
+        `POST /jobs/{id}/cancel`.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Job discarded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobDiscarded'
+        '404':
+          description: Job not found
+        '409':
+          description: Job is not in a discardable state
   /jobs/{id}/cancel:
     post:
       operationId: cancelJob
@@ -8634,6 +8707,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Job'
+    DeadLetterJobs:
+      type: object
+      required:
+      - total
+      - limit
+      - offset
+      - jobs
+      properties:
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of dead-letter jobs visible to the active tenant.
+        limit:
+          type: integer
+          minimum: 1
+          description: Page size used for this response.
+        offset:
+          type: integer
+          minimum: 0
+          description: Offset used for this response.
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+    JobDiscarded:
+      type: object
+      required:
+      - jobId
+      - discarded
+      properties:
+        jobId:
+          type: string
+        discarded:
+          type: boolean
     JobKindSetting:
       type: object
       required:

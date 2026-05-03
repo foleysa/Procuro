@@ -2304,6 +2304,30 @@ export interface RecentlyFailedJobs {
   jobs: Job[];
 }
 
+export interface DeadLetterJobs {
+  /**
+   * Total number of dead-letter jobs visible to the active tenant.
+   * @minimum 0
+   */
+  total: number;
+  /**
+   * Page size used for this response.
+   * @minimum 1
+   */
+  limit: number;
+  /**
+   * Offset used for this response.
+   * @minimum 0
+   */
+  offset: number;
+  jobs: Job[];
+}
+
+export interface JobDiscarded {
+  jobId: string;
+  discarded: boolean;
+}
+
 export type JobKindSettingKind =
   (typeof JobKindSettingKind)[keyof typeof JobKindSettingKind];
 
@@ -5363,6 +5387,18 @@ export type ListRecentlyFailedJobsParams = {
    * @maximum 100
    */
   limit?: number;
+};
+
+export type ListDeadLetterJobsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * @minimum 0
+   */
+  offset?: number;
 };
 
 export type ListErpConnectionRunsParams = {

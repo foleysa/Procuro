@@ -6,7 +6,7 @@ import {
   type JobKind,
   type JobStatus,
 } from "@workspace/db";
-import { and, desc, eq, gte, isNull, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
@@ -323,6 +323,61 @@ router.get("/jobs/recently-failed", tenantMiddleware, async (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Dead-letter listing (#183 — "Needs attention" dashboard card)
+//
+// Permanently-failed jobs in this system always have `status='failed'`
+// (the queue resets transient failures back to `pending` with a future
+// `scheduled_for`). That makes `status='failed'` the dead-letter
+// condition for both the retry-budget-exhausted and the
+// unrecoverable-on-attempt-1 paths.
+//
+// Unlike `/jobs/recently-failed` this endpoint has no lookback window
+// and is offset-paginated so the dashboard drilldown can page through
+// the full backlog if needed. Tenant isolation matches the listing
+// endpoint above (own-org rows + system-scoped rows with NULL orgId).
+//
+// IMPORTANT: declared BEFORE `/jobs/:id` so Express does not match
+// `/jobs/dead-letter` against the `:id` param.
+// ---------------------------------------------------------------------------
+router.get("/jobs/dead-letter", tenantMiddleware, async (req, res) => {
+  const orgId = requireOrgId(req);
+
+  const limitRaw = parseInt(String(req.query["limit"] ?? "20"), 10);
+  const limit = Math.min(
+    Math.max(Number.isFinite(limitRaw) ? limitRaw : 20, 1),
+    100,
+  );
+  const offsetRaw = parseInt(String(req.query["offset"] ?? "0"), 10);
+  const offset = Math.max(Number.isFinite(offsetRaw) ? offsetRaw : 0, 0);
+
+  const tenantFilter = or(
+    eq(jobsTable.orgId, orgId),
+    isNull(jobsTable.orgId),
+  ) as SQL;
+  const where = and(tenantFilter, eq(jobsTable.status, "failed")) as SQL;
+
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(jobsTable)
+    .where(where);
+
+  const rows = await db
+    .select()
+    .from(jobsTable)
+    .where(where)
+    .orderBy(desc(jobsTable.completedAt), desc(jobsTable.enqueuedAt))
+    .limit(limit)
+    .offset(offset);
+
+  res.json({
+    total: total ?? 0,
+    limit,
+    offset,
+    jobs: rows.map(mapJob),
+  });
+});
+
 router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const [row] = await db
@@ -377,6 +432,36 @@ router.post("/jobs/:id/retry", tenantMiddleware, requirePermission("ingest:write
     "Retried failed job",
   );
   res.status(202).json({ jobId: job.id, status: job.status });
+});
+
+router.post("/jobs/:id/discard", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {
+  const orgId = requireOrgId(req);
+  const id = String(req.params.id);
+  const [row] = await db
+    .select()
+    .from(jobsTable)
+    .where(
+      and(
+        eq(jobsTable.id, id),
+        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)),
+      ),
+    );
+  if (!row) {
+    res.status(404).json({ error: "Job not found" });
+    return;
+  }
+  if (row.status !== "failed") {
+    res.status(409).json({
+      error: `Only failed jobs can be discarded (current status: ${row.status})`,
+    });
+    return;
+  }
+  await db.delete(jobsTable).where(eq(jobsTable.id, id));
+  req.log.info(
+    { jobId: id, kind: row.kind, orgId: row.orgId },
+    "Discarded dead-letter job",
+  );
+  res.json({ jobId: id, discarded: true });
 });
 
 router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:write"), async (req, res) => {

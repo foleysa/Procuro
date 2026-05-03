@@ -3764,6 +3764,98 @@ export const ListRecentlyFailedJobsResponse = zod.object({
 });
 
 /**
+ * Returns jobs whose `status` is `failed` — i.e. they have either
+exhausted their auto-retry budget or thrown an unrecoverable error on their first attempt. Powers the "Needs attention" dashboard card so operators can find dead-letter jobs proactively without digging through the System / Jobs page.
+Unlike `/jobs/recently-failed` this endpoint has no lookback window and is offset-paginated so the dashboard drilldown can page through the full backlog.
+
+ * @summary List permanently-failed (dead-letter) jobs for the active tenant
+ */
+export const listDeadLetterJobsQueryLimitDefault = 20;
+export const listDeadLetterJobsQueryLimitMax = 100;
+
+export const listDeadLetterJobsQueryOffsetDefault = 0;
+export const listDeadLetterJobsQueryOffsetMin = 0;
+
+export const ListDeadLetterJobsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listDeadLetterJobsQueryLimitMax)
+    .default(listDeadLetterJobsQueryLimitDefault),
+  offset: zod.coerce
+    .number()
+    .min(listDeadLetterJobsQueryOffsetMin)
+    .default(listDeadLetterJobsQueryOffsetDefault),
+});
+
+export const ListDeadLetterJobsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const listDeadLetterJobsResponseTotalMin = 0;
+
+export const listDeadLetterJobsResponseOffsetMin = 0;
+
+export const ListDeadLetterJobsResponse = zod.object({
+  total: zod
+    .number()
+    .min(listDeadLetterJobsResponseTotalMin)
+    .describe("Total number of dead-letter jobs visible to the active tenant."),
+  limit: zod.number().min(1).describe("Page size used for this response."),
+  offset: zod
+    .number()
+    .min(listDeadLetterJobsResponseOffsetMin)
+    .describe("Offset used for this response."),
+  jobs: zod.array(
+    zod.object({
+      id: zod.string(),
+      orgId: zod.string().nullish(),
+      kind: zod.string(),
+      status: zod
+        .enum(["pending", "running", "succeeded", "failed", "cancelled"])
+        .describe(
+          "`cancelled` is a distinct terminal state from `failed` and is\nonly used for operator-initiated cancellations (it never\nresults from infrastructure errors or exhausted retries).\n",
+        ),
+      attempts: zod.number(),
+      maxAttempts: zod
+        .number()
+        .describe(
+          "Total automatic-attempt budget (initial run + auto-retries).\nWhen `attempts` reaches this value the worker stops retrying\nand marks the job `failed`.\n",
+        ),
+      progress: zod.number().optional(),
+      result: zod.record(zod.string(), zod.unknown()).nullish(),
+      error: zod.string().nullish(),
+      cancelRequested: zod
+        .boolean()
+        .optional()
+        .describe(
+          'True once an operator has requested cancellation. For `running`\njobs the worker will rewrite the terminal state to `cancelled`\nwith error \"Cancelled by operator\" once the handler returns.\n',
+        ),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      scheduledFor: zod.coerce
+        .date()
+        .nullish()
+        .describe(
+          "Earliest time the worker is allowed to claim this job again.\nSet to a future timestamp while a job is in retry-backoff\nafter a transient failure; `null` means the job is ready to\nrun immediately (the common case).\n",
+        ),
+      payload: zod
+        .record(zod.string(), zod.unknown())
+        .optional()
+        .describe(
+          "Defensively-redacted copy of the original job payload.\nReturned ONLY by the job-detail endpoint (`GET \/jobs\/{id}`),\nnever by the listing endpoint, so admins can inspect \*why\*\na job failed without leaking credential-shaped fields. List\nresponses omit this field to keep payloads bounded.\n",
+        ),
+    }),
+  ),
+});
+
+/**
  * Returns one row per configurable job kind. `maxAttempts` is the
 effective retry budget (operator override if present, otherwise the
 in-code default). `isOverride` is `true` when the value comes from
@@ -4049,6 +4141,31 @@ export const RetryJobHeader = zod.object({
     .describe(
       "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
     ),
+});
+
+/**
+ * Removes a permanently-failed job row from the queue table so it
+stops surfacing on the "Needs attention" dashboard card. Intended as the operator escape hatch for dead-letter rows that have been triaged and do not need to be retried (e.g. the upstream condition is known to be transient and a follow-up scheduled run will pick the work back up).
+Only jobs in the `failed` state may be discarded. Active rows (`pending`, `running`) must be cancelled first via `POST /jobs/{id}/cancel`.
+
+ * @summary Discard (delete) a permanently-failed job from the dead-letter list
+ */
+export const DiscardJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DiscardJobHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const DiscardJobResponse = zod.object({
+  jobId: zod.string(),
+  discarded: zod.boolean(),
 });
 
 /**

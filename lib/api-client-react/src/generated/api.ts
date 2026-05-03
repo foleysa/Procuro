@@ -87,6 +87,7 @@ import type {
   CsvIngestRequest,
   Cycle,
   CycleDetail,
+  DeadLetterJobs,
   DefensePack,
   DefensePackListResponse,
   DefensePackOutcome,
@@ -124,6 +125,7 @@ import type {
   Job,
   JobAccepted,
   JobCancelled,
+  JobDiscarded,
   JobKindSetting,
   LearnedPrior,
   ListAdminAuditLogParams,
@@ -136,6 +138,7 @@ import type {
   ListCollectorSourceHealthParams,
   ListContractsParams,
   ListDataSources200,
+  ListDeadLetterJobsParams,
   ListDefensePacksParams,
   ListErpConnectionRunsParams,
   ListIntelligenceEventsParams,
@@ -5061,6 +5064,107 @@ export function useListRecentlyFailedJobs<
 }
 
 /**
+ * Returns jobs whose `status` is `failed` — i.e. they have either
+exhausted their auto-retry budget or thrown an unrecoverable error on their first attempt. Powers the "Needs attention" dashboard card so operators can find dead-letter jobs proactively without digging through the System / Jobs page.
+Unlike `/jobs/recently-failed` this endpoint has no lookback window and is offset-paginated so the dashboard drilldown can page through the full backlog.
+
+ * @summary List permanently-failed (dead-letter) jobs for the active tenant
+ */
+export const getListDeadLetterJobsUrl = (params?: ListDeadLetterJobsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/jobs/dead-letter?${stringifiedParams}`
+    : `/api/jobs/dead-letter`;
+};
+
+export const listDeadLetterJobs = async (
+  params?: ListDeadLetterJobsParams,
+  options?: RequestInit,
+): Promise<DeadLetterJobs> => {
+  return customFetch<DeadLetterJobs>(getListDeadLetterJobsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDeadLetterJobsQueryKey = (
+  params?: ListDeadLetterJobsParams,
+) => {
+  return [`/api/jobs/dead-letter`, ...(params ? [params] : [])] as const;
+};
+
+export const getListDeadLetterJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDeadLetterJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDeadLetterJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDeadLetterJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListDeadLetterJobsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDeadLetterJobs>>
+  > = ({ signal }) => listDeadLetterJobs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDeadLetterJobs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDeadLetterJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDeadLetterJobs>>
+>;
+export type ListDeadLetterJobsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List permanently-failed (dead-letter) jobs for the active tenant
+ */
+
+export function useListDeadLetterJobs<
+  TData = Awaited<ReturnType<typeof listDeadLetterJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDeadLetterJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDeadLetterJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDeadLetterJobsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * Returns one row per configurable job kind. `maxAttempts` is the
 effective retry budget (operator override if present, otherwise the
 in-code default). `isOverride` is `true` when the value comes from
@@ -5569,6 +5673,94 @@ export const useRetryJob = <
   TContext
 > => {
   return useMutation(getRetryJobMutationOptions(options));
+};
+
+/**
+ * Removes a permanently-failed job row from the queue table so it
+stops surfacing on the "Needs attention" dashboard card. Intended as the operator escape hatch for dead-letter rows that have been triaged and do not need to be retried (e.g. the upstream condition is known to be transient and a follow-up scheduled run will pick the work back up).
+Only jobs in the `failed` state may be discarded. Active rows (`pending`, `running`) must be cancelled first via `POST /jobs/{id}/cancel`.
+
+ * @summary Discard (delete) a permanently-failed job from the dead-letter list
+ */
+export const getDiscardJobUrl = (id: string) => {
+  return `/api/jobs/${id}/discard`;
+};
+
+export const discardJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<JobDiscarded> => {
+  return customFetch<JobDiscarded>(getDiscardJobUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getDiscardJobMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof discardJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof discardJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["discardJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof discardJob>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return discardJob(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DiscardJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof discardJob>>
+>;
+
+export type DiscardJobMutationError = ErrorType<void>;
+
+/**
+ * @summary Discard (delete) a permanently-failed job from the dead-letter list
+ */
+export const useDiscardJob = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof discardJob>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof discardJob>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDiscardJobMutationOptions(options));
 };
 
 /**

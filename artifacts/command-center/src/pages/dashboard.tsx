@@ -54,6 +54,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DataReadinessCard } from "@/components/data-readiness-card";
+import { NeedsAttention } from "@/features/dashboard/NeedsAttention";
 
 const POLL_MS = 30_000;
 
@@ -475,6 +476,11 @@ export default function Dashboard() {
           we keep the card mounted so the user can confirm at a glance
           that every lever still has the data it needs. */}
       <DataReadinessCard basePath={import.meta.env.BASE_URL.replace(/\/$/, "")} />
+
+      {/* Dead-letter jobs (#183). Surfaces permanently-failed jobs
+          with one-click retry/discard so operators catch them
+          proactively instead of waiting for an end-user complaint. */}
+      <NeedsAttention />
 
       {/* Attention + System pulse */}
       <div className="grid lg:grid-cols-3 gap-6">
