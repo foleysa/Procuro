@@ -46,6 +46,12 @@ export class ApiError extends Error {
   }
 }
 
+export class InvalidRequestError extends ApiError {
+  constructor(message = "Invalid request", details?: unknown) {
+    super(400, "invalid_request", message, details);
+  }
+}
+
 export class UnauthorizedError extends ApiError {
   constructor(message = "Authentication required") {
     super(401, "unauthorized", message);
@@ -53,8 +59,8 @@ export class UnauthorizedError extends ApiError {
 }
 
 export class ForbiddenError extends ApiError {
-  constructor(message = "Forbidden") {
-    super(403, "forbidden", message);
+  constructor(message = "Forbidden", details?: unknown) {
+    super(403, "forbidden", message, details);
   }
 }
 

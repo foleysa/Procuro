@@ -53,6 +53,12 @@ import {
   transitionAlert,
 } from "@workspace/intelligence";
 import { getChannelAdapter } from "../lib/alerts/channels";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+  ApiError,
+} from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -351,8 +357,7 @@ router.get("/alerts/:id", tenantMiddleware, async (req, res) => {
     .where(and(eq(alertsTable.id, id), eq(alertsTable.orgId, orgId)))
     .limit(1);
   if (!row) {
-    res.status(404).json({ error: "Alert not found" });
-    return;
+    throw new NotFoundError("Alert not found");
   }
   res.json(mapAlert(row));
 });
@@ -366,8 +371,7 @@ router.get("/alerts/:id/events", tenantMiddleware, async (req, res) => {
     .where(and(eq(alertsTable.id, id), eq(alertsTable.orgId, orgId)))
     .limit(1);
   if (!alert) {
-    res.status(404).json({ error: "Alert not found" });
-    return;
+    throw new NotFoundError("Alert not found");
   }
   const rows = await db
     .select()
@@ -386,8 +390,7 @@ router.get("/alerts/:id/deliveries", tenantMiddleware, async (req, res) => {
     .where(and(eq(alertsTable.id, id), eq(alertsTable.orgId, orgId)))
     .limit(1);
   if (!alert) {
-    res.status(404).json({ error: "Alert not found" });
-    return;
+    throw new NotFoundError("Alert not found");
   }
   const rows = await db
     .select()
@@ -409,11 +412,7 @@ router.post("/alerts/:id/transitions", tenantMiddleware, async (req, res) => {
   const id = String(req.params["id"]);
   const parsed = TransitionAlertSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   const [alert] = await db
     .select({ id: alertsTable.id })
@@ -421,8 +420,7 @@ router.post("/alerts/:id/transitions", tenantMiddleware, async (req, res) => {
     .where(and(eq(alertsTable.id, id), eq(alertsTable.orgId, orgId)))
     .limit(1);
   if (!alert) {
-    res.status(404).json({ error: "Alert not found" });
-    return;
+    throw new NotFoundError("Alert not found");
   }
   try {
     const updated = await transitionAlert({
@@ -441,7 +439,7 @@ router.post("/alerts/:id/transitions", tenantMiddleware, async (req, res) => {
       { err: (err as Error).message, alertId: id },
       "Alert transition failed",
     );
-    res.status(400).json({ error: (err as Error).message });
+    throw new InvalidRequestError((err as Error).message);
   }
 });
 
@@ -464,11 +462,7 @@ router.post("/alerts", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateManualAlertSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   const result = await createAlert({
     orgId,
@@ -522,17 +516,12 @@ router.post("/alert-channels", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateChannelSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   try {
     getChannelAdapter(parsed.data.kind).validateConfig(parsed.data.config);
   } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
-    return;
+    throw new InvalidRequestError((err as Error).message);
   }
   const id = newId("achan");
   const [row] = await db
@@ -554,11 +543,7 @@ router.patch("/alert-channels/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params["id"]);
   const parsed = PatchChannelSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   const [existing] = await db
     .select()
@@ -571,15 +556,13 @@ router.patch("/alert-channels/:id", tenantMiddleware, async (req, res) => {
     )
     .limit(1);
   if (!existing) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
+    throw new NotFoundError("Channel not found");
   }
   if (parsed.data.config) {
     try {
       getChannelAdapter(existing.kind).validateConfig(parsed.data.config);
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message });
-      return;
+      throw new InvalidRequestError((err as Error).message);
     }
   }
   const updates: Partial<typeof alertChannelsTable.$inferInsert> = {};
@@ -606,8 +589,7 @@ router.delete("/alert-channels/:id", tenantMiddleware, async (req, res) => {
       ),
     );
   if (r.rowCount === 0) {
-    res.status(404).json({ error: "Channel not found" });
-    return;
+    throw new NotFoundError("Channel not found");
   }
   res.status(204).end();
 });
@@ -629,8 +611,7 @@ router.post(
       )
       .limit(1);
     if (!channel) {
-      res.status(404).json({ error: "Channel not found" });
-      return;
+      throw new NotFoundError("Channel not found");
     }
     // Build an ephemeral AlertRow shape (we never persist it). The
     // adapter only needs read access to the alert fields it formats.
@@ -714,11 +695,7 @@ router.post("/alert-subscriptions", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateSubscriptionSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   // Validate the channel belongs to the same org.
   const [channel] = await db
@@ -732,8 +709,7 @@ router.post("/alert-subscriptions", tenantMiddleware, async (req, res) => {
     )
     .limit(1);
   if (!channel) {
-    res.status(400).json({ error: "Channel not found in this tenant" });
-    return;
+    throw new InvalidRequestError("Channel not found in this tenant");
   }
   // Validate the watchlist (if provided) belongs to the same org.
   if (parsed.data.watchlistId) {
@@ -748,8 +724,7 @@ router.post("/alert-subscriptions", tenantMiddleware, async (req, res) => {
       )
       .limit(1);
     if (!wl) {
-      res.status(400).json({ error: "Watchlist not found in this tenant" });
-      return;
+      throw new InvalidRequestError("Watchlist not found in this tenant");
     }
   }
   const id = newId("asub");
@@ -778,11 +753,7 @@ router.patch(
     const id = String(req.params["id"]);
     const parsed = PatchSubscriptionSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({
-        error: "Invalid request body",
-        details: parsed.error.flatten(),
-      });
-      return;
+      throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
     }
     const [existing] = await db
       .select()
@@ -795,8 +766,7 @@ router.patch(
       )
       .limit(1);
     if (!existing) {
-      res.status(404).json({ error: "Subscription not found" });
-      return;
+      throw new NotFoundError("Subscription not found");
     }
     if (parsed.data.channelId) {
       const [channel] = await db
@@ -810,8 +780,7 @@ router.patch(
         )
         .limit(1);
       if (!channel) {
-        res.status(400).json({ error: "Channel not found in this tenant" });
-        return;
+        throw new InvalidRequestError("Channel not found in this tenant");
       }
     }
     if (parsed.data.watchlistId) {
@@ -826,8 +795,7 @@ router.patch(
         )
         .limit(1);
       if (!wl) {
-        res.status(400).json({ error: "Watchlist not found in this tenant" });
-        return;
+        throw new InvalidRequestError("Watchlist not found in this tenant");
       }
     }
     const updates: Partial<typeof alertSubscriptionsTable.$inferInsert> = {};
@@ -865,8 +833,7 @@ router.delete(
         ),
       );
     if (r.rowCount === 0) {
-      res.status(404).json({ error: "Subscription not found" });
-      return;
+      throw new NotFoundError("Subscription not found");
     }
     res.status(204).end();
   },
@@ -900,11 +867,7 @@ router.post("/watchlists", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateWatchlistSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   const id = newId("wl");
   const [row] = await db
@@ -930,8 +893,7 @@ router.get("/watchlists/:id", tenantMiddleware, async (req, res) => {
     .where(and(eq(watchlistsTable.id, id), eq(watchlistsTable.orgId, orgId)))
     .limit(1);
   if (!row) {
-    res.status(404).json({ error: "Watchlist not found" });
-    return;
+    throw new NotFoundError("Watchlist not found");
   }
   const members = await db
     .select()
@@ -949,11 +911,7 @@ router.patch("/watchlists/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params["id"]);
   const parsed = PatchWatchlistSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   const updates: Partial<typeof watchlistsTable.$inferInsert> = {};
   if (parsed.data.name !== undefined) updates.name = parsed.data.name;
@@ -967,8 +925,7 @@ router.patch("/watchlists/:id", tenantMiddleware, async (req, res) => {
     )
     .returning();
   if (!row) {
-    res.status(404).json({ error: "Watchlist not found" });
-    return;
+    throw new NotFoundError("Watchlist not found");
   }
   res.json(mapWatchlist(row));
 });
@@ -982,8 +939,7 @@ router.delete("/watchlists/:id", tenantMiddleware, async (req, res) => {
       and(eq(watchlistsTable.id, id), eq(watchlistsTable.orgId, orgId)),
     );
   if (r.rowCount === 0) {
-    res.status(404).json({ error: "Watchlist not found" });
-    return;
+    throw new NotFoundError("Watchlist not found");
   }
   res.status(204).end();
 });
@@ -1005,11 +961,7 @@ router.post(
     const id = String(req.params["id"]);
     const parsed = AddMemberSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({
-        error: "Invalid request body",
-        details: parsed.error.flatten(),
-      });
-      return;
+      throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
     }
     const [parent] = await db
       .select({ id: watchlistsTable.id })
@@ -1019,8 +971,7 @@ router.post(
       )
       .limit(1);
     if (!parent) {
-      res.status(404).json({ error: "Watchlist not found" });
-      return;
+      throw new NotFoundError("Watchlist not found");
     }
     const memberId = newId("wlm");
     const inserted = await db
@@ -1059,8 +1010,7 @@ router.post(
         )
         .limit(1);
       if (!existing) {
-        res.status(500).json({ error: "Member upsert vanished" });
-        return;
+        throw new ApiError(500, "internal_error", "Member upsert vanished");
       }
       row = existing;
     }
@@ -1083,8 +1033,7 @@ router.delete(
       )
       .limit(1);
     if (!parent) {
-      res.status(404).json({ error: "Watchlist not found" });
-      return;
+      throw new NotFoundError("Watchlist not found");
     }
     const r = await db
       .delete(watchlistMembersTable)
@@ -1095,8 +1044,7 @@ router.delete(
         ),
       );
     if (r.rowCount === 0) {
-      res.status(404).json({ error: "Member not found" });
-      return;
+      throw new NotFoundError("Member not found");
     }
     res.status(204).end();
   },
@@ -1136,11 +1084,7 @@ router.post("/alert-rules", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateRuleSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   // Validate the watchlist (if provided) belongs to the same org.
   if (parsed.data.watchlistId) {
@@ -1155,8 +1099,7 @@ router.post("/alert-rules", tenantMiddleware, async (req, res) => {
       )
       .limit(1);
     if (!wl) {
-      res.status(400).json({ error: "Watchlist not found in this tenant" });
-      return;
+      throw new InvalidRequestError("Watchlist not found in this tenant");
     }
   }
   const id = newId("arule");
@@ -1181,11 +1124,7 @@ router.patch("/alert-rules/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params["id"]);
   const parsed = PatchRuleSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   // Validate the watchlist (if provided) belongs to the same org.
   if (parsed.data.watchlistId) {
@@ -1200,8 +1139,7 @@ router.patch("/alert-rules/:id", tenantMiddleware, async (req, res) => {
       )
       .limit(1);
     if (!wl) {
-      res.status(400).json({ error: "Watchlist not found in this tenant" });
-      return;
+      throw new InvalidRequestError("Watchlist not found in this tenant");
     }
   }
   const updates: Partial<typeof alertRulesTable.$inferInsert> = {};
@@ -1223,8 +1161,7 @@ router.patch("/alert-rules/:id", tenantMiddleware, async (req, res) => {
     )
     .returning();
   if (!row) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
+    throw new NotFoundError("Rule not found");
   }
   res.json(mapRule(row));
 });
@@ -1238,8 +1175,7 @@ router.delete("/alert-rules/:id", tenantMiddleware, async (req, res) => {
       and(eq(alertRulesTable.id, id), eq(alertRulesTable.orgId, orgId)),
     );
   if (r.rowCount === 0) {
-    res.status(404).json({ error: "Rule not found" });
-    return;
+    throw new NotFoundError("Rule not found");
   }
   res.status(204).end();
 });
@@ -1278,11 +1214,7 @@ router.post("/escalation-policies", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateEscalationSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "Invalid request body",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
   }
   // Validate the channel (if provided) belongs to the same org.
   if (parsed.data.channelId) {
@@ -1297,8 +1229,7 @@ router.post("/escalation-policies", tenantMiddleware, async (req, res) => {
       )
       .limit(1);
     if (!ch) {
-      res.status(400).json({ error: "Channel not found in this tenant" });
-      return;
+      throw new InvalidRequestError("Channel not found in this tenant");
     }
   }
   const id = newId("escp");
@@ -1326,11 +1257,7 @@ router.patch(
     const id = String(req.params["id"]);
     const parsed = PatchEscalationSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({
-        error: "Invalid request body",
-        details: parsed.error.flatten(),
-      });
-      return;
+      throw new InvalidRequestError("Invalid request body", parsed.error.flatten());
     }
     // Validate the channel (if provided) belongs to the same org.
     if (parsed.data.channelId) {
@@ -1345,8 +1272,7 @@ router.patch(
         )
         .limit(1);
       if (!ch) {
-        res.status(400).json({ error: "Channel not found in this tenant" });
-        return;
+        throw new InvalidRequestError("Channel not found in this tenant");
       }
     }
     const updates: Partial<typeof escalationPoliciesTable.$inferInsert> = {};
@@ -1372,8 +1298,7 @@ router.patch(
       )
       .returning();
     if (!row) {
-      res.status(404).json({ error: "Escalation policy not found" });
-      return;
+      throw new NotFoundError("Escalation policy not found");
     }
     res.json(mapEscalation(row));
   },
@@ -1394,8 +1319,7 @@ router.delete(
         ),
       );
     if (r.rowCount === 0) {
-      res.status(404).json({ error: "Escalation policy not found" });
-      return;
+      throw new NotFoundError("Escalation policy not found");
     }
     res.status(204).end();
   },

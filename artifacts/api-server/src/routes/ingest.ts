@@ -4,6 +4,7 @@ import Busboy from "busboy";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { ApiError, InvalidRequestError } from "../lib/api-errors";
 import {
   csvSourceAdapter,
   streamCsvEntity,
@@ -73,10 +74,7 @@ router.post("/ingest/csv", tenantMiddleware, requirePermission("ingest:write"), 
   if (!isAsync(req)) {
     const itemCount = countCsvItems(csv);
     if (itemCount > MAX_SYNC_INGEST_ITEMS) {
-      res.status(413).json({
-        error: `Synchronous ingest is limited to ${MAX_SYNC_INGEST_ITEMS} total records. Received ${itemCount}. Use ?async=true for larger payloads.`,
-      });
-      return;
+      throw new ApiError(413, "invalid_request", `Synchronous ingest is limited to ${MAX_SYNC_INGEST_ITEMS} total records. Received ${itemCount}. Use ?async=true for larger payloads.`);
     }
   }
 
@@ -168,10 +166,7 @@ router.post("/ingest/mock-erp", tenantMiddleware, requirePermission("ingest:writ
       }
     }
     if (erpItemCount > MAX_SYNC_INGEST_ITEMS) {
-      res.status(413).json({
-        error: `Synchronous ingest is limited to ${MAX_SYNC_INGEST_ITEMS} total records (including nested PO lines). Received ${erpItemCount}. Use ?async=true for larger payloads.`,
-      });
-      return;
+      throw new ApiError(413, "invalid_request", `Synchronous ingest is limited to ${MAX_SYNC_INGEST_ITEMS} total records (including nested PO lines). Received ${erpItemCount}. Use ?async=true for larger payloads.`);
     }
   }
 
@@ -450,21 +445,15 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
   const entity = String(req.query["entity"] ?? "") as CsvEntity;
 
   if (!STREAM_CSV_ENTITIES.has(entity)) {
-    res.status(400).json({
-      error: `Invalid or missing 'entity' query parameter. Must be one of: ${Array.from(
-        STREAM_CSV_ENTITIES,
-      ).join(", ")}`,
-    });
-    return;
+    throw new InvalidRequestError(`Invalid or missing 'entity' query parameter. Must be one of: ${Array.from(
+      STREAM_CSV_ENTITIES,
+    ).join(", ")}`);
   }
 
   // Pre-flight Content-Length check (cheap rejection before we start parsing).
   const declaredLen = Number(req.headers["content-length"] ?? "0");
   if (declaredLen > MAX_STREAM_BYTES) {
-    res.status(413).json({
-      error: `Upload too large: ${declaredLen} bytes exceeds the ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit. Split the file into smaller chunks.`,
-    });
-    return;
+    throw new ApiError(413, "invalid_request", `Upload too large: ${declaredLen} bytes exceeds the ${MAX_STREAM_BYTES}-byte (1 GB) per-request limit. Split the file into smaller chunks.`);
   }
 
   // Per-org concurrency check: reject the request early if the tenant
@@ -473,10 +462,7 @@ router.post("/ingest/csv-stream", tenantMiddleware, requirePermission("ingest:wr
   // large uploads that each hold parser/buffer memory simultaneously.
   const activeUploads = activeStreamUploads.get(orgId) ?? 0;
   if (activeUploads >= MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG) {
-    res.status(429).json({
-      error: `Too many concurrent uploads. You may have at most ${MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG} streaming uploads in flight at once. Wait for an active upload to finish before starting a new one.`,
-    });
-    return;
+    throw new ApiError(429, "quota_exceeded", `Too many concurrent uploads. You may have at most ${MAX_CONCURRENT_STREAM_UPLOADS_PER_ORG} streaming uploads in flight at once. Wait for an active upload to finish before starting a new one.`);
   }
   incrementActiveUploads(orgId);
 

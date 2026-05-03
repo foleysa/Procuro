@@ -47,6 +47,7 @@ import {
 import { and, eq, desc, gte, isNull, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { resolveRbacContext } from "../lib/rbac";
+import { NotFoundError } from "../lib/api-errors";
 import {
   getRecentAutoAnnotations,
   getCycleConversionRateDeltas,
@@ -636,7 +637,7 @@ router.post(
         ),
       );
     if (!existing) {
-      return res.status(404).json({ error: "annotation_not_found" });
+      throw new NotFoundError("annotation_not_found");
     }
     return res.json({
       id: existing.id,

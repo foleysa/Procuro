@@ -16,6 +16,7 @@ import { z } from "zod";
 import { resolveEntity, type ResolvedEntity } from "@workspace/intelligence";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
+import { NotFoundError, InvalidRequestError, UnauthorizedError } from "../lib/api-errors";
 import { readRenewalAlertDays } from "../lib/contract-settings";
 import {
   deriveContractStatus,
@@ -712,8 +713,7 @@ router.get("/suppliers/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params.id);
   const detail = await loadSupplierDetail(orgId, id);
   if (!detail) {
-    res.status(404).json({ error: "Supplier not found" });
-    return;
+    throw new NotFoundError("Supplier not found");
   }
   res.json(detail);
 });
@@ -735,8 +735,7 @@ router.patch("/suppliers/:id", tenantMiddleware, async (req, res) => {
     .from(suppliersTable)
     .where(and(eq(suppliersTable.orgId, orgId), eq(suppliersTable.id, id)));
   if (!current) {
-    res.status(404).json({ error: "Supplier not found" });
-    return;
+    throw new NotFoundError("Supplier not found");
   }
 
   const updates: Partial<typeof suppliersTable.$inferInsert> = {};
@@ -821,8 +820,7 @@ router.patch("/suppliers/:id", tenantMiddleware, async (req, res) => {
     // request (cookie-based Clerk session, bearer api-key, etc.).
     const actor = req.actorEmail ?? req.clerkUserId;
     if (!actor) {
-      res.status(401).json({ error: "Authenticated actor required" });
-      return;
+      throw new UnauthorizedError("Authenticated actor required");
     }
     await db.transaction(async (tx) => {
       await tx
@@ -849,8 +847,7 @@ router.patch("/suppliers/:id", tenantMiddleware, async (req, res) => {
 
   const detail = await loadSupplierDetail(orgId, id);
   if (!detail) {
-    res.status(404).json({ error: "Supplier not found" });
-    return;
+    throw new NotFoundError("Supplier not found");
   }
   res.json(detail);
 });
@@ -895,8 +892,7 @@ router.get(
       )
       .limit(1);
     if (!supplier) {
-      res.status(404).json({ error: "Supplier not found" });
-      return;
+      throw new NotFoundError("Supplier not found");
     }
 
     // Resolve the supplier's canonical entity uid. If the backfill
@@ -1107,11 +1103,7 @@ router.post(
     const raw = (req.body as { billingCurrency?: unknown } | null | undefined)
       ?.billingCurrency;
     if (typeof raw !== "string" || !/^[A-Za-z]{3}$/.test(raw.trim())) {
-      res.status(400).json({
-        error:
-          "billingCurrency must be a 3-letter ISO 4217 code (e.g. 'EUR')",
-      });
-      return;
+      throw new InvalidRequestError("billingCurrency must be a 3-letter ISO 4217 code (e.g. 'EUR')");
     }
     const currency = raw.trim().toUpperCase();
     const [updated] = await db
@@ -1131,8 +1123,7 @@ router.post(
         billingCurrencyConfidence: suppliersTable.billingCurrencyConfidence,
       });
     if (!updated) {
-      res.status(404).json({ error: "Supplier not found" });
-      return;
+      throw new NotFoundError("Supplier not found");
     }
     res.json(updated);
   },

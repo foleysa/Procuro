@@ -29,6 +29,11 @@ import { newId } from "../lib/ids";
 import { logger } from "../lib/logger";
 import { extractSourcesFromInputs } from "../lib/insight-sources";
 import { writeAdminAudit, type AdminAuditAction } from "../lib/admin-audit";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -547,8 +552,7 @@ router.get("/opportunities/:id", tenantMiddleware, async (req, res) => {
       ),
     );
   if (!row) {
-    res.status(404).json({ error: "Opportunity not found" });
-    return;
+    throw new NotFoundError("Opportunity not found");
   }
   const decisions = await db
     .select()
@@ -1209,14 +1213,10 @@ router.post("/opportunities/:id/approve", tenantMiddleware, requirePermission("o
   const id = String(req.params.id);
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
-    res.status(404).json({ error: "Opportunity not found" });
-    return;
+    throw new NotFoundError("Opportunity not found");
   }
   if (opp.status !== "proposed") {
-    res
-      .status(409)
-      .json({ error: `Cannot approve from status '${opp.status}'` });
-    return;
+    throw new ConflictError(`Cannot approve from status '${opp.status}'`);
   }
   const { canonicalStage: newStage, savingsType: newSavingsType } =
     s2pForStatusTransition("approved");
@@ -1272,14 +1272,10 @@ router.post("/opportunities/:id/reject", tenantMiddleware, requirePermission("op
 
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
-    res.status(404).json({ error: "Opportunity not found" });
-    return;
+    throw new NotFoundError("Opportunity not found");
   }
   if (opp.status !== "proposed") {
-    res
-      .status(409)
-      .json({ error: `Cannot reject from status '${opp.status}'` });
-    return;
+    throw new ConflictError(`Cannot reject from status '${opp.status}'`);
   }
   const { canonicalStage: newStage, savingsType: newSavingsType } =
     s2pForStatusTransition("rejected");
@@ -1333,14 +1329,10 @@ router.post("/opportunities/:id/execute", tenantMiddleware, requirePermission("o
   const id = String(req.params.id);
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
-    res.status(404).json({ error: "Opportunity not found" });
-    return;
+    throw new NotFoundError("Opportunity not found");
   }
   if (opp.status !== "approved") {
-    res
-      .status(409)
-      .json({ error: `Cannot mark executing from status '${opp.status}'` });
-    return;
+    throw new ConflictError(`Cannot mark executing from status '${opp.status}'`);
   }
   {
     const { canonicalStage: newStage, savingsType: newSavingsType } =
@@ -1389,14 +1381,10 @@ router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("o
 
   const opp = await loadOppOrThrow(orgId, id);
   if (!opp) {
-    res.status(404).json({ error: "Opportunity not found" });
-    return;
+    throw new NotFoundError("Opportunity not found");
   }
   if (opp.status !== "executing" && opp.status !== "approved") {
-    res
-      .status(409)
-      .json({ error: `Cannot realize from status '${opp.status}'` });
-    return;
+    throw new ConflictError(`Cannot realize from status '${opp.status}'`);
   }
   const { canonicalStage: newStage, savingsType: newSavingsType } =
     s2pForStatusTransition("realized");
@@ -1479,8 +1467,7 @@ router.patch(
 
     const opp = await loadOppOrThrow(orgId, id);
     if (!opp) {
-      res.status(404).json({ error: "Opportunity not found" });
-      return;
+      throw new NotFoundError("Opportunity not found");
     }
 
     const hasAnyField =
@@ -1491,8 +1478,7 @@ router.patch(
       body.savingsClassification !== undefined;
 
     if (!hasAnyField) {
-      res.status(400).json({ error: "At least one field must be provided" });
-      return;
+      throw new InvalidRequestError("At least one field must be provided");
     }
 
     const patch: Partial<typeof opportunitiesTable.$inferInsert> = {

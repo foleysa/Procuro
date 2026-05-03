@@ -8,6 +8,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { NotFoundError } from "../lib/api-errors";
 import { GetMeResponse, PatchMeSettingsBody } from "@workspace/api-zod";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { readRenewalAlertDays } from "../lib/contract-settings";
@@ -53,8 +54,7 @@ router.get("/me", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const [org] = await db.select().from(orgsTable).where(eq(orgsTable.id, orgId));
   if (!org) {
-    res.status(404).json({ error: "Org not found" });
-    return;
+    throw new NotFoundError("Org not found");
   }
   const user = await getOrCreateUserByEmail(
     orgId,
@@ -102,8 +102,7 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     .from(orgsTable)
     .where(eq(orgsTable.id, orgId));
   if (!current) {
-    res.status(404).json({ error: "Org not found" });
-    return;
+    throw new NotFoundError("Org not found");
   }
 
   const currentSettings = (current.settings ?? {}) as Record<string, unknown>;
@@ -196,8 +195,7 @@ router.patch("/me/settings", tenantMiddleware, requirePermission("settings:write
     // Row vanished between SELECT and UPDATE — extremely unlikely with
     // a single-org PK update, but surface a stable error rather than
     // returning a stale serialisation.
-    res.status(404).json({ error: "Org not found" });
-    return;
+    throw new NotFoundError("Org not found");
   }
 
   if (changes.length > 0) {

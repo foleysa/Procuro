@@ -19,6 +19,11 @@ import { db, suppliersTable } from "@workspace/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import {
   US_SUPPLIER_SEED_SOURCE,
@@ -89,8 +94,7 @@ router.post("/us-suppliers", tenantMiddleware, async (req, res) => {
   const name = data.name.trim();
   const normalizedName = normalizeUsSupplierName(name);
   if (!normalizedName) {
-    res.status(400).json({ error: "name resolved to empty after normalisation" });
-    return;
+    throw new InvalidRequestError("name resolved to empty after normalisation");
   }
 
   const [existing] = await db
@@ -104,11 +108,7 @@ router.post("/us-suppliers", tenantMiddleware, async (req, res) => {
     )
     .limit(1);
   if (existing) {
-    res.status(409).json({
-      error: "Supplier with that name is already on this tenant's list",
-      id: existing.id,
-    });
-    return;
+    throw new ConflictError("Supplier with that name is already on this tenant's list", { id: existing.id });
   }
 
   const id = newId("sup");
@@ -135,10 +135,7 @@ router.post("/us-suppliers", tenantMiddleware, async (req, res) => {
     res.status(201).json(row);
   } catch (err) {
     if (isUniqueViolation(err)) {
-      res
-        .status(409)
-        .json({ error: "Supplier with that name is already on this tenant's list" });
-      return;
+      throw new ConflictError("Supplier with that name is already on this tenant's list");
     }
     throw err;
   }
@@ -163,8 +160,7 @@ router.delete("/us-suppliers/:id", tenantMiddleware, async (req, res) => {
     )
     .returning({ id: suppliersTable.id });
   if (result.length === 0) {
-    res.status(404).json({ error: "US supplier not found" });
-    return;
+    throw new NotFoundError("US supplier not found");
   }
   res.status(204).end();
 });

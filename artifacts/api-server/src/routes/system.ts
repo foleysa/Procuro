@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requirePlatformAdmin } from "../lib/platform-admin";
+import { InvalidRequestError } from "../lib/api-errors";
 import {
   ensureFunnelSnapshotPruneJobScheduled,
   ensurePruneJobScheduled,
@@ -216,11 +217,9 @@ router.put(
     const snapRaw = body.snapshotDays;
     const failRaw = body.failureDays;
     if (typeof snapRaw !== "number" || typeof failRaw !== "number") {
-      res.status(400).json({
-        error:
-          "Body must include numeric `snapshotDays` and `failureDays` fields",
-      });
-      return;
+      throw new InvalidRequestError(
+        "Body must include numeric `snapshotDays` and `failureDays` fields",
+      );
     }
     try {
       const actor = req.actorEmail ?? "system@procuro.ai";
@@ -249,7 +248,7 @@ router.put(
         lastChangedBy: updated.lastChangedBy,
       });
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message });
+      throw new InvalidRequestError((err as Error).message);
     }
   },
 );
@@ -347,14 +346,12 @@ router.put(
     const body = (req.body ?? {}) as { cron?: unknown };
     const cronRaw = body.cron;
     if (typeof cronRaw !== "string") {
-      res.status(400).json({ error: "Body must include a `cron` string" });
-      return;
+      throw new InvalidRequestError("Body must include a `cron` string");
     }
     try {
       parsePruneCron(cronRaw);
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message });
-      return;
+      throw new InvalidRequestError((err as Error).message);
     }
     const actor = req.actorEmail ?? "system@procuro.ai";
     const updated = await setJobPruneSchedule({

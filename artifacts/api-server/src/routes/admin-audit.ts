@@ -4,7 +4,6 @@ import { and, eq, desc, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission, resolveRbacContext } from "../lib/rbac";
 import { writeAdminAudit } from "../lib/admin-audit";
-
 const router: IRouter = Router();
 
 const PAGE_LIMIT_MAX = 200;
@@ -179,13 +178,9 @@ async function recordMutationAttempt(
   });
 }
 
-const APPEND_ONLY_BODY = {
-  error: "Forbidden",
-  reason: "audit_log_append_only",
-  message:
-    "The admin audit log is append-only. PATCH and DELETE are not " +
-    "permitted; this attempt has been recorded as a new audit row.",
-} as const;
+const APPEND_ONLY_MESSAGE =
+  "The admin audit log is append-only. PATCH and DELETE are not " +
+  "permitted; this attempt has been recorded as a new audit row.";
 
 router.patch(
   "/admin/audit/:id",
@@ -193,7 +188,12 @@ router.patch(
   async (req, res, next) => {
     try {
       await recordMutationAttempt(req, "PATCH", String(req.params["id"]));
-      res.status(403).json(APPEND_ONLY_BODY);
+      res.status(403).json({
+        error: "Forbidden",
+        code: "forbidden",
+        reason: "audit_log_append_only",
+        message: APPEND_ONLY_MESSAGE,
+      });
     } catch (err) {
       next(err);
     }
@@ -206,7 +206,12 @@ router.delete(
   async (req, res, next) => {
     try {
       await recordMutationAttempt(req, "DELETE", String(req.params["id"]));
-      res.status(403).json(APPEND_ONLY_BODY);
+      res.status(403).json({
+        error: "Forbidden",
+        code: "forbidden",
+        reason: "audit_log_append_only",
+        message: APPEND_ONLY_MESSAGE,
+      });
     } catch (err) {
       next(err);
     }

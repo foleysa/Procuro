@@ -75,6 +75,10 @@ import {
   resolvePostureClass,
 } from "../lib/intelligence/workbench-helpers";
 import { z } from "zod";
+import {
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -332,8 +336,7 @@ router.patch("/collectors/:id", requirePlatformAdmin, async (req, res) => {
     .from(collectorsTable)
     .where(eq(collectorsTable.id, id));
   if (!current) {
-    res.status(404).json({ error: "Collector not found" });
-    return;
+    throw new NotFoundError("Collector not found");
   }
 
   let updated = current;
@@ -367,8 +370,7 @@ router.post("/collectors/:id/kill", requirePlatformAdmin, async (req, res) => {
   const actor = req.actorEmail ?? "system@procuro.ai";
   const row = await setKillSwitch(id, true, actor);
   if (!row) {
-    res.status(404).json({ error: "Collector not found" });
-    return;
+    throw new NotFoundError("Collector not found");
   }
   res.json({ id: row.id, killSwitch: true });
 });
@@ -378,8 +380,7 @@ router.post("/collectors/:id/unkill", requirePlatformAdmin, async (req, res) => 
   const actor = req.actorEmail ?? "system@procuro.ai";
   const row = await setKillSwitch(id, false, actor);
   if (!row) {
-    res.status(404).json({ error: "Collector not found" });
-    return;
+    throw new NotFoundError("Collector not found");
   }
   res.json({ id: row.id, killSwitch: false });
 });
@@ -428,8 +429,7 @@ router.post(
         message.includes("approved") ||
         message.includes("approve")
       ) {
-        res.status(409).json({ error: message, collectorId: ECB_FX_RATES_COLLECTOR_ID });
-        return;
+        throw new ConflictError(message, { collectorId: ECB_FX_RATES_COLLECTOR_ID });
       }
       throw err;
     }
@@ -459,10 +459,7 @@ router.post(
         message.includes("approve") ||
         message.includes("FRED_API_KEY")
       ) {
-        res
-          .status(409)
-          .json({ error: message, collectorId: FRED_ECONOMIC_INDEX_COLLECTOR_ID });
-        return;
+        throw new ConflictError(message, { collectorId: FRED_ECONOMIC_INDEX_COLLECTOR_ID });
       }
       throw err;
     }
@@ -509,8 +506,7 @@ function mountBackfillRoute<TOpts extends { force?: boolean }>(
         message.includes("API_KEY") ||
         message.includes("USER_AGENT")
       ) {
-        res.status(409).json({ error: message, collectorId });
-        return;
+        throw new ConflictError(message, { collectorId });
       }
       throw err;
     }
@@ -750,8 +746,7 @@ router.get(
       .from(collectorsTable)
       .where(eq(collectorsTable.id, id));
     if (!current) {
-      res.status(404).json({ error: "Collector not found" });
-      return;
+      throw new NotFoundError("Collector not found");
     }
     const reg = getCollector(id);
     const tenantOptInDefault = reg?.tenantOptInDefault ?? null;
@@ -798,8 +793,7 @@ router.patch(
       .from(collectorsTable)
       .where(eq(collectorsTable.id, id));
     if (!current) {
-      res.status(404).json({ error: "Collector not found" });
-      return;
+      throw new NotFoundError("Collector not found");
     }
 
     let updated = current;
@@ -925,8 +919,7 @@ router.post(
       .from(collectorsTable)
       .where(eq(collectorsTable.id, id));
     if (!current) {
-      res.status(404).json({ error: "Collector not found" });
-      return;
+      throw new NotFoundError("Collector not found");
     }
 
     // Validate the broadcast value is consistent with the collector's
@@ -938,10 +931,7 @@ router.post(
     // for a stale row that's already been removed from the contract.
     const reg = getCollector(id);
     if (!reg) {
-      res.status(404).json({
-        error: "Collector is not registered with the runtime",
-      });
-      return;
+      throw new NotFoundError("Collector is not registered with the runtime");
     }
 
     let tenantsAffected = 0;
@@ -1049,15 +1039,11 @@ router.get(
       .from(collectorsTable)
       .where(eq(collectorsTable.id, id));
     if (!current) {
-      res.status(404).json({ error: "Collector not found" });
-      return;
+      throw new NotFoundError("Collector not found");
     }
     const reg = getCollector(id);
     if (!reg) {
-      res.status(404).json({
-        error: "Collector is not registered with the runtime",
-      });
-      return;
+      throw new NotFoundError("Collector is not registered with the runtime");
     }
     const orgs = await db.select({ id: orgsTable.id }).from(orgsTable);
     const overrides = await db

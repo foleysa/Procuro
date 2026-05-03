@@ -10,6 +10,11 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
 import { requireOrgAdmin } from "../lib/org-admin";
 import { newId } from "../lib/ids";
 import {
@@ -20,7 +25,7 @@ import {
   getErpConnector,
   listErpConnectors,
 } from "../lib/connectors/erp-connector";
-import { enqueueJob, JobQuotaExceededError } from "../lib/jobs/queue";
+import { enqueueJob } from "../lib/jobs/queue";
 import { writeAdminAudit } from "../lib/admin-audit";
 
 const router: IRouter = Router();
@@ -170,8 +175,7 @@ router.get(
         ),
       );
     if (!row) {
-      res.status(404).json({ error: "Connection not found" });
-      return;
+      throw new NotFoundError("Connection not found");
     }
     res.json({ connection: toView(row) });
   },
@@ -187,10 +191,7 @@ router.post(
     const orgId = requireOrgId(req);
     const parsed = CreateConnectionSchema.safeParse(req.body);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "Invalid body", details: parsed.error.format() });
-      return;
+      throw new InvalidRequestError("Invalid body", parsed.error.format());
     }
     const {
       label,
@@ -202,28 +203,15 @@ router.post(
 
     const connector = getErpConnector(adapterKey);
     if (!connector) {
-      res.status(400).json({ error: `Unknown adapter "${adapterKey}"` });
-      return;
+      throw new InvalidRequestError(`Unknown adapter "${adapterKey}"`);
     }
     const credsValid = connector.credentialsSchema.safeParse(credentials);
     if (!credsValid.success) {
-      res
-        .status(400)
-        .json({
-          error: "Invalid credentials for this adapter",
-          details: credsValid.error.format(),
-        });
-      return;
+      throw new InvalidRequestError("Invalid credentials for this adapter", credsValid.error.format());
     }
     const settingsValid = connector.settingsSchema.safeParse(settings);
     if (!settingsValid.success) {
-      res
-        .status(400)
-        .json({
-          error: "Invalid settings for this adapter",
-          details: settingsValid.error.format(),
-        });
-      return;
+      throw new InvalidRequestError("Invalid settings for this adapter", settingsValid.error.format());
     }
 
     const cipher = encryptCredentials(
@@ -267,10 +255,7 @@ router.post(
     } catch (err) {
       const code = (err as { code?: string }).code;
       if (code === "23505") {
-        res
-          .status(409)
-          .json({ error: `A connection labeled "${label}" already exists.` });
-        return;
+        throw new ConflictError(`A connection labeled "${label}" already exists.`);
       }
       throw err;
     }
@@ -288,10 +273,7 @@ router.patch(
     const id = String(req.params["id"] ?? "");
     const parsed = UpdateConnectionSchema.safeParse(req.body);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "Invalid body", details: parsed.error.format() });
-      return;
+      throw new InvalidRequestError("Invalid body", parsed.error.format());
     }
     const [existing] = await db
       .select()
@@ -303,16 +285,12 @@ router.patch(
         ),
       );
     if (!existing) {
-      res.status(404).json({ error: "Connection not found" });
-      return;
+      throw new NotFoundError("Connection not found");
     }
 
     const connector = getErpConnector(existing.adapterKey);
     if (!connector) {
-      res
-        .status(400)
-        .json({ error: `Adapter "${existing.adapterKey}" no longer registered` });
-      return;
+      throw new InvalidRequestError(`Adapter "${existing.adapterKey}" no longer registered`);
     }
 
     const updates: Partial<typeof erpConnectionsTable.$inferInsert> = {
@@ -352,13 +330,7 @@ router.patch(
         parsed.data.settings,
       );
       if (!settingsValid.success) {
-        res
-          .status(400)
-          .json({
-            error: "Invalid settings for this adapter",
-            details: settingsValid.error.format(),
-          });
-        return;
+        throw new InvalidRequestError("Invalid settings for this adapter", settingsValid.error.format());
       }
       updates.settings = settingsValid.data as Record<string, unknown>;
     }
@@ -367,13 +339,7 @@ router.patch(
         parsed.data.credentials,
       );
       if (!credsValid.success) {
-        res
-          .status(400)
-          .json({
-            error: "Invalid credentials for this adapter",
-            details: credsValid.error.format(),
-          });
-        return;
+        throw new InvalidRequestError("Invalid credentials for this adapter", credsValid.error.format());
       }
       updates.credentialsCipher = encryptCredentials(
         parsed.data.credentials as Record<string, unknown>,
@@ -444,8 +410,7 @@ router.delete(
       )
       .returning({ id: erpConnectionsTable.id });
     if (result.length === 0) {
-      res.status(404).json({ error: "Connection not found" });
-      return;
+      throw new NotFoundError("Connection not found");
     }
     try {
       await writeAdminAudit({
@@ -472,31 +437,23 @@ router.post(
   async (req, res) => {
     const parsed = TestConnectionSchema.safeParse(req.body);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "Invalid body", details: parsed.error.format() });
-      return;
+      throw new InvalidRequestError("Invalid body", parsed.error.format());
     }
     const connector = getErpConnector(parsed.data.adapterKey);
     if (!connector) {
-      res
-        .status(400)
-        .json({ error: `Unknown adapter "${parsed.data.adapterKey}"` });
-      return;
+      throw new InvalidRequestError(`Unknown adapter "${parsed.data.adapterKey}"`);
     }
     const credsValid = connector.credentialsSchema.safeParse(
       parsed.data.credentials,
     );
     if (!credsValid.success) {
-      res.status(400).json({ error: "Invalid credentials shape" });
-      return;
+      throw new InvalidRequestError("Invalid credentials shape");
     }
     const settingsValid = connector.settingsSchema.safeParse(
       parsed.data.settings,
     );
     if (!settingsValid.success) {
-      res.status(400).json({ error: "Invalid settings shape" });
-      return;
+      throw new InvalidRequestError("Invalid settings shape");
     }
     const result = await connector.testConnection({
       credentials: credsValid.data,
@@ -536,10 +493,7 @@ router.get(
     const id = String(req.params["id"] ?? "");
     const parsed = RunsQuerySchema.safeParse(req.query);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "Invalid query", details: parsed.error.format() });
-      return;
+      throw new InvalidRequestError("Invalid query", parsed.error.format());
     }
     const limit = parsed.data.limit ?? RUNS_DEFAULT_LIMIT;
 
@@ -556,8 +510,7 @@ router.get(
         ),
       );
     if (!conn) {
-      res.status(404).json({ error: "Connection not found" });
-      return;
+      throw new NotFoundError("Connection not found");
     }
 
     const rows = await db
@@ -616,36 +569,24 @@ router.post(
         ),
       );
     if (!conn) {
-      res.status(404).json({ error: "Connection not found" });
-      return;
+      throw new NotFoundError("Connection not found");
     }
     if (conn.status === "paused") {
-      res.status(409).json({ error: "Connection is paused" });
-      return;
+      throw new ConflictError("Connection is paused");
     }
-    try {
-      const job = await enqueueJob({
-        kind: "sync_erp_connection",
-        orgId,
-        payload: { connectionId: id },
-      });
-      res.status(202).json({
-        job: {
-          id: job.id,
-          kind: job.kind,
-          status: job.status,
-          enqueuedAt: job.enqueuedAt,
-        },
-      });
-    } catch (err) {
-      if (err instanceof JobQuotaExceededError) {
-        res
-          .status(429)
-          .json({ error: "Job quota exceeded for this organisation." });
-        return;
-      }
-      throw err;
-    }
+    const job = await enqueueJob({
+      kind: "sync_erp_connection",
+      orgId,
+      payload: { connectionId: id },
+    });
+    res.status(202).json({
+      job: {
+        id: job.id,
+        kind: job.kind,
+        status: job.status,
+        enqueuedAt: job.enqueuedAt,
+      },
+    });
   },
 );
 

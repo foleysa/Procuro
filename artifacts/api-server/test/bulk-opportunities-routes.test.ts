@@ -585,8 +585,8 @@ test("read_only API key cannot call bulk-approve, bulk-reject, bulk-snooze, or b
           : { ids: seed.ids };
     const r = await call(handle.port, "POST", path, { token, body });
     assert.equal(r.status, 403, `${path} must 403 for read_only, got ${r.status}: ${JSON.stringify(r.body)}`);
-    const obj = r.body as { error?: string; required?: string[] };
-    assert.ok(obj.required?.includes("opp:approve"));
+    const obj = r.body as { error?: string; code?: string; details?: { required?: string[] } };
+    assert.ok(obj.details?.required?.includes("opp:approve"));
   }
 
   // The proposed row must still be untouched after the denied calls.

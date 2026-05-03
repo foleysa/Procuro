@@ -24,6 +24,13 @@ import {
   suggestCategoryMappings,
 } from "../lib/intelligence/routing";
 import { writeAdminAudit } from "../lib/admin-audit";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ForbiddenError,
+  ConflictError,
+  TenantMismatchError,
+} from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -81,9 +88,7 @@ router.post(
     const orgId = requireOrgId(req);
     const parsed = ResolveBody.safeParse(req.body);
     if (!parsed.success) {
-      return res
-        .status(400)
-        .json({ error: "invalid_body", issues: parsed.error.issues });
+      throw new InvalidRequestError("invalid_body", parsed.error.issues);
     }
     const queueId = String(req.params.id);
     // The resolver looks up the queue entry inside its own
@@ -94,10 +99,10 @@ router.post(
       [queueId],
     );
     if (owned.rows.length === 0) {
-      return res.status(404).json({ error: "not_found" });
+      throw new NotFoundError("not_found");
     }
     if (owned.rows[0]!.org_id !== orgId) {
-      return res.status(403).json({ error: "forbidden" });
+      throw new TenantMismatchError("Resource belongs to a different tenant");
     }
     // Attribute the resolution to the acting operator's user id (the
     // RBAC middleware populates req.user). Falling back to the orgId
@@ -123,10 +128,7 @@ router.post(
         callerCanWriteGlobal,
       });
       if (result.kind === "collision") {
-        return res.status(409).json({
-          error: "synonym_collision",
-          existing: result.existing,
-        });
+        throw new ConflictError("synonym_collision", { existing: result.existing });
       }
       try {
         await writeAdminAudit({
@@ -162,13 +164,13 @@ router.post(
       // write a global row) are surfaced as 403.
       const message = err instanceof Error ? err.message : String(err);
       if (message.startsWith("forbidden:")) {
-        return res.status(403).json({ error: "forbidden", message });
+        throw new ForbiddenError(message);
       }
       if (
         message.includes("escalate_to_global") ||
         message.includes("narrow_to_tenant")
       ) {
-        return res.status(400).json({ error: "invalid_decision", message });
+        throw new InvalidRequestError(message);
       }
       throw err;
     }

@@ -8,6 +8,7 @@ import {
   isProduction,
   hashToken,
 } from "./auth";
+import { UnauthorizedError, ForbiddenError, TenantMismatchError } from "./api-errors";
 
 const orgCache = new Map<string, { id: string; expiresAt: number }>();
 const TTL_MS = 30_000;
@@ -82,14 +83,10 @@ export const tenantMiddleware: RequestHandler = async (
       actor = "system@procuro.ai";
     }
     if (!tokenOrgId) {
-      res.status(401).json({ error: "Invalid API token" });
-      return;
+      throw new UnauthorizedError("Invalid API token");
     }
     if (headerOrgId && headerOrgId !== tokenOrgId) {
-      res
-        .status(403)
-        .json({ error: "Token is not authorized for the requested tenant" });
-      return;
+      throw new TenantMismatchError("Token is not authorized for the requested tenant");
     }
     req.orgId = tokenOrgId;
     req.authMode = mode;
@@ -149,8 +146,7 @@ export const tenantMiddleware: RequestHandler = async (
       }
     }
     if (!resolvedOrg) {
-      res.status(403).json({ error: "User is not a member of any tenant" });
-      return;
+      throw new ForbiddenError("User is not a member of any tenant");
     }
     req.orgId = resolvedOrg;
     req.authMode = "clerk";
@@ -162,13 +158,11 @@ export const tenantMiddleware: RequestHandler = async (
 
   if (headerOrgId) {
     if (!devHeaderAllowed) {
-      res.status(401).json({ error: "Bearer token required" });
-      return;
+      throw new UnauthorizedError("Bearer token required");
     }
     const resolved = await resolveOrgId(headerOrgId);
     if (!resolved) {
-      res.status(403).json({ error: "Unknown tenant" });
-      return;
+      throw new ForbiddenError("Unknown tenant");
     }
     req.orgId = resolved;
     req.authMode = "dev-header";
@@ -192,7 +186,7 @@ export const tenantMiddleware: RequestHandler = async (
     }
   }
 
-  res.status(401).json({ error: "Authorization required" });
+  throw new UnauthorizedError("Authorization required");
 };
 
 export function requireOrgId(req: Request): string {

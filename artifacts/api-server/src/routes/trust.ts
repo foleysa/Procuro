@@ -16,6 +16,7 @@ import {
 } from "../lib/trust/summary";
 import { renderTrustSummaryPdf } from "../lib/trust/pdf";
 import { writeAdminAudit } from "../lib/admin-audit";
+import { NotFoundError } from "../lib/api-errors";
 
 /**
  * Window for collapsing repeated `trust.view` events from the same
@@ -39,8 +40,7 @@ router.get(
       summary = await buildTrustSummary(orgId);
     } catch (err) {
       if (err instanceof OrgNotFoundError) {
-        res.status(404).json({ error: "Org not found" });
-        return;
+        throw new NotFoundError("Org not found");
       }
       throw err;
     }
@@ -343,8 +343,7 @@ router.get(
       summary = await buildTrustSummary(orgId);
     } catch (err) {
       if (err instanceof OrgNotFoundError) {
-        res.status(404).json({ error: "Org not found" });
-        return;
+        throw new NotFoundError("Org not found");
       }
       throw err;
     }

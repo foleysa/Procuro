@@ -53,6 +53,7 @@ import type {
   TenantPolicy,
 } from "@workspace/intelligence";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { InvalidRequestError, NotFoundError } from "../lib/api-errors";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { getCollector } from "../lib/intelligence/runtime";
 import {
@@ -460,13 +461,11 @@ router.get(
     const kindRaw = String(req.params["kind"] ?? "");
     const id = String(req.params["id"] ?? "");
     if (!VALID_ENTITY_KINDS.includes(kindRaw as EntityKind)) {
-      res.status(400).json({ error: `unknown entity kind: ${kindRaw}` });
-      return;
+      throw new InvalidRequestError(`unknown entity kind: ${kindRaw}`);
     }
     const kind = kindRaw as EntityKind;
     if (id.length === 0) {
-      res.status(400).json({ error: "id is required" });
-      return;
+      throw new InvalidRequestError("id is required");
     }
 
     // Resolve a human label + scope-condition for this entity.
@@ -487,10 +486,7 @@ router.get(
         .where(and(eq(suppliersTable.id, id), eq(suppliersTable.orgId, orgId)))
         .limit(1);
       if (!s) {
-        res
-          .status(404)
-          .json({ error: kind === "site" ? "Site not found" : "Supplier not found" });
-        return;
+        throw new NotFoundError(kind === "site" ? "Site not found" : "Supplier not found");
       }
       label = s.name;
       country = s.countryCode ?? null;
@@ -546,8 +542,7 @@ router.get(
         )
         .limit(1);
       if (!c) {
-        res.status(404).json({ error: "Contract not found" });
-        return;
+        throw new NotFoundError("Contract not found");
       }
       label = c.title;
       // Pull every signal scoped to this contract's supplier OR to the
@@ -601,8 +596,7 @@ router.get(
         )
         .limit(1);
       if (!c) {
-        res.status(404).json({ error: "Category not found" });
-        return;
+        throw new NotFoundError("Category not found");
       }
       label = c.name;
       // Always pull signals scoped directly to this category code.

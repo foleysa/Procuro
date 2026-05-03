@@ -31,6 +31,11 @@ import {
 import { and, asc, eq, inArray, or, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import {
   padCik,
@@ -167,10 +172,9 @@ router.get("/watched-issuers", tenantMiddleware, async (req, res) => {
   if (typeof sourceParam === "string") {
     const parsed = SourceSchema.safeParse(sourceParam);
     if (!parsed.success) {
-      res.status(400).json({
-        error: `source must be one of ${watchedIssuerSourceValues.join(", ")}`,
-      });
-      return;
+      throw new InvalidRequestError(
+        `source must be one of ${watchedIssuerSourceValues.join(", ")}`,
+      );
     }
     where.push(eq(watchedIssuersTable.source, parsed.data));
   }
@@ -200,13 +204,11 @@ router.post("/watched-issuers", tenantMiddleware, async (req, res) => {
   const data = AddWatchedIssuerSchema.parse(req.body);
   const identifier = normaliseIdentifier(data.source, data.identifier);
   if (!identifier) {
-    res.status(400).json({ error: "identifier resolved to empty after normalisation" });
-    return;
+    throw new InvalidRequestError("identifier resolved to empty after normalisation");
   }
   const shapeError = validateIdentifierShape(data.source, identifier);
   if (shapeError) {
-    res.status(400).json({ error: shapeError });
-    return;
+    throw new InvalidRequestError(shapeError);
   }
 
   // Validate supplierUid (if provided) belongs to this tenant — otherwise
@@ -223,8 +225,7 @@ router.post("/watched-issuers", tenantMiddleware, async (req, res) => {
       )
       .limit(1);
     if (!supplier) {
-      res.status(400).json({ error: "supplierUid does not belong to the active tenant" });
-      return;
+      throw new InvalidRequestError("supplierUid does not belong to the active tenant");
     }
   }
 
@@ -240,11 +241,7 @@ router.post("/watched-issuers", tenantMiddleware, async (req, res) => {
     )
     .limit(1);
   if (existing) {
-    res.status(409).json({
-      error: "Issuer already on this tenant's watch list",
-      id: existing.id,
-    });
-    return;
+    throw new ConflictError("Issuer already on this tenant's watch list", { id: existing.id });
   }
 
   const id = newId("wi");
@@ -282,11 +279,10 @@ router.post("/watched-issuers", tenantMiddleware, async (req, res) => {
           ),
         )
         .limit(1);
-      res.status(409).json({
-        error: "Issuer already on this tenant's watch list",
-        ...(conflict ? { id: conflict.id } : {}),
-      });
-      return;
+      throw new ConflictError(
+        "Issuer already on this tenant's watch list",
+        conflict ? { id: conflict.id } : undefined,
+      );
     }
     throw err;
   }
@@ -323,10 +319,7 @@ router.post("/watched-issuers/bulk", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = BulkAddRequestSchema.safeParse(req.body);
   if (!parsed.success) {
-    res
-      .status(400)
-      .json({ error: "Invalid bulk request", details: parsed.error.issues });
-    return;
+    throw new InvalidRequestError("Invalid bulk request", parsed.error.issues);
   }
   const items = parsed.data.items;
 
@@ -505,8 +498,7 @@ router.delete("/watched-issuers/:id", tenantMiddleware, async (req, res) => {
     )
     .returning({ id: watchedIssuersTable.id });
   if (result.length === 0) {
-    res.status(404).json({ error: "Watched issuer not found" });
-    return;
+    throw new NotFoundError("Watched issuer not found");
   }
   res.status(204).end();
 });

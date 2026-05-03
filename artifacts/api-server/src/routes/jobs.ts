@@ -10,6 +10,11 @@ import { and, desc, eq, gte, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
+  InvalidRequestError,
+  NotFoundError,
+  ConflictError,
+} from "../lib/api-errors";
+import {
   enqueueJob,
   requestJobCancellation,
   MAX_ATTEMPTS_BY_KIND,
@@ -173,23 +178,16 @@ router.put("/jobs/settings/:kind", tenantMiddleware, requirePermission("settings
   const orgId = requireOrgId(req);
   const kind = String(req.params.kind ?? "") as JobKind;
   if (!configurableKindSet.has(kind)) {
-    res.status(400).json({ error: `Unknown or non-configurable kind: ${kind}` });
-    return;
+    throw new InvalidRequestError(`Unknown or non-configurable kind: ${kind}`);
   }
 
   const raw = (req.body as { maxAttempts?: unknown })?.maxAttempts;
   const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-    res.status(400).json({
-      error: "maxAttempts must be an integer >= 1",
-    });
-    return;
+    throw new InvalidRequestError("maxAttempts must be an integer >= 1");
   }
   if (n > MAX_ATTEMPTS_LIMIT) {
-    res.status(400).json({
-      error: `maxAttempts must be <= ${MAX_ATTEMPTS_LIMIT}`,
-    });
-    return;
+    throw new InvalidRequestError(`maxAttempts must be <= ${MAX_ATTEMPTS_LIMIT}`);
   }
 
   const now = new Date();
@@ -249,8 +247,7 @@ router.delete("/jobs/settings/:kind", tenantMiddleware, requirePermission("setti
   const orgId = requireOrgId(req);
   const kind = String(req.params.kind ?? "") as JobKind;
   if (!configurableKindSet.has(kind)) {
-    res.status(400).json({ error: `Unknown or non-configurable kind: ${kind}` });
-    return;
+    throw new InvalidRequestError(`Unknown or non-configurable kind: ${kind}`);
   }
 
   await db
@@ -410,8 +407,7 @@ router.get("/jobs/:id", tenantMiddleware, async (req, res) => {
       ),
     );
   if (!row) {
-    res.status(404).json({ error: "Job not found" });
-    return;
+    throw new NotFoundError("Job not found");
   }
   // Detail view ships the redacted payload so the job-detail page can
   // show admins the actual input that triggered the failure without
@@ -432,14 +428,11 @@ router.post("/jobs/:id/retry", tenantMiddleware, requirePermission("ingest:write
       ),
     );
   if (!row) {
-    res.status(404).json({ error: "Job not found" });
-    return;
+    throw new NotFoundError("Job not found");
   }
   if (row.status !== "failed") {
-    res.status(409).json({
-      error: `Only failed jobs can be retried (current status: ${row.status})`,
-    });
-    return;
+    throw new ConflictError(`Only failed jobs can be retried (current status: ${row.status})`);
+
   }
 
   const job = await enqueueJob({
@@ -467,14 +460,11 @@ router.post("/jobs/:id/discard", tenantMiddleware, requirePermission("ingest:wri
       ),
     );
   if (!row) {
-    res.status(404).json({ error: "Job not found" });
-    return;
+    throw new NotFoundError("Job not found");
   }
   if (row.status !== "failed") {
-    res.status(409).json({
-      error: `Only failed jobs can be discarded (current status: ${row.status})`,
-    });
-    return;
+    throw new ConflictError(`Only failed jobs can be discarded (current status: ${row.status})`);
+
   }
   await db.delete(jobsTable).where(eq(jobsTable.id, id));
   req.log.info(
@@ -497,18 +487,14 @@ router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:writ
       ),
     );
   if (!row) {
-    res.status(404).json({ error: "Job not found" });
-    return;
+    throw new NotFoundError("Job not found");
   }
   if (
     row.status === "succeeded" ||
     row.status === "failed" ||
     row.status === "cancelled"
   ) {
-    res.status(409).json({
-      error: `Job is already ${row.status} and cannot be cancelled`,
-    });
-    return;
+    throw new ConflictError(`Job is already ${row.status} and cannot be cancelled`);
   }
 
   const result = await requestJobCancellation(id);
@@ -518,10 +504,7 @@ router.post("/jobs/:id/cancel", tenantMiddleware, requirePermission("ingest:writ
   // race the same way we would if the caller had observed the new state
   // directly.
   if (!result.cancelRequested) {
-    res.status(409).json({
-      error: "Job is no longer cancellable (already completed)",
-    });
-    return;
+    throw new ConflictError("Job is no longer cancellable (already completed)");
   }
 
   req.log.info(

@@ -33,6 +33,7 @@ import {
 import { and, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { ApiError, InvalidRequestError, NotFoundError } from "../lib/api-errors";
 import { newId } from "../lib/ids";
 import {
   ensureBackfillFunnelSnapshotsJobScheduled,
@@ -234,7 +235,7 @@ router.get(
         ),
       )
       .limit(1);
-    if (!row) return res.status(404).json({ error: "not_found" });
+    if (!row) throw new NotFoundError("not_found");
     const annotations = await db
       .select()
       .from(funnelAnnotationsTable)
@@ -272,7 +273,7 @@ router.post(
         ),
       )
       .limit(1);
-    if (!cycle) return res.status(404).json({ error: "cycle_not_found" });
+    if (!cycle) throw new NotFoundError("cycle_not_found");
 
     // Drop the existing snapshot (cascade removes annotations).
     await db
@@ -314,7 +315,7 @@ router.post(
       source: "backfill",
     });
     if (result.failed) {
-      return res.status(500).json({ error: "snapshot_capture_failed" });
+      throw new ApiError(500, "internal_error", "snapshot_capture_failed");
     }
     return res.json({ snapshotId: result.snapshotId, recomputed: true });
   },
@@ -370,9 +371,7 @@ router.post(
       targetCohortWindow?: string | null;
     };
     if (!body.snapshotId || !body.summary) {
-      return res
-        .status(400)
-        .json({ error: "snapshotId_and_summary_required" });
+      throw new InvalidRequestError("snapshotId_and_summary_required");
     }
     const [snap] = await db
       .select({ id: funnelSnapshotsTable.id })
@@ -384,7 +383,7 @@ router.post(
         ),
       )
       .limit(1);
-    if (!snap) return res.status(404).json({ error: "snapshot_not_found" });
+    if (!snap) throw new NotFoundError("snapshot_not_found");
 
     const [row] = await db
       .insert(funnelAnnotationsTable)
@@ -424,7 +423,7 @@ router.patch(
         ),
       )
       .returning();
-    if (!row) return res.status(404).json({ error: "not_found" });
+    if (!row) throw new NotFoundError("not_found");
     return res.json({ annotation: row });
   },
 );
@@ -472,7 +471,7 @@ router.patch(
         ),
       )
       .returning();
-    if (!row) return res.status(404).json({ error: "not_found" });
+    if (!row) throw new NotFoundError("not_found");
     return res.json({ failure: row });
   },
 );
@@ -783,9 +782,7 @@ router.get(
     const categoryCode = String(req.query["categoryCode"] ?? "").trim();
     const leverId = String(req.query["leverId"] ?? "").trim();
     if (!categoryCode || !leverId) {
-      return res
-        .status(400)
-        .json({ error: "categoryCode and leverId are required" });
+      throw new InvalidRequestError("categoryCode and leverId are required");
     }
     const windowParam = req.query["window"];
     const window: "30d" | "90d" =
@@ -834,10 +831,7 @@ router.put(
     const body = (req.body ?? {}) as { mode?: unknown };
     const raw = body.mode;
     if (raw !== "advisory" && raw !== "auto") {
-      res.status(400).json({
-        error: 'Body must include `mode` of "advisory" or "auto"',
-      });
-      return;
+      throw new InvalidRequestError('Body must include `mode` of "advisory" or "auto"');
     }
     const mode = raw as TierAutoApplyMode;
     const actor = req.actorEmail ?? "system@procuro.ai";

@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -202,8 +203,7 @@ router.get("/rate-cards/:id", tenantMiddleware, async (req, res) => {
     .leftJoin(suppliersTable, eq(rateCardsTable.supplierId, suppliersTable.id))
     .where(and(eq(rateCardsTable.orgId, orgId), eq(rateCardsTable.id, id)));
   if (!row) {
-    res.status(404).json({ error: "Rate card not found" });
-    return;
+    throw new NotFoundError("Rate card not found");
   }
 
   const [lines, recentOffCardEntries, linkedOppRows] = await Promise.all([

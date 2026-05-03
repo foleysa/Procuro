@@ -6,6 +6,7 @@ import {
   resolveOrgFromToken,
   isProduction,
 } from "../lib/auth";
+import { UnauthorizedError } from "../lib/api-errors";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 
 const router: IRouter = Router();
@@ -24,8 +25,7 @@ router.get("/orgs", async (req, res) => {
   if (bearer) {
     const orgId = await resolveOrgFromToken(bearer);
     if (!orgId) {
-      res.status(401).json({ error: "Invalid API token" });
-      return;
+      throw new UnauthorizedError("Invalid API token");
     }
     const [row] = await db
       .select({
@@ -45,8 +45,7 @@ router.get("/orgs", async (req, res) => {
   const devHeaderAllowed =
     !isProduction() && process.env["ALLOW_DEV_TENANT_HEADER"] !== "false";
   if (!devHeaderAllowed) {
-    res.status(401).json({ error: "Bearer token required" });
-    return;
+    throw new UnauthorizedError("Bearer token required");
   }
 
   const rows = await db

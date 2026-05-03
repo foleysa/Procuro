@@ -115,9 +115,9 @@ test("read_only API key cannot approve opportunities (403)", async () => {
       token,
     );
     assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
-    const obj = r.body as { error: string; required?: string[] };
+    const obj = r.body as { error: string; code?: string; details?: { required?: string[] } };
     assert.equal(obj.error, "Forbidden");
-    assert.ok(obj.required?.includes("opp:approve"));
+    assert.ok(obj.details?.required?.includes("opp:approve"));
   } finally {
     await handle.close();
   }
@@ -153,8 +153,8 @@ test("analyst API key cannot manage users (403)", async () => {
   try {
     const r = await call(handle.port, "GET", "/api/admin/users", token);
     assert.equal(r.status, 403);
-    const obj = r.body as { required?: string[] };
-    assert.ok(obj.required?.includes("users:manage"));
+    const obj = r.body as { details?: { required?: string[] } };
+    assert.ok(obj.details?.required?.includes("users:manage"));
   } finally {
     await handle.close();
   }
@@ -243,9 +243,9 @@ test("analyst API key cannot change tenant-wide settings (403)", async () => {
       403,
       `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`,
     );
-    const obj = r.body as { error: string; required?: string[] };
+    const obj = r.body as { error: string; code?: string; details?: { required?: string[] } };
     assert.equal(obj.error, "Forbidden");
-    assert.ok(obj.required?.includes("settings:write"));
+    assert.ok(obj.details?.required?.includes("settings:write"));
   } finally {
     await db
       .delete(apiKeysTable)

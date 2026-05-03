@@ -8,6 +8,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { ApiError, NotFoundError } from "../lib/api-errors";
 import { ensureOrgAnalysisCycleScheduled } from "../lib/jobs/queue";
 import {
   dedupeSources,
@@ -52,8 +53,7 @@ router.get("/cycles/:id", tenantMiddleware, async (req, res) => {
       ),
     );
   if (!c) {
-    res.status(404).json({ error: "Cycle not found" });
-    return;
+    throw new NotFoundError("Cycle not found");
   }
   // Aggregate citation sources from every opportunity created during
   // this cycle. The cycle-level citation list lets the OODA panel show
@@ -123,9 +123,7 @@ router.post("/cycles/run", tenantMiddleware, requirePermission("ingest:write"), 
     return;
   }
   // quota_exceeded
-  res.status(429).json({
-    error: "Per-tenant pending+running job quota exceeded",
-  });
+  throw new ApiError(429, "quota_exceeded", "Per-tenant pending+running job quota exceeded");
 });
 
 router.get("/priors", tenantMiddleware, async (req, res) => {

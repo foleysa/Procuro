@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { isProduction } from "./auth";
+import { ApiError, ForbiddenError } from "./api-errors";
 
 /**
  * Tenant-scoped admin gating, used by management endpoints that should
@@ -35,18 +36,13 @@ export function requireOrgAdmin(
 
   if (!expected) {
     if (isProduction()) {
-      res.status(503).json({
-        error:
-          "Org admin endpoints are disabled: ORG_ADMIN_TOKEN is not configured.",
-      });
-      return;
+      throw new ApiError(503, "internal_error", "Org admin endpoints are disabled: ORG_ADMIN_TOKEN is not configured.");
     }
     next();
     return;
   }
   if (!presented || presented !== expected) {
-    res.status(403).json({ error: "Org admin token required." });
-    return;
+    throw new ForbiddenError("Org admin token required.");
   }
   next();
 }

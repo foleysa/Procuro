@@ -17,6 +17,7 @@ import { and, asc, count, desc, eq, ilike, or, sql, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
+import { NotFoundError } from "../lib/api-errors";
 import {
   extractSourcesFromInputs,
   dedupeSources,
@@ -588,8 +589,7 @@ router.get("/contracts/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params.id);
   const detail = await loadContractDetail(orgId, id);
   if (!detail) {
-    res.status(404).json({ error: "Contract not found" });
-    return;
+    throw new NotFoundError("Contract not found");
   }
   res.json(detail);
 });
@@ -606,8 +606,7 @@ router.patch("/contracts/:id", tenantMiddleware, async (req, res) => {
     .from(contractsTable)
     .where(and(eq(contractsTable.orgId, orgId), eq(contractsTable.id, id)));
   if (!current) {
-    res.status(404).json({ error: "Contract not found" });
-    return;
+    throw new NotFoundError("Contract not found");
   }
 
   // Build the diff the audit log will record. Only changed fields
@@ -696,8 +695,7 @@ router.patch("/contracts/:id", tenantMiddleware, async (req, res) => {
   if (!detail) {
     // Race: row was deleted between our SELECT and the projection.
     // Treat as not-found rather than echoing a stale snapshot.
-    res.status(404).json({ error: "Contract not found" });
-    return;
+    throw new NotFoundError("Contract not found");
   }
   res.json(detail);
 });

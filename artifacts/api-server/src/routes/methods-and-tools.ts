@@ -29,6 +29,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
+import { InvalidRequestError, NotFoundError, ConflictError } from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -181,8 +182,7 @@ router.post("/methods-and-tools", tenantMiddleware, async (req, res) => {
   const orgId = requireOrgId(req);
   const parsed = CreateSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
-    return;
+    throw new InvalidRequestError("Invalid payload", parsed.error.issues);
   }
   const data = parsed.data;
   try {
@@ -200,10 +200,7 @@ router.post("/methods-and-tools", tenantMiddleware, async (req, res) => {
     res.status(201).json(mapRow(row!));
   } catch (err) {
     if (isUniqueViolation(err)) {
-      res
-        .status(409)
-        .json({ error: "Sourcing strategy already exists for this tenant" });
-      return;
+      throw new ConflictError("Sourcing strategy already exists for this tenant");
     }
     throw err;
   }
@@ -214,8 +211,7 @@ router.patch("/methods-and-tools/:id", tenantMiddleware, async (req, res) => {
   const id = String(req.params.id);
   const parsed = UpdateSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
-    return;
+    throw new InvalidRequestError("Invalid payload", parsed.error.issues);
   }
   const patch: Partial<{
     sourcingStrategy: string;
@@ -241,16 +237,12 @@ router.patch("/methods-and-tools/:id", tenantMiddleware, async (req, res) => {
       )
       .returning();
     if (!row) {
-      res.status(404).json({ error: "Methods & Tools row not found" });
-      return;
+      throw new NotFoundError("Methods & Tools row not found");
     }
     res.json(mapRow(row));
   } catch (err) {
     if (isUniqueViolation(err)) {
-      res
-        .status(409)
-        .json({ error: "Sourcing strategy already exists for this tenant" });
-      return;
+      throw new ConflictError("Sourcing strategy already exists for this tenant");
     }
     throw err;
   }
@@ -269,8 +261,7 @@ router.delete("/methods-and-tools/:id", tenantMiddleware, async (req, res) => {
     )
     .returning({ id: methodsAndToolsTable.id });
   if (result.length === 0) {
-    res.status(404).json({ error: "Methods & Tools row not found" });
-    return;
+    throw new NotFoundError("Methods & Tools row not found");
   }
   res.status(204).end();
 });

@@ -3,6 +3,7 @@ import { db, apiKeysTable, userRoleNames, type UserRoleName } from "@workspace/d
 import { and, eq, desc, isNull } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { NotFoundError, ConflictError } from "../lib/api-errors";
 import { writeAdminAudit } from "../lib/admin-audit";
 import { newId } from "../lib/ids";
 import { generateToken } from "../lib/auth";
@@ -107,12 +108,10 @@ router.post(
       .from(apiKeysTable)
       .where(and(eq(apiKeysTable.orgId, orgId), eq(apiKeysTable.id, id)));
     if (!existing) {
-      res.status(404).json({ error: "API key not found" });
-      return;
+      throw new NotFoundError("API key not found");
     }
     if (existing.revokedAt) {
-      res.status(409).json({ error: "Cannot rotate a revoked key" });
-      return;
+      throw new ConflictError("Cannot rotate a revoked key");
     }
 
     // Issue replacement, then revoke the old one.
@@ -170,12 +169,10 @@ router.delete(
       .from(apiKeysTable)
       .where(and(eq(apiKeysTable.orgId, orgId), eq(apiKeysTable.id, id)));
     if (!existing) {
-      res.status(404).json({ error: "API key not found" });
-      return;
+      throw new NotFoundError("API key not found");
     }
     if (existing.revokedAt) {
-      res.status(409).json({ error: "Already revoked" });
-      return;
+      throw new ConflictError("Already revoked");
     }
     await db
       .update(apiKeysTable)

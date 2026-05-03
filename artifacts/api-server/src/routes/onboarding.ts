@@ -19,6 +19,7 @@ import {
   removeSampleData,
 } from "../lib/onboarding/sample-data";
 import { writeAdminAudit } from "../lib/admin-audit";
+import { ApiError, NotFoundError } from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -64,7 +65,7 @@ async function loadOrInit(
     .values({ orgId, userEmail: email })
     .returning();
   if (!inserted) {
-    throw new Error("Failed to materialise onboarding state row");
+    throw new ApiError(500, "internal_error", "Failed to materialise onboarding state row");
   }
   return inserted;
 }
@@ -92,7 +93,7 @@ router.get("/onboarding/state", tenantMiddleware, async (req, res) => {
       .values({ orgId, userEmail: email })
       .returning();
     if (!inserted) {
-      throw new Error("Failed to materialise onboarding state row");
+      throw new ApiError(500, "internal_error", "Failed to materialise onboarding state row");
     }
     await writeAdminAudit({
       orgId,
@@ -207,8 +208,7 @@ router.patch("/onboarding/state", tenantMiddleware, async (req, res) => {
     )
     .returning();
   if (!updated) {
-    res.status(404).json({ error: "Onboarding state row vanished" });
-    return;
+    throw new NotFoundError("Onboarding state row vanished");
   }
 
   // Best-effort: telemetry should never break the user-facing PATCH.

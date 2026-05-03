@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
+import { NotFoundError } from "../lib/api-errors";
 
 const router: IRouter = Router();
 
@@ -312,8 +313,7 @@ router.get("/sows/:id", tenantMiddleware, async (req, res) => {
       and(eq(statementsOfWorkTable.orgId, orgId), eq(statementsOfWorkTable.id, id)),
     );
   if (!row) {
-    res.status(404).json({ error: "SOW not found" });
-    return;
+    throw new NotFoundError("SOW not found");
   }
 
   const [milestones, changeOrders, linkedOppRows, weeklyBurnRows, byResourceRows] = await Promise.all([

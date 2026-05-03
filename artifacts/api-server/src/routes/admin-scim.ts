@@ -10,6 +10,7 @@ import {
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { ApiError, NotFoundError } from "../lib/api-errors";
 import { writeAdminAudit } from "../lib/admin-audit";
 import { newId } from "../lib/ids";
 import { z } from "zod";
@@ -87,8 +88,7 @@ router.put(
         and(eq(scimGroupsTable.orgId, orgId), eq(scimGroupsTable.id, id)),
       );
     if (!group || group.deletedAt) {
-      res.status(404).json({ error: "SCIM group not found" });
-      return;
+      throw new NotFoundError("SCIM group not found");
     }
     const previous = group.roleMapping;
     const [updated] = await db
@@ -97,8 +97,7 @@ router.put(
       .where(eq(scimGroupsTable.id, id))
       .returning();
     if (!updated) {
-      res.status(500).json({ error: "Update failed" });
-      return;
+      throw new ApiError(500, "internal_error", "Update failed");
     }
 
     // Re-project memberships against the new mapping. We revoke any

@@ -3,6 +3,7 @@ import { db, userRolesTable, userRoleNames, type UserRoleName } from "@workspace
 import { and, eq, desc, isNull } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission, resolveRbacContext } from "../lib/rbac";
+import { ForbiddenError, NotFoundError, ConflictError } from "../lib/api-errors";
 import { writeAdminAudit } from "../lib/admin-audit";
 import { newId } from "../lib/ids";
 import { z } from "zod";
@@ -76,8 +77,7 @@ router.post(
 
     if (PLATFORM_ONLY_ROLES.includes(role as UserRoleName)) {
       if (!(await callerIsPlatformAdmin(req))) {
-        res.status(403).json({ error: "Only platform administrators can assign the platform_admin role" });
-        return;
+        throw new ForbiddenError("Only platform administrators can assign the platform_admin role");
       }
     }
     const placeholderId = `pending:${email}`;
@@ -93,8 +93,7 @@ router.post(
         ),
       );
     if (existing.length > 0) {
-      res.status(409).json({ error: "Invite already pending for this email" });
-      return;
+      throw new ConflictError("Invite already pending for this email");
     }
 
     const [row] = await db
@@ -138,8 +137,7 @@ router.patch(
 
     if (PLATFORM_ONLY_ROLES.includes(role as UserRoleName)) {
       if (!(await callerIsPlatformAdmin(req))) {
-        res.status(403).json({ error: "Only platform administrators can assign the platform_admin role" });
-        return;
+        throw new ForbiddenError("Only platform administrators can assign the platform_admin role");
       }
     }
 
@@ -148,8 +146,7 @@ router.patch(
       .from(userRolesTable)
       .where(and(eq(userRolesTable.orgId, orgId), eq(userRolesTable.id, id)));
     if (!existing) {
-      res.status(404).json({ error: "User role not found" });
-      return;
+      throw new NotFoundError("User role not found");
     }
 
     const [updated] = await db
@@ -188,12 +185,10 @@ router.delete(
       .from(userRolesTable)
       .where(and(eq(userRolesTable.orgId, orgId), eq(userRolesTable.id, id)));
     if (!existing) {
-      res.status(404).json({ error: "User role not found" });
-      return;
+      throw new NotFoundError("User role not found");
     }
     if (existing.revokedAt) {
-      res.status(409).json({ error: "Already revoked" });
-      return;
+      throw new ConflictError("Already revoked");
     }
 
     await db

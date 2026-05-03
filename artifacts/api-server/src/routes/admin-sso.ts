@@ -3,6 +3,7 @@ import { db, orgsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
+import { NotFoundError } from "../lib/api-errors";
 import { writeAdminAudit } from "../lib/admin-audit";
 import { z } from "zod";
 
@@ -61,8 +62,7 @@ router.get(
       .from(orgsTable)
       .where(eq(orgsTable.id, orgId));
     if (!org) {
-      res.status(404).json({ error: "Org not found" });
-      return;
+      throw new NotFoundError("Org not found");
     }
     res.json(readSsoConfig(org.settings));
   },
@@ -82,8 +82,7 @@ router.put(
       .from(orgsTable)
       .where(eq(orgsTable.id, orgId));
     if (!current) {
-      res.status(404).json({ error: "Org not found" });
-      return;
+      throw new NotFoundError("Org not found");
     }
     const next = { ...(current.settings ?? {}) } as Record<string, unknown>;
     next["sso"] = body;

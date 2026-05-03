@@ -30,6 +30,7 @@ import { z } from "zod";
 
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
+import { ApiError, InvalidRequestError, NotFoundError, ConflictError } from "../lib/api-errors";
 import { readDisclosurePolicy } from "../lib/disclosure-policy";
 import { db as _db } from "@workspace/db";
 import { orgsTable } from "@workspace/db";
@@ -178,11 +179,7 @@ router.post("/defense-packs", tenantMiddleware, async (req, res) => {
 
   const parsed = CreatePackSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({
-      error: "invalid_request",
-      details: parsed.error.flatten(),
-    });
-    return;
+    throw new InvalidRequestError("invalid_request", parsed.error.flatten());
   }
 
   // Daily cap
@@ -202,11 +199,7 @@ router.post("/defense-packs", tenantMiddleware, async (req, res) => {
       { orgId, todayCount, cap: DAILY_TENANT_CAP },
       "defensePack.cap.exceeded",
     );
-    res.status(429).json({
-      error: "daily_cap_exceeded",
-      details: { cap: DAILY_TENANT_CAP, used: todayCount },
-    });
-    return;
+    throw new ApiError(429, "quota_exceeded", "daily_cap_exceeded", { cap: DAILY_TENANT_CAP, used: todayCount });
   }
 
   const policy = await loadOrgPolicy(orgId);
@@ -371,8 +364,7 @@ router.get("/defense-packs/:id", tenantMiddleware, async (req, res) => {
     .where(and(eq(defensePacksTable.id, id), eq(defensePacksTable.orgId, orgId)))
     .limit(1);
   if (!row) {
-    res.status(404).json({ error: "not_found" });
-    return;
+    throw new NotFoundError("not_found");
   }
   res.json(toDetail(row));
 });
@@ -389,15 +381,10 @@ router.get("/defense-packs/:id/pdf", tenantMiddleware, async (req, res) => {
     .where(and(eq(defensePacksTable.id, id), eq(defensePacksTable.orgId, orgId)))
     .limit(1);
   if (!row) {
-    res.status(404).json({ error: "not_found" });
-    return;
+    throw new NotFoundError("not_found");
   }
   if (row.status !== "ready") {
-    res.status(409).json({
-      error: "pack_not_ready",
-      details: { status: row.status, statusReason: row.statusReason },
-    });
-    return;
+    throw new ConflictError("pack_not_ready", { status: row.status, statusReason: row.statusReason });
   }
   const pdf = await renderDefensePackPdf(row);
   res.setHeader("Content-Type", "application/pdf");
@@ -422,10 +409,7 @@ router.post(
 
     const parsed = FeedbackSchema.safeParse(req.body);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({ error: "invalid_request", details: parsed.error.flatten() });
-      return;
+      throw new InvalidRequestError("invalid_request", parsed.error.flatten());
     }
 
     const [pack] = await db
@@ -436,8 +420,7 @@ router.post(
       )
       .limit(1);
     if (!pack) {
-      res.status(404).json({ error: "not_found" });
-      return;
+      throw new NotFoundError("not_found");
     }
 
     const [persisted] = await db

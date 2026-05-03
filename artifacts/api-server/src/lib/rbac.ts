@@ -3,6 +3,7 @@ import { db, userRolesTable, apiKeysTable, type UserRoleName } from "@workspace/
 import { and, eq, isNull } from "drizzle-orm";
 import { hashToken, extractBearerToken } from "./auth";
 import { getAuth } from "@clerk/express";
+import { UnauthorizedError, ForbiddenError } from "./api-errors";
 
 /**
  * ============================================================================
@@ -259,19 +260,13 @@ export function requirePermission(...required: Permission[]): RequestHandler {
     try {
       const ctx = await resolveRbacContext(req);
       if (ctx.roles.length === 0) {
-        res.status(401).json({ error: "Authentication required" });
-        return;
+        throw new UnauthorizedError("Authentication required");
       }
       const ok = required.every((p) =>
         ctx.roles.some((r) => roleHasPermission(r, p)),
       );
       if (!ok) {
-        res.status(403).json({
-          error: "Forbidden",
-          required,
-          have: ctx.roles,
-        });
-        return;
+        throw new ForbiddenError("Forbidden", { required, have: ctx.roles });
       }
       next();
     } catch (err) {
@@ -290,15 +285,11 @@ export function requireRole(...allowed: UserRoleName[]): RequestHandler {
     try {
       const ctx = await resolveRbacContext(req);
       if (ctx.roles.length === 0) {
-        res.status(401).json({ error: "Authentication required" });
-        return;
+        throw new UnauthorizedError("Authentication required");
       }
       const ok = ctx.roles.some((r) => allowed.includes(r));
       if (!ok) {
-        res
-          .status(403)
-          .json({ error: "Forbidden", allowed, have: ctx.roles });
-        return;
+        throw new ForbiddenError("Forbidden", { allowed, have: ctx.roles });
       }
       next();
     } catch (err) {
