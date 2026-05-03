@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "pretest": "pnpm --filter @workspace/db run sync",
     "test": "PG_POOL_MAX=${PG_POOL_MAX:-30} NODE_OPTIONS=--expose-gc node --experimental-test-module-mocks --import tsx --test test/*.test.ts",
+    "test:usgs-live": "USGS_LIVE=1 node --import tsx --test --test-name-pattern='USGS DS-140 live URL probe' test/usgs-mineral.test.ts",
     "typecheck": "tsc -b ../../tsconfig.json && tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit"
   },
   "dependencies": {

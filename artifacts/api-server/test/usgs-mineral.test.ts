@@ -28,16 +28,16 @@ import assert from "node:assert/strict";
 import {
   USGS_MINERALS,
   buildUsgsDraftForObservation,
-  fetchUsgsWorkbook,
+  fetchUsgsMineralBackfillDrafts,
   findHeaderRow,
   findUnitValueColumn,
   findYearColumn,
   parseUsgsValue,
-  parseUsgsWorkbook,
   parseUsgsYear,
   yearToObservedAt,
   type UsgsMineralRef,
 } from "../src/lib/intelligence/collectors/usgs-mineral";
+import type { MarketSignalDraft } from "../src/lib/intelligence/collector";
 
 const SAMPLE_MINERAL: UsgsMineralRef = {
   materialCode: "LITHIUM",
@@ -204,31 +204,98 @@ describe("buildUsgsDraftForObservation", () => {
  * stale URLs returned 403. A pure-helper test cannot catch a
  * curated-URL regression like that — only a real fetch + parse can.
  *
+ * Why it goes through `fetchUsgsMineralBackfillDrafts` instead of just
+ * `fetchUsgsWorkbook` + `parseUsgsWorkbook`: task #257 calls out that
+ * a workbook layout drift (header row moves, "Unit value" gets
+ * relabelled) would silently produce 0-row runs and only surface
+ * after the 14-day stale-empty alert. Asserting that the *collector*
+ * — fetch + parse + draft build — emits ≥1 `MarketSignalDraft` per
+ * mineral catches drift at the same boundary the runtime sees, so
+ * any per-mineral regression (URL 403, layout change, value-column
+ * disappears) fails this probe loudly with a per-mineral test name.
+ *
+ * Runs the full backfill once (one HTTP fetch per mineral, shared
+ * across all subtests) and then asserts per mineral so a single bad
+ * workbook fails its own subtest with a clear materialCode in the
+ * test name without aborting the rest of the suite.
+ *
  * Opt-in via `USGS_LIVE=1` so day-to-day CI doesn't depend on the
- * USGS S3 origin being reachable; run it in the scheduled canary slot.
+ * USGS S3 origin being reachable; run it from the scheduled
+ * `pnpm --filter @workspace/api-server run test:usgs-live` canary
+ * slot.
  */
 describe("USGS DS-140 live URL probe (USGS_LIVE=1 only)", () => {
   const live = process.env["USGS_LIVE"] === "1";
+
+  let drafts: MarketSignalDraft[] = [];
+  let failedMinerals: Array<{ materialCode: string; error: string }> = [];
+  let probeError: Error | null = null;
+  let probed = false;
+
+  async function ensureProbe(): Promise<void> {
+    if (probed) return;
+    probed = true;
+    try {
+      const result = await fetchUsgsMineralBackfillDrafts();
+      drafts = result.drafts;
+      failedMinerals = result.failedMinerals;
+    } catch (err) {
+      probeError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
   for (const mineral of USGS_MINERALS) {
-    it(`fetches and parses ${mineral.materialCode} from ${mineral.xlsxUrl}`, async (t) => {
+    it(`emits ≥1 draft for ${mineral.materialCode} from ${mineral.xlsxUrl}`, async (t) => {
       if (!live) {
         t.skip("set USGS_LIVE=1 to run the networked probe");
         return;
       }
-      const buf = await fetchUsgsWorkbook(mineral);
-      const obs = parseUsgsWorkbook(buf, mineral);
-      assert.ok(
-        obs.length > 0,
-        `expected ≥1 (year, value) observation for ${mineral.materialCode}; ` +
-          `got 0 — likely a workbook layout drift or a curated URL change`,
+      await ensureProbe();
+      assert.equal(
+        probeError,
+        null,
+        `live probe threw before per-mineral assertions: ${probeError?.message ?? ""}`,
       );
-      // Sanity check: years must be plausibly recent — guards against
-      // a parser that picks up a header column index by accident and
-      // emits 1900-only rows.
-      const maxYear = Math.max(...obs.map((o) => o.year));
+
+      // Per-mineral fetch failure (HTTP 403, DNS, etc.) — surface the
+      // upstream error message so an operator can repair the curated
+      // URL without re-running the probe to discover what broke.
+      const failure = failedMinerals.find(
+        (f) => f.materialCode === mineral.materialCode,
+      );
+      assert.equal(
+        failure,
+        undefined,
+        `${mineral.materialCode} fetch failed: ${failure?.error ?? ""}. ` +
+          `Curated xlsxUrl probably needs to be re-resolved from ${mineral.xlsxUrl}.`,
+      );
+
+      // Per-mineral parse / layout drift — fetch succeeded but the
+      // workbook produced 0 drafts. This is the silent-data-loss
+      // failure mode task #257 exists to catch.
+      const mineralDrafts = drafts.filter(
+        (d) => d.scopeMaterialCode === mineral.materialCode,
+      );
+      assert.ok(
+        mineralDrafts.length > 0,
+        `expected ≥1 MarketSignalDraft for ${mineral.materialCode}; got 0 — ` +
+          `likely a DS-140 workbook layout drift (header row moved, "Year"/` +
+          `"Unit value" relabelled). Inspect ${mineral.xlsxUrl} and update ` +
+          `findHeaderRow / findUnitValueColumn / findYearColumn as needed.`,
+      );
+
+      // Sanity check: at least one draft must be from a plausibly
+      // recent year — guards against a parser that picks the wrong
+      // column index and emits 1900-only rows from a notes column.
+      const maxYear = Math.max(
+        ...mineralDrafts.map((d) =>
+          Number(d.metadata?.["year"] ?? d.observedAt.getUTCFullYear()),
+        ),
+      );
       assert.ok(
         maxYear >= 2015,
-        `${mineral.materialCode} latest year ${maxYear} < 2015 — parser is reading the wrong column`,
+        `${mineral.materialCode} latest draft year ${maxYear} < 2015 — ` +
+          `parser is reading the wrong column`,
       );
     });
   }
