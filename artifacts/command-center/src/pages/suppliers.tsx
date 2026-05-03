@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  CheckCircle2,
   X,
   ArrowUpDown,
   ArrowDown,
@@ -433,12 +434,41 @@ export default function Suppliers() {
               Failed to load suppliers.
             </div>
           ) : !data || sortedItems.length === 0 ? (
-            <div
-              className="text-muted-foreground py-8 text-center"
-              data-testid="text-empty"
-            >
-              No suppliers match.
-            </div>
+            // Distinguish "the deep-link readiness filter has nothing left
+            // to fix" from a generic empty result. Only treat as the
+            // celebratory case when the only active filter is the
+            // `?missing=` deep-link — a typed search or in-page confidence
+            // toggle could equally explain the empty rows and the operator
+            // would be misled by the success copy.
+            missing &&
+            !search.trim() &&
+            !confidenceFilter &&
+            strategicFilter === null &&
+            preferredFilter === null &&
+            !currencyFilter &&
+            !tagFilter ? (
+              <div
+                className="py-8 text-center space-y-1"
+                data-testid="text-empty-missing-resolved"
+                data-missing={missing}
+              >
+                <CheckCircle2 className="w-6 h-6 text-emerald-600 mx-auto" />
+                <div className="font-medium">
+                  No suppliers are missing{" "}
+                  {MISSING_FIELDS[missing].toLowerCase()} — nothing to fix.
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Nice work. Clear the filter to see everyone.
+                </div>
+              </div>
+            ) : (
+              <div
+                className="text-muted-foreground py-8 text-center"
+                data-testid="text-empty"
+              >
+                No suppliers match.
+              </div>
+            )
           ) : (
             <Table data-testid="table-suppliers">
               <TableHeader>

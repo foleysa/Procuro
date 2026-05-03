@@ -51,6 +51,7 @@ import {
   List as ListIcon,
   Bell,
   AlertCircle,
+  CheckCircle2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -329,6 +330,19 @@ export default function Contracts() {
           isFetching={isFetching}
           nextCursor={data?.nextCursor ?? null}
           canGoBack={cursorStack.length > 1}
+          // Pass through enough context to distinguish a "the deep-link
+          // readiness filter has nothing left to fix" empty result from a
+          // generic "your typed filters returned nothing" empty result.
+          // Only the former gets the celebratory copy — typed filters
+          // could equally explain the empty rows and would mislead.
+          missingField={missing}
+          missingLabel={missing ? MISSING_LABELS[missing] : null}
+          hasOtherFilters={
+            !!search.trim() ||
+            statusFilter !== "all" ||
+            !!currencyFilter.trim() ||
+            !!ownerFilter.trim()
+          }
           onNext={() => {
             if (data?.nextCursor) {
               setCursorStack((s) => [...s, data.nextCursor!]);
@@ -354,6 +368,9 @@ function ListView({
   isFetching,
   nextCursor,
   canGoBack,
+  missingField,
+  missingLabel,
+  hasOtherFilters,
   onNext,
   onBack,
 }: {
@@ -361,10 +378,31 @@ function ListView({
   isFetching: boolean;
   nextCursor: string | null;
   canGoBack: boolean;
+  missingField: ListContractsMissing | null;
+  missingLabel: string | null;
+  hasOtherFilters: boolean;
   onNext: () => void;
   onBack: () => void;
 }) {
   if (items.length === 0) {
+    if (missingField && missingLabel && !hasOtherFilters) {
+      return (
+        <div
+          className="bg-card border rounded-lg p-12 text-center space-y-2"
+          data-testid="empty-state-missing-resolved"
+          data-missing={missingField}
+        >
+          <CheckCircle2 className="w-7 h-7 text-emerald-600 mx-auto" />
+          <div className="font-medium">
+            No contracts are missing {missingLabel.toLowerCase()} — nothing to
+            fix.
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Nice work. Clear the filter to see every contract.
+          </div>
+        </div>
+      );
+    }
     return (
       <div
         className="bg-card border rounded-lg p-12 text-center text-muted-foreground"

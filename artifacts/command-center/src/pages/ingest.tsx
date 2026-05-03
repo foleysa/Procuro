@@ -5,6 +5,8 @@ import Papa from "papaparse";
 import JSZip from "jszip";
 import {
   useIngestCsvBatch,
+  useGetReadiness,
+  getGetReadinessQueryKey,
   type CsvIngestRequest,
   type StreamCsvResult,
   type IngestCsvStreamEntity,
@@ -1527,6 +1529,34 @@ export default function Ingest() {
 
   const ingestM = useIngestCsvBatch();
 
+  // Re-fetch readiness so the deep-link banner can tell the operator
+  // whether the blocker that pointed them here is still firing. The
+  // dashboard already polls the same endpoint cheaply (cached for 60s),
+  // so this is a free piggy-back read in practice. Skipped when there is
+  // no `?missing=` deep-link to interpret.
+  const readinessQ = useGetReadiness({
+    query: {
+      queryKey: getGetReadinessQueryKey(),
+      enabled: !!missing,
+      staleTime: 30_000,
+    },
+  });
+  // The deep-link blocker is "resolved" when readiness has loaded and no
+  // lever still carries a blocker whose own fix-link points at the same
+  // `?missing=<field>` value. Matching on the URL the rules.ts file
+  // emitted keeps the FE/BE coupling narrow — we don't have to enumerate
+  // blocker IDs here and the celebratory message stays correct as new
+  // blockers are added.
+  const missingResolved =
+    !!missing &&
+    !!highlightedEntity &&
+    readinessQ.data !== undefined &&
+    !readinessQ.data.levers.some((lev) =>
+      lev.blockers.some((b) =>
+        b.fixUrl.includes(`missing=${encodeURIComponent(missing)}`),
+      ),
+    );
+
   const onPickFile = async (entity: EntityDef, file: File | null) => {
     setResult(null);
     setApiError(null);
@@ -1930,6 +1960,30 @@ export default function Ingest() {
           as CSV. Validate Procuro on real data without ERP integration.
         </p>
       </div>
+
+      {/*
+        Celebratory banner for the deep-link case: the operator clicked
+        "Fix this" on the data-readiness card for a blocker that the
+        backend no longer reports. Without this they'd see the highlighted
+        upload row with no indication that the upload may be unnecessary.
+        Only rendered when the deep-link maps to a known entity AND the
+        readiness response no longer carries a matching blocker.
+      */}
+      {missingResolved && (
+        <Alert
+          data-testid="alert-missing-resolved"
+          data-missing={missing}
+          className="border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          <AlertTitle>Nothing to fix here</AlertTitle>
+          <AlertDescription className="text-xs">
+            The data-readiness blocker that linked you to this uploader is no
+            longer firing — your existing data already covers it. Upload a new
+            file only if you want to add or replace records.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {result && (
         <Alert data-testid="alert-import-success">
