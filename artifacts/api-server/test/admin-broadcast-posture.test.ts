@@ -363,9 +363,13 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
     });
     assert.equal(optOutRes.status, 200);
     assert.equal(optOutRes.body.tenantOptedIn, false);
+    // Other tests may add or DELETE orgs concurrently between the
+    // opt-in and opt-out broadcasts. We only require the broadcast
+    // touched at least our own test orgs — using `>= n1` here would
+    // race with concurrent test cleanup.
     assert.ok(
-      optOutRes.body.tenantsAffected >= n1,
-      `opt-out tenantsAffected (${optOutRes.body.tenantsAffected}) should be >= opt-in count (${n1})`,
+      optOutRes.body.tenantsAffected >= ORG_IDS.length,
+      `opt-out tenantsAffected (${optOutRes.body.tenantsAffected}) should be >= ${ORG_IDS.length} (our test orgs)`,
     );
     const n2 = optOutRes.body.tenantsAffected;
     assert.equal(
@@ -373,6 +377,9 @@ test("admin broadcast-posture: end-to-end fleet-wide opt-in flow", async (t) => 
       n2,
       "force-opt-out upserts rows for all current orgs (no duplicates per org)",
     );
+    // Audit log is append-only — opt-in wrote n1 rows, opt-out wrote
+    // n2 rows. The total equals n1 + n2 even though n2 may differ
+    // from n1 (orgs added/removed concurrently are reflected here).
     assert.equal(
       await countAuditRows(),
       n1 + n2,
