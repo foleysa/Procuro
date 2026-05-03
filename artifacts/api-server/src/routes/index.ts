@@ -39,6 +39,7 @@ import routingRouter from "./routing";
 import servicesRouter from "./services";
 import sowsRouter from "./sows";
 import rateCardsRouter from "./rate-cards";
+import methodsAndToolsRouter from "./methods-and-tools";
 
 const router: IRouter = Router();
 
@@ -82,5 +83,6 @@ router.use(routingRouter);
 router.use(servicesRouter);
 router.use(sowsRouter);
 router.use(rateCardsRouter);
+router.use(methodsAndToolsRouter);
 
 export default router;

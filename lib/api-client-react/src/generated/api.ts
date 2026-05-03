@@ -85,6 +85,7 @@ import type {
   CreateEscalationPolicyRequest,
   CreateManualAlertRequest,
   CreateManualAlertResponse,
+  CreateMethodAndToolRequest,
   CreateWatchlistRequest,
   CsvIngestRequest,
   Cycle,
@@ -162,6 +163,8 @@ import type {
   ListWatchedIssuersParams,
   MarketSignal,
   MeResponse,
+  MethodAndTool,
+  MethodAndToolListResponse,
   MockErpIngestRequest,
   NotFoundResponse,
   OnboardingState,
@@ -225,6 +228,7 @@ import type {
   UncoveredWatchedSuppliersResponse,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
+  UpdateMethodAndToolRequest,
   UpdateSystemCleanupSchedule400,
   UpdateSystemFunnelSnapshotRetention400,
   UsSupplier,
@@ -8721,6 +8725,343 @@ export function useGetRateCard<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns the rows that drive the Methods & Tools card on the Command Center dashboard. On a fresh tenant the registry is auto-seeded with a starter set so the dashboard never renders empty; subsequent edits, additions, and deletions are persisted per tenant.
+ * @summary List the tenant's Methods & Tools registry rows
+ */
+export const getListMethodsAndToolsUrl = () => {
+  return `/api/methods-and-tools`;
+};
+
+export const listMethodsAndTools = async (
+  options?: RequestInit,
+): Promise<MethodAndToolListResponse> => {
+  return customFetch<MethodAndToolListResponse>(getListMethodsAndToolsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListMethodsAndToolsQueryKey = () => {
+  return [`/api/methods-and-tools`] as const;
+};
+
+export const getListMethodsAndToolsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMethodsAndTools>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listMethodsAndTools>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListMethodsAndToolsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listMethodsAndTools>>
+  > = ({ signal }) => listMethodsAndTools({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMethodsAndTools>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListMethodsAndToolsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMethodsAndTools>>
+>;
+export type ListMethodsAndToolsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List the tenant's Methods & Tools registry rows
+ */
+
+export function useListMethodsAndTools<
+  TData = Awaited<ReturnType<typeof listMethodsAndTools>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listMethodsAndTools>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListMethodsAndToolsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add one row to the tenant's Methods & Tools registry
+ */
+export const getCreateMethodAndToolUrl = () => {
+  return `/api/methods-and-tools`;
+};
+
+export const createMethodAndTool = async (
+  createMethodAndToolRequest: CreateMethodAndToolRequest,
+  options?: RequestInit,
+): Promise<MethodAndTool> => {
+  return customFetch<MethodAndTool>(getCreateMethodAndToolUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createMethodAndToolRequest),
+  });
+};
+
+export const getCreateMethodAndToolMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createMethodAndTool>>,
+    TError,
+    { data: BodyType<CreateMethodAndToolRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createMethodAndTool>>,
+  TError,
+  { data: BodyType<CreateMethodAndToolRequest> },
+  TContext
+> => {
+  const mutationKey = ["createMethodAndTool"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createMethodAndTool>>,
+    { data: BodyType<CreateMethodAndToolRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createMethodAndTool(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateMethodAndToolMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createMethodAndTool>>
+>;
+export type CreateMethodAndToolMutationBody =
+  BodyType<CreateMethodAndToolRequest>;
+export type CreateMethodAndToolMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add one row to the tenant's Methods & Tools registry
+ */
+export const useCreateMethodAndTool = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createMethodAndTool>>,
+    TError,
+    { data: BodyType<CreateMethodAndToolRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createMethodAndTool>>,
+  TError,
+  { data: BodyType<CreateMethodAndToolRequest> },
+  TContext
+> => {
+  return useMutation(getCreateMethodAndToolMutationOptions(options));
+};
+
+/**
+ * @summary Update one row in the tenant's Methods & Tools registry
+ */
+export const getUpdateMethodAndToolUrl = (id: string) => {
+  return `/api/methods-and-tools/${id}`;
+};
+
+export const updateMethodAndTool = async (
+  id: string,
+  updateMethodAndToolRequest: UpdateMethodAndToolRequest,
+  options?: RequestInit,
+): Promise<MethodAndTool> => {
+  return customFetch<MethodAndTool>(getUpdateMethodAndToolUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateMethodAndToolRequest),
+  });
+};
+
+export const getUpdateMethodAndToolMutationOptions = <
+  TError = ErrorType<ErrorResponse | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMethodAndTool>>,
+    TError,
+    { id: string; data: BodyType<UpdateMethodAndToolRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateMethodAndTool>>,
+  TError,
+  { id: string; data: BodyType<UpdateMethodAndToolRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateMethodAndTool"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateMethodAndTool>>,
+    { id: string; data: BodyType<UpdateMethodAndToolRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateMethodAndTool(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateMethodAndToolMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateMethodAndTool>>
+>;
+export type UpdateMethodAndToolMutationBody =
+  BodyType<UpdateMethodAndToolRequest>;
+export type UpdateMethodAndToolMutationError = ErrorType<
+  ErrorResponse | NotFoundResponse
+>;
+
+/**
+ * @summary Update one row in the tenant's Methods & Tools registry
+ */
+export const useUpdateMethodAndTool = <
+  TError = ErrorType<ErrorResponse | NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMethodAndTool>>,
+    TError,
+    { id: string; data: BodyType<UpdateMethodAndToolRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateMethodAndTool>>,
+  TError,
+  { id: string; data: BodyType<UpdateMethodAndToolRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateMethodAndToolMutationOptions(options));
+};
+
+/**
+ * @summary Delete one row from the tenant's Methods & Tools registry
+ */
+export const getDeleteMethodAndToolUrl = (id: string) => {
+  return `/api/methods-and-tools/${id}`;
+};
+
+export const deleteMethodAndTool = async (
+  id: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteMethodAndToolUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteMethodAndToolMutationOptions = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteMethodAndTool>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteMethodAndTool>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteMethodAndTool"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteMethodAndTool>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteMethodAndTool(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteMethodAndToolMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteMethodAndTool>>
+>;
+
+export type DeleteMethodAndToolMutationError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Delete one row from the tenant's Methods & Tools registry
+ */
+export const useDeleteMethodAndTool = <
+  TError = ErrorType<NotFoundResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteMethodAndTool>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteMethodAndTool>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  return useMutation(getDeleteMethodAndToolMutationOptions(options));
+};
 
 /**
  * Trailing-12-month services-only rollup powering the "Services

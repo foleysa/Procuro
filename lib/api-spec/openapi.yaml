@@ -72,6 +72,10 @@ tags:
   description: Customer-facing trust posture (live controls, citations, compliance)
 - name: alerts
   description: Alerts subsystem — inbox, channels, subscriptions, watchlists, rules, escalation
+- name: methods-and-tools
+  description: 'Tenant-scoped Methods & Tools registry — editable mapping of
+    sourcing strategy to method, tool/system, and maturity rating
+    surfaced on the Command Center dashboard reference card.'
 - name: admin
   description: 'Tenant Org-Admin surface. RBAC-gated endpoints behind
 
@@ -3140,6 +3144,107 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RateCardDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /methods-and-tools:
+    get:
+      operationId: listMethodsAndTools
+      tags:
+      - methods-and-tools
+      summary: List the tenant's Methods & Tools registry rows
+      description: 'Returns the rows that drive the Methods & Tools card on
+        the Command Center dashboard. On a fresh tenant the registry is
+        auto-seeded with a starter set so the dashboard never renders
+        empty; subsequent edits, additions, and deletions are persisted
+        per tenant.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Methods & tools rows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MethodAndToolListResponse'
+    post:
+      operationId: createMethodAndTool
+      tags:
+      - methods-and-tools
+      summary: Add one row to the tenant's Methods & Tools registry
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMethodAndToolRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MethodAndTool'
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Sourcing strategy already exists for this tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /methods-and-tools/{id}:
+    patch:
+      operationId: updateMethodAndTool
+      tags:
+      - methods-and-tools
+      summary: Update one row in the tenant's Methods & Tools registry
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMethodAndToolRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MethodAndTool'
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Sourcing strategy already exists for this tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteMethodAndTool
+      tags:
+      - methods-and-tools
+      summary: Delete one row from the tenant's Methods & Tools registry
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Removed
         '404':
           $ref: '#/components/responses/NotFound'
   /services/spend:
@@ -14640,3 +14745,89 @@ components:
           minimum: 0
         description:
           type: string
+    MethodAndToolMaturity:
+      type: string
+      enum:
+      - proven
+      - emerging
+      - first_run
+      description: 'Maturity rating for a Methods & Tools registry entry.
+        `proven` = used in production and repeatable, `emerging` = in
+        active rollout with evidence of value, `first_run` = pilot.'
+    MethodAndTool:
+      type: object
+      required:
+      - id
+      - sourcingStrategy
+      - method
+      - toolSystem
+      - maturity
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        sourcingStrategy:
+          type: string
+        method:
+          type: string
+        toolSystem:
+          type: string
+        maturity:
+          $ref: '#/components/schemas/MethodAndToolMaturity'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MethodAndToolListResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MethodAndTool'
+    CreateMethodAndToolRequest:
+      type: object
+      required:
+      - sourcingStrategy
+      - method
+      - toolSystem
+      - maturity
+      properties:
+        sourcingStrategy:
+          type: string
+          minLength: 1
+          maxLength: 200
+        method:
+          type: string
+          minLength: 1
+          maxLength: 500
+        toolSystem:
+          type: string
+          minLength: 1
+          maxLength: 500
+        maturity:
+          $ref: '#/components/schemas/MethodAndToolMaturity'
+    UpdateMethodAndToolRequest:
+      type: object
+      description: 'Partial update — any subset of fields may be provided.
+        Omitted fields are left unchanged.'
+      properties:
+        sourcingStrategy:
+          type: string
+          minLength: 1
+          maxLength: 200
+        method:
+          type: string
+          minLength: 1
+          maxLength: 500
+        toolSystem:
+          type: string
+          minLength: 1
+          maxLength: 500
+        maturity:
+          $ref: '#/components/schemas/MethodAndToolMaturity'

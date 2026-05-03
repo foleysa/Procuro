@@ -5797,6 +5797,73 @@ export interface AdminTenantSettings {
 }
 
 /**
+ * Maturity rating for a Methods & Tools registry entry. `proven` = used in production and repeatable, `emerging` = in active rollout with evidence of value, `first_run` = pilot.
+ */
+export type MethodAndToolMaturity =
+  (typeof MethodAndToolMaturity)[keyof typeof MethodAndToolMaturity];
+
+export const MethodAndToolMaturity = {
+  proven: "proven",
+  emerging: "emerging",
+  first_run: "first_run",
+} as const;
+
+export interface MethodAndTool {
+  id: string;
+  sourcingStrategy: string;
+  method: string;
+  toolSystem: string;
+  maturity: MethodAndToolMaturity;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MethodAndToolListResponse {
+  items: MethodAndTool[];
+}
+
+export interface CreateMethodAndToolRequest {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  sourcingStrategy: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  method: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  toolSystem: string;
+  maturity: MethodAndToolMaturity;
+}
+
+/**
+ * Partial update — any subset of fields may be provided. Omitted fields are left unchanged.
+ */
+export interface UpdateMethodAndToolRequest {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  sourcingStrategy?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  method?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  toolSystem?: string;
+  maturity?: MethodAndToolMaturity;
+}
+
+/**
  * Not found
  */
 export type NotFoundResponse = ErrorResponse;
@@ -5944,10 +6011,6 @@ export const ListOpportunitiesSnoozed = {
   all: "all",
 } as const;
 
-export type PatchOpportunityClassification400 = {
-  error?: string;
-};
-
 export type ListOpportunitiesCanonicalStage =
   (typeof ListOpportunitiesCanonicalStage)[keyof typeof ListOpportunitiesCanonicalStage];
 
@@ -5960,6 +6023,10 @@ export const ListOpportunitiesCanonicalStage = {
   "Closed-No_Action": "Closed-No Action",
   "Under_Re-evaluation": "Under Re-evaluation",
 } as const;
+
+export type PatchOpportunityClassification400 = {
+  error?: string;
+};
 
 export type RunNextCycleParams = {
   /**

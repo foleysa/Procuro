@@ -7950,6 +7950,149 @@ export const GetRateCardResponse = zod
   );
 
 /**
+ * Returns the rows that drive the Methods & Tools card on the Command Center dashboard. On a fresh tenant the registry is auto-seeded with a starter set so the dashboard never renders empty; subsequent edits, additions, and deletions are persisted per tenant.
+ * @summary List the tenant's Methods & Tools registry rows
+ */
+export const ListMethodsAndToolsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListMethodsAndToolsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      sourcingStrategy: zod.string(),
+      method: zod.string(),
+      toolSystem: zod.string(),
+      maturity: zod
+        .enum(["proven", "emerging", "first_run"])
+        .describe(
+          "Maturity rating for a Methods & Tools registry entry. `proven` = used in production and repeatable, `emerging` = in active rollout with evidence of value, `first_run` = pilot.",
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Add one row to the tenant's Methods & Tools registry
+ */
+export const CreateMethodAndToolHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const createMethodAndToolBodySourcingStrategyMax = 200;
+
+export const createMethodAndToolBodyMethodMax = 500;
+
+export const createMethodAndToolBodyToolSystemMax = 500;
+
+export const CreateMethodAndToolBody = zod.object({
+  sourcingStrategy: zod
+    .string()
+    .min(1)
+    .max(createMethodAndToolBodySourcingStrategyMax),
+  method: zod.string().min(1).max(createMethodAndToolBodyMethodMax),
+  toolSystem: zod.string().min(1).max(createMethodAndToolBodyToolSystemMax),
+  maturity: zod
+    .enum(["proven", "emerging", "first_run"])
+    .describe(
+      "Maturity rating for a Methods & Tools registry entry. `proven` = used in production and repeatable, `emerging` = in active rollout with evidence of value, `first_run` = pilot.",
+    ),
+});
+
+/**
+ * @summary Update one row in the tenant's Methods & Tools registry
+ */
+export const UpdateMethodAndToolParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const UpdateMethodAndToolHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const updateMethodAndToolBodySourcingStrategyMax = 200;
+
+export const updateMethodAndToolBodyMethodMax = 500;
+
+export const updateMethodAndToolBodyToolSystemMax = 500;
+
+export const UpdateMethodAndToolBody = zod
+  .object({
+    sourcingStrategy: zod
+      .string()
+      .min(1)
+      .max(updateMethodAndToolBodySourcingStrategyMax)
+      .optional(),
+    method: zod
+      .string()
+      .min(1)
+      .max(updateMethodAndToolBodyMethodMax)
+      .optional(),
+    toolSystem: zod
+      .string()
+      .min(1)
+      .max(updateMethodAndToolBodyToolSystemMax)
+      .optional(),
+    maturity: zod
+      .enum(["proven", "emerging", "first_run"])
+      .optional()
+      .describe(
+        "Maturity rating for a Methods & Tools registry entry. `proven` = used in production and repeatable, `emerging` = in active rollout with evidence of value, `first_run` = pilot.",
+      ),
+  })
+  .describe(
+    "Partial update — any subset of fields may be provided. Omitted fields are left unchanged.",
+  );
+
+export const UpdateMethodAndToolResponse = zod.object({
+  id: zod.string(),
+  sourcingStrategy: zod.string(),
+  method: zod.string(),
+  toolSystem: zod.string(),
+  maturity: zod
+    .enum(["proven", "emerging", "first_run"])
+    .describe(
+      "Maturity rating for a Methods & Tools registry entry. `proven` = used in production and repeatable, `emerging` = in active rollout with evidence of value, `first_run` = pilot.",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Delete one row from the tenant's Methods & Tools registry
+ */
+export const DeleteMethodAndToolParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeleteMethodAndToolHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+/**
  * Trailing-12-month services-only rollup powering the "Services
 Spend" tab. Splits services spend by contract type (T&M vs
 fixed-price vs milestone vs retainer vs outcome), top services
