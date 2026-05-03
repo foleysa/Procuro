@@ -10,6 +10,7 @@
     "backfill-bls-scope-sku": "tsx ./src/backfill-bls-scope-sku.ts",
     "replay-collector": "tsx ./src/replay-collector.ts",
     "backfill-funnel-snapshots": "tsx ./src/backfill-funnel-snapshots.ts",
+    "backfill-opportunity-mapped-via": "tsx ./src/backfill-opportunity-mapped-via.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
