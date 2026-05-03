@@ -59,6 +59,11 @@ import {
   COMPANIES_HOUSE_COLLECTOR_ID,
   fetchCompaniesHouseBackfillDrafts,
 } from "./collectors/companies-house";
+import {
+  USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID,
+  fetchUsdaNassBackfillDrafts,
+  NASS_SERIES,
+} from "./collectors/usda-nass-economic-index";
 
 /**
  * Inference target matching the unique *index* defined in
@@ -1726,6 +1731,42 @@ export async function runCompaniesHouseBackfill(
         opts.numbers ? { numbers: opts.numbers } : {},
       );
       return { drafts, extraSucceededMeta: { failed: failed.length } };
+    },
+  });
+}
+
+/**
+ * Backfill the USDA NASS agricultural commodity collector. Replays
+ * `yearGe` (default: 5 years back) of monthly Prices Received rows for
+ * the curated commodity list and inserts only the (series × month)
+ * rows that aren't already in `market_signals` — so re-runs are safe
+ * no-ops. Throws if every curated series fails so the audit log
+ * records `backfill_failed` instead of "succeeded with 0 inserts".
+ */
+export async function runUsdaNassEconomicIndexBackfill(
+  opts: { force?: boolean; yearGe?: number } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { yearGe: opts.yearGe ?? null },
+    fetchDrafts: async () => {
+      const { drafts, failedSeries } = await fetchUsdaNassBackfillDrafts(
+        opts.yearGe !== undefined ? { yearGe: opts.yearGe } : {},
+      );
+      if (drafts.length === 0 && failedSeries.length === NASS_SERIES.length) {
+        const sample = failedSeries
+          .slice(0, 3)
+          .map((f) => f.error)
+          .join("; ");
+        throw new Error(
+          `USDA NASS backfill: all ${NASS_SERIES.length} series failed. Sample errors: ${sample}`,
+        );
+      }
+      return {
+        drafts,
+        extraSucceededMeta: { failedSeries: failedSeries.length },
+      };
     },
   });
 }

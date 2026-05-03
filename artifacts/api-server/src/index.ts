@@ -10,6 +10,7 @@ import { ecbFxRatesCollector } from "./lib/intelligence/collectors/ecb-fx-rates"
 import { fredEconomicIndexCollector } from "./lib/intelligence/collectors/fred-economic-index";
 import { eiaEnergyCollector } from "./lib/intelligence/collectors/eia-energy";
 import { worldBankPinkSheetCollector } from "./lib/intelligence/collectors/world-bank-pink-sheet";
+import { usdaNassEconomicIndexCollector } from "./lib/intelligence/collectors/usda-nass-economic-index";
 import { blsEconomicIndexCollector } from "./lib/intelligence/collectors/bls-economic-index";
 import { blsOewsCollector } from "./lib/intelligence/collectors/bls-oews";
 import { secEdgarCollector } from "./lib/intelligence/collectors/sec-edgar";
@@ -88,6 +89,10 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   fredEconomicIndexCollector,
   eiaEnergyCollector,
   worldBankPinkSheetCollector,
+  // USDA NASS QuickStats — US monthly Prices Received for a curated
+  // set of agricultural commodities (corn/wheat/soybeans, dairy,
+  // beef/pork/poultry, cotton). Task #244.
+  usdaNassEconomicIndexCollector,
   blsEconomicIndexCollector,
   // BLS OEWS — annual, region-aware occupational wage benchmarks
   // anchoring services-band rate-card negotiations (Task #215).

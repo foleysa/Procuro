@@ -49,6 +49,7 @@ import {
   runGleifLeiBackfill,
   runClimateTraceBackfill,
   runCompaniesHouseBackfill,
+  runUsdaNassEconomicIndexBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
@@ -57,6 +58,7 @@ import { OPENSANCTIONS_COLLECTOR_ID } from "../lib/intelligence/collectors/opens
 import { GLEIF_LEI_COLLECTOR_ID } from "../lib/intelligence/collectors/gleif-lei";
 import { CLIMATE_TRACE_COLLECTOR_ID } from "../lib/intelligence/collectors/climate-trace";
 import { COMPANIES_HOUSE_COLLECTOR_ID } from "../lib/intelligence/collectors/companies-house";
+import { USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/usda-nass-economic-index";
 import { getWorkbenchMeta } from "../lib/intelligence/workbench-meta";
 import {
   buildLineageGraph,
@@ -588,6 +590,20 @@ mountBackfillRoute(
   COMPANIES_HOUSE_COLLECTOR_ID,
   runCompaniesHouseBackfill,
   (req) => CompaniesHouseBackfillSchema.parse(req.body) ?? {},
+);
+
+const UsdaNassBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    yearGe: z.number().int().min(1900).max(2100).optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/usda-nass-economic-index/backfill",
+  USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID,
+  runUsdaNassEconomicIndexBackfill,
+  (req) => UsdaNassBackfillSchema.parse(req.body) ?? {},
 );
 
 /**
