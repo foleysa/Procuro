@@ -531,6 +531,8 @@ export * from "./trustOperationalControlsSchemaDriftRecentEventsItem";
 export * from "./trustProvenance";
 export * from "./trustSummary";
 export * from "./trustTenant";
+export * from "./uncoveredWatchedSupplier";
+export * from "./uncoveredWatchedSuppliersResponse";
 export * from "./updateErpConnectionRequest";
 export * from "./updateErpConnectionRequestCredentials";
 export * from "./updateErpConnectionRequestSettings";

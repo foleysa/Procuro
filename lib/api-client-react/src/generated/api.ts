@@ -217,6 +217,7 @@ import type {
   TodayFeed,
   TransitionAlertRequest,
   TrustSummary,
+  UncoveredWatchedSuppliersResponse,
   UpdateErpConnectionRequest,
   UpdateJobKindSettingRequest,
   UpdateSystemCleanupSchedule400,
@@ -8974,6 +8975,89 @@ export function useListWatchedIssuerSuggestions<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the active tenant's suppliers flagged as `isStrategic` or `isPreferred` that do NOT yet have a `watched_issuers` row linked to them via `supplierUid`. Powers the "Suggested watches" section on the Watched Companies page so admins can spot strategic suppliers whose corporate filings are not being polled.
+Read-only — confirm by POSTing to /watched-issuers with the returned `supplierUid` (and a CIK / company number) the same way the manual Add Company dialog does.
+
+ * @summary List strategic / preferred suppliers not yet on the watch list
+ */
+export const getListUncoveredWatchedSuppliersUrl = () => {
+  return `/api/watched-issuers/uncovered-suppliers`;
+};
+
+export const listUncoveredWatchedSuppliers = async (
+  options?: RequestInit,
+): Promise<UncoveredWatchedSuppliersResponse> => {
+  return customFetch<UncoveredWatchedSuppliersResponse>(
+    getListUncoveredWatchedSuppliersUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListUncoveredWatchedSuppliersQueryKey = () => {
+  return [`/api/watched-issuers/uncovered-suppliers`] as const;
+};
+
+export const getListUncoveredWatchedSuppliersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListUncoveredWatchedSuppliersQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>
+  > = ({ signal }) =>
+    listUncoveredWatchedSuppliers({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListUncoveredWatchedSuppliersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>
+>;
+export type ListUncoveredWatchedSuppliersQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List strategic / preferred suppliers not yet on the watch list
+ */
+
+export function useListUncoveredWatchedSuppliers<
+  TData = Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listUncoveredWatchedSuppliers>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListUncoveredWatchedSuppliersQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

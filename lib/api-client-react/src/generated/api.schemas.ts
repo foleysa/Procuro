@@ -4234,6 +4234,20 @@ export interface WatchedIssuerSuggestionListResponse {
   suppliersSkippedAlreadyWatched: number;
 }
 
+export interface UncoveredWatchedSupplier {
+  /** Supplier ID (mirrors `suppliersTable.id`). Pass this back to POST /watched-issuers as `supplierUid` to link the new watched-issuer row to the supplier.
+   */
+  supplierUid: string;
+  name: string;
+  countryCode?: string | null;
+  isStrategic: boolean;
+  isPreferred: boolean;
+}
+
+export interface UncoveredWatchedSuppliersResponse {
+  items: UncoveredWatchedSupplier[];
+}
+
 /**
  * What the Defense Pack is defending or attacking. At least one
 of `contractId+lineItem`, `categoryCode`, or `materialCode`

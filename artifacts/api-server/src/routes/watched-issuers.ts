@@ -28,7 +28,7 @@ import {
   suppliersTable,
   type WatchedIssuerSource,
 } from "@workspace/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, or, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { newId } from "../lib/ids";
@@ -519,6 +519,73 @@ export function setSuggestLookupsForTests(lookups: ReferenceLookups): void {
 export function resetSuggestLookupsForTests(): void {
   activeSuggestLookups = defaultReferenceLookups;
 }
+
+/**
+ * GET /watched-issuers/uncovered-suppliers
+ *
+ * Returns the active tenant's strategic / preferred suppliers that
+ * don't yet have a `watched_issuers` row linked to them via
+ * `supplierUid`. Powers the "Suggested" tab on the Watched Companies
+ * page so admins can spot strategic suppliers whose corporate filings
+ * aren't being polled. Read-only — confirm by POSTing the same way the
+ * manual Add Company dialog does.
+ *
+ * "Strategic" here means `isStrategic = true OR isPreferred = true`.
+ * Suppliers already linked from any source (SEC EDGAR or Companies
+ * House) are skipped: a supplier is considered covered as soon as it
+ * has at least one row pointing at it.
+ */
+router.get(
+  "/watched-issuers/uncovered-suppliers",
+  tenantMiddleware,
+  async (req, res) => {
+    const orgId = requireOrgId(req);
+
+    // Suppliers already attached to ANY watched-issuer row, scoped to
+    // this tenant. We want the "still-missing" view, so anything in
+    // here gets filtered out below.
+    const linkedRows = await db
+      .selectDistinct({ supplierUid: watchedIssuersTable.supplierUid })
+      .from(watchedIssuersTable)
+      .where(eq(watchedIssuersTable.orgId, orgId));
+    const linkedSupplierIds = linkedRows
+      .map((r) => r.supplierUid)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    const where = [
+      eq(suppliersTable.orgId, orgId),
+      or(
+        eq(suppliersTable.isStrategic, true),
+        eq(suppliersTable.isPreferred, true),
+      )!,
+    ];
+    if (linkedSupplierIds.length > 0) {
+      where.push(notInArray(suppliersTable.id, linkedSupplierIds));
+    }
+
+    const rows = await db
+      .select({
+        id: suppliersTable.id,
+        name: suppliersTable.name,
+        countryCode: suppliersTable.countryCode,
+        isStrategic: suppliersTable.isStrategic,
+        isPreferred: suppliersTable.isPreferred,
+      })
+      .from(suppliersTable)
+      .where(and(...where))
+      .orderBy(asc(suppliersTable.name));
+
+    res.json({
+      items: rows.map((r) => ({
+        supplierUid: r.id,
+        name: r.name,
+        countryCode: r.countryCode,
+        isStrategic: r.isStrategic,
+        isPreferred: r.isPreferred,
+      })),
+    });
+  },
+);
 
 /**
  * GET /watched-issuers/suggestions

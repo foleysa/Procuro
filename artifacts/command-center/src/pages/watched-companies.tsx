@@ -25,14 +25,17 @@ import {
   useRemoveWatchedIssuer,
   useBulkAddWatchedIssuers,
   useListSuppliers,
+  useListUncoveredWatchedSuppliers,
   getListWatchedIssuersQueryKey,
   getListWatchedIssuerSuggestionsQueryKey,
+  getListUncoveredWatchedSuppliersQueryKey,
   type WatchedIssuer,
   type WatchedIssuerSource,
   type BulkAddWatchedIssuerRow,
   type BulkAddWatchedIssuerResultItem,
   type BulkAddWatchedIssuersResponse,
   type WatchedIssuerSuggestion,
+  type UncoveredWatchedSupplier,
 } from "@workspace/api-client-react";
 import {
   Card,
@@ -189,15 +192,39 @@ function sourceLabel(source: WatchedIssuerSource): string {
   return SOURCES.find((s) => s.value === source)?.label ?? source;
 }
 
+/**
+ * Tabs include the two source-specific lists plus a "Suggested" tab
+ * driven by `GET /watched-issuers/uncovered-suppliers`. The string
+ * literal type lets us reuse the same `Tabs` value channel without a
+ * second `useState`.
+ */
+type WatchedTab = WatchedIssuerSource | "suggested";
+
 export default function WatchedCompanies() {
-  const [tab, setTab] = useState<WatchedIssuerSource>("sec_edgar");
+  const [tab, setTab] = useState<WatchedTab>("sec_edgar");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<WatchedIssuer | null>(
     null,
   );
+  // When the user clicks a "Suggested" row we open the Add dialog
+  // pre-filled with that supplier's name + id. Cleared on dialog close.
+  const [prefill, setPrefill] = useState<{
+    name: string;
+    supplierUid: string;
+  } | null>(null);
 
-  const activeMeta = SOURCES.find((s) => s.value === tab) ?? SOURCES[0]!;
+  // The source the dialog should default to. When the user is on the
+  // "Suggested" tab we still need to pick something concrete — default
+  // to SEC EDGAR, which the user can flip in the dialog itself.
+  const dialogDefaultSource: WatchedIssuerSource =
+    tab === "suggested" ? "sec_edgar" : tab;
+
+  // Source meta for the active source-specific tab. Used to seed the
+  // CSV import dialog. When the user is on the "Suggested" tab we
+  // still need a concrete source, so fall back to the first SOURCE.
+  const activeMeta =
+    SOURCES.find((s) => s.value === tab) ?? SOURCES[0];
 
   return (
     <div className="p-8 space-y-6 max-w-5xl">
@@ -227,7 +254,10 @@ export default function WatchedCompanies() {
           </Button>
           <Button
             data-testid="button-add-watched"
-            onClick={() => setAddOpen(true)}
+            onClick={() => {
+              setPrefill(null);
+              setAddOpen(true);
+            }}
           >
             <Plus className="w-4 h-4 mr-1" />
             Add company
@@ -239,10 +269,7 @@ export default function WatchedCompanies() {
         onConfirmedSwitchTab={(source) => setTab(source)}
       />
 
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as WatchedIssuerSource)}
-      >
+      <Tabs value={tab} onValueChange={(v) => setTab(v as WatchedTab)}>
         <TabsList>
           {SOURCES.map((s) => (
             <TabsTrigger
@@ -258,6 +285,10 @@ export default function WatchedCompanies() {
               {s.label}
             </TabsTrigger>
           ))}
+          <TabsTrigger value="suggested" data-testid="tab-suggested">
+            <Sparkles className="w-4 h-4 mr-1" />
+            Suggested
+          </TabsTrigger>
         </TabsList>
 
         {SOURCES.map((s) => (
@@ -268,15 +299,29 @@ export default function WatchedCompanies() {
             />
           </TabsContent>
         ))}
+
+        <TabsContent value="suggested" className="space-y-4">
+          <SuggestedSection
+            onPrefill={(s) => {
+              setPrefill({ name: s.name, supplierUid: s.supplierUid });
+              setAddOpen(true);
+            }}
+          />
+        </TabsContent>
       </Tabs>
 
       <AddWatchedDialog
         open={addOpen}
-        defaultSource={tab}
-        onOpenChange={(open) => setAddOpen(open)}
+        defaultSource={dialogDefaultSource}
+        prefill={prefill}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          if (!open) setPrefill(null);
+        }}
         onAdded={(source) => {
           setTab(source);
           setAddOpen(false);
+          setPrefill(null);
         }}
       />
 
@@ -294,6 +339,116 @@ export default function WatchedCompanies() {
         onClose={() => setPendingDelete(null)}
       />
     </div>
+  );
+}
+
+function SuggestedSection({
+  onPrefill,
+}: {
+  onPrefill: (supplier: UncoveredWatchedSupplier) => void;
+}) {
+  const { data, isLoading, error } = useListUncoveredWatchedSuppliers();
+  const rows = data?.items ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-primary" />
+          Strategic suppliers without a watched filer
+        </CardTitle>
+        <CardDescription>
+          Suppliers you've flagged as strategic or preferred but that
+          aren't yet linked to any watched issuer. Click one to start
+          adding the missing CIK or company number.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center text-sm text-muted-foreground py-4">
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Loading suggestions…
+          </div>
+        ) : error ? (
+          <div
+            data-testid="error-suggested"
+            className="text-sm text-red-700 dark:text-red-400 py-4"
+          >
+            Could not load suggestions: {String(error)}
+          </div>
+        ) : rows.length === 0 ? (
+          <div
+            data-testid="empty-suggested"
+            className="text-sm text-muted-foreground py-6 text-center flex flex-col items-center gap-2"
+          >
+            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+            All your strategic suppliers are already covered.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-muted-foreground border-b">
+                  <th className="py-2 pr-4 font-medium">Supplier</th>
+                  <th className="py-2 pr-4 font-medium">Country</th>
+                  <th className="py-2 pr-4 font-medium">Flags</th>
+                  <th className="py-2 pr-4 font-medium text-right">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((s) => (
+                  <tr
+                    key={s.supplierUid}
+                    data-testid={`row-suggested-${s.supplierUid}`}
+                    className="border-b last:border-b-0"
+                  >
+                    <td className="py-3 pr-4">
+                      <div className="font-medium">{s.name}</div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {s.supplierUid}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-xs">
+                      {s.countryCode ? (
+                        s.countryCode
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex gap-1 flex-wrap">
+                        {s.isStrategic ? (
+                          <Badge variant="outline" className="text-xs">
+                            Strategic
+                          </Badge>
+                        ) : null}
+                        {s.isPreferred ? (
+                          <Badge variant="outline" className="text-xs">
+                            Preferred
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-right">
+                      <Button
+                        size="sm"
+                        data-testid={`button-add-from-suggested-${s.supplierUid}`}
+                        onClick={() => onPrefill(s)}
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Add company
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -422,11 +577,13 @@ function SourceTable({
 function AddWatchedDialog({
   open,
   defaultSource,
+  prefill,
   onOpenChange,
   onAdded,
 }: {
   open: boolean;
   defaultSource: WatchedIssuerSource;
+  prefill: { name: string; supplierUid: string } | null;
   onOpenChange: (open: boolean) => void;
   onAdded: (source: WatchedIssuerSource) => void;
 }) {
@@ -462,10 +619,20 @@ function AddWatchedDialog({
   // Sync the source select with the active tab whenever the dialog
   // opens — `useState(defaultSource)` only initialises once, so if the
   // user switches tabs and THEN opens the dialog the initial value would
-  // be stale otherwise.
+  // be stale otherwise. Also apply any pending prefill (from the
+  // "Suggested" tab) so the operator only has to type the CIK / company
+  // number.
   useEffect(() => {
-    if (open) setSource(defaultSource);
-  }, [open, defaultSource]);
+    if (!open) return;
+    setSource(defaultSource);
+    if (prefill) {
+      setName(prefill.name);
+      setSupplierUid(prefill.supplierUid);
+      // Seed the supplier-search box with the same name so the linked
+      // supplier shows up in the picker without the operator typing.
+      setSupplierSearch(prefill.name);
+    }
+  }, [open, defaultSource, prefill]);
 
   const meta = SOURCES.find((s) => s.value === source) ?? SOURCES[0]!;
 
@@ -500,6 +667,11 @@ function AddWatchedDialog({
         // Future-proof against orval renaming the URL key by also
         // invalidating the canonical no-args key.
         qc.invalidateQueries({ queryKey: getListWatchedIssuersQueryKey() });
+        // The "Suggested" tab is a derived view of the same data; the
+        // newly-linked supplier should drop off it immediately.
+        qc.invalidateQueries({
+          queryKey: getListUncoveredWatchedSuppliersQueryKey(),
+        });
         onAdded(row.source);
       },
       onError: (e: Error) => {
@@ -716,6 +888,10 @@ function DeleteWatchedDialog({
         });
         qc.invalidateQueries({ queryKey: ["/api/watched-issuers"] });
         qc.invalidateQueries({ queryKey: getListWatchedIssuersQueryKey() });
+        // Removing a row may re-expose its supplier as uncovered.
+        qc.invalidateQueries({
+          queryKey: getListUncoveredWatchedSuppliersQueryKey(),
+        });
         onClose();
       },
       onError: (e: Error) => {

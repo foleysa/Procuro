@@ -231,16 +231,10 @@ vi.mock("@/lib/admin-client", async () => {
         return { id, revoked: true };
       },
 
-      // SSO / tenant / audit are unused on these flows but the real
-      // module exports them; spread `actual` to avoid breaking dynamic
-      // import.
-      getSso: actual.adminClient.getSso,
-      saveSso: actual.adminClient.saveSso,
-      getTenantSettings: actual.adminClient.getTenantSettings,
-      saveTenantSettings: actual.adminClient.saveTenantSettings,
-      listAudit: actual.adminClient.listAudit,
-      listAuditActions: actual.adminClient.listAuditActions,
-      exportAuditCsv: actual.adminClient.exportAuditCsv,
+      // SSO / tenant / audit are unused on these flows. Earlier
+      // revisions of `adminClient` exported method shims for them; the
+      // real module no longer does (those endpoints are consumed via
+      // generated React Query hooks now), so we don't re-export them.
     },
   };
 });

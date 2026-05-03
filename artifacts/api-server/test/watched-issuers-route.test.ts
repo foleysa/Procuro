@@ -35,6 +35,7 @@ process.env["ALLOW_DEV_TENANT_HEADER"] = "true";
 import {
   db,
   orgsTable,
+  suppliersTable,
   watchedIssuersTable,
   pool,
 } from "@workspace/db";
@@ -171,6 +172,9 @@ after(async () => {
   await db
     .delete(watchedIssuersTable)
     .where(like(watchedIssuersTable.notes, `%${RUN_ID}%`));
+  await db
+    .delete(suppliersTable)
+    .where(like(suppliersTable.id, `sup_${RUN_ID}-%`));
   if (createdOrgIds.length > 0) {
     await db.delete(orgsTable).where(inArray(orgsTable.id, createdOrgIds));
   }
@@ -599,5 +603,122 @@ test("DELETE /watched-issuers/:id only removes rows the tenant owns", async () =
       .from(watchedIssuersTable)
       .where(eq(watchedIssuersTable.id, id));
     assert.equal(after.length, 0, "row must be gone after owner-issued delete");
+  });
+});
+
+test("GET /watched-issuers/uncovered-suppliers lists strategic suppliers without a watched_issuers row", async () => {
+  // Three suppliers on tenant A:
+  //   - strategic, NOT linked to any watched issuer       → expect in result
+  //   - preferred, NOT linked                              → expect in result
+  //   - strategic, linked from a watched issuer           → expect filtered out
+  //   - non-strategic, non-preferred, NOT linked          → expect filtered out
+  // Plus one strategic supplier on tenant B               → expect tenant A
+  //                                                         must NOT see it.
+  const sUncoveredStrat = `sup_${RUN_ID}-uncov-strat`;
+  const sUncoveredPref = `sup_${RUN_ID}-uncov-pref`;
+  const sCovered = `sup_${RUN_ID}-covered`;
+  const sBoring = `sup_${RUN_ID}-boring`;
+  const sOtherTenant = `sup_${RUN_ID}-other-tenant`;
+
+  await db.insert(suppliersTable).values([
+    {
+      id: sUncoveredStrat,
+      orgId: orgA,
+      name: `Uncovered Strategic ${RUN_ID}`,
+      normalizedName: `uncovered strategic ${RUN_ID}`,
+      isStrategic: true,
+      isPreferred: false,
+      sourceSystem: "test",
+      sourceExternalId: sUncoveredStrat,
+    },
+    {
+      id: sUncoveredPref,
+      orgId: orgA,
+      name: `Uncovered Preferred ${RUN_ID}`,
+      normalizedName: `uncovered preferred ${RUN_ID}`,
+      isStrategic: false,
+      isPreferred: true,
+      sourceSystem: "test",
+      sourceExternalId: sUncoveredPref,
+    },
+    {
+      id: sCovered,
+      orgId: orgA,
+      name: `Covered Strategic ${RUN_ID}`,
+      normalizedName: `covered strategic ${RUN_ID}`,
+      isStrategic: true,
+      isPreferred: false,
+      sourceSystem: "test",
+      sourceExternalId: sCovered,
+    },
+    {
+      id: sBoring,
+      orgId: orgA,
+      name: `Boring ${RUN_ID}`,
+      normalizedName: `boring ${RUN_ID}`,
+      isStrategic: false,
+      isPreferred: false,
+      sourceSystem: "test",
+      sourceExternalId: sBoring,
+    },
+    {
+      id: sOtherTenant,
+      orgId: orgB,
+      name: `Other Tenant Strategic ${RUN_ID}`,
+      normalizedName: `other tenant strategic ${RUN_ID}`,
+      isStrategic: true,
+      isPreferred: false,
+      sourceSystem: "test",
+      sourceExternalId: sOtherTenant,
+    },
+  ]);
+
+  // Link `sCovered` to a watched issuer so it gets filtered out.
+  await db.insert(watchedIssuersTable).values({
+    id: `wi_${RUN_ID}-covered`,
+    orgId: orgA,
+    source: "sec_edgar",
+    identifier: "0000200406", // J&J — arbitrary, just needs to be unique on this tenant
+    name: `J&J for ${sCovered} ${RUN_ID}`,
+    supplierUid: sCovered,
+    notes: `created by ${RUN_ID}`,
+  });
+
+  await withServer(async (base) => {
+    const res = await getJson(
+      base,
+      "/api/watched-issuers/uncovered-suppliers",
+      orgA,
+    );
+    assert.equal(res.status, 200, res.body);
+    const body = JSON.parse(res.body) as {
+      items: Array<{
+        supplierUid: string;
+        name: string;
+        isStrategic: boolean;
+        isPreferred: boolean;
+      }>;
+    };
+    const ids = body.items.map((i) => i.supplierUid);
+    assert.ok(
+      ids.includes(sUncoveredStrat),
+      `strategic uncovered supplier should be returned; got ${ids.join(",")}`,
+    );
+    assert.ok(
+      ids.includes(sUncoveredPref),
+      `preferred uncovered supplier should be returned; got ${ids.join(",")}`,
+    );
+    assert.ok(
+      !ids.includes(sCovered),
+      `supplier already linked to a watched issuer must be filtered out`,
+    );
+    assert.ok(
+      !ids.includes(sBoring),
+      `non-strategic, non-preferred supplier must be filtered out`,
+    );
+    assert.ok(
+      !ids.includes(sOtherTenant),
+      `other tenant's strategic supplier must NEVER leak across tenants`,
+    );
   });
 });

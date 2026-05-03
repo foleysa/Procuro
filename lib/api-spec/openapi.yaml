@@ -3249,6 +3249,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WatchedIssuerSuggestionListResponse'
+  /watched-issuers/uncovered-suppliers:
+    get:
+      operationId: listUncoveredWatchedSuppliers
+      tags:
+      - watched-issuers
+      summary: List strategic / preferred suppliers not yet on the watch list
+      description: 'Returns the active tenant''s suppliers flagged as `isStrategic`
+        or `isPreferred` that do NOT yet have a `watched_issuers` row linked
+        to them via `supplierUid`. Powers the "Suggested watches" section
+        on the Watched Companies page so admins can spot strategic
+        suppliers whose corporate filings are not being polled.
+
+        Read-only — confirm by POSTing to /watched-issuers with the
+        returned `supplierUid` (and a CIK / company number) the same way
+        the manual Add Company dialog does.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Uncovered suppliers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UncoveredWatchedSuppliersResponse'
   /watched-issuers/{id}:
     delete:
       operationId: removeWatchedIssuer
@@ -11621,6 +11647,39 @@ components:
           type: integer
           description: Suppliers excluded because they are already linked to a
             watched_issuer row for this tenant.
+    UncoveredWatchedSupplier:
+      type: object
+      required:
+      - supplierUid
+      - name
+      - isStrategic
+      - isPreferred
+      properties:
+        supplierUid:
+          type: string
+          description: 'Supplier ID (mirrors `suppliersTable.id`). Pass this back to
+            POST /watched-issuers as `supplierUid` to link the new
+            watched-issuer row to the supplier.
+
+            '
+        name:
+          type: string
+        countryCode:
+          type: string
+          nullable: true
+        isStrategic:
+          type: boolean
+        isPreferred:
+          type: boolean
+    UncoveredWatchedSuppliersResponse:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UncoveredWatchedSupplier'
     DefensePackTarget:
       type: object
       required:

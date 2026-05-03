@@ -7302,6 +7302,37 @@ export const ListWatchedIssuerSuggestionsResponse = zod.object({
 });
 
 /**
+ * Returns the active tenant's suppliers flagged as `isStrategic` or `isPreferred` that do NOT yet have a `watched_issuers` row linked to them via `supplierUid`. Powers the "Suggested watches" section on the Watched Companies page so admins can spot strategic suppliers whose corporate filings are not being polled.
+Read-only — confirm by POSTing to /watched-issuers with the returned `supplierUid` (and a CIK / company number) the same way the manual Add Company dialog does.
+
+ * @summary List strategic / preferred suppliers not yet on the watch list
+ */
+export const ListUncoveredWatchedSuppliersHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListUncoveredWatchedSuppliersResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      supplierUid: zod
+        .string()
+        .describe(
+          "Supplier ID (mirrors `suppliersTable.id`). Pass this back to POST \/watched-issuers as `supplierUid` to link the new watched-issuer row to the supplier.\n",
+        ),
+      name: zod.string(),
+      countryCode: zod.string().nullish(),
+      isStrategic: zod.boolean(),
+      isPreferred: zod.boolean(),
+    }),
+  ),
+});
+
+/**
  * @summary Remove a watched issuer from the tenant's list
  */
 export const RemoveWatchedIssuerParams = zod.object({
