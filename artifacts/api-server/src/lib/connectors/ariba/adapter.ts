@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ErpWatermarks } from "@workspace/db";
 import type {
-  ErpConnector,
+  ErpIngestAdapter,
   ErpEntity,
   ErpFetchResult,
 } from "../erp-connector";
@@ -244,10 +244,11 @@ function maxWatermark(
 
 // ---------- Connector ----------
 
-export const aribaConnector: ErpConnector<
+export const aribaConnector: ErpIngestAdapter<
   typeof aribaCredentialsSchema,
   typeof aribaSettingsSchema
 > = {
+  adapterType: "erp",
   key: "ariba",
   label: "SAP Ariba",
   description:

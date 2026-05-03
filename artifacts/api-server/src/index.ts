@@ -61,7 +61,7 @@ import {
   runRoutingHealthCheckHandler,
   runDefensePackStalenessScanHandler,
 } from "./lib/jobs/handlers";
-import { registerErpConnector } from "./lib/connectors/erp-connector";
+import { registerErpConnector } from "./lib/adapters/source-adapter";
 import { coupaConnector } from "./lib/connectors/coupa/adapter";
 import { netsuiteConnector } from "./lib/connectors/netsuite/adapter";
 import { aribaConnector } from "./lib/connectors/ariba/adapter";

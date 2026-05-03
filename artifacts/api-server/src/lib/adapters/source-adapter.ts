@@ -1,12 +1,39 @@
 /**
- * Phase 1 contract — every internal-data ingestion source implements this.
+ * Unified ingestion adapter contract.
  *
- * The adapter is the only abstraction the agent and the rest of the platform
- * use to read tenant data. Today: CSV. Tomorrow: SAP, Coupa, Ariba, NetSuite,
- * Workday, Microsoft Dynamics, Infor, Jaggaer.
+ * Every data-ingestion source — whether it writes directly to the DB
+ * (CSV, mock-ERP) or fetches upstream data for the handler to write
+ * (Coupa, NetSuite, Ariba) — implements one of the two concrete shapes
+ * in the `IngestAdapter` discriminated union:
+ *
+ *   • `DirectIngestAdapter`  — handles its own DB writes via
+ *     `fullSync` / `incrementalSync`.  Used by CSV and mock-ERP.
+ *
+ *   • `ErpIngestAdapter`     — fetches structured data from an
+ *     upstream API via `fetchAll` and returns it for the sync handler
+ *     to persist.  Used by live ERP connectors (Coupa, NetSuite,
+ *     Ariba, …).
+ *
+ * Shared supporting types (`SyncResult`, `SyncProgress`,
+ * `IsCancelledFn`, `IngestWarning`, etc.) are defined once here so
+ * both adapter flavours — and their consumers — import from a single
+ * module.
  *
  * Idempotent upsert keyed on (tenant_id, source_system, source_external_id).
  */
+
+import type { z } from "zod";
+import type { ErpAdapterKey, ErpWatermarks } from "@workspace/db";
+import type { IngestPayload } from "./ingest-writer";
+import type {
+  PostureClass,
+  DisclosureTier,
+  Jurisdiction,
+} from "@workspace/intelligence";
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
 
 export type SourceCursor = string | null;
 
@@ -31,27 +58,9 @@ export interface SyncProgress {
  * rendered verbatim in the job-result JSON viewer on the System page.
  */
 export interface IngestWarning {
-  /**
-   * Stable machine-readable category. Today only
-   * `"unknown_record_type"` is emitted, but downstream callers may add
-   * `"missing_required_field"`, `"orphan_reference"`, etc. Kept open
-   * (string union widening) so adding a new code is non-breaking.
-   */
   code: "unknown_record_type" | (string & {});
-  /**
-   * Path-style locator for the offending field, e.g.
-   * `"frobnicators[0]"` or `"suppliers[3].externalId"`. Optional —
-   * not every warning has a clean field path (e.g. a non-array unknown
-   * top-level key).
-   */
   field?: string;
-  /**
-   * Optional `externalId` captured from the row when one was present.
-   * Lets the operator grep the source file directly. Truncated to
-   * 200 chars by emitters to keep the result row payload bounded.
-   */
   externalId?: string;
-  /** Human-readable explanation. Kept short and free of secrets. */
   reason: string;
 }
 
@@ -60,19 +69,7 @@ export interface SyncResult {
   recordsCreated: number;
   recordsUpdated: number;
   recordsDeleted: number;
-  /**
-   * Number of payload rows that were intentionally skipped (e.g. an
-   * unknown record type the adapter doesn't know how to handle). A
-   * skipped row produces a corresponding entry in `warnings` and does
-   * NOT count toward `recordsProcessed` / `recordsCreated`. Optional
-   * for back-compat with adapters that have nothing to skip.
-   */
   recordsSkipped?: number;
-  /**
-   * Per-row warnings accumulated during the sync. Empty / omitted
-   * when nothing was skipped. The handler returns this verbatim in
-   * the job result so the operator can inspect each dropped row.
-   */
   warnings?: IngestWarning[];
   cursor: SourceCursor;
   durationMs: number;
@@ -90,13 +87,52 @@ export interface SyncResult {
  */
 export type IsCancelledFn = () => Promise<boolean>;
 
-export interface SourceAdapter<TConfig = Record<string, unknown>> {
-  /** Stable adapter key, e.g. "csv", "mock_erp_sap" */
+// ---------------------------------------------------------------------------
+// ERP-specific types (used by ErpIngestAdapter and its consumers)
+// ---------------------------------------------------------------------------
+
+export type ErpEntity =
+  | "suppliers"
+  | "contracts"
+  | "purchase_orders"
+  | "invoices"
+  | "payments"
+  | "statements_of_work"
+  | "rate_cards"
+  | "time_entries";
+
+export interface ErpFetchProgress {
+  entity: ErpEntity;
+  pagesFetched: number;
+  recordsFetched: number;
+}
+
+export interface ErpFetchResult {
+  payload: IngestPayload;
+  nextWatermarks: ErpWatermarks;
+  pagesByEntity: Partial<Record<ErpEntity, number>>;
+  recordsByEntity: Partial<Record<ErpEntity, number>>;
+}
+
+export interface ErpFetchArgs<TCreds, TSettings> {
+  orgId: string;
+  connectionId: string;
+  credentials: TCreds;
+  settings: TSettings;
+  watermarks: ErpWatermarks;
+  isCancelled?: IsCancelledFn;
+  fetchImpl?: typeof fetch;
+}
+
+// ---------------------------------------------------------------------------
+// DirectIngestAdapter — adapters that handle their own DB writes
+// ---------------------------------------------------------------------------
+
+export interface DirectIngestAdapter<TConfig = Record<string, unknown>> {
+  readonly adapterType: "direct";
   readonly key: string;
-  /** Human-readable label for the registry/UI */
   readonly label: string;
 
-  /** Full sync — wipes nothing, but pulls the entire dataset and upserts. */
   fullSync(args: {
     orgId: string;
     config: TConfig;
@@ -104,7 +140,6 @@ export interface SourceAdapter<TConfig = Record<string, unknown>> {
     isCancelled?: IsCancelledFn;
   }): Promise<SyncResult>;
 
-  /** Incremental sync from a cursor — implementer defines cursor semantics. */
   incrementalSync(args: {
     orgId: string;
     config: TConfig;
@@ -113,10 +148,88 @@ export interface SourceAdapter<TConfig = Record<string, unknown>> {
     isCancelled?: IsCancelledFn;
   }): Promise<SyncResult>;
 
-  /** Optional: idempotent single-record delete. */
   deleteRecord?(args: {
     orgId: string;
     type: string;
     externalId: string;
   }): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// ErpIngestAdapter — adapters that fetch data for the handler to persist
+// ---------------------------------------------------------------------------
+
+export interface ErpIngestAdapter<
+  CredentialsSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  SettingsSchema extends z.ZodTypeAny = z.ZodTypeAny,
+> {
+  readonly adapterType: "erp";
+  readonly key: ErpAdapterKey;
+  readonly label: string;
+  readonly description: string;
+
+  readonly postureClass: PostureClass;
+  readonly disclosureTier: DisclosureTier;
+  readonly jurisdiction: Jurisdiction;
+  readonly retentionDays: number;
+
+  readonly credentialsSchema: CredentialsSchema;
+  readonly settingsSchema: SettingsSchema;
+
+  testConnection(args: {
+    credentials: z.infer<CredentialsSchema>;
+    settings: z.infer<SettingsSchema>;
+    fetchImpl?: typeof fetch;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
+
+  fetchAll(
+    args: ErpFetchArgs<z.infer<CredentialsSchema>, z.infer<SettingsSchema>>,
+  ): Promise<ErpFetchResult>;
+}
+
+// ---------------------------------------------------------------------------
+// Unified type
+// ---------------------------------------------------------------------------
+
+export type IngestAdapter = DirectIngestAdapter | ErpIngestAdapter;
+
+// ---------------------------------------------------------------------------
+// Back-compat aliases
+// ---------------------------------------------------------------------------
+
+export type SourceAdapter<TConfig = Record<string, unknown>> =
+  DirectIngestAdapter<TConfig>;
+
+export type ErpConnector<
+  CredentialsSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  SettingsSchema extends z.ZodTypeAny = z.ZodTypeAny,
+> = ErpIngestAdapter<CredentialsSchema, SettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Unified registry
+// ---------------------------------------------------------------------------
+
+const ERP_REGISTRY = new Map<ErpAdapterKey, ErpIngestAdapter>();
+
+export function registerErpConnector(connector: ErpIngestAdapter): void {
+  if (ERP_REGISTRY.has(connector.key)) {
+    throw new Error(
+      `ERP connector "${connector.key}" is already registered`,
+    );
+  }
+  ERP_REGISTRY.set(connector.key, connector);
+}
+
+export function getErpConnector(
+  key: ErpAdapterKey,
+): ErpIngestAdapter | undefined {
+  return ERP_REGISTRY.get(key);
+}
+
+export function listErpConnectors(): ReadonlyArray<ErpIngestAdapter> {
+  return Array.from(ERP_REGISTRY.values());
+}
+
+export function _clearErpConnectorsForTest(): void {
+  ERP_REGISTRY.clear();
 }

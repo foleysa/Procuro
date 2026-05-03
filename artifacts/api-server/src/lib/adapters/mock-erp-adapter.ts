@@ -12,7 +12,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { newId } from "../ids";
 import { CANCELLED_ERROR_MESSAGE } from "../jobs/queue";
 import { logger } from "../logger";
-import type { SourceAdapter, SyncResult } from "./source-adapter";
+import type { DirectIngestAdapter, SyncResult } from "./source-adapter";
 
 /**
  * Mock ERP adapter — proves the SourceAdapter abstraction works against a
@@ -44,7 +44,8 @@ export interface MockErpConfig {
 
 const SOURCE = "mock_erp";
 
-export const mockErpSourceAdapter: SourceAdapter<MockErpConfig> = {
+export const mockErpSourceAdapter: DirectIngestAdapter<MockErpConfig> = {
+  adapterType: "direct",
   key: SOURCE,
   label: "Mock ERP (SAP-like)",
 

@@ -27,7 +27,7 @@ import { backfillSupplierBillingCurrency } from "../suppliers/backfill-billing-c
 import type {
   IngestWarning,
   IsCancelledFn,
-  SourceAdapter,
+  DirectIngestAdapter,
   SyncResult,
 } from "./source-adapter";
 import {
@@ -197,7 +197,8 @@ async function bulkInsert<T>(
  */
 export type CsvPayload = IngestPayload;
 
-export const csvSourceAdapter: SourceAdapter<CsvPayload> = {
+export const csvSourceAdapter: DirectIngestAdapter<CsvPayload> = {
+  adapterType: "direct",
   key: "csv",
   label: "CSV Bulk Upload",
 

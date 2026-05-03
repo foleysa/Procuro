@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ErpWatermarks } from "@workspace/db";
 import type {
-  ErpConnector,
+  ErpIngestAdapter,
   ErpEntity,
   ErpFetchResult,
 } from "../erp-connector";
@@ -207,10 +207,11 @@ function maxWatermark(
 
 // ---------- Connector ----------
 
-export const coupaConnector: ErpConnector<
+export const coupaConnector: ErpIngestAdapter<
   typeof coupaCredentialsSchema,
   typeof coupaSettingsSchema
 > = {
+  adapterType: "erp",
   key: "coupa",
   label: "Coupa",
   description:

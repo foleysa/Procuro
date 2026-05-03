@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ErpWatermarks } from "@workspace/db";
 import type {
-  ErpConnector,
+  ErpIngestAdapter,
   ErpEntity,
   ErpFetchResult,
 } from "../erp-connector";
@@ -217,10 +217,11 @@ function maxWatermark(
 
 // ---------- Connector ----------
 
-export const netsuiteConnector: ErpConnector<
+export const netsuiteConnector: ErpIngestAdapter<
   typeof netsuiteCredentialsSchema,
   typeof netsuiteSettingsSchema
 > = {
+  adapterType: "erp",
   key: "netsuite",
   label: "NetSuite",
   description:
