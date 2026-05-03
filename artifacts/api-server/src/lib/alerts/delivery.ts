@@ -27,6 +27,7 @@ import {
   alertDeliveriesTable,
   escalationPoliciesTable,
   watchlistMembersTable,
+  watchlistsTable,
   type AlertRow,
   type AlertChannelRow,
   type AlertSubscriptionRow,
@@ -278,7 +279,16 @@ async function watchlistMatches(
       entityUid: watchlistMembersTable.entityUid,
     })
     .from(watchlistMembersTable)
-    .where(eq(watchlistMembersTable.watchlistId, watchlistId));
+    .innerJoin(
+      watchlistsTable,
+      eq(watchlistMembersTable.watchlistId, watchlistsTable.id),
+    )
+    .where(
+      and(
+        eq(watchlistMembersTable.watchlistId, watchlistId),
+        eq(watchlistsTable.orgId, alert.orgId),
+      ),
+    );
   for (const m of members) {
     if (m.supplierId && m.supplierId === alert.supplierId) return true;
     if (m.entityUid && m.entityUid === alert.entityUid) return true;
@@ -340,7 +350,12 @@ export async function escalateAlertsTick(
       const [channel] = await db
         .select()
         .from(alertChannelsTable)
-        .where(eq(alertChannelsTable.id, policy.channelId))
+        .where(
+          and(
+            eq(alertChannelsTable.id, policy.channelId),
+            eq(alertChannelsTable.orgId, policy.orgId),
+          ),
+        )
         .limit(1);
       if (!channel || !channel.enabled) continue;
 

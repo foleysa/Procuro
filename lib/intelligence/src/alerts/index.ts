@@ -29,6 +29,7 @@ import {
   alertEventsTable,
   alertRulesTable,
   watchlistMembersTable,
+  watchlistsTable,
   alertSeverityValues,
   type AlertRow,
   type AlertSeverity,
@@ -433,7 +434,16 @@ export async function evaluateRulesForSignal(
           entityUid: watchlistMembersTable.entityUid,
         })
         .from(watchlistMembersTable)
-        .where(eq(watchlistMembersTable.watchlistId, rule.watchlistId));
+        .innerJoin(
+          watchlistsTable,
+          eq(watchlistMembersTable.watchlistId, watchlistsTable.id),
+        )
+        .where(
+          and(
+            eq(watchlistMembersTable.watchlistId, rule.watchlistId),
+            eq(watchlistsTable.orgId, orgId),
+          ),
+        );
       const supplierMatch =
         !!candidate.supplierId &&
         members.some((m) => m.supplierId === candidate.supplierId);

@@ -197,6 +197,14 @@ export const synonymRegistryTable = pgTable(
     index("synonym_registry_active_idx")
       .on(t.normalized)
       .where(sql`${t.supersededAt} IS NULL`),
+    // GIN trigram index for fuzzy suggestions in the routing layer.
+    // Requires the `pg_trgm` extension, which is bootstrapped at API
+    // server startup (`bootstrapTrigramSuggestions`). Declared here so
+    // drizzle-kit knows about it and does not try to drop it on sync.
+    index("synonym_registry_normalized_trgm_idx").using(
+      "gin",
+      t.normalized.op("gin_trgm_ops"),
+    ),
   ],
 );
 
@@ -249,6 +257,14 @@ export const unmappedCategoryQueueTable = pgTable(
       .on(t.orgId, t.spendTrailing90dUsd)
       .where(sql`${t.resolvedAt} IS NULL`),
     index("unmapped_queue_first_seen_idx").on(t.firstSeenAt),
+    // GIN trigram index for fuzzy suggestions in the routing layer.
+    // Requires the `pg_trgm` extension, which is bootstrapped at API
+    // server startup (`bootstrapTrigramSuggestions`). Declared here so
+    // drizzle-kit knows about it and does not try to drop it on sync.
+    index("unmapped_queue_normalized_trgm_idx").using(
+      "gin",
+      t.normalized.op("gin_trgm_ops"),
+    ),
   ],
 );
 

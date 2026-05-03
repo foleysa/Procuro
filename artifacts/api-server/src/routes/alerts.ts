@@ -714,6 +714,23 @@ router.post("/alert-subscriptions", tenantMiddleware, async (req, res) => {
     res.status(400).json({ error: "Channel not found in this tenant" });
     return;
   }
+  // Validate the watchlist (if provided) belongs to the same org.
+  if (parsed.data.watchlistId) {
+    const [wl] = await db
+      .select({ id: watchlistsTable.id })
+      .from(watchlistsTable)
+      .where(
+        and(
+          eq(watchlistsTable.id, parsed.data.watchlistId),
+          eq(watchlistsTable.orgId, orgId),
+        ),
+      )
+      .limit(1);
+    if (!wl) {
+      res.status(400).json({ error: "Watchlist not found in this tenant" });
+      return;
+    }
+  }
   const id = newId("asub");
   const [row] = await db
     .insert(alertSubscriptionsTable)
@@ -773,6 +790,22 @@ router.patch(
         .limit(1);
       if (!channel) {
         res.status(400).json({ error: "Channel not found in this tenant" });
+        return;
+      }
+    }
+    if (parsed.data.watchlistId) {
+      const [wl] = await db
+        .select({ id: watchlistsTable.id })
+        .from(watchlistsTable)
+        .where(
+          and(
+            eq(watchlistsTable.id, parsed.data.watchlistId),
+            eq(watchlistsTable.orgId, orgId),
+          ),
+        )
+        .limit(1);
+      if (!wl) {
+        res.status(400).json({ error: "Watchlist not found in this tenant" });
         return;
       }
     }
@@ -1088,6 +1121,23 @@ router.post("/alert-rules", tenantMiddleware, async (req, res) => {
     });
     return;
   }
+  // Validate the watchlist (if provided) belongs to the same org.
+  if (parsed.data.watchlistId) {
+    const [wl] = await db
+      .select({ id: watchlistsTable.id })
+      .from(watchlistsTable)
+      .where(
+        and(
+          eq(watchlistsTable.id, parsed.data.watchlistId),
+          eq(watchlistsTable.orgId, orgId),
+        ),
+      )
+      .limit(1);
+    if (!wl) {
+      res.status(400).json({ error: "Watchlist not found in this tenant" });
+      return;
+    }
+  }
   const id = newId("arule");
   const [row] = await db
     .insert(alertRulesTable)
@@ -1115,6 +1165,23 @@ router.patch("/alert-rules/:id", tenantMiddleware, async (req, res) => {
       details: parsed.error.flatten(),
     });
     return;
+  }
+  // Validate the watchlist (if provided) belongs to the same org.
+  if (parsed.data.watchlistId) {
+    const [wl] = await db
+      .select({ id: watchlistsTable.id })
+      .from(watchlistsTable)
+      .where(
+        and(
+          eq(watchlistsTable.id, parsed.data.watchlistId),
+          eq(watchlistsTable.orgId, orgId),
+        ),
+      )
+      .limit(1);
+    if (!wl) {
+      res.status(400).json({ error: "Watchlist not found in this tenant" });
+      return;
+    }
   }
   const updates: Partial<typeof alertRulesTable.$inferInsert> = {};
   if (parsed.data.name !== undefined) updates.name = parsed.data.name;
@@ -1196,6 +1263,23 @@ router.post("/escalation-policies", tenantMiddleware, async (req, res) => {
     });
     return;
   }
+  // Validate the channel (if provided) belongs to the same org.
+  if (parsed.data.channelId) {
+    const [ch] = await db
+      .select({ id: alertChannelsTable.id })
+      .from(alertChannelsTable)
+      .where(
+        and(
+          eq(alertChannelsTable.id, parsed.data.channelId),
+          eq(alertChannelsTable.orgId, orgId),
+        ),
+      )
+      .limit(1);
+    if (!ch) {
+      res.status(400).json({ error: "Channel not found in this tenant" });
+      return;
+    }
+  }
   const id = newId("escp");
   const [row] = await db
     .insert(escalationPoliciesTable)
@@ -1226,6 +1310,23 @@ router.patch(
         details: parsed.error.flatten(),
       });
       return;
+    }
+    // Validate the channel (if provided) belongs to the same org.
+    if (parsed.data.channelId) {
+      const [ch] = await db
+        .select({ id: alertChannelsTable.id })
+        .from(alertChannelsTable)
+        .where(
+          and(
+            eq(alertChannelsTable.id, parsed.data.channelId),
+            eq(alertChannelsTable.orgId, orgId),
+          ),
+        )
+        .limit(1);
+      if (!ch) {
+        res.status(400).json({ error: "Channel not found in this tenant" });
+        return;
+      }
     }
     const updates: Partial<typeof escalationPoliciesTable.$inferInsert> = {};
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
