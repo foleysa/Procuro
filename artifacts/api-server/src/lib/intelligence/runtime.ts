@@ -773,6 +773,7 @@ export async function runCollector(
           scopeMaterialCode: normalizeScope(d.scopeMaterialCode),
           scopeSupplierName: normalizeScope(d.scopeSupplierName),
           scopeLaneKey: normalizeScope(d.scopeLaneKey),
+          scopeRegionCode: normalizeScope(d.scopeRegionCode),
           value: String(d.value),
           unit: d.unit,
           currency: d.currency ?? "USD",

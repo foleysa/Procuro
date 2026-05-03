@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS \`${cfg.projectId}.${cfg.bqDataset}.market_signals\` 
   scope_material_code STRING,
   scope_supplier_name STRING,
   scope_lane_key STRING,
+  scope_region_code STRING,
   value NUMERIC NOT NULL,
   unit STRING NOT NULL,
   currency STRING NOT NULL,
@@ -169,6 +170,22 @@ ALTER TABLE \`${cfg.projectId}.${cfg.bqDataset}.collector_runs\`
 ADD COLUMN IF NOT EXISTS raw_landing_failed BOOL
 `;
 
+/**
+ * Backfill ALTER for warehouses created before `scope_region_code` was
+ * introduced (task #235). The new BLS OEWS wage benchmarks tag every
+ * signal with a region (US-NATIONAL, state, metro) and the warehouse
+ * needs the column so analysts can group/slice wage benchmarks
+ * regionally. `CREATE TABLE IF NOT EXISTS` only seeds the schema for
+ * *new* tables — without this ALTER an existing warehouse would
+ * silently drop the field on insert (we use `ignoreUnknownValues`).
+ */
+export const MARKET_SIGNALS_REGION_ALTER = (
+  cfg: IntelligenceConfig,
+): string => `
+ALTER TABLE \`${cfg.projectId}.${cfg.bqDataset}.market_signals\`
+ADD COLUMN IF NOT EXISTS scope_region_code STRING
+`;
+
 export const ENTITIES_DDL = (cfg: IntelligenceConfig): string => `
 CREATE TABLE IF NOT EXISTS \`${cfg.projectId}.${cfg.bqDataset}.entities\` (
   entity_uid STRING NOT NULL,
@@ -220,6 +237,7 @@ export async function ensureWarehouseSchema(): Promise<boolean> {
   // when the column is already present.
   for (const ddl of [
     MARKET_SIGNALS_DDL(cfg),
+    MARKET_SIGNALS_REGION_ALTER(cfg),
     COLLECTOR_RUNS_DDL(cfg),
     COLLECTOR_RUNS_RAW_LANDING_ALTER(cfg),
     ENTITIES_DDL(cfg),
@@ -250,6 +268,7 @@ export interface BqMarketSignalRow {
   scopeMaterialCode: string | null;
   scopeSupplierName: string | null;
   scopeLaneKey: string | null;
+  scopeRegionCode: string | null;
   value: string;
   unit: string;
   currency: string;
@@ -299,6 +318,7 @@ export async function mergeMarketSignals(
     scope_material_code: r.scopeMaterialCode,
     scope_supplier_name: r.scopeSupplierName,
     scope_lane_key: r.scopeLaneKey,
+    scope_region_code: r.scopeRegionCode,
     value: r.value,
     unit: r.unit,
     currency: r.currency,
@@ -348,7 +368,7 @@ WHERE T.stable_signal_key = S.stable_signal_key
 INSERT INTO ${fqTable} (
   signal_id, org_id, collector_id, signal_type,
   scope_category_code, scope_sku, scope_material_code,
-  scope_supplier_name, scope_lane_key,
+  scope_supplier_name, scope_lane_key, scope_region_code,
   value, unit, currency,
   observed_at, ingested_at,
   source_url, source_collector_id, source_run_id, raw_payload_pointer,
@@ -359,7 +379,7 @@ INSERT INTO ${fqTable} (
 SELECT
   S.signal_id, S.org_id, S.collector_id, S.signal_type,
   S.scope_category_code, S.scope_sku, S.scope_material_code,
-  S.scope_supplier_name, S.scope_lane_key,
+  S.scope_supplier_name, S.scope_lane_key, S.scope_region_code,
   CAST(S.value AS NUMERIC), S.unit, S.currency,
   TIMESTAMP(S.observed_at), TIMESTAMP(S.ingested_at),
   S.source_url, S.source_collector_id, S.source_run_id, S.raw_payload_pointer,

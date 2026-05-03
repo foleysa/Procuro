@@ -88,6 +88,7 @@ interface ParsedDraftsSnapshot {
     scopeMaterialCode?: string | null;
     scopeSupplierName?: string | null;
     scopeLaneKey?: string | null;
+    scopeRegionCode?: string | null;
     value: number;
     unit: string;
     currency?: string;
@@ -126,6 +127,7 @@ function snapshotReparser(): Reparser {
         scopeMaterialCode: d.scopeMaterialCode ?? null,
         scopeSupplierName: d.scopeSupplierName ?? null,
         scopeLaneKey: d.scopeLaneKey ?? null,
+        scopeRegionCode: d.scopeRegionCode ?? null,
         value: String(d.value),
         unit: d.unit,
         currency: d.currency ?? "USD",
