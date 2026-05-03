@@ -440,6 +440,142 @@ test("composeSignalKey: refresh-stability and no-collision contract (#219 review
   );
 });
 
+test("Tier 1: two distinct incidents for the same supplier produce DIFFERENT signal keys (#223)", async () => {
+  // Per #223: under one Tier 1 lever, two genuinely different
+  // opportunities targeting the same supplier (e.g. two distinct
+  // duplicate-payment incidents — different invoice clusters) MUST
+  // dedupe to DIFFERENT rows. Before #223 the default cohortKey of
+  // "" collapsed both onto a single signal_key like
+  // `<lever>:<supplierId>:` and the second silently refreshed the
+  // first. Now each Tier 1 lever overrides cohortKey() with the
+  // appropriate finer identity (dedupKey for duplicate_payment, sku
+  // for sku_price_benchmark, leakSupplierId for contract_leakage,
+  // contractItemId for missed_volume_threshold), so distinct
+  // incidents land as distinct rows.
+  const { composeSignalKey } = await import("../src/lib/levers/types.js");
+  const {
+    duplicatePaymentLever,
+    skuPriceBenchmarkLever,
+    contractLeakageLever,
+    missedVolumeThresholdLever,
+    maverickSpendLever,
+  } = await import("../src/lib/levers/tier1.js");
+
+  // duplicate_payment: same supplier, two distinct invoice clusters.
+  const supplierId = "supplier-acme";
+  const dupA = {
+    leverId: "duplicate_payment" as const,
+    title: "dup A",
+    rationale: "r",
+    recommendedAction: "a",
+    supplierId,
+    rawProjectedSavingsUsd: 500,
+    inputs: {
+      dedupKey: "INV-CLUSTER-A",
+      supplierId,
+      duplicateInvoices: ["INV-100", "INV-100R"],
+      unitAmountUsd: 500,
+      duplicateCount: 2,
+    },
+  };
+  const dupB = {
+    ...dupA,
+    title: "dup B",
+    inputs: { ...dupA.inputs, dedupKey: "INV-CLUSTER-B" },
+  };
+  const keyDupA = composeSignalKey(duplicatePaymentLever, dupA);
+  const keyDupB = composeSignalKey(duplicatePaymentLever, dupB);
+  assert.ok(keyDupA && keyDupB);
+  assert.notEqual(
+    keyDupA,
+    keyDupB,
+    "two distinct duplicate-payment incidents (different dedupKeys) for the same supplier MUST produce distinct signal keys",
+  );
+
+  // sku_price_benchmark: same lever (no supplier on draft), two SKUs.
+  const skuA = {
+    leverId: "sku_price_benchmark" as const,
+    title: "t",
+    rationale: "r",
+    recommendedAction: "a",
+    rawProjectedSavingsUsd: 1,
+    inputs: { sku: "SKU-A" },
+  };
+  const skuB = { ...skuA, inputs: { sku: "SKU-B" } };
+  assert.notEqual(
+    composeSignalKey(skuPriceBenchmarkLever, skuA),
+    composeSignalKey(skuPriceBenchmarkLever, skuB),
+    "two distinct SKUs in sku_price_benchmark MUST produce distinct signal keys",
+  );
+
+  // contract_leakage: same preferred supplier+category, two different
+  // leak suppliers — must NOT collapse.
+  const categoryId = "cat-1";
+  const preferredId = "pref-supplier";
+  const leak1 = {
+    leverId: "contract_leakage" as const,
+    title: "t",
+    rationale: "r",
+    recommendedAction: "a",
+    categoryId,
+    supplierId: preferredId,
+    rawProjectedSavingsUsd: 1,
+    inputs: {
+      categoryId,
+      preferredSupplierId: preferredId,
+      leakSupplierId: "leak-supplier-1",
+    },
+  };
+  const leak2 = {
+    ...leak1,
+    inputs: { ...leak1.inputs, leakSupplierId: "leak-supplier-2" },
+  };
+  assert.notEqual(
+    composeSignalKey(contractLeakageLever, leak1),
+    composeSignalKey(contractLeakageLever, leak2),
+    "two leaks from different non-preferred suppliers against the same preferred contract MUST produce distinct signal keys",
+  );
+
+  // missed_volume_threshold: two different contract items.
+  const ci1 = {
+    leverId: "missed_volume_threshold" as const,
+    title: "t",
+    rationale: "r",
+    recommendedAction: "a",
+    rawProjectedSavingsUsd: 1,
+    inputs: { sku: "SKU-X", contractItemId: "ci-1" },
+  };
+  const ci2 = {
+    ...ci1,
+    inputs: { sku: "SKU-X", contractItemId: "ci-2" },
+  };
+  assert.notEqual(
+    composeSignalKey(missedVolumeThresholdLever, ci1),
+    composeSignalKey(missedVolumeThresholdLever, ci2),
+    "two distinct contract items MUST produce distinct signal keys even with the same SKU",
+  );
+
+  // maverick_spend: same contracted supplier, two distinct SKUs.
+  const mav1 = {
+    leverId: "maverick_spend" as const,
+    title: "t",
+    rationale: "r",
+    recommendedAction: "a",
+    supplierId,
+    rawProjectedSavingsUsd: 1,
+    inputs: { sku: "SKU-M1", contractedSupplierId: supplierId },
+  };
+  const mav2 = {
+    ...mav1,
+    inputs: { sku: "SKU-M2", contractedSupplierId: supplierId },
+  };
+  assert.notEqual(
+    composeSignalKey(maverickSpendLever, mav1),
+    composeSignalKey(maverickSpendLever, mav2),
+    "two distinct maverick SKUs against the same contracted supplier MUST produce distinct signal keys",
+  );
+});
+
 test("cycle Act: refresh on subsequent run with mutated content updates the same row (#219 review)", async (t) => {
   // End-to-end pin of the cycle-level refresh-on-mutation contract:
   // simulate two cycles for the same draft identity (same SKU) with

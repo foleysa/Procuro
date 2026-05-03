@@ -445,6 +445,16 @@ export const paymentTermExtensionLever: LeverAnalyzer = {
   label: "Payment-Term Extension",
   description:
     "Suppliers paid on shorter terms than portfolio norm without a discount justifying it. Extend terms; capture working-capital benefit.",
+  // Task #223 dedupe identity: this lever produces at most one draft
+  // per supplier per cycle (the SQL groups by s.id), so the supplier
+  // already on the draft via supplierId IS the finest identity. The
+  // empty leverKey collapses cycle re-runs onto the same row, which
+  // is the desired behaviour — the metric (avg terms, total paid)
+  // drifts cycle-to-cycle but the signal "supplier X is paid early"
+  // is one signal.
+  cohortKey() {
+    return "";
+  },
   async analyze({ orgId }) {
     const rows = await db.execute(sql`
       SELECT s.id AS supplier_id,
