@@ -1,0 +1,218 @@
+{
+  "config": {
+    "configFile": "/home/runner/workspace/playwright.a11y.config.ts",
+    "rootDir": "/home/runner/workspace/tests/a11y",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/runner/workspace/test-results/a11y-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium-a11y",
+        "name": "chromium-a11y",
+        "testDir": "/home/runner/workspace/tests/a11y",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.a11y.test.ts"
+        ],
+        "timeout": 15000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "test-results/a11y-report.json"
+        }
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "test-results/a11y-html",
+          "open": "never"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "scan.a11y.test.ts",
+      "file": "scan.a11y.test.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "a11y: Landing (/landing)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium-a11y",
+              "projectName": "chromium-a11y",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 7992,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "Route: Landing (/landing)\nTotal violations: 1\n  Baselined (pass): 1\n  New (all impacts): 0\n  New serious/critical: 0\n\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-05-03T16:00:11.805Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "axe-violations",
+                      "contentType": "application/json",
+                      "body": "eyJyb3V0ZSI6Ii9sYW5kaW5nIiwicm91dGVOYW1lIjoiTGFuZGluZyIsInZpb2xhdGlvbnMiOlt7ImlkIjoibWV0YS12aWV3cG9ydCIsImltcGFjdCI6Im1vZGVyYXRlIiwiZGVzY3JpcHRpb24iOiJFbnN1cmUgPG1ldGEgbmFtZT1cInZpZXdwb3J0XCI+IGRvZXMgbm90IGRpc2FibGUgdGV4dCBzY2FsaW5nIGFuZCB6b29taW5nIiwiaGVscFVybCI6Imh0dHBzOi8vZGVxdWV1bml2ZXJzaXR5LmNvbS9ydWxlcy9heGUvNC4xMS9tZXRhLXZpZXdwb3J0P2FwcGxpY2F0aW9uPXBsYXl3cmlnaHQiLCJub2RlcyI6W3siaHRtbCI6IjxtZXRhIG5hbWU9XCJ2aWV3cG9ydFwiIGNvbnRlbnQ9XCJ3aWR0aD1kZXZpY2Utd2lkdGgsIGluaXRpYWwtc2NhbGU9MS4wLCBtYXhpbXVtLXNjYWxlPTFcIj4iLCJ0YXJnZXQiOlsibWV0YVtuYW1lPVwidmlld3BvcnRcIl0iXSwiZmFpbHVyZVN1bW1hcnkiOiJGaXggYW55IG9mIHRoZSBmb2xsb3dpbmc6XG4gIG1heGltdW0tc2NhbGUgb24gPG1ldGE+IHRhZyBkaXNhYmxlcyB6b29taW5nIG9uIG1vYmlsZSBkZXZpY2VzIn1dfV19"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "30a99e4249b245024dc1-380da34bf0f8f7f00d08",
+          "file": "scan.a11y.test.ts",
+          "line": 87,
+          "column": 7
+        },
+        {
+          "title": "a11y: Home / Dashboard (/)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium-a11y",
+              "projectName": "chromium-a11y",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 6636,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "Route: Home / Dashboard (/)\nTotal violations: 4\n  Baselined (pass): 4\n  New (all impacts): 0\n  New serious/critical: 0\n\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-05-03T16:00:26.049Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "axe-violations",
+                      "contentType": "application/json",
+                      "body": "eyJyb3V0ZSI6Ii8iLCJyb3V0ZU5hbWUiOiJIb21lIC8gRGFzaGJvYXJkIiwidmlvbGF0aW9ucyI6W3siaWQiOiJhcmlhLXByb2dyZXNzYmFyLW5hbWUiLCJpbXBhY3QiOiJzZXJpb3VzIiwiZGVzY3JpcHRpb24iOiJFbnN1cmUgZXZlcnkgQVJJQSBwcm9ncmVzc2JhciBub2RlIGhhcyBhbiBhY2Nlc3NpYmxlIG5hbWUiLCJoZWxwVXJsIjoiaHR0cHM6Ly9kZXF1ZXVuaXZlcnNpdHkuY29tL3J1bGVzL2F4ZS80LjExL2FyaWEtcHJvZ3Jlc3NiYXItbmFtZT9hcHBsaWNhdGlvbj1wbGF5d3JpZ2h0Iiwibm9kZXMiOlt7Imh0bWwiOiI8ZGl2IGFyaWEtdmFsdWVtYXg9XCIxMDBcIiBhcmlhLXZhbHVlbWluPVwiMFwiIHJvbGU9XCJwcm9ncmVzc2JhclwiIGRhdGEtc3RhdGU9XCJpbmRldGVybWluYXRlXCIgZGF0YS1tYXg9XCIxMDBcIiBkYXRhLXJlcGxpdC1tZXRhZGF0YT1cImFydGlmYWN0cy9jb21tYW5kLWNlbnRlci9zcmMvcGFnZXMvb25ib2FyZGluZy50c3g6MjI5OjEwXCIgZGF0YS1jb21wb25lbnQtbmFtZT1cIlByb2dyZXNzXCIgY2xhc3M9XCJyZWxhdGl2ZSB3LWZ1bGwgb3ZlcmZsb3ctaGlkZGVuIHJvdW5kZWQtZnVsbCBiZy1wcmltYXJ5LzIwIGgtMlwiPiIsInRhcmdldCI6WyIucmVsYXRpdmUiXSwiZmFpbHVyZVN1bW1hcnkiOiJGaXggYW55IG9mIHRoZSBmb2xsb3dpbmc6XG4gIGFyaWEtbGFiZWwgYXR0cmlidXRlIGRvZXMgbm90IGV4aXN0IG9yIGlzIGVtcHR5XG4gIGFyaWEtbGFiZWxsZWRieSBhdHRyaWJ1dGUgZG9lcyBub3QgZXhpc3QsIHJlZmVyZW5jZXMgZWxlbWVudHMgdGhhdCBkbyBub3QgZXhpc3Qgb3IgcmVmZXJlbmNlcyBlbGVtZW50cyB0aGF0IGFyZSBlbXB0eVxuICBFbGVtZW50IGhhcyBubyB0aXRsZSBhdHRyaWJ1dGUifV19LHsiaWQiOiJidXR0b24tbmFtZSIsImltcGFjdCI6ImNyaXRpY2FsIiwiZGVzY3JpcHRpb24iOiJFbnN1cmUgYnV0dG9ucyBoYXZlIGRpc2Nlcm5pYmxlIHRleHQiLCJoZWxwVXJsIjoiaHR0cHM6Ly9kZXF1ZXVuaXZlcnNpdHkuY29tL3J1bGVzL2F4ZS80LjExL2J1dHRvbi1uYW1lP2FwcGxpY2F0aW9uPXBsYXl3cmlnaHQiLCJub2RlcyI6W3siaHRtbCI6IjxidXR0b24gZGF0YS1yZXBsaXQtbWV0YWRhdGE9XCJhcnRpZmFjdHMvY29tbWFuZC1jZS4uLlwiIGRhdGEtY29tcG9uZW50LW5hbWU9XCJCdXR0b25cIiBjbGFzcz1cImlubGluZS1mbGV4IGl0ZW1zLWNlLi4uXCIgcm9sZT1cImNvbWJvYm94XCIgYXJpYS1leHBhbmRlZD1cImZhbHNlXCIgdHlwZT1cImJ1dHRvblwiIGFyaWEtaGFzcG9wdXA9XCJkaWFsb2dcIiBhcmlhLWNvbnRyb2xzPVwicmFkaXgtwqtyMMK7XCIgZGF0YS1zdGF0ZT1cImNsb3NlZFwiPiIsInRhcmdldCI6WyJidXR0b25bcm9sZT1cImNvbWJvYm94XCJdIl0sImZhaWx1cmVTdW1tYXJ5IjoiRml4IGFueSBvZiB0aGUgZm9sbG93aW5nOlxuICBFbGVtZW50IGRvZXMgbm90IGhhdmUgaW5uZXIgdGV4dCB0aGF0IGlzIHZpc2libGUgdG8gc2NyZWVuIHJlYWRlcnNcbiAgYXJpYS1sYWJlbCBhdHRyaWJ1dGUgZG9lcyBub3QgZXhpc3Qgb3IgaXMgZW1wdHlcbiAgYXJpYS1sYWJlbGxlZGJ5IGF0dHJpYnV0ZSBkb2VzIG5vdCBleGlzdCwgcmVmZXJlbmNlcyBlbGVtZW50cyB0aGF0IGRvIG5vdCBleGlzdCBvciByZWZlcmVuY2VzIGVsZW1lbnRzIHRoYXQgYXJlIGVtcHR5XG4gIEVsZW1lbnQgaGFzIG5vIHRpdGxlIGF0dHJpYnV0ZVxuICBFbGVtZW50IGRvZXMgbm90IGhhdmUgYW4gaW1wbGljaXQgKHdyYXBwZWQpIDxsYWJlbD5cbiAgRWxlbWVudCBkb2VzIG5vdCBoYXZlIGFuIGV4cGxpY2l0IDxsYWJlbD5cbiAgRWxlbWVudCdzIGRlZmF1bHQgc2VtYW50aWNzIHdlcmUgbm90IG92ZXJyaWRkZW4gd2l0aCByb2xlPVwibm9uZVwiIG9yIHJvbGU9XCJwcmVzZW50YXRpb25cIiJ9XX0seyJpZCI6ImNvbG9yLWNvbnRyYXN0IiwiaW1wYWN0Ijoic2VyaW91cyIsImRlc2NyaXB0aW9uIjoiRW5zdXJlIHRoZSBjb250cmFzdCBiZXR3ZWVuIGZvcmVncm91bmQgYW5kIGJhY2tncm91bmQgY29sb3JzIG1lZXRzIFdDQUcgMiBBQSBtaW5pbXVtIGNvbnRyYXN0IHJhdGlvIHRocmVzaG9sZHMiLCJoZWxwVXJsIjoiaHR0cHM6Ly9kZXF1ZXVuaXZlcnNpdHkuY29tL3J1bGVzL2F4ZS80LjExL2NvbG9yLWNvbnRyYXN0P2FwcGxpY2F0aW9uPXBsYXl3cmlnaHQiLCJub2RlcyI6W3siaHRtbCI6IjxwIGRhdGEtcmVwbGl0LW1ldGFkYXRhPVwiYXJ0aWZhY3RzL2NvbW1hbmQtY2VudGVyL3NyYy9jb21wb25lbnRzL2xheW91dC50c3g6MjI0OjEwXCIgZGF0YS1jb21wb25lbnQtbmFtZT1cInBcIiBjbGFzcz1cInRleHQteHMgdGV4dC1zaWRlYmFyLWZvcmVncm91bmQvNDAgbXQtMVwiPnYwLjEgTVZQPC9wPiIsInRhcmdldCI6WyIudGV4dC1zaWRlYmFyLWZvcmVncm91bmRcXC80MCJdLCJmYWlsdXJlU3VtbWFyeSI6IkZpeCBhbnkgb2YgdGhlIGZvbGxvd2luZzpcbiAgRWxlbWVudCBoYXMgaW5zdWZmaWNpZW50IGNvbG9yIGNvbnRyYXN0IG9mIDMuNjkgKGZvcmVncm91bmQgY29sb3I6ICM2YzcyN2QsIGJhY2tncm91bmQgY29sb3I6ICMwZjE3MjksIGZvbnQgc2l6ZTogOS4wcHQgKDEycHgpLCBmb250IHdlaWdodDogbm9ybWFsKS4gRXhwZWN0ZWQgY29udHJhc3QgcmF0aW8gb2YgNC41OjEifSx7Imh0bWwiOiI8YnV0dG9uIGRhdGEtcmVwbGl0LW1ldGFkYXRhPVwiYXJ0aWZhY3RzL2NvbW1hbmQtY2VudGVyL3NyYy9jb21wb25lbnRzL21pZ3JhdGlvbi1iYW5uZXIudHN4OjY2OjZcIiBkYXRhLWNvbXBvbmVudC1uYW1lPVwiYnV0dG9uXCIgdHlwZT1cImJ1dHRvblwiIGRhdGEtdGVzdGlkPVwibWlncmF0aW9uLWJhbm5lci1kaXNtaXNzXCIgY2xhc3M9XCJ0ZXh0LWJsdWUtOTAwLzcwIGhvdmVyOnRleHQtYmx1ZS05MDAgaW5saW5lLWZsZXggaXRlbXMtY2VudGVyIGdhcC0xIHRleHQteHNcIiBhcmlhLWxhYmVsPVwiRGlzbWlzc1wiPiIsInRhcmdldCI6WyIudGV4dC1ibHVlLTkwMFxcLzcwIl0sImZhaWx1cmVTdW1tYXJ5IjoiRml4IGFueSBvZiB0aGUgZm9sbG93aW5nOlxuICBFbGVtZW50IGhhcyBpbnN1ZmZpY2llbnQgY29sb3IgY29udHJhc3Qgb2YgNC4zNSAoZm9yZWdyb3VuZCBjb2xvcjogIzViNzFiMCwgYmFja2dyb3VuZCBjb2xvcjogI2VmZjZmZiwgZm9udCBzaXplOiA5LjBwdCAoMTJweCksIGZvbnQgd2VpZ2h0OiBub3JtYWwpLiBFeHBlY3RlZCBjb250cmFzdCByYXRpbyBvZiA0LjU6MSJ9XX0seyJpZCI6Im1ldGEtdmlld3BvcnQiLCJpbXBhY3QiOiJtb2RlcmF0ZSIsImRlc2NyaXB0aW9uIjoiRW5zdXJlIDxtZXRhIG5hbWU9XCJ2aWV3cG9ydFwiPiBkb2VzIG5vdCBkaXNhYmxlIHRleHQgc2NhbGluZyBhbmQgem9vbWluZyIsImhlbHBVcmwiOiJodHRwczovL2RlcXVldW5pdmVyc2l0eS5jb20vcnVsZXMvYXhlLzQuMTEvbWV0YS12aWV3cG9ydD9hcHBsaWNhdGlvbj1wbGF5d3JpZ2h0Iiwibm9kZXMiOlt7Imh0bWwiOiI8bWV0YSBuYW1lPVwidmlld3BvcnRcIiBjb250ZW50PVwid2lkdGg9ZGV2aWNlLXdpZHRoLCBpbml0aWFsLXNjYWxlPTEuMCwgbWF4aW11bS1zY2FsZT0xXCI+IiwidGFyZ2V0IjpbIm1ldGFbbmFtZT1cInZpZXdwb3J0XCJdIl0sImZhaWx1cmVTdW1tYXJ5IjoiRml4IGFueSBvZiB0aGUgZm9sbG93aW5nOlxuICBtYXhpbXVtLXNjYWxlIG9uIDxtZXRhPiB0YWcgZGlzYWJsZXMgem9vbWluZyBvbiBtb2JpbGUgZGV2aWNlcyJ9XX1dfQ=="
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "30a99e4249b245024dc1-a893808791fa67cfa736",
+          "file": "scan.a11y.test.ts",
+          "line": 87,
+          "column": 7
+        },
+        {
+          "title": "a11y: Suppliers (/suppliers)",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 15000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium-a11y",
+              "projectName": "chromium-a11y",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 6566,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "Route: Suppliers (/suppliers)\nTotal violations: 4\n  Baselined (pass): 4\n  New (all impacts): 0\n  New serious/critical: 0\n\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-05-03T16:00:32.704Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "axe-violations",
+                      "contentType": "application/json",
+                      "body": "eyJyb3V0ZSI6Ii9zdXBwbGllcnMiLCJyb3V0ZU5hbWUiOiJTdXBwbGllcnMiLCJ2aW9sYXRpb25zIjpbeyJpZCI6ImFyaWEtYWxsb3dlZC1hdHRyIiwiaW1wYWN0IjoiY3JpdGljYWwiLCJkZXNjcmlwdGlvbiI6IkVuc3VyZSBhbiBlbGVtZW50J3Mgcm9sZSBzdXBwb3J0cyBpdHMgQVJJQSBhdHRyaWJ1dGVzIiwiaGVscFVybCI6Imh0dHBzOi8vZGVxdWV1bml2ZXJzaXR5LmNvbS9ydWxlcy9heGUvNC4xMS9hcmlhLWFsbG93ZWQtYXR0cj9hcHBsaWNhdGlvbj1wbGF5d3JpZ2h0Iiwibm9kZXMiOlt7Imh0bWwiOiI8YnV0dG9uIHR5cGU9XCJidXR0b25cIiBjbGFzcz1cImlubGluZS1mbGV4IGl0ZW1zLWNlbnRlciBnYXAtMSBob3Zlcjp0ZXh0LWZvcmVncm91bmRcIiBkYXRhLXRlc3RpZD1cImJ0bi1zb3J0LWNvbmZpZGVuY2VcIiBhcmlhLXNvcnQ9XCJub25lXCI+IiwidGFyZ2V0IjpbImJ1dHRvbltkYXRhLXRlc3RpZD1cImJ0bi1zb3J0LWNvbmZpZGVuY2VcIl0iXSwiZmFpbHVyZVN1bW1hcnkiOiJGaXggYWxsIG9mIHRoZSBmb2xsb3dpbmc6XG4gIEFSSUEgYXR0cmlidXRlIGlzIG5vdCBhbGxvd2VkOiBhcmlhLXNvcnQ9XCJub25lXCIifV19LHsiaWQiOiJidXR0b24tbmFtZSIsImltcGFjdCI6ImNyaXRpY2FsIiwiZGVzY3JpcHRpb24iOiJFbnN1cmUgYnV0dG9ucyBoYXZlIGRpc2Nlcm5pYmxlIHRleHQiLCJoZWxwVXJsIjoiaHR0cHM6Ly9kZXF1ZXVuaXZlcnNpdHkuY29tL3J1bGVzL2F4ZS80LjExL2J1dHRvbi1uYW1lP2FwcGxpY2F0aW9uPXBsYXl3cmlnaHQiLCJub2RlcyI6W3siaHRtbCI6IjxidXR0b24gZGF0YS1yZXBsaXQtbWV0YWRhdGE9XCJhcnRpZmFjdHMvY29tbWFuZC1jZS4uLlwiIGRhdGEtY29tcG9uZW50LW5hbWU9XCJCdXR0b25cIiBjbGFzcz1cImlubGluZS1mbGV4IGl0ZW1zLWNlLi4uXCIgcm9sZT1cImNvbWJvYm94XCIgYXJpYS1leHBhbmRlZD1cImZhbHNlXCIgdHlwZT1cImJ1dHRvblwiIGFyaWEtaGFzcG9wdXA9XCJkaWFsb2dcIiBhcmlhLWNvbnRyb2xzPVwicmFkaXgtwqtyMMK7XCIgZGF0YS1zdGF0ZT1cImNsb3NlZFwiPiIsInRhcmdldCI6WyIubWluLWgtOSJdLCJmYWlsdXJlU3VtbWFyeSI6IkZpeCBhbnkgb2YgdGhlIGZvbGxvd2luZzpcbiAgRWxlbWVudCBkb2VzIG5vdCBoYXZlIGlubmVyIHRleHQgdGhhdCBpcyB2aXNpYmxlIHRvIHNjcmVlbiByZWFkZXJzXG4gIGFyaWEtbGFiZWwgYXR0cmlidXRlIGRvZXMgbm90IGV4aXN0IG9yIGlzIGVtcHR5XG4gIGFyaWEtbGFiZWxsZWRieSBhdHRyaWJ1dGUgZG9lcyBub3QgZXhpc3QsIHJlZmVyZW5jZXMgZWxlbWVudHMgdGhhdCBkbyBub3QgZXhpc3Qgb3IgcmVmZXJlbmNlcyBlbGVtZW50cyB0aGF0IGFyZSBlbXB0eVxuICBFbGVtZW50IGhhcyBubyB0aXRsZSBhdHRyaWJ1dGVcbiAgRWxlbWVudCBkb2VzIG5vdCBoYXZlIGFuIGltcGxpY2l0ICh3cmFwcGVkKSA8bGFiZWw+XG4gIEVsZW1lbnQgZG9lcyBub3QgaGF2ZSBhbiBleHBsaWNpdCA8bGFiZWw+XG4gIEVsZW1lbnQncyBkZWZhdWx0IHNlbWFudGljcyB3ZXJlIG5vdCBvdmVycmlkZGVuIHdpdGggcm9sZT1cIm5vbmVcIiBvciByb2xlPVwicHJlc2VudGF0aW9uXCIifV19LHsiaWQiOiJjb2xvci1jb250cmFzdCIsImltcGFjdCI6InNlcmlvdXMiLCJkZXNjcmlwdGlvbiI6IkVuc3VyZSB0aGUgY29udHJhc3QgYmV0d2VlbiBmb3JlZ3JvdW5kIGFuZCBiYWNrZ3JvdW5kIGNvbG9ycyBtZWV0cyBXQ0FHIDIgQUEgbWluaW11bSBjb250cmFzdCByYXRpbyB0aHJlc2hvbGRzIiwiaGVscFVybCI6Imh0dHBzOi8vZGVxdWV1bml2ZXJzaXR5LmNvbS9ydWxlcy9heGUvNC4xMS9jb2xvci1jb250cmFzdD9hcHBsaWNhdGlvbj1wbGF5d3JpZ2h0Iiwibm9kZXMiOlt7Imh0bWwiOiI8cCBkYXRhLXJlcGxpdC1tZXRhZGF0YT1cImFydGlmYWN0cy9jb21tYW5kLWNlbnRlci9zcmMvY29tcG9uZW50cy9sYXlvdXQudHN4OjIyNDoxMFwiIGRhdGEtY29tcG9uZW50LW5hbWU9XCJwXCIgY2xhc3M9XCJ0ZXh0LXhzIHRleHQtc2lkZWJhci1mb3JlZ3JvdW5kLzQwIG10LTFcIj52MC4xIE1WUDwvcD4iLCJ0YXJnZXQiOlsiLnRleHQtc2lkZWJhci1mb3JlZ3JvdW5kXFwvNDAiXSwiZmFpbHVyZVN1bW1hcnkiOiJGaXggYW55IG9mIHRoZSBmb2xsb3dpbmc6XG4gIEVsZW1lbnQgaGFzIGluc3VmZmljaWVudCBjb2xvciBjb250cmFzdCBvZiAzLjY5IChmb3JlZ3JvdW5kIGNvbG9yOiAjNmM3MjdkLCBiYWNrZ3JvdW5kIGNvbG9yOiAjMGYxNzI5LCBmb250IHNpemU6IDkuMHB0ICgxMnB4KSwgZm9udCB3ZWlnaHQ6IG5vcm1hbCkuIEV4cGVjdGVkIGNvbnRyYXN0IHJhdGlvIG9mIDQuNToxIn0seyJodG1sIjoiPGJ1dHRvbiBkYXRhLXJlcGxpdC1tZXRhZGF0YT1cImFydGlmYWN0cy9jb21tYW5kLWNlbnRlci9zcmMvY29tcG9uZW50cy9taWdyYXRpb24tYmFubmVyLnRzeDo2Njo2XCIgZGF0YS1jb21wb25lbnQtbmFtZT1cImJ1dHRvblwiIHR5cGU9XCJidXR0b25cIiBkYXRhLXRlc3RpZD1cIm1pZ3JhdGlvbi1iYW5uZXItZGlzbWlzc1wiIGNsYXNzPVwidGV4dC1ibHVlLTkwMC83MCBob3Zlcjp0ZXh0LWJsdWUtOTAwIGlubGluZS1mbGV4IGl0ZW1zLWNlbnRlciBnYXAtMSB0ZXh0LXhzXCIgYXJpYS1sYWJlbD1cIkRpc21pc3NcIj4iLCJ0YXJnZXQiOlsiLnRleHQtYmx1ZS05MDBcXC83MCJdLCJmYWlsdXJlU3VtbWFyeSI6IkZpeCBhbnkgb2YgdGhlIGZvbGxvd2luZzpcbiAgRWxlbWVudCBoYXMgaW5zdWZmaWNpZW50IGNvbG9yIGNvbnRyYXN0IG9mIDQuMzUgKGZvcmVncm91bmQgY29sb3I6ICM1YjcxYjAsIGJhY2tncm91bmQgY29sb3I6ICNlZmY2ZmYsIGZvbnQgc2l6ZTogOS4wcHQgKDEycHgpLCBmb250IHdlaWdodDogbm9ybWFsKS4gRXhwZWN0ZWQgY29udHJhc3QgcmF0aW8gb2YgNC41OjEifV19LHsiaWQiOiJtZXRhLXZpZXdwb3J0IiwiaW1wYWN0IjoibW9kZXJhdGUiLCJkZXNjcmlwdGlvbiI6IkVuc3VyZSA8bWV0YSBuYW1lPVwidmlld3BvcnRcIj4gZG9lcyBub3QgZGlzYWJsZSB0ZXh0IHNjYWxpbmcgYW5kIHpvb21pbmciLCJoZWxwVXJsIjoiaHR0cHM6Ly9kZXF1ZXVuaXZlcnNpdHkuY29tL3J1bGVzL2F4ZS80LjExL21ldGEtdmlld3BvcnQ/YXBwbGljYXRpb249cGxheXdyaWdodCIsIm5vZGVzIjpbeyJodG1sIjoiPG1ldGEgbmFtZT1cInZpZXdwb3J0XCIgY29udGVudD1cIndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xLjAsIG1heGltdW0tc2NhbGU9MVwiPiIsInRhcmdldCI6WyJtZXRhW25hbWU9XCJ2aWV3cG9ydFwiXSJdLCJmYWlsdXJlU3VtbWFyeSI6IkZpeCBhbnkgb2YgdGhlIGZvbGxvd2luZzpcbiAgbWF4aW11bS1zY2FsZSBvbiA8bWV0YT4gdGFnIGRpc2FibGVzIHpvb21pbmcgb24gbW9iaWxlIGRldmljZXMifV19XX0="
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "30a99e4249b245024dc1-002e1e4237a20062e8c9",
+          "file": "scan.a11y.test.ts",
+          "line": 87,
+          "column": 7
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-05-03T16:00:04.131Z",
+    "duration": 35334.835999999996,
+    "expected": 3,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

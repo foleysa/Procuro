@@ -13,6 +13,7 @@
     "backfill-opportunity-mapped-via": "tsx ./src/backfill-opportunity-mapped-via.ts",
     "backfill-supplier-entity-uid": "tsx ./src/backfill-supplier-entity-uid.ts",
     "data-integrity": "tsx ./src/run-data-integrity.ts",
+    "establish-a11y-baseline": "tsx ./src/establish-a11y-baseline.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

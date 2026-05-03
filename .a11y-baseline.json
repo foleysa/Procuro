@@ -1,0 +1,1471 @@
+[
+  {
+    "route": "/landing",
+    "routeName": "Landing",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/sign-in",
+    "routeName": "Sign In",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/sign-up",
+    "routeName": "Sign Up",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust/public",
+    "routeName": "Trust Center (public)",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".flex-1.items-start.gap-3 > .space-y-1[data-component-name=\"div\"] > p",
+      ".bg-muted.border-border.text-\\[10px\\]",
+      "td:nth-child(2) > .bg-muted.border-border.px-2\\.5"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust/public",
+    "routeName": "Trust Center (public)",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/",
+    "routeName": "Home / Dashboard",
+    "violationId": "aria-progressbar-name",
+    "impact": "serious",
+    "description": "Ensure every ARIA progressbar node has an accessible name",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/aria-progressbar-name?application=playwright",
+    "affectedNodes": [
+      ".relative"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/",
+    "routeName": "Home / Dashboard",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      "button[role=\"combobox\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/",
+    "routeName": "Home / Dashboard",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/",
+    "routeName": "Home / Dashboard",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/spend",
+    "routeName": "Spend Overview",
+    "violationId": "aria-valid-attr-value",
+    "impact": "critical",
+    "description": "Ensure all ARIA attributes have valid values",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/aria-valid-attr-value?application=playwright",
+    "affectedNodes": [
+      "#radix-\u00abr1\u00bb-trigger-all"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/spend",
+    "routeName": "Spend Overview",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".focus-visible\\:ring-1"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/spend",
+    "routeName": "Spend Overview",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-goods"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/spend",
+    "routeName": "Spend Overview",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers/00000000-0000-0000-0000-000000000001",
+    "routeName": "Supplier Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers/00000000-0000-0000-0000-000000000001",
+    "routeName": "Supplier Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers/00000000-0000-0000-0000-000000000001",
+    "routeName": "Supplier Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities/00000000-0000-0000-0000-000000000001",
+    "routeName": "Opportunity Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities/00000000-0000-0000-0000-000000000001",
+    "routeName": "Opportunity Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities/00000000-0000-0000-0000-000000000001",
+    "routeName": "Opportunity Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts/00000000-0000-0000-0000-000000000001",
+    "routeName": "Contract Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts/00000000-0000-0000-0000-000000000001",
+    "routeName": "Contract Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts/00000000-0000-0000-0000-000000000001",
+    "routeName": "Contract Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/sows/00000000-0000-0000-0000-000000000001",
+    "routeName": "SOW Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/sows/00000000-0000-0000-0000-000000000001",
+    "routeName": "SOW Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/sows/00000000-0000-0000-0000-000000000001",
+    "routeName": "SOW Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/rate-cards/00000000-0000-0000-0000-000000000001",
+    "routeName": "Rate Card Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/rate-cards/00000000-0000-0000-0000-000000000001",
+    "routeName": "Rate Card Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/rate-cards/00000000-0000-0000-0000-000000000001",
+    "routeName": "Rate Card Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/approvals",
+    "routeName": "Approvals",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".focus-visible\\:outline-none"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/approvals",
+    "routeName": "Approvals",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      ".text-destructive"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/approvals",
+    "routeName": "Approvals",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/fusion",
+    "routeName": "Intelligence (Fusion)",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[\\&_svg\\]\\:pointer-events-none",
+      ".data-\\[placeholder\\]\\:text-muted-foreground"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/fusion",
+    "routeName": "Intelligence (Fusion)",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-entity"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/fusion",
+    "routeName": "Intelligence (Fusion)",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/alerts",
+    "routeName": "Alerts",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9",
+      "button[aria-controls=\"radix-\u00abr1\u00bb\"]",
+      "button[aria-controls=\"radix-\u00abr2\u00bb\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/alerts",
+    "routeName": "Alerts",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      ".bg-amber-500\\/15"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/alerts",
+    "routeName": "Alerts",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watchlists",
+    "routeName": "Saved Lists",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[border-color\\:var\\(--button-outline\\)\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watchlists",
+    "routeName": "Saved Lists",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watchlists",
+    "routeName": "Saved Lists",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-companies",
+    "routeName": "Watched Companies",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      "button[role=\"combobox\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-companies",
+    "routeName": "Watched Companies",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-companies_house"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-companies",
+    "routeName": "Watched Companies",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-us-suppliers",
+    "routeName": "Watched US Suppliers",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[border-color\\:var\\(--button-outline\\)\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-us-suppliers",
+    "routeName": "Watched US Suppliers",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/watched-us-suppliers",
+    "routeName": "Watched US Suppliers",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/results",
+    "routeName": "Results & Billing",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/results",
+    "routeName": "Results & Billing",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      ".p-8 > .grid.grid-cols-2.md\\:grid-cols-4 > .bg-primary\\/5.border-primary\\/40.rounded-lg > .tracking-wide.text-muted-foreground.uppercase"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/results",
+    "routeName": "Results & Billing",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/playbook",
+    "routeName": "Playbook",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".focus-visible\\:outline-none"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/playbook",
+    "routeName": "Playbook",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "div[data-testid=\"lever-spot_vs_contract\"] > .space-y-1\\.5.flex-col[data-component-name=\"CardHeader\"] > .items-start.justify-between.gap-3 > .bg-muted.px-2\\.5.focus\\:outline-none"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/playbook",
+    "routeName": "Playbook",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust",
+    "routeName": "Trust Center (authenticated)",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust",
+    "routeName": "Trust Center (authenticated)",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      ".flex.gap-1.items-center > .bg-muted.border-border.text-\\[10px\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust",
+    "routeName": "Trust Center (authenticated)",
+    "violationId": "link-in-text-block",
+    "impact": "serious",
+    "description": "Ensure links are distinguished from surrounding text in a way that does not rely on color",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-in-text-block?application=playwright",
+    "affectedNodes": [
+      "a[data-testid=\"link-trust-to-data-sources\"]",
+      "a[data-testid=\"link-trust-to-opportunities\"]",
+      "a[data-testid=\"link-trust-to-admin\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/trust",
+    "routeName": "Trust Center (authenticated)",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/whats-new",
+    "routeName": "What's New",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/whats-new",
+    "routeName": "What's New",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/whats-new",
+    "routeName": "What's New",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/settings",
+    "routeName": "Settings",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[border-color\\:var\\(--button-outline\\)\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/settings",
+    "routeName": "Settings",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-notifications"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/settings",
+    "routeName": "Settings",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/operations",
+    "routeName": "Operations Health",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/operations",
+    "routeName": "Operations Health",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/operations",
+    "routeName": "Operations Health",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/collectors",
+    "routeName": "Collectors",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9",
+      ".h-9"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/collectors",
+    "routeName": "Collectors",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr2\u00bb-trigger-catalog"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/collectors",
+    "routeName": "Collectors",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/data-sources",
+    "routeName": "Data Sources",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".focus-visible\\:outline-none"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/data-sources",
+    "routeName": "Data Sources",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/data-sources",
+    "routeName": "Data Sources",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/ingest",
+    "routeName": "Data Ingest",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/ingest",
+    "routeName": "Data Ingest",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/ingest",
+    "routeName": "Data Ingest",
+    "violationId": "label",
+    "impact": "critical",
+    "description": "Ensure every form element has a label",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/label?application=playwright",
+    "affectedNodes": [
+      "input[data-testid=\"input-file-categories\"]",
+      "input[data-testid=\"input-file-suppliers\"]",
+      "input[data-testid=\"input-file-items\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/ingest",
+    "routeName": "Data Ingest",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/integrations",
+    "routeName": "Integrations",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[border-color\\:var\\(--button-outline\\)\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/integrations",
+    "routeName": "Integrations",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      ".bg-muted"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/integrations",
+    "routeName": "Integrations",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system",
+    "routeName": "System & Jobs",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9",
+      ".w-\\[170px\\]",
+      "button[aria-controls=\"radix-\u00abr2\u00bb\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system",
+    "routeName": "System & Jobs",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system",
+    "routeName": "System & Jobs",
+    "violationId": "label",
+    "impact": "critical",
+    "description": "Ensure every form element has a label",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/label?application=playwright",
+    "affectedNodes": [
+      "input[data-testid=\"input-max-attempts-ingest_csv\"]",
+      "tr[data-testid=\"row-setting-ingest_mock_erp\"] > .pr-4:nth-child(3) > .gap-2.items-center.flex > .w-20[value=\"3\"][max=\"100\"]",
+      "tr[data-testid=\"row-setting-run_analysis_cycle\"] > .pr-4:nth-child(3) > .gap-2.items-center.flex > .w-20[value=\"3\"][max=\"100\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system",
+    "routeName": "System & Jobs",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system/jobs/00000000-0000-0000-0000-000000000001",
+    "routeName": "Job Detail",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system/jobs/00000000-0000-0000-0000-000000000001",
+    "routeName": "Job Detail",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/system/jobs/00000000-0000-0000-0000-000000000001",
+    "routeName": "Job Detail",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin/taxonomy/queue",
+    "routeName": "Taxonomy Queue",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".whitespace-nowrap"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin/taxonomy/queue",
+    "routeName": "Taxonomy Queue",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin/taxonomy/queue",
+    "routeName": "Taxonomy Queue",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin",
+    "routeName": "Org Admin",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".\\[border-color\\:var\\(--button-outline\\)\\]",
+      ".data-\\[placeholder\\]\\:text-muted-foreground"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin",
+    "routeName": "Org Admin",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-sso"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin",
+    "routeName": "Org Admin",
+    "violationId": "link-in-text-block",
+    "impact": "serious",
+    "description": "Ensure links are distinguished from surrounding text in a way that does not rely on color",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-in-text-block?application=playwright",
+    "affectedNodes": [
+      ".underline-offset-2"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/admin",
+    "routeName": "Org Admin",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers",
+    "routeName": "Suppliers",
+    "violationId": "aria-allowed-attr",
+    "impact": "critical",
+    "description": "Ensure an element's role supports its ARIA attributes",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/aria-allowed-attr?application=playwright",
+    "affectedNodes": [
+      "button[data-testid=\"btn-sort-confidence\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers",
+    "routeName": "Suppliers",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers",
+    "routeName": "Suppliers",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/suppliers",
+    "routeName": "Suppliers",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities",
+    "routeName": "Opportunities",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".focus-visible\\:outline-none",
+      ".w-\\[160px\\]",
+      ".w-\\[260px\\]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities",
+    "routeName": "Opportunities",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/opportunities",
+    "routeName": "Opportunities",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts",
+    "routeName": "Contracts",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".disabled\\:pointer-events-none",
+      ".ring-offset-background"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts",
+    "routeName": "Contracts",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/contracts",
+    "routeName": "Contracts",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/services",
+    "routeName": "Services",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9",
+      ".data-\\[placeholder\\]\\:text-muted-foreground"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/services",
+    "routeName": "Services",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-rate-cards"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/services",
+    "routeName": "Services",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/engine",
+    "routeName": "Engine",
+    "violationId": "button-name",
+    "impact": "critical",
+    "description": "Ensure buttons have discernible text",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/button-name?application=playwright",
+    "affectedNodes": [
+      ".min-h-9"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/engine",
+    "routeName": "Engine",
+    "violationId": "color-contrast",
+    "impact": "serious",
+    "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=playwright",
+    "affectedNodes": [
+      ".text-sidebar-foreground\\/40",
+      ".text-blue-900\\/70",
+      "#radix-\u00abr1\u00bb-trigger-lowest"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  },
+  {
+    "route": "/engine",
+    "routeName": "Engine",
+    "violationId": "meta-viewport",
+    "impact": "moderate",
+    "description": "Ensure <meta name=\"viewport\"> does not disable text scaling and zooming",
+    "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/meta-viewport?application=playwright",
+    "affectedNodes": [
+      "meta[name=\"viewport\"]"
+    ],
+    "followUpRef": "task #329 \u2014 fix pre-existing a11y violations",
+    "baselinedAt": "2026-05-03T15:48:06.897Z"
+  }
+]
