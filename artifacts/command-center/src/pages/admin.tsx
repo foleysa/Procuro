@@ -44,6 +44,7 @@ import {
   Copy,
   Download,
   Eye,
+  UserPlus,
 } from "lucide-react";
 import {
   useListAdminUsers,
@@ -56,6 +57,8 @@ import {
   useRevokeAdminApiKey,
   useListAdminAuditLog,
   useListAdminAuditActions,
+  useListEngineAccessDenials,
+  getListEngineAccessDenialsQueryKey,
   useGetAdminTrustEngagement,
   useGetAdminSsoConfig,
   useSaveAdminSsoConfig,
@@ -85,6 +88,213 @@ function formatTime(s: string | Date | null | undefined): string {
 }
 
 // ----- Users tab ---------------------------------------------------
+
+/**
+ * #207 — In-product signal that teammates have been bouncing off the
+ * Engine page (or other admin-gated routes). Fed by the
+ * `engine.access_denied` audit rows the AdminGuard empty state emits,
+ * deduped server-side per-actor per-day. Renders a one-click
+ * "grant role" button per teammate so the admin can close the loop
+ * without context-switching to email.
+ *
+ * The default role is `org_admin` because that's what `AdminGuard`
+ * actually checks for (`isOrgAdmin`) — granting analyst would *not*
+ * unlock the Engine page the teammate was bouncing off, so the
+ * default has to be the role that resolves the request. Admins can
+ * pick a lower role (analyst / approver) from the per-row picker if
+ * they want to grant looser access first.
+ *
+ * If the teammate already exists in `userRolesTable` (typical case —
+ * they had to be a tenant member to reach the AdminGuard at all) we
+ * issue a `changeAdminUserRole` against their row. Otherwise we fall
+ * back to `inviteAdminUser` so brand-new teammates still get
+ * provisioned.
+ */
+const ENGINE_ACCESS_GRANT_ROLES: AdminUserRole[] = [
+  "org_admin",
+  "approver",
+  "analyst",
+];
+
+function EngineAccessRequestsCallout({
+  users,
+}: {
+  users:
+    | { id: string; email: string; active: boolean }[]
+    | undefined;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useListEngineAccessDenials();
+  const [pickedRole, setPickedRole] = useState<
+    Record<string, AdminUserRole>
+  >({});
+
+  const onSettled = (kind: "granted" | "invited", email: string, role: AdminUserRole) => {
+    toast({
+      title: kind === "granted" ? "Role updated" : "Invite sent",
+      description: `${email} → ${role}`,
+    });
+    qc.invalidateQueries({ queryKey: getListAdminUsersQueryKey() });
+    qc.invalidateQueries({
+      queryKey: getListEngineAccessDenialsQueryKey(),
+    });
+  };
+  const onError = (e: Error) =>
+    toast({
+      title: "Could not grant access",
+      description: String(e),
+      variant: "destructive",
+    });
+
+  const changeM = useChangeAdminUserRole({
+    mutation: {
+      onSuccess: (resp) =>
+        onSettled(
+          "granted",
+          resp.email ?? "",
+          (resp.role ?? "org_admin") as AdminUserRole,
+        ),
+      onError,
+    },
+  });
+  const inviteM = useInviteAdminUser({
+    mutation: {
+      onSuccess: (resp) => onSettled("invited", resp.email, resp.role),
+      onError,
+    },
+  });
+
+  if (isLoading || !data || data.denials.length === 0) {
+    // No callout when there's nothing to show — keeps the page
+    // uncluttered for admins whose teammates are not blocked.
+    return null;
+  }
+
+  const usersByEmail = new Map(
+    (users ?? [])
+      .filter((u) => u.active)
+      .map((u) => [u.email.toLowerCase(), u]),
+  );
+
+  const grantBusy = changeM.isPending || inviteM.isPending;
+
+  return (
+    <Card
+      className="border-amber-500/60 bg-amber-50/40"
+      data-testid="card-engine-access-requests"
+    >
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-amber-600" />
+          {data.denials.length} teammate
+          {data.denials.length === 1 ? "" : "s"} requested admin access
+          this week
+        </CardTitle>
+        <CardDescription>
+          Each row is a signed-in teammate that hit the friendly
+          &ldquo;request access&rdquo; empty state on an admin-only page
+          (Engine, Operations, Taxonomy queue, …) in the last
+          {" "}{data.windowDays} days. The default grant is{" "}
+          <code>org_admin</code> because that&rsquo;s the role that
+          actually unlocks those pages — pick a lower role per row if
+          you want narrower access.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Teammate</TableHead>
+              <TableHead>Days hit</TableHead>
+              <TableHead>Last attempt</TableHead>
+              <TableHead>Grant role</TableHead>
+              <TableHead className="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.denials.map((d) => {
+              const existing = usersByEmail.get(d.actor.toLowerCase());
+              const role = pickedRole[d.actor] ?? "org_admin";
+              return (
+                <TableRow
+                  key={d.actor}
+                  data-testid={`row-engine-denial-${d.actor}`}
+                >
+                  <TableCell className="font-medium">
+                    {d.actor}
+                    {existing ? null : (
+                      <Badge variant="outline" className="ml-2">
+                        New
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs">{d.count}</TableCell>
+                  <TableCell className="text-xs">
+                    {formatTime(d.lastAt)}
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={role}
+                      onValueChange={(v) =>
+                        setPickedRole((prev) => ({
+                          ...prev,
+                          [d.actor]: v as AdminUserRole,
+                        }))
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-[160px]"
+                        data-testid={`select-grant-role-${d.actor}`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ENGINE_ACCESS_GRANT_ROLES.map((r) => (
+                          <SelectItem key={r} value={r}>
+                            {ROLE_OPTIONS.find((o) => o.value === r)
+                              ?.label ?? r}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-testid={`button-grant-role-${d.actor}`}
+                      disabled={grantBusy}
+                      onClick={() => {
+                        if (existing) {
+                          changeM.mutate({
+                            id: existing.id,
+                            data: { role },
+                          });
+                        } else {
+                          inviteM.mutate({
+                            data: { email: d.actor, role },
+                          });
+                        }
+                      }}
+                    >
+                      {grantBusy ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <UserPlus className="w-4 h-4 mr-2" />
+                      )}
+                      {existing ? "Update role" : "Invite"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
 
 function UsersTab() {
   const qc = useQueryClient();
@@ -139,6 +349,7 @@ function UsersTab() {
 
   return (
     <div className="space-y-6">
+      <EngineAccessRequestsCallout users={users} />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

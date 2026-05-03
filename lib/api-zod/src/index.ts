@@ -16,3 +16,6 @@ export { ListErpConnectionRunsParams } from "./generated/api";
 // consumers that need the TS type can import it directly from the
 // generated types path.
 export { BulkAddWatchedIssuersResponse } from "./generated/api";
+
+// Same TS2308 ambiguity for the engine-access denial POST body (#207).
+export { RecordEngineAccessDenialBody } from "./generated/api";

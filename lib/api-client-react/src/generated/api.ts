@@ -92,6 +92,7 @@ import type {
   DefensePackListResponse,
   DefensePackOutcome,
   DefensePackSummaryStats,
+  EngineAccessDenialList,
   ErpAdapterListResponse,
   ErpConnectionListResponse,
   ErpConnectionResponse,
@@ -183,6 +184,7 @@ import type {
   ReadinessResponse,
   RealizeOpportunityRequest,
   RecentlyFailedJobs,
+  RecordEngineAccessDenialBody,
   RegisterCollectorRequest,
   RejectOpportunityRequest,
   RunCycleResponse,
@@ -14868,6 +14870,173 @@ export function useGetAdminTrustEngagement<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Powers the "N teammates requested Engine access this week" callout on the Org Admin page. Aggregates `engine.access_denied` rows in `admin_audit_log` over the trailing 7 days. Writes are deduped per-actor per-day, so the count approximates distinct days a teammate hit the locked page rather than raw page loads.
+
+ * @summary Recent Engine page access denials, aggregated per teammate
+ */
+export const getListEngineAccessDenialsUrl = () => {
+  return `/api/admin/engine-access/denials`;
+};
+
+export const listEngineAccessDenials = async (
+  options?: RequestInit,
+): Promise<EngineAccessDenialList> => {
+  return customFetch<EngineAccessDenialList>(getListEngineAccessDenialsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListEngineAccessDenialsQueryKey = () => {
+  return [`/api/admin/engine-access/denials`] as const;
+};
+
+export const getListEngineAccessDenialsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEngineAccessDenials>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listEngineAccessDenials>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListEngineAccessDenialsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEngineAccessDenials>>
+  > = ({ signal }) => listEngineAccessDenials({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEngineAccessDenials>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListEngineAccessDenialsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEngineAccessDenials>>
+>;
+export type ListEngineAccessDenialsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recent Engine page access denials, aggregated per teammate
+ */
+
+export function useListEngineAccessDenials<
+  TData = Awaited<ReturnType<typeof listEngineAccessDenials>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listEngineAccessDenials>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListEngineAccessDenialsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Emitted by the friendly "request access" empty state when a signed-in non-admin lands on the Engine page (or another admin-gated route). Idempotent per actor per UTC day. Available to any signed-in tenant member — gating it on admin would defeat the purpose of capturing the signal.
+
+ * @summary Record that the current user was shown the AdminGuard empty state
+ */
+export const getRecordEngineAccessDenialUrl = () => {
+  return `/api/admin/engine-access/denials`;
+};
+
+export const recordEngineAccessDenial = async (
+  recordEngineAccessDenialBody?: RecordEngineAccessDenialBody,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRecordEngineAccessDenialUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(recordEngineAccessDenialBody),
+  });
+};
+
+export const getRecordEngineAccessDenialMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordEngineAccessDenial>>,
+    TError,
+    { data: BodyType<RecordEngineAccessDenialBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recordEngineAccessDenial>>,
+  TError,
+  { data: BodyType<RecordEngineAccessDenialBody> },
+  TContext
+> => {
+  const mutationKey = ["recordEngineAccessDenial"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recordEngineAccessDenial>>,
+    { data: BodyType<RecordEngineAccessDenialBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return recordEngineAccessDenial(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecordEngineAccessDenialMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recordEngineAccessDenial>>
+>;
+export type RecordEngineAccessDenialMutationBody =
+  BodyType<RecordEngineAccessDenialBody>;
+export type RecordEngineAccessDenialMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Record that the current user was shown the AdminGuard empty state
+ */
+export const useRecordEngineAccessDenial = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordEngineAccessDenial>>,
+    TError,
+    { data: BodyType<RecordEngineAccessDenialBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recordEngineAccessDenial>>,
+  TError,
+  { data: BodyType<RecordEngineAccessDenialBody> },
+  TContext
+> => {
+  return useMutation(getRecordEngineAccessDenialMutationOptions(options));
+};
 
 /**
  * Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /

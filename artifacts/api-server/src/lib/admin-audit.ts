@@ -60,5 +60,13 @@ export const ADMIN_AUDIT_ACTIONS = [
   // operators can see when a tenant is actively sharing posture
   // with auditors / prospects without bloating the audit log.
   "trust.view",
+  // In-product signal from the AdminGuard friendly empty state
+  // (#207). Emitted when a signed-in non-admin user lands on the
+  // Engine page (or other admin-gated routes) and is shown the
+  // "request access" empty state. Deduped per-actor per-day so
+  // refreshing or revisiting the page doesn't drown the signal.
+  // Surfaced on the Org Admin page as a callout listing teammates
+  // who keep hitting locked admin pages.
+  "engine.access_denied",
 ] as const;
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

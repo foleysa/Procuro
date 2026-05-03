@@ -55,6 +55,7 @@ import TrustPage from "./pages/trust";
 import TrustPublicPage from "./pages/trust-public";
 import { SignInPage, SignUpPage } from "./pages/auth";
 import { useMyRole } from "./lib/use-my-role";
+import { recordEngineAccessDenial } from "@workspace/api-client-react";
 import { WarRoomAlertsProvider } from "./lib/use-war-room-alerts";
 import Alerts from "./pages/alerts";
 import Watchlists from "./pages/watchlists";
@@ -179,6 +180,19 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
       setLocation("/sign-in");
     }
   }, [data, isLoading, setLocation]);
+
+  // #207: emit a one-shot "engine_access_denied" telemetry ping when
+  // a signed-in non-admin sees the friendly empty state, so workspace
+  // admins get an in-product signal that a teammate is bouncing off
+  // a locked page. The server dedupes per-actor per-day so revisits
+  // and refreshes don't spam the audit log; failures are swallowed
+  // because a UX surface must never be blocked on telemetry.
+  useEffect(() => {
+    if (isLoading || !data) return;
+    if (data.roles.length === 0) return; // unauth → redirected above
+    if (isOrgAdmin) return;
+    void recordEngineAccessDenial({ route: location }).catch(() => undefined);
+  }, [isLoading, data, isOrgAdmin, location]);
 
   if (isLoading) {
     return (

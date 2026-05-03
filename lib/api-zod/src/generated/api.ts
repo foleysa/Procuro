@@ -9736,6 +9736,67 @@ export const GetAdminTrustEngagementResponse = zod
   );
 
 /**
+ * Powers the "N teammates requested Engine access this week" callout on the Org Admin page. Aggregates `engine.access_denied` rows in `admin_audit_log` over the trailing 7 days. Writes are deduped per-actor per-day, so the count approximates distinct days a teammate hit the locked page rather than raw page loads.
+
+ * @summary Recent Engine page access denials, aggregated per teammate
+ */
+export const ListEngineAccessDenialsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListEngineAccessDenialsResponse = zod.object({
+  windowDays: zod
+    .number()
+    .describe("Trailing window the rollup covers. Always 7 today."),
+  denials: zod.array(
+    zod
+      .object({
+        actor: zod
+          .string()
+          .describe(
+            "Email (or system principal) of the teammate that was denied.",
+          ),
+        count: zod
+          .number()
+          .describe(
+            "Distinct days the teammate hit the locked page in the window.",
+          ),
+        firstAt: zod.coerce.date().describe("First denial in the window."),
+        lastAt: zod.coerce.date().describe("Most recent denial in the window."),
+      })
+      .describe(
+        "One teammate who hit the AdminGuard empty state on an admin-only route within the trailing window.",
+      ),
+  ),
+});
+
+/**
+ * Emitted by the friendly "request access" empty state when a signed-in non-admin lands on the Engine page (or another admin-gated route). Idempotent per actor per UTC day. Available to any signed-in tenant member — gating it on admin would defeat the purpose of capturing the signal.
+
+ * @summary Record that the current user was shown the AdminGuard empty state
+ */
+export const RecordEngineAccessDenialHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const RecordEngineAccessDenialBody = zod.object({
+  route: zod
+    .string()
+    .optional()
+    .describe("The admin-gated route the user landed on (e.g. `\/engine`)."),
+});
+
+/**
  * Stored under `orgs.settings.sso`. Clerk hosts the actual SAML /
 OIDC connection; this endpoint stores only the tenant-specific
 metadata operators surface in the admin UI.

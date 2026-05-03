@@ -5057,6 +5057,26 @@ export interface AdminTrustEngagement {
   lastViewer: string | null;
 }
 
+/**
+ * One teammate who hit the AdminGuard empty state on an admin-only route within the trailing window.
+ */
+export interface EngineAccessDenial {
+  /** Email (or system principal) of the teammate that was denied. */
+  actor: string;
+  /** Distinct days the teammate hit the locked page in the window. */
+  count: number;
+  /** First denial in the window. */
+  firstAt: string;
+  /** Most recent denial in the window. */
+  lastAt: string;
+}
+
+export interface EngineAccessDenialList {
+  /** Trailing window the rollup covers. Always 7 today. */
+  windowDays: number;
+  denials: EngineAccessDenial[];
+}
+
 export type AdminSsoProtocol =
   (typeof AdminSsoProtocol)[keyof typeof AdminSsoProtocol];
 
@@ -5804,4 +5824,9 @@ export type ExportAdminAuditLogParams = {
   actor?: string;
   action?: string;
   targetId?: string;
+};
+
+export type RecordEngineAccessDenialBody = {
+  /** The admin-gated route the user landed on (e.g. `/engine`). */
+  route?: string;
 };

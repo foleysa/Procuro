@@ -4805,6 +4805,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdminTrustEngagement'
+  /admin/engine-access/denials:
+    get:
+      operationId: listEngineAccessDenials
+      tags:
+      - admin
+      summary: Recent Engine page access denials, aggregated per teammate
+      description: 'Powers the "N teammates requested Engine access this week" callout
+        on the Org Admin page. Aggregates `engine.access_denied` rows in
+        `admin_audit_log` over the trailing 7 days. Writes are deduped
+        per-actor per-day, so the count approximates distinct days a
+        teammate hit the locked page rather than raw page loads.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      responses:
+        '200':
+          description: Aggregated denials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EngineAccessDenialList'
+    post:
+      operationId: recordEngineAccessDenial
+      tags:
+      - admin
+      summary: Record that the current user was shown the AdminGuard empty state
+      description: 'Emitted by the friendly "request access" empty state when a
+        signed-in non-admin lands on the Engine page (or another
+        admin-gated route). Idempotent per actor per UTC day. Available
+        to any signed-in tenant member — gating it on admin would
+        defeat the purpose of capturing the signal.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                route:
+                  type: string
+                  description: The admin-gated route the user landed on (e.g. `/engine`).
+      responses:
+        '204':
+          description: Recorded (or coalesced into an existing same-day event)
   /admin/sso:
     get:
       operationId: getAdminSsoConfig
@@ -13213,6 +13262,43 @@ components:
           type: string
           nullable: true
           description: Actor (email or system principal) that triggered the most recent view.
+    EngineAccessDenial:
+      type: object
+      description: One teammate who hit the AdminGuard empty state on an admin-only
+        route within the trailing window.
+      required:
+      - actor
+      - count
+      - firstAt
+      - lastAt
+      properties:
+        actor:
+          type: string
+          description: Email (or system principal) of the teammate that was denied.
+        count:
+          type: integer
+          description: Distinct days the teammate hit the locked page in the window.
+        firstAt:
+          type: string
+          format: date-time
+          description: First denial in the window.
+        lastAt:
+          type: string
+          format: date-time
+          description: Most recent denial in the window.
+    EngineAccessDenialList:
+      type: object
+      required:
+      - windowDays
+      - denials
+      properties:
+        windowDays:
+          type: integer
+          description: Trailing window the rollup covers. Always 7 today.
+        denials:
+          type: array
+          items:
+            $ref: '#/components/schemas/EngineAccessDenial'
     AdminSsoProtocol:
       type: string
       enum:
