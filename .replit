@@ -49,6 +49,7 @@ args = "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-ser
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
+integrations = ["notion:1.0.0"]
 
 [postMerge]
 path = "scripts/post-merge.sh"

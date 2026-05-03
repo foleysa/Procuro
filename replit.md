@@ -46,3 +46,19 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **EIA API:** Energy Information Administration data for `eia-energy` collector.
 - **Clerk:** User authentication and management.
 - **Gemini 2.5 Flash:** AI model for Defense Pack memo generation.
+- **Notion:** Connected via Replit native integration (connector `notion`). Use the credentials proxy at `https://${REPLIT_CONNECTORS_HOSTNAME}/api/v2/connection?include_secrets=true&connector_names=notion` with `X_REPLIT_TOKEN: "repl " + REPL_IDENTITY` to fetch a fresh `access_token`, then call `https://api.notion.com/v1/...` with `Notion-Version: 2022-06-28`. Never cache the token.
+
+## Notion workspace map ("FSA Operating")
+
+Top-level page `FSA Operating` (`3554a7a5-85e9-80ff-9875-f3bab7730935`) contains:
+
+- `1. Operating Protocol` — `3554a7a5-85e9-801b-9c0d-c90c60ac4ec2` — **read before starting any task**
+  - `Correction Log` — `3554a7a5-85e9-80ce-8a08-ed0cff64c80c`
+  - `Decision Registry` — `3554a7a5-85e9-80a8-a87b-ffa80d5b5839`
+  - `Project State Ledger` — `3554a7a5-85e9-80f8-a512-f1c23036d511`
+  - `Stale File Index` — `3554a7a5-85e9-80d4-bb2e-e96a50fd60f2`
+  - `Lawyer Conditions` — `3554a7a5-85e9-80d3-96d2-c62800b27034`
+- `2. Procuro Tasks` — `3554a7a5-85e9-80fe-ba14-ffea48fc1110` — **update on task open/close** (currently a plain page, not yet a Notion database)
+- `3. Content Pipeline` — `3554a7a5-85e9-80e5-b791-fc293c3214b5`
+- `4. Pipeline (CRM)` — `3554a7a5-85e9-8039-ba93-db876b0aeedc`
+- `5. Strategic Docs` — `3554a7a5-85e9-800f-a5d7-e45ddb7c1c67`
