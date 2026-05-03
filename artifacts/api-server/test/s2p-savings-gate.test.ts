@@ -326,6 +326,10 @@ describe("full 5-stage lifecycle", () => {
       canonicalStage: "Identified",
       savingsType: "Identified",
       doaTier: 2,
+      // Realize endpoint enforces a Finance-grade baseline (task #323):
+      // a non-null baseline_value OR baseline_method = 'N/A — Soft'.
+      baselineValue: "1500000.0000",
+      baselineMethod: "Internal Estimate",
     });
 
     // --- Step 1: approve (Identified → Awarded) ---
@@ -573,5 +577,135 @@ describe("full 5-stage lifecycle", () => {
     );
     assert.equal(contractingTransition!.fromStage, "Awarded");
     assert.equal(contractingTransition!.transitionedByUserId, actor);
+  });
+
+  // ===========================================================================
+  // Section 3 — Baseline gate on POST /opportunities/:id/realize (task #323)
+  //
+  // validateBaselineForRealized() lives in lib/db/src/s2p-helpers.ts and is
+  // wired into the realize handler. A Realized record without a non-null
+  // baseline_value AND without baseline_method = 'N/A — Soft' would fail
+  // Finance review, so the route must reject the transition with 422 before
+  // persisting anything.
+  // ===========================================================================
+  test("POST /opportunities/:id/realize returns 422 when baseline_value is null and method is not 'N/A — Soft'", async (t) => {
+    if (!process.env["DATABASE_URL"]) {
+      t.skip("DATABASE_URL required");
+      return;
+    }
+
+    const tag = `nobase-${Date.now()}-${process.pid}`;
+    const orgId = `org_${tag}`;
+    const cycleId = `cyc_${tag}`;
+    const oppId = `opp_${tag}`;
+
+    await seedOrg(orgId);
+    await seedCycle(cycleId, orgId);
+    t.after(() => cleanupOrg(orgId));
+
+    await insertOpp({
+      id: oppId,
+      orgId,
+      cycleId,
+      title: oppId,
+      status: "executing",
+      projectedSavingsUsd: "750000.00",
+      canonicalStage: "In Implementation",
+      savingsType: "Implemented",
+      // Deliberately MISSING baseline_value with a non-soft method —
+      // this is exactly the audit-fail shape the gate must reject.
+      baselineValue: null,
+      baselineMethod: "Internal Estimate",
+    });
+
+    const res = await call(
+      handle.port,
+      "POST",
+      `/api/opportunities/${oppId}/realize`,
+      { orgId, body: { realizedSavingsUsd: 750_000 } },
+    );
+
+    assert.equal(
+      res.status,
+      422,
+      `realize without a Finance-grade baseline must yield 422; got ${res.status} ${JSON.stringify(res.body)}`,
+    );
+    const body = res.body as { error: string; code: string };
+    assert.equal(body.code, "unprocessable");
+    assert.match(
+      body.error,
+      /baseline_value|N\/A — Soft/,
+      "error message must explain the baseline requirement",
+    );
+
+    // The opportunity row must NOT have been mutated (status, canonical_stage,
+    // savings_type, realized_at all unchanged) — the gate runs before any
+    // UPDATE and before the decisions/stage_history rows are written.
+    const [row] = await db
+      .select({
+        status: opportunitiesTable.status,
+        canonicalStage: opportunitiesTable.canonicalStage,
+        savingsType: opportunitiesTable.savingsType,
+        realizedAt: opportunitiesTable.realizedAt,
+      })
+      .from(opportunitiesTable)
+      .where(eq(opportunitiesTable.id, oppId));
+    assert.equal(row!.status, "executing", "status must not advance on 422");
+    assert.equal(row!.canonicalStage, "In Implementation");
+    assert.equal(row!.savingsType, "Implemented");
+    assert.equal(row!.realizedAt, null);
+
+    const history = await db
+      .select({ toStage: opportunityStageHistoryTable.toStage })
+      .from(opportunityStageHistoryTable)
+      .where(
+        and(
+          eq(opportunityStageHistoryTable.orgId, orgId),
+          eq(opportunityStageHistoryTable.opportunityId, oppId),
+        ),
+      );
+    assert.equal(history.length, 0, "no stage_history row must be written on 422");
+  });
+
+  test("POST /opportunities/:id/realize succeeds with baseline_method = 'N/A — Soft' even when baseline_value is null", async (t) => {
+    if (!process.env["DATABASE_URL"]) {
+      t.skip("DATABASE_URL required");
+      return;
+    }
+
+    const tag = `soft-${Date.now()}-${process.pid}`;
+    const orgId = `org_${tag}`;
+    const cycleId = `cyc_${tag}`;
+    const oppId = `opp_${tag}`;
+
+    await seedOrg(orgId);
+    await seedCycle(cycleId, orgId);
+    t.after(() => cleanupOrg(orgId));
+
+    await insertOpp({
+      id: oppId,
+      orgId,
+      cycleId,
+      title: oppId,
+      status: "executing",
+      projectedSavingsUsd: "200000.00",
+      canonicalStage: "In Implementation",
+      savingsType: "Implemented",
+      savingsClassification: "Soft",
+      baselineValue: null,
+      baselineMethod: "N/A — Soft",
+    });
+
+    const res = await call(
+      handle.port,
+      "POST",
+      `/api/opportunities/${oppId}/realize`,
+      { orgId, body: { realizedSavingsUsd: 200_000 } },
+    );
+    assert.equal(
+      res.status,
+      200,
+      `Soft realize with method 'N/A — Soft' must succeed; got ${res.status} ${JSON.stringify(res.body)}`,
+    );
   });
 });

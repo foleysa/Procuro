@@ -23,6 +23,7 @@ export type ApiErrorCode =
   | "tenant_mismatch"
   | "not_found"
   | "conflict"
+  | "unprocessable"
   | "db_constraint"
   | "quota_exceeded"
   | "internal_error";
@@ -84,6 +85,21 @@ export class NotFoundError extends ApiError {
 export class ConflictError extends ApiError {
   constructor(message = "Conflict", details?: unknown) {
     super(409, "conflict", message, details);
+  }
+}
+
+/**
+ * Semantic / business-rule violation (HTTP 422). The request was
+ * syntactically valid (so it would not be a `ZodError` / 400) and the
+ * target resource exists (so it would not be a `NotFoundError` / 404),
+ * but the requested state transition violates a domain invariant.
+ *
+ * Used by, e.g., the realize endpoint when the opportunity is missing a
+ * Finance-grade baseline (`baseline_value` / `baseline_method = 'N/A — Soft'`).
+ */
+export class UnprocessableEntityError extends ApiError {
+  constructor(message = "Unprocessable entity", details?: unknown) {
+    super(422, "unprocessable", message, details);
   }
 }
 

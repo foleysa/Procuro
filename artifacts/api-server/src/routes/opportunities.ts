@@ -21,6 +21,7 @@ import {
   computeBreachingDoaSla,
   computeTimeInCurrentStageHours,
   s2pForStatusTransition,
+  validateBaselineForRealized,
 } from "@workspace/db";
 import { and, eq, desc, sql, or, lt, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
@@ -34,6 +35,7 @@ import {
   InvalidRequestError,
   NotFoundError,
   ConflictError,
+  UnprocessableEntityError,
 } from "../lib/api-errors";
 
 const router: IRouter = Router();
@@ -1365,6 +1367,24 @@ router.post("/opportunities/:id/realize", tenantMiddleware, requirePermission("o
   }
   const { canonicalStage: newStage, savingsType: newSavingsType } =
     s2pForStatusTransition("realized");
+
+  // Finance-grade baseline gate: a Realized record must carry either a
+  // numeric baseline_value OR be explicitly flagged baseline_method =
+  // 'N/A — Soft' so Finance review can distinguish a missing baseline
+  // (audit fail) from a deliberately soft-savings classification.
+  // Validated against the *post-transition* savingsType ("Realized")
+  // and the existing baseline columns on the opportunity row.
+  const baselineCheck = validateBaselineForRealized({
+    savingsType: newSavingsType,
+    baselineValue: opp.baselineValue,
+    baselineMethod: opp.baselineMethod,
+  });
+  if (!baselineCheck.valid) {
+    throw new UnprocessableEntityError(
+      baselineCheck.reason ?? "Realized savings require a valid baseline",
+    );
+  }
+
   const now = new Date();
   await db
     .update(opportunitiesTable)

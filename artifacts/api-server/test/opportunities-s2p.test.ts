@@ -137,12 +137,14 @@ async function seedOppForTransition(
        id, org_id, cycle_id, lever_id, tier, title,
        rationale, recommended_action,
        raw_projected_savings_usd, projected_savings_usd, confidence,
-       inputs, status
+       inputs, status,
+       baseline_value, baseline_method
      )
      VALUES ($1,$2,$3,'supplier_consolidation',1,$4,
              'test','test',
              '1500000.00','1500000.00','0.7000',
-             '{}'::jsonb, $5)
+             '{}'::jsonb, $5,
+             '1500000.0000','Internal Estimate')
      ON CONFLICT DO NOTHING`,
     [oppId, orgId, cycleId, oppId, status],
   );
