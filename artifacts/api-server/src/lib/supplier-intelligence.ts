@@ -38,6 +38,8 @@ export const SUPPLIER_INTELLIGENCE_SIGNAL_TYPES = [
   "facility_emissions",
   "natural_hazard",
   "event_geocoded",
+  "environmental_violation",
+  "workplace_safety_incident",
 ] as const satisfies readonly MarketSignalType[];
 
 export type SupplierIntelligenceSignalType =
@@ -63,6 +65,26 @@ const SANCTIONS_LIST_LABELS: Record<number, string> = {
   2: "EU consolidated",
   3: "UK OFSI",
   4: "UN consolidated",
+};
+
+const EPA_STATUTE_LABELS: Record<number, string> = {
+  1: "Clean Water Act",
+  2: "Clean Air Act",
+  3: "RCRA",
+  4: "TSCA",
+  5: "EPCRA",
+  6: "Safe Drinking Water Act",
+  7: "FIFRA",
+};
+
+const OSHA_SCOPE_LABELS: Record<number, string> = {
+  1: "Comprehensive inspection",
+  2: "Partial inspection",
+  3: "Records inspection",
+  4: "Referral inspection",
+  5: "Complaint inspection",
+  6: "Accident inspection",
+  7: "Programmed inspection",
 };
 
 const HAZARD_SOURCE_LABELS: Record<number, string> = {
@@ -209,6 +231,34 @@ export function renderSupplierIntelligenceHeadline(
       const source = HAZARD_SOURCE_LABELS[row.value] ?? "Hazard";
       const place = str(row.metadata, "place", "title", "headline");
       return { headline: source, detail: place };
+    }
+    case "environmental_violation": {
+      const statute = EPA_STATUTE_LABELS[row.value] ?? "EPA enforcement";
+      const facility = str(row.metadata, "facilityName");
+      const state = str(row.metadata, "facilityState");
+      const detail =
+        [facility, state].filter(Boolean).join(" · ") ||
+        str(row.metadata, "caseName") ||
+        null;
+      return {
+        headline: `EPA enforcement — ${statute}`,
+        detail,
+      };
+    }
+    case "workplace_safety_incident": {
+      const scope = OSHA_SCOPE_LABELS[row.value] ?? "OSHA inspection";
+      const violations = (() => {
+        if (!row.metadata) return null;
+        const v = (row.metadata as { totalViolations?: unknown })
+          .totalViolations;
+        return typeof v === "number" && v > 0 ? `${v} violation(s)` : null;
+      })();
+      const state = str(row.metadata, "siteState");
+      const detail =
+        [violations, state].filter(Boolean).join(" · ") ||
+        str(row.metadata, "establishmentName") ||
+        null;
+      return { headline: scope, detail };
     }
     case "event_geocoded": {
       const code = str(row.metadata, "eventCode", "eventBaseCode");

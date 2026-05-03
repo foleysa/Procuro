@@ -147,6 +147,19 @@ export const marketSignalTypes = [
   /** USGS / NOAA / NASA EONET / GDACS natural hazard observation. */
   "natural_hazard",
   /**
+   * EPA ECHO enforcement case / violation against a US-regulated
+   * facility. Emitted by the `epa-echo` collector. Surfaces on the
+   * supplier-intelligence timeline as a supplier-risk signal.
+   */
+  "environmental_violation",
+  /**
+   * DOL OSHA inspection of a US workplace establishment, with violation
+   * counts and penalties. Emitted by the `osha-inspections` collector.
+   * Surfaces on the supplier-intelligence timeline as a supplier-risk
+   * signal alongside `environmental_violation`.
+   */
+  "workplace_safety_incident",
+  /**
    * BLS Occupational Employment & Wage Statistics (OEWS) — annual,
    * region-specific occupational wage benchmark used to anchor
    * services-band rate-card negotiations and contingent-labor pricing.

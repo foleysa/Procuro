@@ -21,6 +21,8 @@ import { gleifLeiCollector } from "./lib/intelligence/collectors/gleif-lei";
 import { climateTraceCollector } from "./lib/intelligence/collectors/climate-trace";
 import { naturalHazardsCollector } from "./lib/intelligence/collectors/natural-hazards";
 import { companiesHouseCollector } from "./lib/intelligence/collectors/companies-house";
+import { epaEchoCollector } from "./lib/intelligence/collectors/epa-echo";
+import { oshaInspectionsCollector } from "./lib/intelligence/collectors/osha-inspections";
 import type { IntelligenceCollector } from "./lib/intelligence/collector";
 import {
   registerJobHandler,
@@ -111,6 +113,11 @@ const COLLECTORS: ReadonlyArray<IntelligenceCollector> = [
   climateTraceCollector,
   naturalHazardsCollector,
   companiesHouseCollector,
+  // Task #246 — supplier-risk collectors covering US-regulated
+  // facilities. Both query per-watched-supplier and emit one draft per
+  // upstream record (EPA enforcement case / OSHA inspection).
+  epaEchoCollector,
+  oshaInspectionsCollector,
 ];
 
 for (const c of COLLECTORS) {

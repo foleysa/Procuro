@@ -64,6 +64,15 @@ import {
   fetchUsdaNassBackfillDrafts,
   NASS_SERIES,
 } from "./collectors/usda-nass-economic-index";
+import {
+  EPA_ECHO_COLLECTOR_ID,
+  fetchEpaEchoBackfillDrafts,
+} from "./collectors/epa-echo";
+import {
+  OSHA_COLLECTOR_ID,
+  fetchOshaBackfillDrafts,
+} from "./collectors/osha-inspections";
+import type { WatchedUsSupplier } from "./collectors/_us-suppliers";
 
 /**
  * Inference target matching the unique *index* defined in
@@ -1768,6 +1777,48 @@ export async function runUsdaNassEconomicIndexBackfill(
         drafts,
         extraSucceededMeta: { failedSeries: failedSeries.length },
       };
+    },
+  });
+}
+
+/**
+ * Backfill the EPA ECHO supplier-risk collector. Replays the full
+ * watched US supplier list (uncapped) so the supplier-risk timeline
+ * picks up historical enforcement cases the recurring tick missed
+ * because of the per-tick supplier cap.
+ */
+export async function runEpaEchoBackfill(
+  opts: { force?: boolean; suppliers?: readonly WatchedUsSupplier[] } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: EPA_ECHO_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { suppliers: opts.suppliers?.length ?? "all-watched-us" },
+    fetchDrafts: async () => {
+      const { drafts, failed } = await fetchEpaEchoBackfillDrafts(
+        opts.suppliers ? { suppliers: opts.suppliers } : {},
+      );
+      return { drafts, extraSucceededMeta: { failed: failed.length } };
+    },
+  });
+}
+
+/**
+ * Backfill the OSHA inspections collector. Same shape as the EPA ECHO
+ * backfill: lift the per-tick cap and replay every watched US supplier.
+ */
+export async function runOshaInspectionsBackfill(
+  opts: { force?: boolean; suppliers?: readonly WatchedUsSupplier[] } = {},
+): Promise<BackfillResult> {
+  return runGenericBackfill({
+    collectorId: OSHA_COLLECTOR_ID,
+    force: opts.force,
+    startedMeta: { suppliers: opts.suppliers?.length ?? "all-watched-us" },
+    fetchDrafts: async () => {
+      const { drafts, failed } = await fetchOshaBackfillDrafts(
+        opts.suppliers ? { suppliers: opts.suppliers } : {},
+      );
+      return { drafts, extraSucceededMeta: { failed: failed.length } };
     },
   });
 }

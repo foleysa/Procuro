@@ -50,6 +50,8 @@ import {
   runClimateTraceBackfill,
   runCompaniesHouseBackfill,
   runUsdaNassEconomicIndexBackfill,
+  runEpaEchoBackfill,
+  runOshaInspectionsBackfill,
 } from "../lib/intelligence/runtime";
 import { ECB_FX_RATES_COLLECTOR_ID } from "../lib/intelligence/collectors/ecb-fx-rates";
 import { FRED_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/fred-economic-index";
@@ -59,6 +61,8 @@ import { GLEIF_LEI_COLLECTOR_ID } from "../lib/intelligence/collectors/gleif-lei
 import { CLIMATE_TRACE_COLLECTOR_ID } from "../lib/intelligence/collectors/climate-trace";
 import { COMPANIES_HOUSE_COLLECTOR_ID } from "../lib/intelligence/collectors/companies-house";
 import { USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID } from "../lib/intelligence/collectors/usda-nass-economic-index";
+import { EPA_ECHO_COLLECTOR_ID } from "../lib/intelligence/collectors/epa-echo";
+import { OSHA_COLLECTOR_ID } from "../lib/intelligence/collectors/osha-inspections";
 import { getWorkbenchMeta } from "../lib/intelligence/workbench-meta";
 import {
   buildLineageGraph,
@@ -604,6 +608,38 @@ mountBackfillRoute(
   USDA_NASS_ECONOMIC_INDEX_COLLECTOR_ID,
   runUsdaNassEconomicIndexBackfill,
   (req) => UsdaNassBackfillSchema.parse(req.body) ?? {},
+);
+
+// Task #246 supplier-risk collectors. Caller may supply an explicit
+// supplier list; otherwise the backfill replays every watched US
+// supplier (cap lifted relative to the recurring tick).
+const SupplierRiskBackfillSchema = z
+  .object({
+    force: z.boolean().optional(),
+    suppliers: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(200),
+          normalizedName: z.string().min(1).max(200),
+        }),
+      )
+      .max(500)
+      .optional(),
+  })
+  .optional();
+
+mountBackfillRoute(
+  "/collectors/epa-echo/backfill",
+  EPA_ECHO_COLLECTOR_ID,
+  runEpaEchoBackfill,
+  (req) => SupplierRiskBackfillSchema.parse(req.body) ?? {},
+);
+
+mountBackfillRoute(
+  "/collectors/osha-inspections/backfill",
+  OSHA_COLLECTOR_ID,
+  runOshaInspectionsBackfill,
+  (req) => SupplierRiskBackfillSchema.parse(req.body) ?? {},
 );
 
 /**

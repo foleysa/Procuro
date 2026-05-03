@@ -117,6 +117,24 @@ const FANOUT_BY_SIGNAL_TYPE: Record<string, FanoutSpec> = {
     buildSummary: (d) =>
       `Hazard alert observed at ${d.observedAt.toISOString()}. Severity proxy: ${String(d.value)} ${d.unit}.`,
   },
+  environmental_violation: {
+    source: "risk_screening",
+    severity: "high",
+    kind: "environmental_violation",
+    buildTitle: (d) =>
+      `EPA enforcement against ${d.scopeSupplierName ?? "supplier"}`,
+    buildSummary: (d) =>
+      `Environmental enforcement case observed at ${d.observedAt.toISOString()}. Source: ${d.sourceUrl}`,
+  },
+  workplace_safety_incident: {
+    source: "risk_screening",
+    severity: "medium",
+    kind: "workplace_safety_incident",
+    buildTitle: (d) =>
+      `OSHA inspection of ${d.scopeSupplierName ?? "supplier"}`,
+    buildSummary: (d) =>
+      `Workplace-safety inspection observed at ${d.observedAt.toISOString()}. Source: ${d.sourceUrl}`,
+  },
 };
 
 interface FanoutCounts {

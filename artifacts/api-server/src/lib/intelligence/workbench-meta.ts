@@ -165,6 +165,46 @@ const WORKBENCH_META: Record<string, CollectorWorkbenchMeta> = {
       "Fusion: Commodity-trend pane",
     ],
   },
+  "epa-echo": {
+    flagEmoji: "🇺🇸",
+    tosUrl: "https://echo.epa.gov/help/web-services-faq",
+    licenseNote:
+      "U.S. EPA ECHO Web Services. Public-domain federal data; attribution requested.",
+    logoUrl: "https://echo.epa.gov/themes/custom/echo/logo.png",
+    piiClassification: "none",
+    killCriteria:
+      "Persistent 5xx for >24h, Case Search schema drift, or EPA ECHO ToS revocation.",
+    outputSignalTypes: ["environmental_violation"],
+    scopeKinds: ["supplier", "lane"],
+    cadenceLabel: "Daily (per watched US supplier, capped per tick)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_supplier_risk_timeline"],
+    downstreamConsumers: [
+      "Supplier 360: Risk & Filings tab",
+      "Alerts inbox (environmental_violation kind)",
+      "Fusion: Supplier-risk pane",
+    ],
+  },
+  "osha-inspections": {
+    flagEmoji: "🇺🇸",
+    tosUrl: "https://www.osha.gov/laws-regs/regulations/standardnumber",
+    licenseNote:
+      "U.S. DOL OSHA Establishment Search. Public-domain federal data; no attribution required.",
+    logoUrl: "https://www.osha.gov/themes/custom/osha_eta/logo.svg",
+    piiClassification: "low",
+    killCriteria:
+      "Persistent 5xx for >24h, OSHA Establishment Search schema drift, or DOL ToS revocation.",
+    outputSignalTypes: ["workplace_safety_incident"],
+    scopeKinds: ["supplier", "lane"],
+    cadenceLabel: "Daily (per watched US supplier, capped per tick)",
+    downstreamBqTables: COMMON_BQ_TABLES,
+    downstreamMarts: ["mart_supplier_risk_timeline"],
+    downstreamConsumers: [
+      "Supplier 360: Risk & Filings tab",
+      "Alerts inbox (workplace_safety_incident kind)",
+      "Fusion: Supplier-risk pane",
+    ],
+  },
   "published-commodity-index": {
     flagEmoji: "🌐",
     tosUrl: "https://www.lme.com/en/about/legal/terms-and-conditions",
