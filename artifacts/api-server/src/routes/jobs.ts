@@ -6,7 +6,7 @@ import {
   type JobKind,
   type JobStatus,
 } from "@workspace/db";
-import { and, desc, eq, gte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or, sql, type SQL } from "drizzle-orm";
 import { tenantMiddleware, requireOrgId } from "../lib/tenant";
 import { requirePermission } from "../lib/rbac";
 import {
@@ -329,7 +329,10 @@ router.get("/jobs/recently-failed", tenantMiddleware, async (req, res) => {
     .from(jobsTable)
     .where(
       and(
-        eq(jobsTable.orgId, orgId),
+        // System-scoped rows (org_id IS NULL) are visible to every
+        // tenant — these are cleanup / pruner kinds that any admin
+        // might be the one to notice has died. See #309.
+        or(eq(jobsTable.orgId, orgId), isNull(jobsTable.orgId)) as SQL,
         eq(jobsTable.status, "failed"),
         gte(jobsTable.completedAt, cutoff),
       ),
