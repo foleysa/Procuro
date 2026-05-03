@@ -86,6 +86,96 @@ describe("OEWS_SERIES registry shape", () => {
     assert.ok(types.has("S") || types.has("M"));
   });
 
+  it("covers the major US states required for regional rate-card comparison", () => {
+    // Top-10-by-GDP coverage: a regression here means a state was
+    // dropped from the registry or had its FIPS code mistyped.
+    const requiredStates: ReadonlyArray<{ code: string; areaCode: string }> = [
+      { code: "US-CA", areaCode: "0600000" },
+      { code: "US-TX", areaCode: "4800000" },
+      { code: "US-NY", areaCode: "3600000" },
+      { code: "US-FL", areaCode: "1200000" },
+      { code: "US-IL", areaCode: "1700000" },
+      { code: "US-PA", areaCode: "4200000" },
+      { code: "US-WA", areaCode: "5300000" },
+      { code: "US-GA", areaCode: "1300000" },
+      { code: "US-MA", areaCode: "2500000" },
+      { code: "US-VA", areaCode: "5100000" },
+    ];
+    const byCode = new Map(OEWS_REGIONS.map((r) => [r.regionCode, r]));
+    for (const want of requiredStates) {
+      const region = byCode.get(want.code);
+      assert.ok(region, `OEWS_REGIONS missing state ${want.code}`);
+      assert.equal(region!.areaType, "S", `${want.code} should be areaType S`);
+      assert.equal(
+        region!.areaCode,
+        want.areaCode,
+        `${want.code} has wrong area code`,
+      );
+    }
+  });
+
+  it("covers the top US metros required for procurement benchmarking", () => {
+    // Top metros by services-spend density. Each MSA area code is
+    // `00MMMMM` (2 leading zeros + 5-digit CBSA per BLS OEWS).
+    const requiredMetros: ReadonlyArray<{ code: string; areaCode: string }> = [
+      { code: "US-MSA-35620", areaCode: "0035620" }, // New York
+      { code: "US-MSA-31080", areaCode: "0031080" }, // Los Angeles
+      { code: "US-MSA-16980", areaCode: "0016980" }, // Chicago
+      { code: "US-MSA-19100", areaCode: "0019100" }, // DFW
+      { code: "US-MSA-26420", areaCode: "0026420" }, // Houston
+      { code: "US-MSA-47900", areaCode: "0047900" }, // DC
+      { code: "US-MSA-41860", areaCode: "0041860" }, // SF Bay
+      { code: "US-MSA-14460", areaCode: "0014460" }, // Boston
+      { code: "US-MSA-42660", areaCode: "0042660" }, // Seattle
+      { code: "US-MSA-12060", areaCode: "0012060" }, // Atlanta
+      { code: "US-MSA-33100", areaCode: "0033100" }, // Miami
+      { code: "US-MSA-12420", areaCode: "0012420" }, // Austin
+    ];
+    const byCode = new Map(OEWS_REGIONS.map((r) => [r.regionCode, r]));
+    for (const want of requiredMetros) {
+      const region = byCode.get(want.code);
+      assert.ok(region, `OEWS_REGIONS missing metro ${want.code}`);
+      assert.equal(region!.areaType, "M", `${want.code} should be areaType M`);
+      assert.equal(
+        region!.areaCode,
+        want.areaCode,
+        `${want.code} has wrong area code`,
+      );
+    }
+  });
+
+  it("emits per-region wage benchmarks for every services tower so dashboards can compare", () => {
+    // Pick three towers spanning legal, IT, and facilities to prove
+    // every tower expands across every region — not just lawyers.
+    const sampleTowers = ["PROF_LEGAL", "IT_APP_DEV", "FAC_JANITORIAL"];
+    for (const tower of sampleTowers) {
+      const regionsForTower = new Set(
+        OEWS_SERIES.filter((s) => s.scopeCategoryCode === tower).map(
+          (s) => s.regionCode,
+        ),
+      );
+      for (const region of OEWS_REGIONS) {
+        assert.ok(
+          regionsForTower.has(region.regionCode),
+          `tower ${tower} missing region ${region.regionCode}`,
+        );
+      }
+    }
+  });
+
+  it("uses unique area codes across the region registry", () => {
+    // Two regions sharing an area code would silently collapse onto
+    // the same upstream BLS series — catch typos in the FIPS/CBSA list.
+    const seen = new Set<string>();
+    for (const region of OEWS_REGIONS) {
+      assert.ok(
+        !seen.has(region.areaCode),
+        `duplicate area code: ${region.areaCode} (${region.regionCode})`,
+      );
+      seen.add(region.areaCode);
+    }
+  });
+
   it("pins every entry to a canonical category code", () => {
     const canonical = new Set<string>(
       CANONICAL_CATEGORY_CODES as readonly string[],

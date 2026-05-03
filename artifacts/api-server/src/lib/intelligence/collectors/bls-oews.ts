@@ -110,7 +110,17 @@ export function buildOewsSeriesId(opts: {
   return `OEU${opts.areaType}${opts.areaCode}${opts.industryCode}${opts.occupationCode}${opts.datatype}`;
 }
 
-/** Curated OEWS regions: US national + CA state + NYC MSA. */
+/**
+ * Curated OEWS regions: US national + the 10 largest states by GDP +
+ * the top metros for services-band procurement comparisons. State area
+ * codes are `SS00000` (2-digit FIPS + 5 zeros). MSA area codes are
+ * `00MMMMM` (2 leading zeros + 5-digit CBSA code per the BLS OEWS area
+ * code reference at https://www.bls.gov/oes/current/oessrcma.htm).
+ *
+ * Cardinality: 23 regions × 11 occupations × 7 datatypes = 1,771 series.
+ * At 50 series/request (authenticated tier) that's 36 chunks per
+ * collector run, well within the 500/day OEWS quota.
+ */
 export const OEWS_REGIONS: readonly OewsRegion[] = [
   {
     regionCode: "US-NATIONAL",
@@ -118,6 +128,7 @@ export const OEWS_REGIONS: readonly OewsRegion[] = [
     areaCode: "0000000",
     label: "United States (national)",
   },
+  // Top 10 US states by GDP — covers the bulk of services spend.
   {
     regionCode: "US-CA",
     areaType: "S",
@@ -125,10 +136,131 @@ export const OEWS_REGIONS: readonly OewsRegion[] = [
     label: "California (state)",
   },
   {
+    regionCode: "US-TX",
+    areaType: "S",
+    areaCode: "4800000",
+    label: "Texas (state)",
+  },
+  {
+    regionCode: "US-NY",
+    areaType: "S",
+    areaCode: "3600000",
+    label: "New York (state)",
+  },
+  {
+    regionCode: "US-FL",
+    areaType: "S",
+    areaCode: "1200000",
+    label: "Florida (state)",
+  },
+  {
+    regionCode: "US-IL",
+    areaType: "S",
+    areaCode: "1700000",
+    label: "Illinois (state)",
+  },
+  {
+    regionCode: "US-PA",
+    areaType: "S",
+    areaCode: "4200000",
+    label: "Pennsylvania (state)",
+  },
+  {
+    regionCode: "US-WA",
+    areaType: "S",
+    areaCode: "5300000",
+    label: "Washington (state)",
+  },
+  {
+    regionCode: "US-GA",
+    areaType: "S",
+    areaCode: "1300000",
+    label: "Georgia (state)",
+  },
+  {
+    regionCode: "US-MA",
+    areaType: "S",
+    areaCode: "2500000",
+    label: "Massachusetts (state)",
+  },
+  {
+    regionCode: "US-VA",
+    areaType: "S",
+    areaCode: "5100000",
+    label: "Virginia (state)",
+  },
+  // Top metros for rate-card benchmarking. CBSA codes per BLS OEWS.
+  {
     regionCode: "US-MSA-35620",
     areaType: "M",
     areaCode: "0035620",
     label: "New York-Newark-Jersey City MSA",
+  },
+  {
+    regionCode: "US-MSA-31080",
+    areaType: "M",
+    areaCode: "0031080",
+    label: "Los Angeles-Long Beach-Anaheim MSA",
+  },
+  {
+    regionCode: "US-MSA-16980",
+    areaType: "M",
+    areaCode: "0016980",
+    label: "Chicago-Naperville-Elgin MSA",
+  },
+  {
+    regionCode: "US-MSA-19100",
+    areaType: "M",
+    areaCode: "0019100",
+    label: "Dallas-Fort Worth-Arlington MSA",
+  },
+  {
+    regionCode: "US-MSA-26420",
+    areaType: "M",
+    areaCode: "0026420",
+    label: "Houston-The Woodlands-Sugar Land MSA",
+  },
+  {
+    regionCode: "US-MSA-47900",
+    areaType: "M",
+    areaCode: "0047900",
+    label: "Washington-Arlington-Alexandria MSA",
+  },
+  {
+    regionCode: "US-MSA-41860",
+    areaType: "M",
+    areaCode: "0041860",
+    label: "San Francisco-Oakland-Berkeley MSA",
+  },
+  {
+    regionCode: "US-MSA-14460",
+    areaType: "M",
+    areaCode: "0014460",
+    label: "Boston-Cambridge-Newton MSA",
+  },
+  {
+    regionCode: "US-MSA-42660",
+    areaType: "M",
+    areaCode: "0042660",
+    label: "Seattle-Tacoma-Bellevue MSA",
+  },
+  {
+    regionCode: "US-MSA-12060",
+    areaType: "M",
+    areaCode: "0012060",
+    label: "Atlanta-Sandy Springs-Alpharetta MSA",
+  },
+  {
+    regionCode: "US-MSA-33100",
+    areaType: "M",
+    areaCode: "0033100",
+    label: "Miami-Fort Lauderdale-Pompano Beach MSA",
+  },
+  {
+    regionCode: "US-MSA-12420",
+    areaType: "M",
+    areaCode: "0012420",
+    label: "Austin-Round Rock-Georgetown MSA",
   },
 ];
 
