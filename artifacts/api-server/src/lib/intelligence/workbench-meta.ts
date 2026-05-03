@@ -287,19 +287,22 @@ const WORKBENCH_META: Record<string, CollectorWorkbenchMeta> = {
   },
   "published-commodity-index": {
     flagEmoji: "🌐",
-    tosUrl: "https://www.lme.com/en/about/legal/terms-and-conditions",
+    tosUrl: "https://www.alphavantage.co/terms_of_service/",
     licenseNote:
-      "Synthetic stand-in for published exchange indices used in dev environments.",
-    logoUrl: "https://www.lme.com/static/img/lme-logo.svg",
+      "Live commodity prices from Alpha Vantage public API (Brent crude daily, copper monthly). Requires ALPHA_VANTAGE_API_KEY.",
+    logoUrl: "https://www.alphavantage.co/static/img/favicon.ico",
     piiClassification: "none",
     killCriteria:
-      "Synthetic feed: kill only if dev environment is leaking values to production tenants.",
+      "Kill if Alpha Vantage API key is revoked, rate limits are persistently exceeded, or data quality degrades.",
     outputSignalTypes: ["commodity_index"],
     scopeKinds: ["material"],
-    cadenceLabel: "On-demand (dev / smoke runs)",
+    cadenceLabel: "Every 6 hours (cron 0 */6 * * *)",
     downstreamBqTables: COMMON_BQ_TABLES,
     downstreamMarts: ["mart_commodity_index_trend"],
-    downstreamConsumers: ["spot_vs_contract lever (smoke / dev only)"],
+    downstreamConsumers: [
+      "material_index_arbitrage lever",
+      "spot_vs_contract lever",
+    ],
   },
 };
 
