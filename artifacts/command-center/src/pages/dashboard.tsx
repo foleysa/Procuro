@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Link, useLocation } from "wouter";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   useGetMe,
   useGetSpendOverview,
@@ -48,11 +48,8 @@ import {
   TrendingUp,
   Activity,
   Server,
-  Radar,
-  Timer,
-  Target,
-  Zap,
 } from "lucide-react";
+import { SystemHealthStrip } from "@/components/dashboard/SystemHealthStrip";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { DataReadinessCard } from "@/components/data-readiness-card";
@@ -79,7 +76,20 @@ export default function Dashboard() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const search = useSearch();
   const { data: me } = useGetMe();
+
+  // System Health drawer state — lifted here so the
+  // "Open Engine Telemetry" CTA (from the engine-stalled alert URL) can
+  // auto-open it by passing ?health=open from the alerts page.
+  const [healthDrawerOpen, setHealthDrawerOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(search).get("health") === "open") {
+      setHealthDrawerOpen(true);
+      const el = document.getElementById("system-health-strip");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [search]);
   const { isOrgAdmin } = useMyRole();
   // #269: the unified landing page composes the Today triage cards
   // and the funnel "what changed" deltas alongside the original KPI
@@ -292,6 +302,17 @@ export default function Dashboard() {
     (s) => new Date(s.observedAt).getTime() > last24h,
   );
   const lastSignal = signals[0];
+
+  // Trailing 7-day average (signals per day) used by the health strip
+  // to evaluate the 50% threshold. We count all signals in the last 7
+  // days and divide by 7; using the fetched page is good enough because
+  // the dataset is small on most tenants and the strip only needs a
+  // directional threshold, not a precision count.
+  const last7d = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const signals7dCount = signals.filter(
+    (s) => new Date(s.observedAt).getTime() > last7d,
+  ).length;
+  const signals7dayAvg = signals7dCount / 7;
 
   const highConfProposed = proposedItems.filter((o) => o.confidence >= 0.7);
   const staleProposed = proposedItems.filter((o) => {
@@ -749,138 +770,13 @@ export default function Dashboard() {
           doa-summary endpoint so counts are never pagination-limited. */}
       <DOAApprovalQueue />
 
-      {/* Supporting KPI strip — engine-quality metrics. Placed below
-          all Tier 2 components so the strategic S2P tier sequence
-          (Tier 1 → 2a → 2b → 2c → 2d) reads uninterrupted. */}
-      <div
-        className="grid grid-cols-2 md:grid-cols-4 gap-3"
-        data-testid="dashboard-kpi-supporting"
-      >
-        <SmallKpi
-          label="Cycle p50"
-          value={cycleP50Hours === null ? "—" : `${cycleP50Hours.toFixed(1)}h`}
-          progress={
-            cycleP50Hours === null
-              ? null
-              : Math.min(1, CYCLE_TARGET_HOURS / Math.max(0.01, cycleP50Hours))
-          }
-          targetText={`target ≤${CYCLE_TARGET_HOURS}h`}
-          icon={Timer}
-          href="/system"
-          testId="kpi-cycle-p50"
-        />
-        <SmallKpi
-          label="Recommendation precision"
-          value={precisionRate === null ? "—" : formatPercent(precisionRate)}
-          progress={precisionRate}
-          targetText={
-            precisionRate === null
-              ? "needs decided opps"
-              : `${buckets.realized.count} realized of ${decidedCount} decided`
-          }
-          icon={Zap}
-          href="/results"
-          testId="kpi-precision"
-        />
-        <SmallKpi
-          label="Signals · 24h"
-          value={recentSignals24h.length.toLocaleString()}
-          progress={null}
-          targetText={
-            signals24to48h.length === 0
-              ? lastSignal
-                ? `last ${timeAgo(lastSignal.observedAt)}`
-                : "no signals yet"
-              : `vs ${signals24to48h.length} prior 24h`
-          }
-          dir={signals24to48h.length > 0 ? signalsDir : undefined}
-          icon={Radar}
-          href="/fusion"
-          testId="kpi-signals"
-        />
-        <SmallKpi
-          label="Collector coverage"
-          value={
-            collectors.length === 0
-              ? "—"
-              : `${enabledCollectors.length}/${collectors.length}`
-          }
-          progress={
-            collectors.length === 0
-              ? null
-              : enabledCollectors.length / collectors.length
-          }
-          targetText={
-            staleCollectors.length > 0
-              ? `${staleCollectors.length} stale`
-              : "all fresh"
-          }
-          icon={Radar}
-          href="/collectors"
-          testId="kpi-coverage"
-          tone={staleCollectors.length > 0 ? "warn" : undefined}
-        />
-      </div>
-
-      {/* Row 5 — Telemetry + Cycle delta + Top lever. The bottom
-          monitor row: data pulse on the left, what shifted between
-          cycles in the middle, and the play paying off most on the
-          right. */}
+      {/* Row 5 — Cycle delta + Top lever. Data Pulse is now inside the
+          System Health drawer at the bottom of the page. */}
       <div
         className="grid grid-cols-1 lg:grid-cols-12 gap-4"
         data-testid="dashboard-telemetry-band"
       >
-        <Card className="lg:col-span-5">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Activity className="w-4 h-4 text-emerald-500" />
-              Data pulse
-            </CardTitle>
-            <CardDescription>
-              Engine intake — collectors, signals, and active jobs.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3">
-            <Telemetry
-              label="Collectors"
-              value={`${enabledCollectors.length}/${collectors.length}`}
-              sub={
-                staleCollectors.length > 0
-                  ? `${staleCollectors.length} stale`
-                  : "all fresh"
-              }
-              tone={staleCollectors.length > 0 ? "warn" : "ok"}
-              href="/collectors"
-            />
-            <Telemetry
-              label="Signals · 24h"
-              value={recentSignals24h.length.toLocaleString()}
-              sub={
-                signals24to48h.length === 0
-                  ? "first window"
-                  : `vs ${signals24to48h.length} prior`
-              }
-              tone="ok"
-              href="/fusion"
-            />
-            <Telemetry
-              label="Jobs in flight"
-              value={String(runningJobs.length + pendingJobs.length)}
-              sub={`${runningJobs.length} run · ${pendingJobs.length} queued`}
-              tone={pendingJobs.length + runningJobs.length > 0 ? "info" : "ok"}
-              href="/system"
-            />
-            <Telemetry
-              label="Addressable spend"
-              value={formatUsd(spendQ.data?.totalSpendUsd ?? 0, { compact: true })}
-              sub={`${spendQ.data?.concentration.activeSupplierCount ?? 0} suppliers`}
-              tone="ok"
-              href="/spend"
-            />
-          </CardContent>
-        </Card>
-
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-8">
           {todayFeedQ.data ? (
             <TodayDeltasCard data={todayFeedQ.data} isAdmin={isOrgAdmin} />
           ) : (
@@ -912,7 +808,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <Card className="lg:col-span-3" data-testid="dashboard-top-lever">
+        <Card className="lg:col-span-4" data-testid="dashboard-top-lever">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <TrendingUp className="w-4 h-4 text-emerald-500" />
@@ -1171,6 +1067,35 @@ export default function Dashboard() {
           />
         </div>
       </details>
+
+      {/* System Health strip — pinned to bottom of dashboard (#286).
+          Demotes the diagnostic telemetry tiles (Cycle P50, Precision,
+          Signals 24h, Collector Coverage, Data Pulse) into a compact
+          status bar that is collapsed by default. Status is evaluated
+          in real-time from existing telemetry. When the engine is
+          stalled (🔴 Red) the strip automatically fires and deduplicates
+          an Engine Stalled high-severity alert so Critical Alerts > 0. */}
+      <SystemHealthStrip
+        signals24h={recentSignals24h.length}
+        signals7dayAvg={signals7dayAvg}
+        failedJobs={failedJobs24h.length}
+        pendingJobs={pendingJobs.length}
+        runningJobs={runningJobs.length}
+        staleCollectors={staleCollectors.length}
+        cycleP50Hours={cycleP50Hours}
+        precisionRate={precisionRate}
+        decidedCount={decidedCount}
+        realizedCount={buckets.realized.count}
+        signalsDir={signals24to48h.length > 0 ? signalsDir : undefined}
+        signals24to48hCount={signals24to48h.length}
+        lastSignalAt={lastSignal?.observedAt}
+        enabledCollectorCount={enabledCollectors.length}
+        collectorTotal={collectors.length}
+        spendTotalUsd={spendQ.data?.totalSpendUsd ?? 0}
+        supplierCount={spendQ.data?.concentration.activeSupplierCount ?? 0}
+        isOpen={healthDrawerOpen}
+        onToggle={() => setHealthDrawerOpen((v) => !v)}
+      />
     </div>
   );
 }

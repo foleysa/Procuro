@@ -54,6 +54,7 @@ import {
   Send,
   Siren,
   X,
+  Activity,
 } from "lucide-react";
 
 const POLL_MS = 15_000;
@@ -489,6 +490,24 @@ function AlertRow({
         </button>
       </div>
       <div className="flex items-center gap-1 shrink-0">
+        {/* "Open Engine Telemetry" one-click CTA for the Engine Stalled
+            alert rule (#286). The payload carries ctaUrl/ctaLabel so
+            future alert rules can also get deep-link CTAs without code
+            changes. */}
+        {alert.kind === "engine_stalled" && (
+          <Link
+            href={
+              typeof (alert.payload as Record<string, unknown> | null)?.["ctaUrl"] === "string"
+                ? (alert.payload as Record<string, string>)["ctaUrl"]
+                : "/?health=open"
+            }
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 rounded px-2 py-1 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            data-testid={`btn-open-engine-telemetry-${alert.id}`}
+          >
+            <Activity className="w-3 h-3" />
+            Open Engine Telemetry
+          </Link>
+        )}
         {isOpen && (
           <>
             <Button
