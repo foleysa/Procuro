@@ -55,6 +55,7 @@ import {
   type OutcomeStats,
 } from "../src/lib/ooda/priors";
 import { ALL_LEVERS } from "../src/lib/levers";
+import { bootstrapCategoryLeverMappings } from "../src/lib/intelligence/routing";
 
 const RUN = `t198-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 
@@ -156,6 +157,14 @@ function fmtSamples(sorted: number[]): string {
 
 describe("OODA cycle perf budget", () => {
   before(async () => {
+    // The end-to-end runAnalysisCycle iteration goes through the
+    // routing fallback path, which queries the
+    // `v_category_lever_mappings` materialized view. In production
+    // this view is created at server boot via bootstrapCategoryLeverMappings;
+    // in tests we have to do it explicitly so the e2e perf iteration
+    // can run instead of crashing with `relation does not exist`.
+    await bootstrapCategoryLeverMappings();
+
     orgId = newId("org");
     await db.insert(orgsTable).values({
       id: orgId,

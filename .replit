@@ -11,6 +11,41 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-api-server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "perf-budget"
+
+[[workflows.workflow]]
+name = "test-api-server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "perf-budget"
+author = "agent"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-server exec node --experimental-test-module-mocks --import tsx --test test/funnel-perf-budget.test.ts test/cycle-perf-budget.test.ts"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
