@@ -76,6 +76,7 @@ import {
 } from "lucide-react";
 import { DefensePackPane } from "@/components/defense-pack-pane";
 import { BlsTrendChart } from "@/components/bls-trend-chart";
+import { CriticalMineralsTrendChart } from "@/components/critical-minerals-trend-chart";
 
 const POLL_MS = 60_000;
 // War room polls more aggressively than the rest of the fusion center
@@ -777,6 +778,14 @@ function EntityPane({
               kind={data.kind}
               details={data.details}
               onOpenEntity={onChange}
+            />
+          )}
+
+          {(data.kind === "material" || data.kind === "category") && id && (
+            <CriticalMineralsTrendChart
+              title={`Critical-mineral price trends — ${data.label}`}
+              description={`Annual USGS DS-140 unit-value series for the curated critical-mineral list. Use these alongside the BLS trend below to spot whether a category-level cost move on ${data.label} is being driven by an underlying mineral.`}
+              emptyStateHint="Run the USGS Mineral Resources collector from the Collector Workbench to seed annual unit-value observations."
             />
           )}
 

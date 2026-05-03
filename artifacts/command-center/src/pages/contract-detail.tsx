@@ -64,6 +64,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatUsd, formatDate, formatDateTime, leverLabel } from "@/lib/format";
 import { FxTrendChart } from "@/components/fx-trend-chart";
 import { BlsTrendChart } from "@/components/bls-trend-chart";
+import { CriticalMineralsTrendChart } from "@/components/critical-minerals-trend-chart";
 import { InsightCitations } from "@/components/insight-citations";
 import { usePolicy } from "@/lib/use-policy";
 import { DerivedStatusBadge } from "./contracts";
@@ -405,6 +406,12 @@ export default function ContractDetail() {
           emptyStateHint="Run the BLS Economic Index collector from the Collector Workbench to seed the CPI sub-series."
         />
       )}
+
+      <CriticalMineralsTrendChart
+        title="Critical-mineral price trends (USGS)"
+        description="Annual USGS DS-140 unit-value series for the critical minerals most likely to drive cost on this contract (lithium, cobalt, nickel, copper, aluminum, rare earths, graphite). Use the trend to anchor cost-driver discussions and benchmark supplier price-increase asks against the underlying mineral move."
+        emptyStateHint="Run the USGS Mineral Resources collector from the Collector Workbench to seed annual unit-value observations for this contract's critical-mineral exposure."
+      />
 
       {otherSignals.length > 0 && (
         <Card>
