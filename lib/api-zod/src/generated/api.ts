@@ -1359,6 +1359,35 @@ export const GetSupplierIntelligenceResponse = zod.object({
     .describe(
       "Map from `SupplierIntelligenceSignalType` to the number of\nitems in this response with that type. Empty when no signals\nmatched.\n",
     ),
+  federalSpend: zod
+    .object({
+      windowDays: zod
+        .number()
+        .describe(
+          "Trailing time window (in days) the roll-up was computed over.\nAlways 365 today; surfaced explicitly so the FE label can stay\nin lockstep with any future tweak.\n",
+        ),
+      totalObligatedUsd: zod
+        .number()
+        .describe(
+          "Sum of `value` (USD obligation) across every\n`public_bid_award` MarketSignal authored by the `usaspending`\ncollector that matches this supplier (resolved entity_uid OR\nscope_supplier_name) and was observed within `windowDays`.\nZero when the supplier has no USAspending matches in window.\n",
+        ),
+      awardCount: zod
+        .number()
+        .describe("Count of matching federal-award signals in the window."),
+      topAwardingAgency: zod
+        .string()
+        .nullable()
+        .describe(
+          "Name of the federal agency with the largest obligated total\nacross the matching awards. Null when `awardCount` is zero or\nno row carried an `awardingAgency` in metadata.\n",
+        ),
+      topAwardingAgencyObligatedUsd: zod
+        .number()
+        .nullable()
+        .describe(
+          "Obligated USD attributed to `topAwardingAgency` within the\nwindow. Null when `topAwardingAgency` is null.\n",
+        ),
+    })
+    .optional(),
   totalCount: zod
     .number()
     .describe("Total number of items returned (`items.length`)."),

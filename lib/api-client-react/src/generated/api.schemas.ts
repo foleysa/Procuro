@@ -703,6 +703,32 @@ server-side). Example: `EUR`.
   billingCurrency: string;
 }
 
+export interface SupplierFederalSpendRollup {
+  /** Trailing time window (in days) the roll-up was computed over.
+Always 365 today; surfaced explicitly so the FE label can stay
+in lockstep with any future tweak.
+ */
+  windowDays: number;
+  /** Sum of `value` (USD obligation) across every
+`public_bid_award` MarketSignal authored by the `usaspending`
+collector that matches this supplier (resolved entity_uid OR
+scope_supplier_name) and was observed within `windowDays`.
+Zero when the supplier has no USAspending matches in window.
+ */
+  totalObligatedUsd: number;
+  /** Count of matching federal-award signals in the window. */
+  awardCount: number;
+  /** Name of the federal agency with the largest obligated total
+across the matching awards. Null when `awardCount` is zero or
+no row carried an `awardingAgency` in metadata.
+ */
+  topAwardingAgency: string | null;
+  /** Obligated USD attributed to `topAwardingAgency` within the
+window. Null when `topAwardingAgency` is null.
+ */
+  topAwardingAgencyObligatedUsd: number | null;
+}
+
 export interface BillingCurrencyOverrideResponse {
   id: string;
   billingCurrency: string;
@@ -755,6 +781,7 @@ items in this response with that type. Empty when no signals
 matched.
  */
   countsByType?: SupplierIntelligenceResponseCountsByType;
+  federalSpend?: SupplierFederalSpendRollup;
   /** Total number of items returned (`items.length`). */
   totalCount: number;
   items: SupplierIntelligenceSignal[];

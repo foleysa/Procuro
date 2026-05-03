@@ -457,6 +457,7 @@ export * from "./submitDefensePackFeedbackRequest";
 export * from "./supplier";
 export * from "./supplierAuditEntry";
 export * from "./supplierDetail";
+export * from "./supplierFederalSpendRollup";
 export * from "./supplierIntelligenceMatchKind";
 export * from "./supplierIntelligenceResponse";
 export * from "./supplierIntelligenceResponseCountsByType";

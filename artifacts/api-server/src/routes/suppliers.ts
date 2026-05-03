@@ -949,12 +949,85 @@ router.get(
         )!
       : nameMatch;
 
-    const rows = await db
-      .select()
-      .from(marketSignalsTable)
-      .where(and(orgScope, typeFilter, matchPredicate))
-      .orderBy(desc(marketSignalsTable.observedAt))
-      .limit(SUPPLIER_INTELLIGENCE_ROW_CAP);
+    // Federal-spend roll-up (trailing 12 months). Computed against the
+    // same org/name/uid match predicate as the timeline so the totals
+    // can never disagree with the rows the operator sees, but scoped to
+    // the USAspending collector's `public_bid_award` rows only and run
+    // as an aggregate so it's not bounded by the 100-row timeline cap.
+    // We surface the obligation total, the count of awards in the
+    // window, and the agency that received the largest share so the
+    // header can render "$X to <agency> across N awards" at a glance.
+    const federalMatchPredicate = resolvedEntityUid
+      ? or(
+          sql`${marketSignalsTable.metadata}->>'entityUid' = ${resolvedEntityUid}`,
+          nameMatch,
+        )!
+      : nameMatch;
+
+    const [rows, federalRollupRes] = await Promise.all([
+      db
+        .select()
+        .from(marketSignalsTable)
+        .where(and(orgScope, typeFilter, matchPredicate))
+        .orderBy(desc(marketSignalsTable.observedAt))
+        .limit(SUPPLIER_INTELLIGENCE_ROW_CAP),
+      db.execute(sql`
+        WITH matched AS (
+          SELECT
+            ${marketSignalsTable.value}::numeric AS amount,
+            ${marketSignalsTable.metadata}->>'awardingAgency' AS awarding_agency
+          FROM ${marketSignalsTable}
+          WHERE (${marketSignalsTable.orgId} = ${orgId}
+                 OR ${marketSignalsTable.orgId} IS NULL)
+            AND ${marketSignalsTable.collectorId} = 'usaspending'
+            AND ${marketSignalsTable.signalType} = 'public_bid_award'
+            AND ${marketSignalsTable.observedAt} >= NOW() - INTERVAL '365 days'
+            AND ${federalMatchPredicate}
+        ),
+        totals AS (
+          SELECT
+            COALESCE(SUM(amount), 0)::numeric AS total_obligated,
+            COUNT(*)::int AS award_count
+          FROM matched
+        ),
+        top_agency AS (
+          SELECT awarding_agency, COALESCE(SUM(amount), 0)::numeric AS agency_total
+          FROM matched
+          WHERE awarding_agency IS NOT NULL
+          GROUP BY awarding_agency
+          ORDER BY agency_total DESC
+          LIMIT 1
+        )
+        SELECT
+          totals.total_obligated,
+          totals.award_count,
+          top_agency.awarding_agency AS top_awarding_agency,
+          top_agency.agency_total AS top_awarding_agency_obligated
+        FROM totals
+        LEFT JOIN top_agency ON true
+      `),
+    ]);
+
+    const federalRow = federalRollupRes.rows[0] as
+      | {
+          total_obligated: string | number | null;
+          award_count: number | string | null;
+          top_awarding_agency: string | null;
+          top_awarding_agency_obligated: string | number | null;
+        }
+      | undefined;
+    const federalAwardCount = Number(federalRow?.award_count ?? 0);
+    const federalSpend = {
+      windowDays: 365,
+      totalObligatedUsd: Number(federalRow?.total_obligated ?? 0),
+      awardCount: federalAwardCount,
+      topAwardingAgency:
+        federalAwardCount > 0 ? federalRow?.top_awarding_agency ?? null : null,
+      topAwardingAgencyObligatedUsd:
+        federalAwardCount > 0 && federalRow?.top_awarding_agency
+          ? Number(federalRow.top_awarding_agency_obligated ?? 0)
+          : null,
+    };
 
     const items = rows
       .map((r) => buildSupplierIntelligenceItem(r, resolvedEntityUid))
@@ -985,6 +1058,7 @@ router.get(
       resolvedEntityUid,
       resolvedMatchType,
       countsByType,
+      federalSpend,
       totalCount: items.length,
       items,
     });

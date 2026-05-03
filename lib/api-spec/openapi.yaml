@@ -6104,6 +6104,58 @@ components:
             server-side). Example: `EUR`.
 
             '
+    SupplierFederalSpendRollup:
+      type: object
+      required:
+      - windowDays
+      - totalObligatedUsd
+      - awardCount
+      - topAwardingAgency
+      - topAwardingAgencyObligatedUsd
+      properties:
+        windowDays:
+          type: integer
+          description: 'Trailing time window (in days) the roll-up was computed over.
+
+            Always 365 today; surfaced explicitly so the FE label can stay
+
+            in lockstep with any future tweak.
+
+            '
+        totalObligatedUsd:
+          type: number
+          description: 'Sum of `value` (USD obligation) across every
+
+            `public_bid_award` MarketSignal authored by the `usaspending`
+
+            collector that matches this supplier (resolved entity_uid OR
+
+            scope_supplier_name) and was observed within `windowDays`.
+
+            Zero when the supplier has no USAspending matches in window.
+
+            '
+        awardCount:
+          type: integer
+          description: Count of matching federal-award signals in the window.
+        topAwardingAgency:
+          type: string
+          nullable: true
+          description: 'Name of the federal agency with the largest obligated total
+
+            across the matching awards. Null when `awardCount` is zero or
+
+            no row carried an `awardingAgency` in metadata.
+
+            '
+        topAwardingAgencyObligatedUsd:
+          type: number
+          nullable: true
+          description: 'Obligated USD attributed to `topAwardingAgency` within the
+
+            window. Null when `topAwardingAgency` is null.
+
+            '
     BillingCurrencyOverrideResponse:
       type: object
       required:
@@ -6187,6 +6239,8 @@ components:
             '
           additionalProperties:
             type: integer
+        federalSpend:
+          $ref: '#/components/schemas/SupplierFederalSpendRollup'
         totalCount:
           type: integer
           description: Total number of items returned (`items.length`).

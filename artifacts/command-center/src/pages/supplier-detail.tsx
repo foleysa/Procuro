@@ -42,6 +42,7 @@ import {
   ExternalLink,
   FileText,
   IdCard,
+  Landmark,
   Loader2,
   Plus,
   Radar,
@@ -264,7 +265,7 @@ export default function SupplierDetailPage() {
         Back to suppliers
       </Link>
 
-      <Header data={data} />
+      <Header data={data} intel={intel} />
 
       <Tabs value={tab} onValueChange={onTabChange}>
         <TabsList
@@ -375,7 +376,13 @@ export default function SupplierDetailPage() {
 // Header
 // ---------------------------------------------------------------------
 
-function Header({ data }: { data: SupplierDetail }) {
+function Header({
+  data,
+  intel,
+}: {
+  data: SupplierDetail;
+  intel: SupplierIntelligenceResponse | undefined;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap">
       <div className="flex items-start gap-3">
@@ -410,6 +417,7 @@ function Header({ data }: { data: SupplierDetail }) {
               </>
             ) : null}
           </p>
+          <FederalSpendChip federalSpend={intel?.federalSpend} />
         </div>
       </div>
       <Link
@@ -422,6 +430,75 @@ function Header({ data }: { data: SupplierDetail }) {
           <ExternalLink className="w-3 h-3 ml-2" />
         </Button>
       </Link>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Federal-spend header chip
+// ---------------------------------------------------------------------
+//
+// Renders the trailing-12mo USAspending.gov roll-up surfaced on the
+// `/suppliers/:id/intelligence` response so an operator can see "this
+// vendor sells $X to the federal government" without scrolling into
+// the Risk timeline. We only render once `intel` has loaded — when
+// `awardCount === 0` we still render (with an empty-state message) so
+// the absence of federal business is itself a positive data point for
+// procurement context. While `intel` is loading we render nothing to
+// avoid a flicker between empty-state and populated.
+function FederalSpendChip({
+  federalSpend,
+}: {
+  federalSpend: SupplierIntelligenceResponse["federalSpend"] | undefined;
+}) {
+  if (!federalSpend) return null;
+  const { totalObligatedUsd, awardCount, topAwardingAgency, windowDays } =
+    federalSpend;
+  const windowLabel =
+    windowDays === 365 ? "trailing 12mo" : `trailing ${windowDays}d`;
+
+  if (awardCount === 0) {
+    return (
+      <p
+        className="text-muted-foreground text-xs mt-2 flex items-center gap-1"
+        data-testid="text-federal-spend-empty"
+      >
+        <Landmark className="w-3 h-3" />
+        No federal awards on file ({windowLabel})
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="mt-2 flex items-center gap-2 flex-wrap text-sm"
+      data-testid="chip-federal-spend"
+    >
+      <Badge
+        variant="outline"
+        className="font-normal flex items-center gap-1"
+        data-testid="badge-federal-spend-total"
+      >
+        <Landmark className="w-3 h-3" />
+        <span className="font-semibold font-mono">
+          {formatUsd(totalObligatedUsd, { compact: true })}
+        </span>
+        <span className="text-muted-foreground">federal · {windowLabel}</span>
+      </Badge>
+      <span className="text-xs text-muted-foreground">
+        {awardCount} award{awardCount === 1 ? "" : "s"}
+        {topAwardingAgency ? (
+          <>
+            {" · top agency "}
+            <span
+              className="text-foreground"
+              data-testid="text-federal-spend-top-agency"
+            >
+              {topAwardingAgency}
+            </span>
+          </>
+        ) : null}
+      </span>
     </div>
   );
 }

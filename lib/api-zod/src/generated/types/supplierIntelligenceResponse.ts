@@ -13,6 +13,7 @@ must supply it. All list endpoints return only rows owned by that org.
  */
 import type { BillingCurrencyConfidence } from "./billingCurrencyConfidence";
 import type { BillingCurrencySource } from "./billingCurrencySource";
+import type { SupplierFederalSpendRollup } from "./supplierFederalSpendRollup";
 import type { SupplierIntelligenceResponseCountsByType } from "./supplierIntelligenceResponseCountsByType";
 import type { SupplierIntelligenceResponseResolvedMatchType } from "./supplierIntelligenceResponseResolvedMatchType";
 import type { SupplierIntelligenceSignal } from "./supplierIntelligenceSignal";
@@ -41,6 +42,7 @@ items in this response with that type. Empty when no signals
 matched.
  */
   countsByType?: SupplierIntelligenceResponseCountsByType;
+  federalSpend?: SupplierFederalSpendRollup;
   /** Total number of items returned (`items.length`). */
   totalCount: number;
   items: SupplierIntelligenceSignal[];
