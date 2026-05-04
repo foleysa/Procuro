@@ -301,7 +301,10 @@ export async function enqueueJob(args: {
   return row;
 }
 
-export async function claimNextJob(): Promise<JobRow | null> {
+export async function claimNextJob(
+  kindFilter?: Set<JobKind>,
+): Promise<JobRow | null> {
+  if (kindFilter && kindFilter.size === 0) return null;
   // Per-org head-of-line scheduling: select the oldest pending job from each
   // org (via ROW_NUMBER window function — compatible with FOR UPDATE SKIP
   // LOCKED, unlike DISTINCT ON), then among those candidates pick the org
@@ -323,6 +326,9 @@ export async function claimNextJob(): Promise<JobRow | null> {
   // Jobs whose `scheduled_for` is set in the future are in retry-backoff and
   // must be skipped until that time arrives. NULL means "ready immediately"
   // (the common case for fresh enqueues), so we coalesce to NOW().
+  const kindClause = kindFilter
+    ? sql`AND kind IN (${sql.join([...kindFilter].map((k) => sql`${k}`), sql`, `)})`
+    : sql``;
   const result = await db.execute(sql`
     WITH candidate AS MATERIALIZED (
       SELECT id
@@ -333,6 +339,7 @@ export async function claimNextJob(): Promise<JobRow | null> {
         FROM jobs
         WHERE status = 'pending'
           AND COALESCE(scheduled_for, NOW()) <= NOW()
+          ${kindClause}
       ) ranked
       WHERE rn = 1
       ORDER BY org_earliest ASC
@@ -547,12 +554,11 @@ let workerStarted = false;
 let workerHandle: ReturnType<typeof setInterval> | null = null;
 
 export async function processOnce(): Promise<boolean> {
-  const job = await claimNextJob();
+  const registeredKinds = new Set(handlers.keys());
+  const job = await claimNextJob(registeredKinds);
   if (!job) return false;
   const handler = handlers.get(job.kind);
   if (!handler) {
-    // Unknown kind is a permanent configuration error: retrying will not
-    // suddenly conjure a handler. Fail immediately, no retry.
     await failJob(
       job.id,
       new Error(`No handler registered for kind=${job.kind}`),
