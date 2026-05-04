@@ -1,0 +1,494 @@
+Visual Regression Tests (Playwright Snapshot Testing)
+What & Why
+Establish automated visual regression testing on every dashboard route using Playwright's built-in snapshot testing. On every pull request, Playwright captures screenshots of every dashboard view and compares them pixel-by-pixel against committed baselines. Any unintended visual change is surfaced as a failed test with a side-by-side diff image.
+This matters specifically for AI-generated UIs. Replit Agent — and any agentic coding tool — silently restyles components when fixing unrelated things. A button gets re-padded during a "quick CSS tidy-up." A typography token gets swapped because the agent thought a different one looked better. A chart's color palette shifts because the agent chose to use Tailwind's default green instead of the design system green. None of these break tests that check behavior. None of them break the build. They drift the UI away from intent, slowly, until the dashboard looks subtly wrong and no one can quite say why.
+Visual regression catches all of it. Tooling choice: Playwright snapshot testing (built in, free, no vendor lock-in) over Percy or Chromatic (paid SaaS, better triage UI but $200–$400/seat/month). At this stage, Playwright snapshots are the right call. Migration path to Percy/Chromatic is documented if the team later wants better triage workflow.
+Dependencies: #287 (test framework with Playwright installed), #290 (existing Playwright config patterns to mirror), #292 (route inventory in tests/a11y/routes.ts is reusable here).
+Done looks like
+Playwright snapshot tests run on every pull request, capturing screenshots of every dashboard route across two viewports (desktop, tablet) and comparing against committed baselines. The CI job:
+
+Logs in as the smoke test account.
+Visits every route in the visual regression inventory.
+Captures full-page screenshots in two viewports: 1440×900 (desktop) and 768×1024 (tablet).
+Compares each screenshot against the committed baseline in tests/visual/baselines/.
+Fails the build on any pixel diff exceeding the threshold (configurable per route, default 0.1%).
+Uploads diff images as CI artifacts when the test fails.
+
+A tests/visual/baselines/ directory holds committed baseline screenshots. When a PR intentionally changes the UI, the developer regenerates baselines with a documented command, commits the new baselines, and the reviewer sees the visual diff in the PR.
+A docs/visual-regression.md documents how to handle baseline updates, when to update thresholds, and how to add new routes.
+Out of scope
+
+Percy or Chromatic integration — separate ticket if the team later moves to managed visual regression.
+Mobile viewports beyond tablet (375×667 phone) — separate ticket; this one targets desktop and tablet.
+Cross-browser visual diffs (Firefox, WebKit) — separate ticket; Chromium only for now.
+Per-component snapshot testing in isolation (e.g., Storybook + Loki) — separate ticket; this targets full-page snapshots only.
+Animation testing — animations introduce inherent flakiness; this ticket pauses animations on snapshot.
+Dark mode testing — separate ticket if dark mode is added.
+Snapshot testing of email or PDF outputs — separate ticket.
+
+Steps for Replit
+Step 1 — Visual regression test inventory
+Reuse the route inventory from #292 with one change — visual regression has a simpler shape because authentication and data state matter for snapshot stability.
+Create tests/visual/routes.ts:
+typescriptexport type VisualRoute = {
+  path: string;
+  name: string;
+  authenticated: boolean;
+  viewports: ('desktop' | 'tablet')[];
+  // Per-route threshold tweaking. Default is 0.1% (very tight).
+  // Routes with charts or live data may need 0.5–1.0% to absorb sub-pixel anti-aliasing differences.
+  threshold?: number;
+  // Selectors to mask before snapshotting (timestamps, "X minutes ago", etc.)
+  maskSelectors?: string[];
+};
+
+export const VISUAL_ROUTES: VisualRoute[] = [
+  // Public routes
+  { path: '/',      name: 'home',  authenticated: false, viewports: ['desktop', 'tablet'] },
+  { path: '/login', name: 'login', authenticated: false, viewports: ['desktop', 'tablet'] },
+
+  // Authenticated dashboard routes
+  {
+    path: '/dashboard',
+    name: 'command-center',
+    authenticated: true,
+    viewports: ['desktop', 'tablet'],
+    threshold: 0.005,  // 0.5% — accommodates sub-pixel differences in chart rendering
+    maskSelectors: [
+      '[data-testid="last-refreshed-timestamp"]',
+      '[data-testid="time-ago-label"]',
+      '[data-testid="awaiting-sign-off-count"]',  // mask if data is volatile in the test env
+    ],
+  },
+  {
+    path: '/opportunities',
+    name: 'opp-list',
+    authenticated: true,
+    viewports: ['desktop', 'tablet'],
+    threshold: 0.003,
+    maskSelectors: [
+      '[data-testid="opp-row-timestamp"]',
+    ],
+  },
+  {
+    path: '/dashboard/levers',
+    name: 'lever-perf',
+    authenticated: true,
+    viewports: ['desktop', 'tablet'],
+    threshold: 0.005,
+  },
+  {
+    path: '/dashboard/queue',
+    name: 'sign-off-queue',
+    authenticated: true,
+    viewports: ['desktop', 'tablet'],
+  },
+
+  // Detail route — uses the seeded opp from a11y/E2E setup
+  {
+    path: '/opportunities/{OPP_ID}',
+    name: 'opp-detail',
+    authenticated: true,
+    viewports: ['desktop'],
+    maskSelectors: ['[data-testid="opp-detail-timestamp"]'],
+  },
+];
+
+export const VIEWPORT_SIZES = {
+  desktop: { width: 1440, height: 900 },
+  tablet:  { width: 768,  height: 1024 },
+} as const;
+Step 2 — Playwright config for visual tests
+Create playwright.visual.config.ts:
+typescriptimport { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/visual',
+  timeout: 60_000,
+  expect: {
+    timeout: 5_000,
+    toHaveScreenshot: {
+      // Default threshold; per-route overrides come from VISUAL_ROUTES.threshold
+      maxDiffPixelRatio: 0.001,
+      animations: 'disabled',
+      caret: 'hide',
+      scale: 'css',  // ensures consistent rendering regardless of devicePixelRatio
+    },
+  },
+  retries: 0,  // visual diffs should not be retried; flakiness here is a real issue
+  workers: 4,
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: 'playwright-visual-report' }],
+    ['json', { outputFile: 'visual-results.json' }],
+  ],
+  use: {
+    baseURL: process.env.VISUAL_BASE_URL ?? 'http://localhost:3000',
+    headless: true,
+    trace: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        // Override default viewport — we set viewport per test instead
+      },
+    },
+  ],
+  // Snapshot path template: tests/visual/baselines/<route-name>/<viewport>.png
+  snapshotPathTemplate: 'tests/visual/baselines/{arg}{ext}',
+});
+Step 3 — The visual regression tests
+Create tests/visual/snapshots.visual.test.ts:
+typescriptimport { test, expect, type Page } from '@playwright/test';
+import { VISUAL_ROUTES, VIEWPORT_SIZES } from './routes';
+
+async function login(page: Page) {
+  await page.goto('/login');
+  await page.getByLabel(/email/i).fill(process.env.SMOKE_TEST_EMAIL!);
+  await page.getByLabel(/password/i).fill(process.env.SMOKE_TEST_PASSWORD!);
+  await page.getByRole('button', { name: /sign in|log in/i }).click();
+  await page.waitForURL(/\/dashboard|\/$/, { timeout: 15_000 });
+}
+
+async function stabilizePage(page: Page) {
+  // Wait for fonts to load — without this, snapshots flicker on font swap
+  await page.evaluate(() => document.fonts.ready);
+
+  // Pause CSS animations and transitions globally
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+    `,
+  });
+
+  // Wait for any lazy-loaded images to settle
+  await page.waitForLoadState('networkidle');
+
+  // Allow one extra paint cycle for charts that render via requestAnimationFrame
+  await page.waitForTimeout(500);
+}
+
+for (const route of VISUAL_ROUTES) {
+  for (const viewportName of route.viewports) {
+    const viewport = VIEWPORT_SIZES[viewportName];
+
+    test(`visual: ${route.name} @ ${viewportName}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+
+      if (route.authenticated) {
+        await login(page);
+      }
+
+      const path = route.path.replace('{OPP_ID}', process.env.VISUAL_TEST_OPP_ID ?? '');
+      if (route.path.includes('{OPP_ID}') && !process.env.VISUAL_TEST_OPP_ID) {
+        test.skip(true, 'VISUAL_TEST_OPP_ID not set; skipping detail-route snapshot');
+      }
+
+      await page.goto(path);
+      await stabilizePage(page);
+
+      // Mask volatile selectors so they don't trigger pixel diffs
+      const masks = (route.maskSelectors ?? []).map((sel) => page.locator(sel));
+
+      await expect(page).toHaveScreenshot(`${route.name}-${viewportName}.png`, {
+        fullPage: true,
+        maxDiffPixelRatio: route.threshold ?? 0.001,
+        mask: masks,
+        animations: 'disabled',
+        caret: 'hide',
+      });
+    });
+  }
+}
+Step 4 — Baseline directory and gitignore
+Create the baseline directory structure:
+tests/visual/baselines/
+  command-center-desktop.png
+  command-center-tablet.png
+  opp-list-desktop.png
+  opp-list-tablet.png
+  ...
+Update .gitignore to ignore intermediate visual artifacts but commit baselines:
+# Visual regression — keep baselines tracked, ignore everything else
+tests/visual/diffs/
+test-results/
+playwright-visual-report/
+visual-results.json
+Step 5 — Baseline regeneration script
+Create scripts/update-visual-baselines.sh:
+bash#!/usr/bin/env bash
+set -euo pipefail
+
+# Regenerates all visual baseline screenshots.
+#
+# Run this LOCALLY against a clean staging or test environment when the UI has
+# changed intentionally. Review the diff in your PR and commit the updated
+# baselines. CI will not regenerate baselines automatically — that is by design.
+#
+# Usage:
+#   ./scripts/update-visual-baselines.sh
+#
+# Optional: limit to specific tests by passing a grep pattern as the first arg
+#   ./scripts/update-visual-baselines.sh "command-center"
+
+GREP_PATTERN="${1:-}"
+EXTRA_ARGS=()
+if [[ -n "$GREP_PATTERN" ]]; then
+  EXTRA_ARGS+=(--grep "$GREP_PATTERN")
+fi
+
+echo "Regenerating visual baselines..."
+echo "Make sure the application is running and seed data is in place."
+echo ""
+
+VISUAL_BASE_URL="${VISUAL_BASE_URL:-http://localhost:3000}" \
+  pnpm exec playwright test \
+    --config playwright.visual.config.ts \
+    --update-snapshots \
+    "${EXTRA_ARGS[@]}"
+
+echo ""
+echo "Baselines updated. Review the diff with:"
+echo "  git diff tests/visual/baselines/"
+echo ""
+echo "If the changes look right, commit them:"
+echo "  git add tests/visual/baselines/"
+echo "  git commit -m 'Update visual baselines for <feature>'"
+Make it executable:
+bashchmod +x scripts/update-visual-baselines.sh
+Add to package.json:
+json{
+  "scripts": {
+    "test:visual": "playwright test --config playwright.visual.config.ts",
+    "test:visual:update": "./scripts/update-visual-baselines.sh"
+  }
+}
+Step 6 — CI workflow
+Create .github/workflows/visual.yml:
+yamlname: Visual Regression
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: visual
+          POSTGRES_PASSWORD: visual
+          POSTGRES_DB: visual_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Migrate and seed
+        env:
+          DATABASE_URL: postgres://visual:visual@localhost:5432/visual_db
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+        run: |
+          pnpm drizzle-kit migrate
+          pnpm tsx scripts/seed-visual-data.ts  # seeds smoke account + deterministic opportunity set
+      - name: Start application
+        env:
+          DATABASE_URL: postgres://visual:visual@localhost:5432/visual_db
+          NODE_ENV: test
+          # Pinning timezone and locale prevents timestamp/locale drift in snapshots
+          TZ: UTC
+          LANG: en_US.UTF-8
+        run: |
+          pnpm build
+          pnpm start &
+          npx wait-on http://localhost:3000 --timeout 60000
+      - name: Run visual regression tests
+        env:
+          VISUAL_BASE_URL: http://localhost:3000
+          SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          VISUAL_TEST_OPP_ID: ${{ secrets.VISUAL_TEST_OPP_ID }}
+          TZ: UTC
+        run: pnpm test:visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: visual-diffs
+          path: |
+            test-results/
+            playwright-visual-report/
+            visual-results.json
+          retention-days: 14
+The seed script scripts/seed-visual-data.ts is identical to scripts/seed-a11y-data.ts from #292 — reuse it directly or copy if scope diverges later. The opportunity ID it produces is captured as the VISUAL_TEST_OPP_ID secret.
+Step 7 — Stabilization checklist
+Visual regression is uniquely sensitive to flakiness. Every snapshot needs deterministic input. The seed script and CI environment must control:
+
+Database state. Always seed the same opportunities, in the same order, with the same values.
+Timezone. Pin to UTC in CI environment variables.
+Locale. Pin to en_US.UTF-8.
+Fonts. Wait for document.fonts.ready before snapshotting (already in stabilizePage).
+Animations. Disable globally before snapshotting (already in stabilizePage).
+Caret. Hide the text caret (already configured).
+Time-sensitive UI. Mask any element showing "X minutes ago," "last refreshed," or relative timestamps (use maskSelectors).
+Random data. If the UI shows any randomized order or sample data, seed the random generator deterministically or sort the data before display.
+
+Document this checklist in docs/visual-regression.md.
+Step 8 — Documentation
+Create docs/visual-regression.md:
+markdown# Visual Regression Testing
+
+This platform runs Playwright snapshot tests on every pull request to catch
+unintended visual changes. Tooling: Playwright's built-in snapshot testing,
+no third-party SaaS.
+
+## How it works
+- On every PR, Playwright captures full-page screenshots of every route in
+  `tests/visual/routes.ts` at desktop (1440×900) and tablet (768×1024) viewports.
+- Each screenshot is compared pixel-by-pixel against the committed baseline in
+  `tests/visual/baselines/`.
+- Diffs above the per-route threshold (default 0.1%) fail the test.
+- On failure, diff images are uploaded as CI artifacts.
+
+## When a visual test fails
+
+### Case 1: the change is intentional
+You changed the UI on purpose (added a tile, restyled a button, swapped a color).
+
+1. Pull the diff artifact from the failed CI run and confirm the change is what you intended.
+2. Locally, regenerate baselines for the affected tests:
+   `pnpm test:visual:update "<test name pattern>"`
+3. Review the new baselines: `git diff tests/visual/baselines/`
+4. Commit the new baselines in the same PR:
+   `git add tests/visual/baselines/ && git commit -m 'Update visual baselines for <feature>'`
+5. The reviewer sees the visual diff in the PR and approves.
+
+### Case 2: the change is unintentional
+You didn't change the UI, but a snapshot still failed.
+
+1. Pull the diff artifact and inspect.
+2. If it's a real UI drift (Replit Agent silently restyled something during another change), find the cause and fix it. Don't update the baseline.
+3. If it's a flakiness issue (timestamp leaked through, animation didn't pause, font loaded late), fix the stabilization (`stabilizePage`, mask selectors, seed data) — don't raise the threshold.
+
+## Adding a new route
+When a new route ships, append it to `tests/visual/routes.ts` in the same PR
+that ships the route. Then regenerate baselines for the new route locally and
+commit them.
+
+## Stabilization rules
+Visual regression is sensitive to flakiness. Every snapshot needs deterministic input:
+- Database seeded with the same data every run
+- Timezone pinned to UTC
+- Locale pinned to en_US.UTF-8
+- Fonts loaded before snapshot
+- Animations disabled
+- Caret hidden
+- Volatile UI (timestamps, "X ago" labels) masked
+
+If a snapshot is flaky, investigate which of these is leaking through. Don't
+raise the threshold to make flakiness pass.
+
+## Threshold tuning
+Default threshold is 0.1% pixel diff (very tight). Per-route overrides live in
+`tests/visual/routes.ts`. Reasonable bounds:
+- 0.1% (default) for static layout pages
+- 0.3–0.5% for pages with charts or sub-pixel text rendering
+- 1.0% only as a last resort after stabilization is exhausted
+
+If a route consistently needs >1.0%, the route is too flaky for snapshot
+testing — consider component-level testing instead, or wait for the route to
+stabilize.
+
+## Migration to Percy or Chromatic
+If the team eventually wants better triage UI (side-by-side approval flow,
+historical baseline browsing, per-component review):
+
+- **Percy** ($79–$399/month): integrates with GitHub PRs, has a polished review UI, handles cross-browser and responsive matrices automatically.
+- **Chromatic** ($149/month and up): tightly integrated with Storybook, best fit if the team adopts Storybook for component-level visual testing.
+
+Both can be added on top of Playwright snapshots — they don't require ripping
+out the existing setup. Migration is a separate ticket when the time comes.
+Acceptance criteria (all must pass before merge)
+Snapshots run
+
+All routes in tests/visual/routes.ts are snapshotted at the configured viewports on every PR.
+The CI workflow Visual Regression runs successfully against a working build.
+Baseline images exist in tests/visual/baselines/ for every (route × viewport) combination.
+
+Stabilization works
+
+Run the visual suite 10 times in a row against a healthy environment.
+All 10 runs must pass cleanly. If any run produces a pixel diff for non-environmental reasons, fix the stabilization (don't raise the threshold).
+
+Failure paths produce useful evidence
+
+Make a deliberate visual change (e.g., shift a button's padding by 4px) and confirm:
+
+The CI job fails on the affected snapshot.
+The artifact contains the diff image with the changed region highlighted.
+The expected baseline and actual screenshot are both viewable.
+
+
+
+Baseline regeneration works
+
+Run pnpm test:visual:update locally against a working environment.
+Confirm baselines are regenerated in tests/visual/baselines/.
+Confirm git diff tests/visual/baselines/ shows the change.
+Confirm a subsequent CI run passes against the new baselines.
+
+New-route enforcement (optional but recommended)
+
+A PR that adds a new route to the application but doesn't add it to tests/visual/routes.ts is flagged. (Same approach as #292's a11y route enforcement; can share a single CI check.)
+
+Determinism
+
+The seed script produces the same data every run.
+The CI environment pins TZ=UTC and LANG=en_US.UTF-8.
+The opportunity ID for detail-route snapshots is stable across runs (set via VISUAL_TEST_OPP_ID secret).
+
+Documentation exists
+
+docs/visual-regression.md exists with the content specified above.
+tests/visual/README.md exists pointing to the docs.
+
+Rollback plan
+Visual regression is independent of all application code. If the suite is producing too much noise:
+
+Disable the workflow by renaming .github/workflows/visual.yml to .disabled.
+Other CI checks continue running.
+Baselines stay in tests/visual/baselines/ for reference.
+Local execution remains available via pnpm test:visual.
+
+The migration to Percy or Chromatic is a separate ticket if visual regression becomes valuable enough to invest in better tooling.
+Mode guidance
+Economy. This is mostly Playwright configuration and a single test file using a parameterized loop. Stabilization details require care but are not architecturally complex. Power is overkill. Lite cannot handle the multi-file scope.
+Run as a single Economy session so the route inventory, config, test, baselines, and documentation share consistent conventions.
+Why this matters (for the reviewer)
+Three failure modes this catches that nothing else does:
+
+Silent AI drift. Replit Agent restyles components when fixing unrelated things. Padding shifts. Fonts swap. Color tokens change. None of it breaks unit tests, integration tests, smoke tests, E2E tests, or accessibility scans. It just slowly degrades the UI until someone notices and can't say when it started.
+Design system erosion. Even with an explicit design system, components drift away from tokens over time as one-off changes accumulate. Visual regression makes the drift visible on every PR — either you accept it intentionally (update the baseline) or you reject it.
+Cross-PR side effects. PR A changes a global CSS variable. PR B, unrelated, ships a UI change that doesn't touch that variable. PR B's screenshots fail because PR A's variable change cascaded into PR B's components. This catches that, on the PR where the cascade lands.
+
+Visual regression is the one test category that specifically protects against the failure modes of agentic IDEs. It's the best defense for a Replit-built UI specifically. The cost is low (Playwright snapshots are free, ~5 minutes of CI per PR) and the value compounds — every baseline added is permanent protection until intentionally updated.
