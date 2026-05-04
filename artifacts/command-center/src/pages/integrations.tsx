@@ -742,10 +742,14 @@ export default function Integrations() {
           {connectionsQuery.isLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : connections.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No connections yet. Add one above to start syncing data from
-              your ERP.
-            </p>
+            <div className="py-6 text-center space-y-2">
+              <Plug className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No connections yet</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                Add a connection above to start syncing data from your ERP or
+                other upstream system.
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
               {connections.map((c) => (

@@ -50,6 +50,7 @@ import {
   FileSignature,
   ClipboardList,
   TrendingUp,
+  CreditCard,
 } from "lucide-react";
 
 const TAB_VALUES = ["sows", "rate-cards", "spend"] as const;
@@ -287,10 +288,16 @@ function SowsTab({ supplierId }: { supplierId: string | null }) {
         <>
           {(data?.items ?? []).length === 0 ? (
             <div
-              className="bg-card border rounded-lg p-12 text-center text-muted-foreground"
+              className="bg-card border rounded-lg p-12 text-center space-y-2"
               data-testid="empty-sows"
             >
-              No SOWs match the current filters.
+              <FileSignature className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No SOWs found</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                {search.trim()
+                  ? "Try adjusting your search or status filter."
+                  : "Statements of work will appear here once they have been ingested or created."}
+              </div>
             </div>
           ) : (
             <Card>
@@ -503,10 +510,16 @@ function RateCardsTab({ supplierId }: { supplierId: string | null }) {
         <>
           {(data?.items ?? []).length === 0 ? (
             <div
-              className="bg-card border rounded-lg p-12 text-center text-muted-foreground"
+              className="bg-card border rounded-lg p-12 text-center space-y-2"
               data-testid="empty-rate-cards"
             >
-              No rate cards match the current filters.
+              <CreditCard className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No rate cards found</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                {search.trim()
+                  ? "Try adjusting your search or status filter."
+                  : "Rate cards will appear here once they have been ingested or associated with a contract."}
+              </div>
             </div>
           ) : (
             <Card>
@@ -673,8 +686,13 @@ function SpendTab({ supplierId }: { supplierId: string | null }) {
         </CardHeader>
         <CardContent>
           {data.byContractType.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No services spend in the last 12 months.
+            <div className="py-4 text-center space-y-2">
+              <Wrench className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No services spend recorded</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                Services spend will appear here once POs tied to services-shaped
+                contracts have been ingested.
+              </div>
             </div>
           ) : (
             <div className="space-y-3">

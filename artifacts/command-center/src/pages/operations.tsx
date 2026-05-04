@@ -127,9 +127,13 @@ export default function Operations() {
               </p>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No collectors data.
-            </p>
+            <div className="space-y-1">
+              <p className="text-3xl font-bold tabular-nums text-muted-foreground/40">—</p>
+              <p className="text-xs text-muted-foreground">
+                No collector data available. Register collectors on the Collector
+                Workbench to start ingesting signals.
+              </p>
+            </div>
           )}
         </HealthCard>
 
@@ -164,7 +168,13 @@ export default function Operations() {
               })()}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">No jobs data.</p>
+            <div className="space-y-1">
+              <p className="text-3xl font-bold tabular-nums text-muted-foreground/40">—</p>
+              <p className="text-xs text-muted-foreground">
+                No job activity in the last 24 hours. Jobs are created
+                automatically by analysis cycles and collectors.
+              </p>
+            </div>
           )}
         </HealthCard>
 
@@ -196,9 +206,13 @@ export default function Operations() {
               })()}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No data-source data.
-            </p>
+            <div className="space-y-1">
+              <p className="text-3xl font-bold tabular-nums text-muted-foreground/40">—</p>
+              <p className="text-xs text-muted-foreground">
+                No data sources configured yet. Enable feeds on the Data Sources
+                page to start receiving external benchmarks.
+              </p>
+            </div>
           )}
         </HealthCard>
 
@@ -214,9 +228,13 @@ export default function Operations() {
               {(integrations.payload as { configured?: number }).configured ?? 0}
             </p>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No integrations data.
-            </p>
+            <div className="space-y-1">
+              <p className="text-3xl font-bold tabular-nums text-muted-foreground/40">—</p>
+              <p className="text-xs text-muted-foreground">
+                No integrations configured yet. Connect your ERP on the
+                Integrations page to start syncing data.
+              </p>
+            </div>
           )}
         </HealthCard>
       </div>

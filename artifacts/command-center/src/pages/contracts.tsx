@@ -405,10 +405,15 @@ function ListView({
     }
     return (
       <div
-        className="bg-card border rounded-lg p-12 text-center text-muted-foreground"
+        className="bg-card border rounded-lg p-12 text-center space-y-2"
         data-testid="empty-state"
       >
-        No contracts match the current filters.
+        <FileText className="w-8 h-8 mx-auto text-muted-foreground/40" />
+        <div className="font-medium">No contracts found</div>
+        <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+          No contracts match the current filters. Try broadening your search or
+          ingest contract data to get started.
+        </div>
       </div>
     );
   }

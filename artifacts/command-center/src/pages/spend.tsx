@@ -166,27 +166,38 @@ export default function SpendOverview() {
           <CardTitle>Spend by class</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {data.byClass.map((c) => {
-              const pct = data.totalSpendUsd > 0 ? c.spendUsd / data.totalSpendUsd : 0;
-              return (
-                <div key={c.spendClass} data-testid={`row-class-${c.spendClass}`}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium capitalize">{c.spendClass}</span>
-                    <span className="tabular-nums">
-                      {formatUsd(c.spendUsd, { compact: true })} · {formatPercent(pct)}
-                    </span>
+          {data.byClass.length === 0 ? (
+            <div className="py-6 text-center space-y-2">
+              <Layers className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No spend-class breakdown yet</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                Ingest PO data to populate this view. Each purchase order is
+                classified into a spend class automatically.
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {data.byClass.map((c) => {
+                const pct = data.totalSpendUsd > 0 ? c.spendUsd / data.totalSpendUsd : 0;
+                return (
+                  <div key={c.spendClass} data-testid={`row-class-${c.spendClass}`}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="font-medium capitalize">{c.spendClass}</span>
+                      <span className="tabular-nums">
+                        {formatUsd(c.spendUsd, { compact: true })} · {formatPercent(pct)}
+                      </span>
+                    </div>
+                    <div className="h-2 bg-muted rounded">
+                      <div
+                        className="h-full bg-primary rounded"
+                        style={{ width: `${pct * 100}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 bg-muted rounded">
-                    <div
-                      className="h-full bg-primary rounded"
-                      style={{ width: `${pct * 100}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -196,23 +207,33 @@ export default function SpendOverview() {
             <CardTitle>Top 10 categories</CardTitle>
           </CardHeader>
           <CardContent>
-            <table className="w-full text-sm">
-              <tbody>
-                {top10Cat.map((c) => (
-                  <tr key={c.categoryId} className="border-b last:border-0">
-                    <td className="py-2">
-                      <div className="font-medium">{c.categoryName}</div>
-                      <div className="text-xs text-muted-foreground capitalize">
-                        {c.categoryClass}
-                      </div>
-                    </td>
-                    <td className="py-2 text-right tabular-nums">
-                      {formatUsd(c.spendUsd, { compact: true })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {top10Cat.length === 0 ? (
+              <div className="py-6 text-center space-y-2">
+                <Layers className="w-6 h-6 mx-auto text-muted-foreground/40" />
+                <div className="text-sm font-medium">No category data yet</div>
+                <div className="text-xs text-muted-foreground">
+                  Categories appear once PO data has been ingested and classified.
+                </div>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <tbody>
+                  {top10Cat.map((c) => (
+                    <tr key={c.categoryId} className="border-b last:border-0">
+                      <td className="py-2">
+                        <div className="font-medium">{c.categoryName}</div>
+                        <div className="text-xs text-muted-foreground capitalize">
+                          {c.categoryClass}
+                        </div>
+                      </td>
+                      <td className="py-2 text-right tabular-nums">
+                        {formatUsd(c.spendUsd, { compact: true })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </CardContent>
         </Card>
 
@@ -221,29 +242,39 @@ export default function SpendOverview() {
             <CardTitle>Top 10 suppliers</CardTitle>
           </CardHeader>
           <CardContent>
-            <table className="w-full text-sm">
-              <tbody>
-                {top10Sup.map((s) => (
-                  <tr key={s.supplierId} className="border-b last:border-0">
-                    <td className="py-2">
-                      <Link
-                        href={`/suppliers/${s.supplierId}`}
-                        className="font-medium hover:underline"
-                        data-testid={`link-supplier-${s.supplierId}`}
-                      >
-                        {s.supplierName}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">
-                        {s.poCount} POs
-                      </div>
-                    </td>
-                    <td className="py-2 text-right tabular-nums">
-                      {formatUsd(s.spendUsd, { compact: true })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {top10Sup.length === 0 ? (
+              <div className="py-6 text-center space-y-2">
+                <Package className="w-6 h-6 mx-auto text-muted-foreground/40" />
+                <div className="text-sm font-medium">No supplier data yet</div>
+                <div className="text-xs text-muted-foreground">
+                  Suppliers appear once PO data has been ingested.
+                </div>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <tbody>
+                  {top10Sup.map((s) => (
+                    <tr key={s.supplierId} className="border-b last:border-0">
+                      <td className="py-2">
+                        <Link
+                          href={`/suppliers/${s.supplierId}`}
+                          className="font-medium hover:underline"
+                          data-testid={`link-supplier-${s.supplierId}`}
+                        >
+                          {s.supplierName}
+                        </Link>
+                        <div className="text-xs text-muted-foreground">
+                          {s.poCount} POs
+                        </div>
+                      </td>
+                      <td className="py-2 text-right tabular-nums">
+                        {formatUsd(s.spendUsd, { compact: true })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -253,16 +284,27 @@ export default function SpendOverview() {
           <CardTitle>Spend by business unit</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {data.byBusinessUnit.map((bu) => (
-              <div key={bu.businessUnit} className="bg-muted/40 rounded-lg p-4">
-                <div className="text-sm font-medium">{bu.businessUnit}</div>
-                <div className="text-xl font-bold tabular-nums mt-1">
-                  {formatUsd(bu.spendUsd, { compact: true })}
-                </div>
+          {data.byBusinessUnit.length === 0 ? (
+            <div className="py-6 text-center space-y-2">
+              <Layers className="w-6 h-6 mx-auto text-muted-foreground/40" />
+              <div className="text-sm font-medium">No business-unit data yet</div>
+              <div className="text-xs text-muted-foreground">
+                Business-unit breakdown appears once PO data includes cost-center
+                or department mappings.
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {data.byBusinessUnit.map((bu) => (
+                <div key={bu.businessUnit} className="bg-muted/40 rounded-lg p-4">
+                  <div className="text-sm font-medium">{bu.businessUnit}</div>
+                  <div className="text-xl font-bold tabular-nums mt-1">
+                    {formatUsd(bu.spendUsd, { compact: true })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

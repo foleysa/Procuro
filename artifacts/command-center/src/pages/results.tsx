@@ -128,35 +128,42 @@ export default function Results() {
       <Card>
         <CardHeader><CardTitle>Realized savings by lever</CardTitle></CardHeader>
         <CardContent>
-          {sortedLevers.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              No realized savings yet. Move executing opportunities to "realized" on the detail page.
-            </p>
-          )}
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground uppercase tracking-wide">
-                <th className="py-2">Lever</th>
-                <th className="py-2 text-right">Opps realized</th>
-                <th className="py-2 text-right">Projected</th>
-                <th className="py-2 text-right">Realized</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedLevers.map((row) => (
-                <tr key={row.leverId} className="border-t">
-                  <td className="py-2 font-medium">{leverLabel(row.leverId)}</td>
-                  <td className="py-2 text-right tabular-nums">{row.opportunityCount}</td>
-                  <td className="py-2 text-right tabular-nums">
-                    {row.projectedUsd != null ? formatUsd(row.projectedUsd, { compact: true }) : "—"}
-                  </td>
-                  <td className="py-2 text-right tabular-nums font-semibold">
-                    {formatUsd(row.realizedUsd, { compact: true })}
-                  </td>
+          {sortedLevers.length === 0 ? (
+            <div className="py-6 text-center space-y-2">
+              <DollarSign className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="font-medium">No realized savings yet</div>
+              <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                Move executing opportunities to &ldquo;realized&rdquo; on the
+                opportunity detail page. Savings will appear here broken down by
+                lever.
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground uppercase tracking-wide">
+                  <th className="py-2">Lever</th>
+                  <th className="py-2 text-right">Opps realized</th>
+                  <th className="py-2 text-right">Projected</th>
+                  <th className="py-2 text-right">Realized</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedLevers.map((row) => (
+                  <tr key={row.leverId} className="border-t">
+                    <td className="py-2 font-medium">{leverLabel(row.leverId)}</td>
+                    <td className="py-2 text-right tabular-nums">{row.opportunityCount}</td>
+                    <td className="py-2 text-right tabular-nums">
+                      {row.projectedUsd != null ? formatUsd(row.projectedUsd, { compact: true }) : "—"}
+                    </td>
+                    <td className="py-2 text-right tabular-nums font-semibold">
+                      {formatUsd(row.realizedUsd, { compact: true })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </CardContent>
       </Card>
     </div>

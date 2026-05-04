@@ -28,6 +28,7 @@ import {
   ArrowDown,
   ArrowUp,
   Pencil,
+  Package,
 } from "lucide-react";
 import {
   Card,
@@ -463,10 +464,16 @@ export default function Suppliers() {
               </div>
             ) : (
               <div
-                className="text-muted-foreground py-8 text-center"
+                className="bg-card border rounded-lg p-12 text-center space-y-2"
                 data-testid="text-empty"
               >
-                No suppliers match.
+                <Package className="w-8 h-8 mx-auto text-muted-foreground/40" />
+                <div className="font-medium">No suppliers found</div>
+                <div className="text-sm text-muted-foreground max-w-sm mx-auto">
+                  {search.trim()
+                    ? "Try adjusting your search or filters."
+                    : "Suppliers will appear here once data has been ingested. Head to the Ingest page to upload your first dataset."}
+                </div>
               </div>
             )
           ) : (
