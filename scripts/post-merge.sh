@@ -2,6 +2,12 @@
 set -e
 pnpm install --frozen-lockfile
 pnpm --filter db push
+
+if [ "${CLEAR_DATA_ON_MERGE:-0}" = "1" ]; then
+  echo "[post-merge] CLEAR_DATA_ON_MERGE is set — wiping business data…"
+  pnpm --filter @workspace/scripts run clear-data
+fi
+
 # Backfill scope_sku on legacy bls-economic-index rows so the natural-key
 # uniqueness index stays consistent across the upgrade. Idempotent: only
 # touches rows where scope_sku IS NULL. See script header for context.

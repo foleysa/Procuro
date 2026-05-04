@@ -47,6 +47,12 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **Visual regression**: Playwright screenshot comparison across all routes × 2 viewports (desktop 1440×900, tablet 768×1024). Run: `pnpm test:visual`. Update baselines: `pnpm test:visual:update`. Config: `playwright.visual.config.ts`. Baselines committed in `tests/visual/baselines/`. See `docs/visual-regression.md`.
 - See `tests/README.md` for full details.
 
+## Post-Merge Setup
+
+The post-merge script (`scripts/post-merge.sh`) runs automatically after task merges. It installs dependencies, pushes the DB schema, and runs backfills.
+
+**Clean-start mode:** Set the environment variable `CLEAR_DATA_ON_MERGE=1` to wipe all business data (orgs, suppliers, opportunities, etc.) before backfills run. This is useful for fresh environments or when stale demo data must not linger. System-config tables (lever_bands, category_bands, synonym_registry, etc.) are preserved. When the variable is unset or `0`, the data-clearing step is skipped entirely.
+
 ## External Dependencies
 
 - **PostgreSQL:** Primary database.
