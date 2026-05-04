@@ -50,9 +50,11 @@ The regression test is not designed to cover the entire feature. It is designed 
 
 ## Enforcement
 
-This is a standing rule enforced by code review. A bug fix PR without a corresponding regression test is rejected at review.
+This is a standing rule enforced by both CI and code review.
 
-A future ticket may add CI tooling that fails any PR closing a UAT-tagged issue without an accompanying new test file. Until that ticket lands, enforcement is human.
+A GitHub Actions workflow (`.github/workflows/regression-test-check.yml`) automatically detects PRs that reference UAT-tagged issues (via the PR title, body, or branch name) and fails if no newly added test file is included. Only files with status `A` (added) count — modifying an existing test is not sufficient. The check script lives at `scripts/src/check-regression-tests.ts`.
+
+A bug fix PR without a corresponding regression test is rejected by CI and by human review.
 
 ## Test naming convention
 

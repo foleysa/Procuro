@@ -21,6 +21,7 @@
     "prune-a11y": "tsx ./src/prune-a11y-results.ts",
     "setup-webkit-deps": "tsx ./src/setup-webkit-deps.ts",
     "seed-soak-data": "tsx ./src/seed-soak-data.ts",
+    "check-regression-tests": "tsx ./src/check-regression-tests.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

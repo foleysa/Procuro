@@ -1,0 +1,48 @@
+name: Regression Test Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  regression-test-gate:
+    name: UAT bug fix requires regression test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get added files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only --diff-filter=A origin/${{ github.base_ref }}...HEAD)
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for regression test
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.head_ref }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: pnpm --filter @workspace/scripts run check-regression-tests
