@@ -278,7 +278,7 @@ export default function Contracts() {
               resetPagination();
             }}
           >
-            <SelectTrigger data-testid="filter-status">
+            <SelectTrigger data-testid="filter-status" aria-label="Filter by contract status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -73,7 +73,11 @@ export function DataReadinessCard({ basePath = "" }: { basePath?: string }) {
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Progress value={data.overallScore} className="h-2" />
+        <Progress
+          value={data.overallScore}
+          className="h-2"
+          aria-label={`Overall data readiness: ${data.overallScore}%`}
+        />
         {!data.hasIngestedData ? (
           <Button asChild size="sm">
             <Link href="/onboarding">
@@ -146,7 +150,7 @@ function BlockerRow({
             {" "}
             <Link
               href={fixHref}
-              className="text-primary underline-offset-2 hover:underline"
+              className="text-primary underline underline-offset-2"
             >
               Fix this
             </Link>

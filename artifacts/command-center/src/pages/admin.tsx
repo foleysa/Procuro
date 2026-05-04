@@ -246,6 +246,7 @@ function EngineAccessRequestsCallout({
                       <SelectTrigger
                         className="w-[160px]"
                         data-testid={`select-grant-role-${d.actor}`}
+                        aria-label={`Grant role for ${d.actor}`}
                       >
                         <SelectValue />
                       </SelectTrigger>
@@ -384,7 +385,7 @@ function UsersTab() {
             <div className="min-w-[180px]">
               <Label>Role</Label>
               <Select value={role} onValueChange={(v) => setRole(v as AdminUserRole)}>
-                <SelectTrigger data-testid="select-invite-role">
+                <SelectTrigger data-testid="select-invite-role" aria-label="Invite role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -459,6 +460,7 @@ function UsersTab() {
                         <SelectTrigger
                           className="w-[160px]"
                           data-testid={`select-role-${u.id}`}
+                          aria-label="User role"
                         >
                           <SelectValue />
                         </SelectTrigger>
@@ -631,7 +633,7 @@ function ApiKeysTab() {
                 value={scopeRole}
                 onValueChange={(v) => setScopeRole(v as AdminUserRole)}
               >
-                <SelectTrigger data-testid="select-key-scope">
+                <SelectTrigger data-testid="select-key-scope" aria-label="API key scope">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -814,7 +816,7 @@ function SsoTab() {
               value={cfg.protocol}
               onValueChange={(v) => update("protocol", v as AdminSsoConfig["protocol"])}
             >
-              <SelectTrigger data-testid="select-sso-protocol">
+              <SelectTrigger data-testid="select-sso-protocol" aria-label="SSO protocol">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1014,6 +1016,7 @@ function ScimGroupsCard() {
                     <SelectTrigger
                       className="w-[170px]"
                       data-testid={`select-scim-mapping-${g.id}`}
+                      aria-label="SCIM group role mapping"
                     >
                       <SelectValue />
                     </SelectTrigger>
@@ -1123,7 +1126,7 @@ function TenantSettingsTab() {
               update("disclosurePolicy", v as AdminTenantSettings["disclosurePolicy"])
             }
           >
-            <SelectTrigger data-testid="select-disclosure">
+            <SelectTrigger data-testid="select-disclosure" aria-label="Disclosure policy">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1198,7 +1201,7 @@ function TrustEngagementCard() {
           sessions, not raw refreshes.{" "}
           <Link
             href="/trust"
-            className="text-primary underline-offset-2 hover:underline"
+            className="text-primary underline underline-offset-2"
             data-testid="link-engagement-trust"
           >
             Open the Trust Center
@@ -1313,7 +1316,7 @@ function AuditTab() {
                 value={action || "__all__"}
                 onValueChange={(v) => setAction(v === "__all__" ? "" : v)}
               >
-                <SelectTrigger data-testid="select-audit-action">
+                <SelectTrigger data-testid="select-audit-action" aria-label="Audit action filter">
                   <SelectValue placeholder="All actions" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1428,7 +1431,7 @@ export default function AdminPage() {
           Sharing posture with a customer or auditor? Send them to the{" "}
           <Link
             href="/trust"
-            className="text-primary underline-offset-2 hover:underline"
+            className="text-primary underline underline-offset-2"
             data-testid="link-admin-trust"
           >
             Trust Center

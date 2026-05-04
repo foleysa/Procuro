@@ -730,6 +730,7 @@ function TierMatrixCard() {
               <SelectTrigger
                 className="inline-flex h-7 w-[110px]"
                 data-testid="select-tier-matrix-window"
+                aria-label="Tier matrix window"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -1708,6 +1709,7 @@ export function RoutingQueueTab() {
                       <SelectTrigger
                         className="w-56"
                         data-testid={`select-code-${e.id}`}
+                        aria-label="Canonical code"
                       >
                         <SelectValue placeholder="Pick canonical code" />
                       </SelectTrigger>
@@ -1736,6 +1738,7 @@ export function RoutingQueueTab() {
                       <SelectTrigger
                         className="w-36"
                         data-testid={`select-scope-${e.id}`}
+                        aria-label="Scope"
                       >
                         <SelectValue />
                       </SelectTrigger>

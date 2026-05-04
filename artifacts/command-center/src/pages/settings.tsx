@@ -1171,7 +1171,7 @@ function CreateChannelDialog({
               value={kind}
               onValueChange={(v) => setKind(v as AlertChannelKind)}
             >
-              <SelectTrigger data-testid="select-channel-kind">
+              <SelectTrigger data-testid="select-channel-kind" aria-label="Channel kind">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1379,7 +1379,7 @@ function SubscriptionsSection() {
             </div>
             <div className="grid sm:grid-cols-3 gap-2">
               <Select value={newChannelId} onValueChange={setNewChannelId}>
-                <SelectTrigger data-testid="select-sub-channel">
+                <SelectTrigger data-testid="select-sub-channel" aria-label="Subscription channel">
                   <SelectValue placeholder="Channel" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1394,7 +1394,7 @@ function SubscriptionsSection() {
                 value={newSeverity}
                 onValueChange={(v) => setNewSeverity(v as AlertSeverity)}
               >
-                <SelectTrigger data-testid="select-sub-severity">
+                <SelectTrigger data-testid="select-sub-severity" aria-label="Subscription severity">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1409,7 +1409,7 @@ function SubscriptionsSection() {
                 value={newWatchlistId}
                 onValueChange={setNewWatchlistId}
               >
-                <SelectTrigger data-testid="select-sub-watchlist">
+                <SelectTrigger data-testid="select-sub-watchlist" aria-label="Subscription watchlist">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

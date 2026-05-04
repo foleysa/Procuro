@@ -163,6 +163,7 @@ function SourcingStrategyCell({ row }: { row: PlayRow }) {
         <SelectTrigger
           className="h-7 w-[180px] text-xs border-amber-300 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800/60"
           data-testid={`select-sourcing-strategy-${row.id}`}
+          aria-label="Sourcing strategy"
         >
           <SelectValue placeholder="Classify…" />
         </SelectTrigger>

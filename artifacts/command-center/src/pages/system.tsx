@@ -273,6 +273,7 @@ function RetryBudgetRow({
             onChange={(e) => setDraft(e.target.value)}
             className="w-20 tabular-nums"
             disabled={isSaving}
+            aria-label={`Max attempts for ${KIND_LABEL[setting.kind] ?? setting.kind}`}
           />
           {setting.isOverride ? (
             <Badge
@@ -1656,6 +1657,7 @@ export default function System() {
                 <SelectTrigger
                   data-testid="select-job-status"
                   className="w-[170px]"
+                  aria-label="Filter by job status"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1671,6 +1673,7 @@ export default function System() {
                 <SelectTrigger
                   data-testid="select-job-kind"
                   className="w-[180px]"
+                  aria-label="Filter by job kind"
                 >
                   <SelectValue />
                 </SelectTrigger>

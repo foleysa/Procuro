@@ -301,7 +301,7 @@ function WatchlistDetail({ watchlist }: { watchlist: Watchlist }) {
                 value={pickedSupplierId}
                 onValueChange={setPickedSupplierId}
               >
-                <SelectTrigger data-testid="select-add-supplier">
+                <SelectTrigger data-testid="select-add-supplier" aria-label="Add supplier to watchlist">
                   <SelectValue placeholder="Select a supplier" />
                 </SelectTrigger>
                 <SelectContent>
@@ -498,6 +498,7 @@ function CreateWatchlistDialog({
               <SelectTrigger
                 id="wl-scope"
                 data-testid="select-watchlist-scope"
+                aria-label="Watchlist scope"
               >
                 <SelectValue />
               </SelectTrigger>

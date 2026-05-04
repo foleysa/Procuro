@@ -211,6 +211,7 @@ export default function Collectors() {
             <SelectTrigger
               data-testid="select-tier"
               className="w-[200px]"
+              aria-label="Filter by tier"
             >
               <SelectValue />
             </SelectTrigger>
@@ -1920,6 +1921,7 @@ function CostTab({ tier }: { tier: TierMode }) {
               <SelectTrigger
                 data-testid="select-cost-window"
                 className="w-[140px] h-8"
+                aria-label="Cost window"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -1977,7 +1979,7 @@ function CostTab({ tier }: { tier: TierMode }) {
                     <td className="py-2">
                       <button
                         type="button"
-                        className="text-left underline-offset-2 hover:underline"
+                        className="text-left underline underline-offset-2"
                         data-testid={`cost-row-toggle-${e.collectorId}`}
                       >
                         {e.name}

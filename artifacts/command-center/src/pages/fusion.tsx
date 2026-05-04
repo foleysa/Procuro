@@ -353,7 +353,7 @@ function SignalBrowserPane({
                 Signal type
               </label>
               <Select value={signalType} onValueChange={setSignalType}>
-                <SelectTrigger data-testid="signal-type-select">
+                <SelectTrigger data-testid="signal-type-select" aria-label="Signal type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -624,7 +624,7 @@ function EntityPane({
                   setCode("");
                 }}
               >
-                <SelectTrigger data-testid="entity-kind-select">
+                <SelectTrigger data-testid="entity-kind-select" aria-label="Entity kind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -651,7 +651,7 @@ function EntityPane({
                       if (next) onChange(`${kind}:${next}`);
                     }}
                   >
-                    <SelectTrigger data-testid="entity-supplier-select">
+                    <SelectTrigger data-testid="entity-supplier-select" aria-label="Pick a supplier">
                       <SelectValue placeholder="Pick a supplier" />
                     </SelectTrigger>
                     <SelectContent>

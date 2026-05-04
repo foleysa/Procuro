@@ -786,6 +786,7 @@ export default function Integrations() {
                         <SelectTrigger
                           className="h-7 w-[180px] text-xs"
                           data-testid={`select-cadence-${c.id}`}
+                          aria-label="Sync cadence"
                         >
                           <SelectValue />
                         </SelectTrigger>

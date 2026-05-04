@@ -2282,6 +2282,7 @@ function EntityRow({
           e.target.value = "";
         }}
         className="text-sm"
+        aria-label={`${entity.label} CSV file`}
       />
 
       {parsed?.parseError && (

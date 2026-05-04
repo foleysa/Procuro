@@ -507,7 +507,7 @@ export default function Dashboard() {
             {me?.org.name ?? "—"} · live view · refreshes every 30s ·{" "}
             <Link
               href="/trust"
-              className="text-primary underline-offset-2 hover:underline"
+              className="text-primary underline underline-offset-2"
               data-testid="link-dashboard-trust"
             >
               Trust Center →

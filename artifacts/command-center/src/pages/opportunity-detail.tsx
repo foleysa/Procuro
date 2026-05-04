@@ -585,7 +585,7 @@ export default function OpportunityDetail() {
                   value={rejectReason}
                   onValueChange={(v) => setRejectReason(v as RejectionReasonCode)}
                 >
-                  <SelectTrigger data-testid="select-reject-reason">
+                  <SelectTrigger data-testid="select-reject-reason" aria-label="Reject reason">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

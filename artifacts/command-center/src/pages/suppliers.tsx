@@ -476,19 +476,21 @@ export default function Suppliers() {
                   <TableHead>Name</TableHead>
                   <TableHead>Country</TableHead>
                   <TableHead>Billing currency</TableHead>
-                  <TableHead>
+                  <TableHead
+                    aria-sort={
+                      sortDir === "asc"
+                        ? "ascending"
+                        : sortDir === "desc"
+                          ? "descending"
+                          : "none"
+                    }
+                  >
                     <button
                       type="button"
                       onClick={toggleSort}
                       className="inline-flex items-center gap-1 hover:text-foreground"
                       data-testid="btn-sort-confidence"
-                      aria-sort={
-                        sortDir === "asc"
-                          ? "ascending"
-                          : sortDir === "desc"
-                            ? "descending"
-                            : "none"
-                      }
+                      aria-label={`Sort by confidence (${sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "unsorted"})`}
                     >
                       Confidence
                       {sortDir === "asc" ? (

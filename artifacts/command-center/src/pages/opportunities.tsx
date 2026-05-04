@@ -220,7 +220,7 @@ export default function Opportunities() {
               setSelected(new Set());
             }}
           >
-            <SelectTrigger className="w-[160px]" data-testid="filter-status">
+            <SelectTrigger className="w-[160px]" data-testid="filter-status" aria-label="Filter by status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -239,7 +239,7 @@ export default function Opportunities() {
               setSelected(new Set());
             }}
           >
-            <SelectTrigger className="w-[260px]" data-testid="filter-lever">
+            <SelectTrigger className="w-[260px]" data-testid="filter-lever" aria-label="Filter by lever">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -259,7 +259,7 @@ export default function Opportunities() {
               setSelected(new Set());
             }}
           >
-            <SelectTrigger className="w-[200px]" data-testid="filter-stage">
+            <SelectTrigger className="w-[200px]" data-testid="filter-stage" aria-label="Filter by stage">
               <SelectValue placeholder="All stages" />
             </SelectTrigger>
             <SelectContent>
@@ -612,7 +612,7 @@ function BulkActionDialog({
                   })
                 }
               >
-                <SelectTrigger data-testid="select-bulk-reject-reason">
+                <SelectTrigger data-testid="select-bulk-reject-reason" aria-label="Bulk reject reason">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

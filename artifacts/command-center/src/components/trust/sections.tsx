@@ -147,7 +147,7 @@ export function DataSourcesSection({
             platform-wide. Cross-link:{" "}
             <Link
               href="/data-sources"
-              className="text-primary underline-offset-2 hover:underline"
+              className="text-primary underline underline-offset-2"
               data-testid="link-trust-to-data-sources"
             >
               Data Sources
@@ -407,7 +407,7 @@ export function ProvenanceSection({
               Open{" "}
               <Link
                 href="/opportunities"
-                className="text-primary underline-offset-2 hover:underline"
+                className="text-primary underline underline-offset-2"
                 data-testid="link-trust-to-opportunities"
               >
                 Opportunities
@@ -452,7 +452,7 @@ export function AuditSection({
               Org admins can browse and export from{" "}
               <Link
                 href="/admin"
-                className="text-primary underline-offset-2 hover:underline"
+                className="text-primary underline underline-offset-2"
                 data-testid="link-trust-to-admin"
               >
                 Org Admin
@@ -527,7 +527,7 @@ export function IdentitySection({
                 Org admins manage SSO, SCIM, users, and API keys from{" "}
                 <Link
                   href="/admin"
-                  className="text-primary underline-offset-2 hover:underline"
+                  className="text-primary underline underline-offset-2"
                 >
                   Org Admin
                 </Link>
@@ -667,14 +667,14 @@ function AttestationCard({
         <Icon className="w-4 h-4" />
         {attestation.name}
       </div>
-      <div className="text-[11px] uppercase tracking-wide font-mono mt-1 opacity-70">
+      <div className="text-[11px] uppercase tracking-wide font-mono mt-1">
         {attestation.status.replace("_", " ")}
       </div>
       {attestation.detail && (
-        <p className="text-xs mt-2 opacity-90">{attestation.detail}</p>
+        <p className="text-xs mt-2">{attestation.detail}</p>
       )}
       {attestation.asOf && (
-        <p className="text-[11px] mt-1 opacity-70">
+        <p className="text-[11px] mt-1">
           As of {formatDateTime(attestation.asOf)}
         </p>
       )}

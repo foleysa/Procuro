@@ -259,7 +259,7 @@ function SowsTab({ supplierId }: { supplierId: string | null }) {
               reset();
             }}
           >
-            <SelectTrigger data-testid="filter-sow-status">
+            <SelectTrigger data-testid="filter-sow-status" aria-label="Filter by SOW status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -473,7 +473,7 @@ function RateCardsTab({ supplierId }: { supplierId: string | null }) {
               reset();
             }}
           >
-            <SelectTrigger data-testid="filter-rc-status">
+            <SelectTrigger data-testid="filter-rc-status" aria-label="Filter by rate card status">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

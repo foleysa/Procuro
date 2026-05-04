@@ -132,6 +132,7 @@ export function CurrencySelect({
         <SelectTrigger
           className={triggerClassName}
           data-testid={`${testIdPrefix}-trigger`}
+          aria-label="Currency"
         >
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>

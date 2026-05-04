@@ -67,7 +67,7 @@ export function MigrationBanner() {
         type="button"
         onClick={dismiss}
         data-testid="migration-banner-dismiss"
-        className="text-blue-900/70 hover:text-blue-900 inline-flex items-center gap-1 text-xs"
+        className="text-blue-900 hover:text-blue-700 inline-flex items-center gap-1 text-xs underline"
         aria-label="Dismiss"
       >
         <X className="w-3.5 h-3.5" /> Dismiss

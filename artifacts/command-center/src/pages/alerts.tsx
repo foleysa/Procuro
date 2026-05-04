@@ -315,6 +315,7 @@ export default function Alerts() {
               <SelectTrigger
                 className="w-[150px]"
                 data-testid="select-state"
+                aria-label="Filter by state"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -333,6 +334,7 @@ export default function Alerts() {
               <SelectTrigger
                 className="w-[150px]"
                 data-testid="select-severity"
+                aria-label="Filter by severity"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -351,6 +353,7 @@ export default function Alerts() {
               <SelectTrigger
                 className="w-[200px]"
                 data-testid="select-source"
+                aria-label="Filter by source"
               >
                 <SelectValue />
               </SelectTrigger>

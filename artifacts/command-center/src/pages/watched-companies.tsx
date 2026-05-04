@@ -723,7 +723,7 @@ function AddWatchedDialog({
               value={source}
               onValueChange={(v) => setSource(v as WatchedIssuerSource)}
             >
-              <SelectTrigger id="source" data-testid="select-source">
+              <SelectTrigger id="source" data-testid="select-source" aria-label="Issuer source">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -777,7 +777,7 @@ function AddWatchedDialog({
                 setSupplierUid(v === "__none__" ? "" : v)
               }
             >
-              <SelectTrigger id="supplier" data-testid="select-supplier">
+              <SelectTrigger id="supplier" data-testid="select-supplier" aria-label="Linked supplier">
                 <SelectValue placeholder="No supplier link" />
               </SelectTrigger>
               <SelectContent>

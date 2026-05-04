@@ -290,6 +290,7 @@ export function MethodsAndTools() {
                             <SelectTrigger
                               className="h-8 text-xs"
                               data-testid="select-edit-maturity"
+                              aria-label="Edit maturity"
                             >
                               <SelectValue />
                             </SelectTrigger>
@@ -431,6 +432,7 @@ export function MethodsAndTools() {
                         <SelectTrigger
                           className="h-8 text-xs"
                           data-testid="select-new-maturity"
+                          aria-label="New maturity"
                         >
                           <SelectValue />
                         </SelectTrigger>

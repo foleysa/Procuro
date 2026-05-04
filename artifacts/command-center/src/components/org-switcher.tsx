@@ -38,6 +38,7 @@ export function OrgSwitcher() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-label="Switch organization"
           className="w-full justify-between"
         >
           <Building className="mr-2 h-4 w-4 opacity-50" />

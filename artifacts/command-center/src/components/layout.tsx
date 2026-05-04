@@ -222,7 +222,7 @@ export function Layout({ children }: LayoutProps) {
           <p className="text-xs text-sidebar-foreground/60">
             Procurement‑as‑a‑Service
           </p>
-          <p className="text-xs text-sidebar-foreground/40 mt-1">v0.1 MVP</p>
+          <p className="text-xs text-sidebar-foreground/70 mt-1">v0.1 MVP</p>
         </div>
       </aside>
 

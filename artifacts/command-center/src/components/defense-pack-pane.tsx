@@ -196,7 +196,7 @@ function BuilderCard({ onCreated }: { onCreated: (id: string) => void }) {
             Supplier
           </label>
           <Select value={supplierId} onValueChange={setSupplierId}>
-            <SelectTrigger data-testid="select-defense-supplier">
+            <SelectTrigger data-testid="select-defense-supplier" aria-label="Pick a supplier">
               <SelectValue placeholder="Pick a supplier" />
             </SelectTrigger>
             <SelectContent>
@@ -219,7 +219,7 @@ function BuilderCard({ onCreated }: { onCreated: (id: string) => void }) {
                 setScopeMode(v as "material" | "category" | "line")
               }
             >
-              <SelectTrigger data-testid="select-defense-scope-mode">
+              <SelectTrigger data-testid="select-defense-scope-mode" aria-label="Scope mode">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -269,7 +269,7 @@ function BuilderCard({ onCreated }: { onCreated: (id: string) => void }) {
               value={position}
               onValueChange={(v) => setPosition(v as DefensePackPosition)}
             >
-              <SelectTrigger data-testid="select-defense-position">
+              <SelectTrigger data-testid="select-defense-position" aria-label="Defense position">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -289,7 +289,7 @@ function BuilderCard({ onCreated }: { onCreated: (id: string) => void }) {
               value={length}
               onValueChange={(v) => setLength(v as DefensePackLength)}
             >
-              <SelectTrigger data-testid="select-defense-length">
+              <SelectTrigger data-testid="select-defense-length" aria-label="Defense length">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
