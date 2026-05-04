@@ -72,8 +72,24 @@ The format `Regression: <UAT-ID> — <human summary>` is required at the top-lev
 
 ## Exceptions
 
-There are no exceptions.
+If a bug is truly impossible to reproduce in an automated test (e.g., a one-time data corruption from a manual operation), the PR may be granted a documented exception. "It's hard to write a test for this" is not an exception. Hard tests are the most valuable ones.
 
-If a bug is impossible to reproduce in an automated test (e.g., a one-time data corruption from a manual operation), the PR description must explain why and propose a different defense — typically a runtime assertion, a data integrity check, or a monitoring alert. The reviewer must accept the alternative defense in writing on the PR.
+### How to request an exception
 
-"It's hard to write a test for this" is not an exception. Hard tests are the most valuable ones.
+1. In the PR description, explain clearly why an automated regression test is impossible for this specific bug.
+2. Propose an alternative defense — typically a runtime assertion, a data integrity check, or a monitoring alert.
+3. Add the exception marker to the PR body (anywhere in the description):
+
+   ```
+   <!-- REGRESSION-TEST-EXCEPTION -->
+   ```
+
+   Alternatively, apply the `regression-test-exception` label to the PR on GitHub.
+
+4. The reviewer must explicitly accept the alternative defense **in writing** in a review comment before approving the PR.
+
+### What happens in CI
+
+When the exception marker or label is present, the regression test gate **passes with a warning** instead of failing. The warning box is printed to the CI log to remind reviewers of their obligations. The gate still fails if neither a test file nor a valid bypass is present.
+
+Reviewers who approve a PR with this bypass without verifying the alternative defense are in violation of this policy.
