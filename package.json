@@ -12,11 +12,13 @@
     "test:perf": "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-server exec node --experimental-test-module-mocks --import tsx --test test/funnel-perf-budget.test.ts test/cycle-perf-budget.test.ts",
     "test:hardening": "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-server exec node --import tsx --test test/global-error-handler-envelope.test.ts test/tenant-isolation.test.ts test/assert-dev-tenant-header-safe.test.ts",
     "test:a11y": "npx playwright test --config playwright.a11y.config.ts",
+    "test:smoke": "playwright test --config playwright.smoke.config.ts",
     "check": "pnpm run typecheck:libs && pnpm run test:hardening && pnpm run test:perf"
   },
   "private": true,
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
+    "@clerk/testing": "^2.0.24",
     "@playwright/test": "^1.59.1",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
