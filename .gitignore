@@ -60,3 +60,4 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+test-results/
