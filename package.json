@@ -13,7 +13,7 @@
     "test:hardening": "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-server exec node --import tsx --test test/global-error-handler-envelope.test.ts test/tenant-isolation.test.ts test/assert-dev-tenant-header-safe.test.ts",
     "test:a11y": "npx playwright test --config playwright.a11y.config.ts",
     "test:smoke": "playwright test --config playwright.smoke.config.ts",
-    "check": "pnpm run typecheck:libs && pnpm run test:hardening && pnpm run test:perf",
+    "check": "pnpm run typecheck:libs && pnpm run test:hardening && pnpm run test:perf && pnpm run test:a11y",
     "test:e2e": "pnpm exec playwright test --config playwright.e2e.config.ts"
   },
   "private": true,

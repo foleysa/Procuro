@@ -24,6 +24,10 @@ args = "test-api-server"
 task = "workflow.run"
 args = "perf-budget"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "a11y"
+
 [[workflows.workflow]]
 name = "test-api-server"
 author = "agent"
@@ -45,6 +49,17 @@ isValidation = true
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/db run sync && pnpm --filter @workspace/api-server exec node --experimental-test-module-mocks --import tsx --test test/funnel-perf-budget.test.ts test/cycle-perf-budget.test.ts"
+
+[[workflows.workflow]]
+name = "a11y"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm run test:a11y"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 stack = "PNPM_WORKSPACE"

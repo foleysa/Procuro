@@ -40,6 +40,7 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **`lib/db`**: Vitest unit tests for S2P business logic (DOA tiers, gate SLA breach, backfill mapping, baseline validation). Run: `pnpm --filter @workspace/db run test`
 - **`api-server`**: Node native test runner with real dev DB for integration tests (stage transitions, CFO insurance gate, lifecycle). Run: `pnpm --filter @workspace/api-server run test`
 - **`command-center`**: Vitest for frontend component tests. Run: `pnpm --filter @workspace/command-center run test`
+- **Accessibility (a11y)**: Playwright + axe-core WCAG 2.2 AA scan across ~40 routes. Run: `pnpm run test:a11y`. Registered as a CI validation (`a11y`) and included in `pnpm run check`. New serious/critical violations block the build; baselined violations (`.a11y-baseline.json`) pass through. Config: `playwright.a11y.config.ts`, tests: `tests/a11y/`, routes: `tests/a11y/routes.ts`.
 - **All suites**: `pnpm run test` (filters `lib/**` and `artifacts/**`)
 - Key shared modules: `lib/db/src/s2p-helpers.ts` (backfill mapping, baseline validation), `lib/db/src/hard-savings.ts` (aggregate gate query)
 - Fixture factory: `lib/db/test/fixtures/factory.ts` (`makeOpportunity`, `makeBackfilledOpportunity`, `makeUser`)
