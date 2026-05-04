@@ -6,7 +6,7 @@
  *   2. Navigates and waits for network idle.
  *   3. Runs axe with WCAG 2.x + 2.2 AA tags.
  *   4. Partitions violations into "baselined" vs "new".
- *   5. Fails only on new serious or critical violations.
+ *   5. Fails on any new violation (all impact levels).
  *   6. Attaches full violation data for the baseline-establishment script.
  *
  * Run:
@@ -66,8 +66,6 @@ function isBaselined(
     (e) => e.route === route && e.violationId === violationId,
   );
 }
-
-const SERIOUS_OR_CRITICAL = new Set(["serious", "critical"]);
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -149,17 +147,12 @@ for (const entry of ROUTES) {
     const newViolations = violations.filter(
       (v) => !isBaselined(baseline, entry.path, v.id),
     );
-    const newSeriousOrCritical = newViolations.filter((v) =>
-      SERIOUS_OR_CRITICAL.has(v.impact ?? ""),
-    );
-
     // Build a human-readable summary for the test report
     const summary = [
       `Route: ${entry.name} (${entry.path})`,
       `Total violations: ${violations.length}`,
       `  Baselined (pass): ${violations.length - newViolations.length}`,
-      `  New (all impacts): ${newViolations.length}`,
-      `  New serious/critical: ${newSeriousOrCritical.length}`,
+      `  New: ${newViolations.length}`,
       "",
     ];
 
@@ -179,14 +172,14 @@ for (const entry of ROUTES) {
 
     console.log(summary.join("\n"));
 
-    // Gate: fail only on new serious or critical violations
-    if (newSeriousOrCritical.length > 0) {
+    // Gate: fail on ANY new violation (all impact levels)
+    if (newViolations.length > 0) {
       const failureLines = [
-        `${newSeriousOrCritical.length} new serious/critical WCAG 2.2 AA violation(s) on "${entry.name}" (${entry.path}).`,
+        `${newViolations.length} new WCAG 2.2 AA violation(s) on "${entry.name}" (${entry.path}).`,
         "Fix or baseline these before merging.\n",
       ];
 
-      for (const v of newSeriousOrCritical) {
+      for (const v of newViolations) {
         failureLines.push(`• [${v.impact?.toUpperCase()}] ${v.id}`);
         failureLines.push(`  ${v.description}`);
         failureLines.push(`  Help: ${v.helpUrl}`);
@@ -201,20 +194,9 @@ for (const entry of ROUTES) {
       }
 
       expect.soft(
-        newSeriousOrCritical.length,
+        newViolations.length,
         failureLines.join("\n"),
       ).toBe(0);
-    }
-
-    // Non-blocking: log new moderate/minor violations as annotations
-    const newMinor = newViolations.filter(
-      (v) => !SERIOUS_OR_CRITICAL.has(v.impact ?? ""),
-    );
-    for (const v of newMinor) {
-      testInfo.annotations.push({
-        type: "warning",
-        description: `New moderate/minor a11y: [${v.impact}] ${v.id} — ${v.description}`,
-      });
     }
   });
 }
