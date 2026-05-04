@@ -30,6 +30,16 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Get commit messages
+        id: commits
+        run: |
+          MSGS=$(git log --format=%B origin/${{ github.base_ref }}...HEAD)
+          {
+            echo "messages<<EOF"
+            echo "$MSGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -47,6 +57,7 @@ jobs:
           PR_BRANCH: ${{ github.head_ref }}
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: pnpm --filter @workspace/scripts run check-regression-tests

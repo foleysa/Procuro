@@ -34,14 +34,25 @@ function extractUatIds(pr: PrInfo): string[] {
   return [...ids];
 }
 
-function extractClosingIssueNumbers(prBody: string): number[] {
+function extractClosingIssueNumbers(text: string): number[] {
   const numbers: number[] = [];
   const re = new RegExp(CLOSING_REF_PATTERN.source, "gi");
   let match: RegExpExecArray | null;
-  while ((match = re.exec(prBody)) !== null) {
+  while ((match = re.exec(text)) !== null) {
     numbers.push(parseInt(match[1], 10));
   }
   return numbers;
+}
+
+function extractClosingIssueNumbersFromAll(...sources: string[]): number[] {
+  const seen = new Set<number>();
+  for (const src of sources) {
+    if (!src) continue;
+    for (const n of extractClosingIssueNumbers(src)) {
+      seen.add(n);
+    }
+  }
+  return [...seen];
 }
 
 interface GitHubLabel {
@@ -55,10 +66,11 @@ interface GitHubIssue {
 
 async function fetchLinkedIssueUatIds(
   prBody: string,
+  commitMessages: string,
   token: string,
   repo: string
 ): Promise<string[]> {
-  const issueNumbers = extractClosingIssueNumbers(prBody);
+  const issueNumbers = extractClosingIssueNumbersFromAll(prBody, commitMessages);
   if (issueNumbers.length === 0) return [];
 
   const ids = new Set<string>();
@@ -117,6 +129,7 @@ async function run(): Promise<void> {
   const branchName = process.env.PR_BRANCH ?? "";
   const changedFilesRaw = process.env.CHANGED_FILES ?? "";
   const labelsRaw = process.env.PR_LABELS ?? "";
+  const commitMessages = process.env.PR_COMMITS ?? "";
   const githubToken = process.env.GITHUB_TOKEN ?? "";
   const githubRepo = process.env.GITHUB_REPOSITORY ?? "";
 
@@ -135,9 +148,9 @@ async function run(): Promise<void> {
   const directUatIds = extractUatIds(pr);
 
   let linkedIssueUatIds: string[] = [];
-  if (githubToken && githubRepo && body) {
+  if (githubToken && githubRepo && (body || commitMessages)) {
     console.log("Checking linked GitHub issues for UAT references...");
-    linkedIssueUatIds = await fetchLinkedIssueUatIds(body, githubToken, githubRepo);
+    linkedIssueUatIds = await fetchLinkedIssueUatIds(body, commitMessages, githubToken, githubRepo);
     if (linkedIssueUatIds.length > 0) {
       console.log(`  UAT reference(s) found via linked issues: ${linkedIssueUatIds.join(", ")}`);
     }
