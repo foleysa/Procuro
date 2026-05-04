@@ -3,9 +3,6 @@ name: Enforce branch protection
 on:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/enforce-branch-protection.yml
-      - scripts/src/protect-main-branch.ts
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
