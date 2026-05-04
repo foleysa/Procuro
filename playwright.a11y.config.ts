@@ -81,6 +81,7 @@ export default defineConfig({
     ["list"],
     ["json", { outputFile: "test-results/a11y-report.json" }],
     ["html", { outputFolder: "test-results/a11y-html", open: "never" }],
+    ["./tests/a11y/ingest-reporter.ts"],
   ],
 
   use: {

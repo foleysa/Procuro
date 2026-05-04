@@ -15,7 +15,7 @@ interface AxeViolation {
   nodes: Array<{ html: string; target: string[]; failureSummary?: string }>;
 }
 
-interface RouteResult {
+export interface RouteResult {
   route: string;
   routeName: string;
   violations: AxeViolation[];
@@ -56,40 +56,34 @@ function isBaselined(
   );
 }
 
-async function main() {
-  if (!fs.existsSync(VIOLATIONS_JSONL)) {
-    console.error(`No JSONL file found at ${VIOLATIONS_JSONL}.`);
-    console.error("Run the a11y scan first:");
-    console.error("  npx playwright test --config playwright.a11y.config.ts");
-    process.exit(1);
-  }
+export interface IngestResult {
+  runId: string;
+  routeCount: number;
+  totalViolations: number;
+  totalNew: number;
+  prunedCount: number;
+}
 
-  const lines = fs
-    .readFileSync(VIOLATIONS_JSONL, "utf8")
-    .split("\n")
-    .filter(Boolean);
+export async function ingestA11yResults(
+  routeResults: RouteResult[],
+  baselinePath?: string,
+): Promise<IngestResult> {
+  const baseline = baselinePath
+    ? (() => {
+        if (!fs.existsSync(baselinePath)) return [];
+        try {
+          return JSON.parse(fs.readFileSync(baselinePath, "utf8")) as BaselineEntry[];
+        } catch {
+          return [];
+        }
+      })()
+    : loadBaseline();
 
-  const byRoute = new Map<string, RouteResult>();
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line) as RouteResult;
-      byRoute.set(parsed.route, parsed);
-    } catch {
-      // skip malformed lines
-    }
-  }
-
-  if (byRoute.size === 0) {
-    console.log("No route results found in JSONL file. Nothing to ingest.");
-    process.exit(0);
-  }
-
-  const baseline = loadBaseline();
   const runId = crypto.randomUUID();
   const scannedAt = new Date();
   const rows: Array<typeof a11yScanResultsTable.$inferInsert> = [];
 
-  for (const [, rr] of byRoute) {
+  for (const rr of routeResults) {
     let criticalCount = 0;
     let seriousCount = 0;
     let moderateCount = 0;
@@ -167,19 +161,64 @@ async function main() {
   const totalViolations = rows.reduce((s, r) => s + r.totalViolations, 0);
   const totalNew = rows.reduce((s, r) => s + (r.newCount ?? 0), 0);
 
-  console.log(`Ingested ${rows.length} route results into a11y_scan_results.`);
-  console.log(`  Run ID:           ${runId}`);
-  console.log(`  Total violations: ${totalViolations}`);
-  console.log(`  New violations:   ${totalNew}`);
-  console.log(`  Baselined:        ${totalViolations - totalNew}`);
-  if (prunedCount > 0) {
-    console.log(`  Pruned:           ${prunedCount} rows older than ${A11Y_RETENTION_DAYS} days`);
+  return { runId, routeCount: rows.length, totalViolations, totalNew, prunedCount };
+}
+
+export function parseJsonlFile(filePath: string): RouteResult[] {
+  const lines = fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .filter(Boolean);
+
+  const byRoute = new Map<string, RouteResult>();
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as RouteResult;
+      byRoute.set(parsed.route, parsed);
+    } catch {
+      // skip malformed lines
+    }
+  }
+
+  return Array.from(byRoute.values());
+}
+
+async function main() {
+  if (!fs.existsSync(VIOLATIONS_JSONL)) {
+    console.error(`No JSONL file found at ${VIOLATIONS_JSONL}.`);
+    console.error("Run the a11y scan first:");
+    console.error("  npx playwright test --config playwright.a11y.config.ts");
+    process.exit(1);
+  }
+
+  const routeResults = parseJsonlFile(VIOLATIONS_JSONL);
+
+  if (routeResults.length === 0) {
+    console.log("No route results found in JSONL file. Nothing to ingest.");
+    process.exit(0);
+  }
+
+  const result = await ingestA11yResults(routeResults);
+
+  console.log(`Ingested ${result.routeCount} route results into a11y_scan_results.`);
+  console.log(`  Run ID:           ${result.runId}`);
+  console.log(`  Total violations: ${result.totalViolations}`);
+  console.log(`  New violations:   ${result.totalNew}`);
+  console.log(`  Baselined:        ${result.totalViolations - result.totalNew}`);
+  if (result.prunedCount > 0) {
+    console.log(`  Pruned:           ${result.prunedCount} rows older than ${A11Y_RETENTION_DAYS} days`);
   }
 
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+const isDirectRun =
+  process.argv[1] &&
+  import.meta.url === `file://${path.resolve(process.argv[1])}`;
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}
