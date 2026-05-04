@@ -71,13 +71,13 @@ const CHROMIUM_THRESHOLDS = {
 };
 
 const FIREFOX_THRESHOLDS = {
-  static: 0.002,
-  chart: 0.008,
+  static: 0.003,
+  chart: 0.012,
 };
 
 const WEBKIT_THRESHOLDS = {
-  static: 0.002,
-  chart: 0.008,
+  static: 0.003,
+  chart: 0.012,
 };
 
 export const BROWSER_THRESHOLDS: Record<
@@ -89,12 +89,56 @@ export const BROWSER_THRESHOLDS: Record<
   "webkit-visual": WEBKIT_THRESHOLDS,
 };
 
+type RouteOverride = {
+  browsers?: string[];
+  maxDiffPixelRatio: number;
+};
+
+const ROUTE_OVERRIDES: Record<string, RouteOverride[]> = {
+  "/sign-in": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.015 },
+  ],
+  "/sign-up": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.015 },
+  ],
+
+  "/": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.018 },
+  ],
+  "/spend": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.018 },
+  ],
+  "/results": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.018 },
+  ],
+
+  "/services": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.006 },
+  ],
+  "/suppliers": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.006 },
+  ],
+  "/contracts": [
+    { browsers: ["firefox-visual", "webkit-visual"], maxDiffPixelRatio: 0.006 },
+  ],
+};
+
 export function getMaxDiffForRoute(
   routePath: string,
   projectName?: string,
 ): number {
   const key = projectName ?? "chromium-visual";
   const thresholds = BROWSER_THRESHOLDS[key] ?? CHROMIUM_THRESHOLDS;
+
+  const overrides = ROUTE_OVERRIDES[routePath];
+  if (overrides) {
+    for (const override of overrides) {
+      if (!override.browsers || override.browsers.includes(key)) {
+        return override.maxDiffPixelRatio;
+      }
+    }
+  }
+
   return CHART_ROUTES.has(routePath) ? thresholds.chart : thresholds.static;
 }
 

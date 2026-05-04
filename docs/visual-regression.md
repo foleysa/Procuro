@@ -83,14 +83,14 @@ If a test fails intermittently:
 
 1. Check if a volatile element is not being masked — add its selector to `VOLATILE_SELECTORS` in `tests/visual/routes.ts`.
 2. Check if a chart or animation is not fully settled — the `stabilizePage` helper may need a longer wait.
-3. Consider raising the threshold for that specific route in `BROWSER_THRESHOLDS`.
+3. Consider adding a route-specific override in `ROUTE_OVERRIDES` in `tests/visual/routes.ts` to raise the threshold for that specific route and browser.
 
 ### Browser-specific failures
 
 Firefox and WebKit may render fonts, anti-aliasing, and sub-pixel layouts differently from Chromium. If a test fails in only one browser:
 
 1. Confirm the diff is a genuine rendering difference, not a layout bug.
-2. If the rendering difference is cosmetic and expected, the browser-specific thresholds already provide extra tolerance. If that's not enough, increase the threshold for the affected browser in `tests/visual/routes.ts` → `BROWSER_THRESHOLDS`.
+2. If the rendering difference is cosmetic and expected, check if the browser-specific global thresholds already provide enough tolerance. If not, add a route-specific override in `ROUTE_OVERRIDES` in `tests/visual/routes.ts` (preferred over raising the global threshold).
 3. If the difference reveals a real layout bug, fix it in the CSS/component code.
 
 ## Adding New Routes
@@ -102,17 +102,40 @@ Firefox and WebKit may render fonts, anti-aliasing, and sub-pixel layouts differ
 
 ## Threshold Tuning
 
+### Global per-browser thresholds
+
 Thresholds are defined per-browser in `tests/visual/routes.ts` via `BROWSER_THRESHOLDS`:
 
 | Browser | Static pages | Chart-heavy pages |
 |---|---|---|
 | Chromium | `0.001` (0.1%) | `0.005` (0.5%) |
-| Firefox | `0.002` (0.2%) | `0.008` (0.8%) |
-| WebKit | `0.002` (0.2%) | `0.008` (0.8%) |
+| Firefox | `0.003` (0.3%) | `0.012` (1.2%) |
+| WebKit | `0.003` (0.3%) | `0.012` (1.2%) |
 
-Firefox and WebKit use slightly higher thresholds because their font rasterizers and anti-aliasing engines produce minor sub-pixel differences compared to Chromium. These defaults are conservative; adjust them per-browser if you see persistent false positives.
+Firefox and WebKit thresholds are set higher than Chromium to account for known cross-engine rendering differences:
 
-The test file resolves the active project name at runtime via `test.info().project.name` and looks up the matching thresholds through the `getMaxDiffForRoute()` helper.
+- **Font rasterization**: Firefox uses its own text shaper with different sub-pixel anti-aliasing; WebKit uses a Core Text–style rasterizer. Both produce slightly different glyph outlines and hinting compared to Chromium/Skia, causing small per-pixel diffs on text-heavy pages.
+- **SVG / chart rendering**: Recharts SVG paths, gradients, and anti-aliased curves render with measurably different sub-pixel coverage across engines, especially for complex data-viz pages.
+- **CSS rendering**: Minor differences in border-radius interpolation, box-shadow blur, and gradient banding.
+
+### Route-specific overrides
+
+For routes with known larger cosmetic deltas, per-route overrides are defined in `ROUTE_OVERRIDES` in `tests/visual/routes.ts`. These take precedence over the global thresholds:
+
+| Route | Browsers | Threshold | Reason |
+|---|---|---|---|
+| `/sign-in` | Firefox, WebKit | `0.015` (1.5%) | Clerk-rendered external widget with different form control styling |
+| `/sign-up` | Firefox, WebKit | `0.015` (1.5%) | Clerk-rendered external widget with different form control styling |
+| `/` | Firefox, WebKit | `0.018` (1.8%) | Dashboard with multiple chart panels and SVG-heavy sparklines |
+| `/spend` | Firefox, WebKit | `0.018` (1.8%) | Dense Recharts area/bar charts with gradient fills |
+| `/results` | Firefox, WebKit | `0.018` (1.8%) | Savings charts and billing visualizations |
+| `/services` | Firefox, WebKit | `0.006` (0.6%) | Dense data tables with many text cells |
+| `/suppliers` | Firefox, WebKit | `0.006` (0.6%) | Dense data tables with many text cells |
+| `/contracts` | Firefox, WebKit | `0.006` (0.6%) | Dense data tables with many text cells |
+
+To add a new override, add an entry to the `ROUTE_OVERRIDES` map in `tests/visual/routes.ts`. Each override specifies the route path, an optional list of browser project names, and the `maxDiffPixelRatio`.
+
+The test file resolves the active project name at runtime via `test.info().project.name` and looks up the matching thresholds through the `getMaxDiffForRoute()` helper, which checks route-specific overrides first, then falls back to global browser thresholds.
 
 ## Stabilization Rules
 
