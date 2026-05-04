@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, a11yScanResultsTable } from "@workspace/db";
-import { and, desc, gte, sql, eq, count, sum } from "drizzle-orm";
+import { and, desc, gte, lt, sql, eq, count, sum } from "drizzle-orm";
 import { tenantMiddleware } from "../lib/tenant";
 import { requireRole } from "../lib/rbac";
 import crypto from "node:crypto";
@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 const router: IRouter = Router();
 
 const MAX_TREND_DAYS = 90;
+const DEFAULT_RETENTION_DAYS = 90;
 const DEFAULT_TREND_DAYS = 30;
 
 function parseDays(raw: unknown): number {
@@ -268,6 +269,25 @@ router.get(
         a.route.localeCompare(b.route),
       ),
     });
+  },
+);
+
+router.delete(
+  "/admin/a11y/prune",
+  tenantMiddleware,
+  requireRole("platform_admin"),
+  async (req, res): Promise<void> => {
+    const retentionDays = Math.max(1, Math.floor(Number(req.query["days"]) || DEFAULT_RETENTION_DAYS));
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+    const result = await db
+      .delete(a11yScanResultsTable)
+      .where(lt(a11yScanResultsTable.scannedAt, cutoff));
+
+    const deleted = result.rowCount ?? 0;
+    req.log.info({ retentionDays, cutoff, deleted }, "a11y scan results pruned");
+
+    res.json({ retentionDays, cutoff: cutoff.toISOString(), deleted });
   },
 );
 

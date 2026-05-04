@@ -3,6 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { db, a11yScanResultsTable } from "@workspace/db";
+import { lt } from "drizzle-orm";
+
+const A11Y_RETENTION_DAYS = Math.max(1, Math.floor(Number(process.env.A11Y_RETENTION_DAYS) || 90));
 
 interface AxeViolation {
   id: string;
@@ -155,6 +158,12 @@ async function main() {
     await db.insert(a11yScanResultsTable).values(rows);
   }
 
+  const cutoff = new Date(Date.now() - A11Y_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const pruned = await db
+    .delete(a11yScanResultsTable)
+    .where(lt(a11yScanResultsTable.scannedAt, cutoff));
+  const prunedCount = pruned.rowCount ?? 0;
+
   const totalViolations = rows.reduce((s, r) => s + r.totalViolations, 0);
   const totalNew = rows.reduce((s, r) => s + (r.newCount ?? 0), 0);
 
@@ -163,6 +172,9 @@ async function main() {
   console.log(`  Total violations: ${totalViolations}`);
   console.log(`  New violations:   ${totalNew}`);
   console.log(`  Baselined:        ${totalViolations - totalNew}`);
+  if (prunedCount > 0) {
+    console.log(`  Pruned:           ${prunedCount} rows older than ${A11Y_RETENTION_DAYS} days`);
+  }
 
   process.exit(0);
 }
