@@ -66,6 +66,19 @@ The post-merge script (`scripts/post-merge.sh`) runs automatically after task me
 - **Gemini 2.5 Flash:** AI model for Defense Pack memo generation.
 - **Notion:** Connected via Replit native integration (connector `notion`). Use the credentials proxy at `https://${REPLIT_CONNECTORS_HOSTNAME}/api/v2/connection?include_secrets=true&connector_names=notion` with `X_REPLIT_TOKEN: "repl " + REPL_IDENTITY` to fetch a fresh `access_token`, then call `https://api.notion.com/v1/...` with `Notion-Version: 2022-06-28`. Never cache the token.
 
+## Performance Testing
+
+Three k6 performance scenarios live in `tests/performance/`:
+- **Load test** (`load.k6.js`) — 25 VUs for 5 min; p95 ≤ 1500ms, error rate < 0.1%
+- **Stress test** (`stress.k6.js`) — 50→800 VUs over 10 min; documents breaking point
+- **Soak test** (`soak.k6.js`) — 25 VUs for 4 hours; detects memory leaks and query degradation
+
+Soak data seeder: `pnpm --filter @workspace/scripts run seed-soak-data` (50K opps, ~150K history rows under `org_soak_test`).
+
+Baselines documented in `docs/performance-baselines.md` (TBD values to be filled after first run).
+
+`@types/k6` is a dev dependency in `@workspace/api-server` for type awareness. k6 binary must be installed separately (not in Nix modules currently).
+
 ## Notion workspace map ("FSA Operating")
 
 Top-level page `FSA Operating` (`3554a7a5-85e9-80ff-9875-f3bab7730935`) contains:
