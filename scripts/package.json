@@ -6,6 +6,7 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "seed": "tsx ./src/seed.ts",
+    "clear-data": "tsx ./src/clear-data.ts",
     "dedupe-market-signals": "tsx ./src/dedupe-market-signals.ts",
     "backfill-bls-scope-sku": "tsx ./src/backfill-bls-scope-sku.ts",
     "replay-collector": "tsx ./src/replay-collector.ts",
