@@ -35,3 +35,4 @@ export * from "./taxonomy";
 export * from "./categoryLeverPriorScales";
 export * from "./methodsAndTools";
 export * from "./dataIntegrity";
+export * from "./a11yScanResults";

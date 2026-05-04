@@ -49,6 +49,7 @@ import WatchedCompanies from "./pages/watched-companies";
 import WatchedUsSuppliers from "./pages/watched-us-suppliers";
 import Admin from "./pages/admin";
 import AdminDataIntegrity from "./pages/admin-data-integrity";
+import AdminA11y from "./pages/admin-a11y";
 import Operations from "./pages/operations";
 import Engine from "./pages/engine";
 import TaxonomyQueue from "./pages/taxonomy-queue";
@@ -170,6 +171,11 @@ const ADMIN_PAGE_BLURBS: Record<
     name: "Data integrity checks",
     what:
       "Data integrity checks shows the latest run of the eleven reconciliation assertions plus a sparkline of recent pass/fail history.",
+  },
+  "/admin/a11y": {
+    name: "Accessibility trends",
+    what:
+      "Accessibility trends tracks WCAG 2.2 AA violation counts over time across all scanned routes, showing severity breakdown and per-route heatmaps.",
   },
   "/admin": {
     name: "Admin",
@@ -401,6 +407,11 @@ function AppRoutes() {
             <Route path="/admin/data-integrity">
               <AdminGuard>
                 <AdminDataIntegrity />
+              </AdminGuard>
+            </Route>
+            <Route path="/admin/a11y">
+              <AdminGuard>
+                <AdminA11y />
               </AdminGuard>
             </Route>
             <Route path="/admin">

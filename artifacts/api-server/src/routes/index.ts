@@ -42,6 +42,7 @@ import servicesRouter from "./services";
 import sowsRouter from "./sows";
 import rateCardsRouter from "./rate-cards";
 import methodsAndToolsRouter from "./methods-and-tools";
+import adminA11yRouter from "./admin-a11y";
 
 const router: IRouter = Router();
 
@@ -88,5 +89,6 @@ router.use(servicesRouter);
 router.use(sowsRouter);
 router.use(rateCardsRouter);
 router.use(methodsAndToolsRouter);
+router.use(adminA11yRouter);
 
 export default router;

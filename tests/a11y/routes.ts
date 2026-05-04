@@ -249,6 +249,12 @@ export const ROUTES: RouteEntry[] = [
     description: "Category taxonomy mapping queue (admin)",
   },
   {
+    path: "/admin/a11y",
+    name: "A11y Trends",
+    requiresAuth: true,
+    description: "Accessibility violation trend reporting (platform admin)",
+  },
+  {
     path: "/admin",
     name: "Org Admin",
     requiresAuth: true,

@@ -16,6 +16,7 @@
     "backfill-savings-classification": "tsx ./src/backfill-savings-classification.ts",
     "data-integrity": "tsx ./src/run-data-integrity.ts",
     "establish-a11y-baseline": "tsx ./src/establish-a11y-baseline.ts",
+    "ingest-a11y": "tsx ./src/ingest-a11y-results.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
