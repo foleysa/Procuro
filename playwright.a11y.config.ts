@@ -65,7 +65,7 @@ const defaultBaseUrl = replitDomain
 
 export default defineConfig({
   testDir: "./tests/a11y",
-  testMatch: "**/*.a11y.test.ts",
+  testMatch: ["**/*.a11y.test.ts", "**/route-coverage.test.ts"],
 
   /* Generous timeout — pages may be slow to hydrate in dev */
   timeout: 60_000,

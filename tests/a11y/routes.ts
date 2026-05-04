@@ -255,6 +255,12 @@ export const ROUTES: RouteEntry[] = [
     description: "Accessibility violation trend reporting (platform admin)",
   },
   {
+    path: "/admin/data-integrity",
+    name: "Data Integrity",
+    requiresAuth: true,
+    description: "Data-integrity assertion results and violation details (admin)",
+  },
+  {
     path: "/admin",
     name: "Org Admin",
     requiresAuth: true,
