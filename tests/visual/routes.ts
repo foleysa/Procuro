@@ -65,6 +65,39 @@ const CHART_ROUTES = new Set([
   "/engine",
 ]);
 
+const CHROMIUM_THRESHOLDS = {
+  static: 0.001,
+  chart: 0.005,
+};
+
+const FIREFOX_THRESHOLDS = {
+  static: 0.002,
+  chart: 0.008,
+};
+
+const WEBKIT_THRESHOLDS = {
+  static: 0.002,
+  chart: 0.008,
+};
+
+export const BROWSER_THRESHOLDS: Record<
+  string,
+  { static: number; chart: number }
+> = {
+  "chromium-visual": CHROMIUM_THRESHOLDS,
+  "firefox-visual": FIREFOX_THRESHOLDS,
+  "webkit-visual": WEBKIT_THRESHOLDS,
+};
+
+export function getMaxDiffForRoute(
+  routePath: string,
+  projectName?: string,
+): number {
+  const key = projectName ?? "chromium-visual";
+  const thresholds = BROWSER_THRESHOLDS[key] ?? CHROMIUM_THRESHOLDS;
+  return CHART_ROUTES.has(routePath) ? thresholds.chart : thresholds.static;
+}
+
 export const VISUAL_ROUTES: VisualRouteEntry[] = A11Y_ROUTES.map((route) => ({
   path: route.path,
   name: route.name,
@@ -72,6 +105,6 @@ export const VISUAL_ROUTES: VisualRouteEntry[] = A11Y_ROUTES.map((route) => ({
   description: route.description,
   viewports: VIEWPORTS,
   themes: THEMES,
-  maxDiffPixelRatio: CHART_ROUTES.has(route.path) ? 0.005 : 0.001,
+  maxDiffPixelRatio: CHROMIUM_THRESHOLDS.static,
   maskSelectors: [...VOLATILE_SELECTORS],
 }));

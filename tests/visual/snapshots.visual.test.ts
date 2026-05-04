@@ -23,7 +23,7 @@
 
 import { test, expect } from "@playwright/test";
 import type { Theme } from "./routes";
-import { VISUAL_ROUTES } from "./routes";
+import { VISUAL_ROUTES, getMaxDiffForRoute } from "./routes";
 
 const ORG_ID = process.env["VISUAL_ORG_ID"] ?? "org-t272-55abafb4-dis";
 
@@ -113,9 +113,12 @@ for (const route of VISUAL_ROUTES) {
 
         await stabilizePage(page, route.maskSelectors, theme);
 
+        const projectName = test.info().project.name;
+        const threshold = getMaxDiffForRoute(route.path, projectName);
+
         await expect(page).toHaveScreenshot(snapshotName, {
           fullPage: true,
-          maxDiffPixelRatio: route.maxDiffPixelRatio,
+          maxDiffPixelRatio: threshold,
         });
       });
     }

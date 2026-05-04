@@ -12,22 +12,28 @@ import path from "node:path";
  *   VISUAL_BASE_URL                     Override the target base URL
  *   VISUAL_ORG_ID                       Tenant org-id for dev-header auth bypass
  *   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Override the Chromium binary
+ *   PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH   Override the Firefox binary
+ *   VISUAL_BROWSERS                      Comma-separated list of browser projects to run
+ *                                        (e.g. "chromium-visual,firefox-visual")
+ *                                        Defaults to all three browsers.
  */
 
-function findNixChromium(): string | undefined {
+function findNixBrowser(
+  dirPattern: string,
+  binaryRelPath: string | ((dir: string) => string | undefined),
+): string | undefined {
   const nixStore = "/nix/store";
   try {
     const entries = fs.readdirSync(nixStore);
     const candidates = entries
-      .filter((e) => e.includes("playwright-browsers-chromium"))
+      .filter((e) => e.includes(dirPattern))
       .map((e) => {
-        const chromiumDir = path.join(nixStore, e);
+        const fullDir = path.join(nixStore, e);
         try {
-          const sub = fs
-            .readdirSync(chromiumDir)
-            .find((d) => d.startsWith("chromium-"));
-          if (!sub) return undefined;
-          const bin = path.join(chromiumDir, sub, "chrome-linux", "chrome");
+          if (typeof binaryRelPath === "function") {
+            return binaryRelPath(fullDir);
+          }
+          const bin = path.join(fullDir, binaryRelPath);
           return fs.existsSync(bin) ? bin : undefined;
         } catch {
           return undefined;
@@ -41,8 +47,25 @@ function findNixChromium(): string | undefined {
   }
 }
 
-const executablePath =
+function findNixChromium(): string | undefined {
+  return findNixBrowser("playwright-browsers-chromium", (dir) => {
+    const sub = fs
+      .readdirSync(dir)
+      .find((d) => d.startsWith("chromium-"));
+    if (!sub) return undefined;
+    const bin = path.join(dir, sub, "chrome-linux", "chrome");
+    return fs.existsSync(bin) ? bin : undefined;
+  });
+}
+
+function findNixFirefox(): string | undefined {
+  return findNixBrowser("playwright-firefox", "firefox/firefox");
+}
+
+const chromiumExec =
   process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"] ?? findNixChromium();
+const firefoxExec =
+  process.env["PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH"] ?? findNixFirefox();
 
 const replitDomain =
   process.env["REPLIT_DEV_DOMAIN"] ??
@@ -50,6 +73,42 @@ const replitDomain =
 const defaultBaseUrl = replitDomain
   ? `https://${replitDomain}`
   : "http://localhost:80";
+
+const defaultProjects = [
+  {
+    name: "chromium-visual",
+    use: {
+      ...devices["Desktop Chrome"],
+      launchOptions: chromiumExec ? { executablePath: chromiumExec } : {},
+    },
+  },
+  {
+    name: "firefox-visual",
+    use: {
+      ...devices["Desktop Firefox"],
+      launchOptions: firefoxExec ? { executablePath: firefoxExec } : {},
+    },
+  },
+];
+
+const optInProjects = [
+  {
+    name: "webkit-visual",
+    use: {
+      ...devices["Desktop Safari"],
+    },
+  },
+];
+
+const allProjects = [...defaultProjects, ...optInProjects];
+
+const enabledBrowsers = process.env["VISUAL_BROWSERS"]
+  ? process.env["VISUAL_BROWSERS"].split(",").map((b) => b.trim())
+  : undefined;
+
+const projects = enabledBrowsers
+  ? allProjects.filter((p) => enabledBrowsers.includes(p.name))
+  : defaultProjects;
 
 export default defineConfig({
   testDir: "./tests/visual",
@@ -80,21 +139,14 @@ export default defineConfig({
 
   use: {
     baseURL: process.env["VISUAL_BASE_URL"] ?? defaultBaseUrl,
+    ignoreHTTPSErrors: true,
     actionTimeout: 30_000,
     navigationTimeout: 45_000,
     screenshot: "only-on-failure",
     trace: "off",
   },
 
-  projects: [
-    {
-      name: "chromium-visual",
-      use: {
-        ...devices["Desktop Chrome"],
-        launchOptions: executablePath ? { executablePath } : {},
-      },
-    },
-  ],
+  projects,
 
   outputDir: "test-results/visual-artifacts",
 });
