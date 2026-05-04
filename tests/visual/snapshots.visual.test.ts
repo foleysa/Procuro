@@ -11,6 +11,12 @@
  *   class *before* the page navigates so every resource renders in the
  *   target theme from the start—no flash of the wrong theme.
  *
+ * Theme filtering:
+ *   Set the VISUAL_THEME env var to run only one theme:
+ *     VISUAL_THEME=dark  pnpm test:visual   # dark-mode tests only
+ *     VISUAL_THEME=light pnpm test:visual   # light-mode tests only
+ *   Omit the variable to run both themes (default).
+ *
  * Run:   pnpm test:visual
  * Update baselines:  pnpm test:visual:update
  */

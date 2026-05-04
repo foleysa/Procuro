@@ -25,7 +25,14 @@ export const VIEWPORTS: Viewport[] = [
 
 export type Theme = "light" | "dark";
 
-export const THEMES: Theme[] = ["light", "dark"];
+const ALL_THEMES: Theme[] = ["light", "dark"];
+
+const envTheme = process.env["VISUAL_THEME"]?.toLowerCase();
+
+export const THEMES: Theme[] =
+  envTheme === "light" || envTheme === "dark"
+    ? [envTheme]
+    : ALL_THEMES;
 
 export type VisualRouteEntry = {
   path: string;
