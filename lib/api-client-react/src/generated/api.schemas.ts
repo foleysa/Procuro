@@ -5995,6 +5995,133 @@ export interface UpdateMethodAndToolRequest {
   maturity?: MethodAndToolMaturity;
 }
 
+export interface A11yViolationNode {
+  html?: string;
+  target?: string[];
+}
+
+export type A11yViolationImpact =
+  (typeof A11yViolationImpact)[keyof typeof A11yViolationImpact];
+
+export const A11yViolationImpact = {
+  critical: "critical",
+  serious: "serious",
+  moderate: "moderate",
+  minor: "minor",
+} as const;
+
+export interface A11yViolation {
+  id: string;
+  impact: A11yViolationImpact;
+  description: string;
+  helpUrl?: string;
+  nodes?: A11yViolationNode[];
+}
+
+export interface A11yIngestRouteResult {
+  route: string;
+  routeName: string;
+  violations: A11yViolation[];
+  newCount?: number;
+  baselinedCount?: number;
+}
+
+export interface A11yIngestRequest {
+  runId?: string;
+  scannedAt?: string;
+  results: A11yIngestRouteResult[];
+}
+
+export interface A11yIngestResponse {
+  runId: string;
+  inserted: number;
+}
+
+export interface A11yRunSummary {
+  runId: string;
+  scannedAt: string;
+  routeCount: number;
+  totalViolations: number;
+  criticalCount: number;
+  seriousCount: number;
+  moderateCount: number;
+  minorCount: number;
+  newCount: number;
+  baselinedCount: number;
+}
+
+export interface A11yRunsResponse {
+  windowDays: number;
+  runs: A11yRunSummary[];
+}
+
+export interface A11yTrendPoint {
+  runId: string;
+  scannedAt: string;
+  totalViolations: number;
+  criticalCount: number;
+  seriousCount: number;
+  moderateCount: number;
+  minorCount: number;
+  newCount: number;
+  baselinedCount: number;
+  totalNodes: number;
+}
+
+export interface A11yTrendResponse {
+  windowDays: number;
+  points: A11yTrendPoint[];
+}
+
+export interface A11yByRoutePoint {
+  runId: string;
+  scannedAt: string;
+  totalViolations: number;
+  criticalCount: number;
+  seriousCount: number;
+  moderateCount: number;
+  minorCount: number;
+}
+
+export interface A11yByRouteEntry {
+  route: string;
+  routeName: string;
+  points: A11yByRoutePoint[];
+}
+
+export interface A11yByRouteResponse {
+  windowDays: number;
+  routes: A11yByRouteEntry[];
+}
+
+export interface A11yStoredViolation {
+  id: string;
+  impact: string;
+  description: string;
+  helpUrl: string;
+  nodeCount: number;
+}
+
+export interface A11yRunRouteDetail {
+  route: string;
+  routeName: string;
+  totalViolations: number;
+  criticalCount: number;
+  seriousCount: number;
+  moderateCount: number;
+  minorCount: number;
+  newCount: number;
+  baselinedCount: number;
+  totalNodes: number;
+  violations: A11yStoredViolation[];
+}
+
+export interface A11yRunDetailResponse {
+  runId: string;
+  scannedAt: string;
+  routes: A11yRunRouteDetail[];
+}
+
 /**
  * Not found
  */
@@ -6719,4 +6846,31 @@ export type ExportAdminAuditLogParams = {
 export type RecordEngineAccessDenialBody = {
   /** The admin-gated route the user landed on (e.g. `/engine`). */
   route?: string;
+};
+
+export type ListA11yRunsParams = {
+  /**
+   * Trailing window in days. Capped at 90.
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+};
+
+export type GetA11yTrendParams = {
+  /**
+   * Trailing window in days. Capped at 90.
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
+};
+
+export type GetA11yByRouteParams = {
+  /**
+   * Trailing window in days. Capped at 90.
+   * @minimum 1
+   * @maximum 90
+   */
+  days?: number;
 };

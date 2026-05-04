@@ -23,6 +23,12 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  A11yByRouteResponse,
+  A11yIngestRequest,
+  A11yIngestResponse,
+  A11yRunDetailResponse,
+  A11yRunsResponse,
+  A11yTrendResponse,
   AckTodayAnnotationResponse,
   AddUsSupplierRequest,
   AddWatchedIssuerRequest,
@@ -111,6 +117,8 @@ import type {
   FunnelBackfillRequest,
   FunnelBackfillStatus,
   GateSummaryResponse,
+  GetA11yByRouteParams,
+  GetA11yTrendParams,
   GetCollectorCost200,
   GetCollectorCostParams,
   GetCollectorCostTimeseries200,
@@ -140,6 +148,7 @@ import type {
   JobDiscarded,
   JobKindSetting,
   LearnedPrior,
+  ListA11yRunsParams,
   ListAdminAuditLogParams,
   ListAlertSubscriptionsParams,
   ListAlertsParams,
@@ -16922,3 +16931,463 @@ export const useSaveAdminTenantSettings = <
 > => {
   return useMutation(getSaveAdminTenantSettingsMutationOptions(options));
 };
+
+/**
+ * Accepts axe-core scan results from the a11y test suite and persists them as `a11y_scan_results` rows. Each result in the array maps to one scanned route. Platform-admin only.
+ * @summary Ingest accessibility scan results
+ */
+export const getIngestA11yScanUrl = () => {
+  return `/api/admin/a11y/ingest`;
+};
+
+export const ingestA11yScan = async (
+  a11yIngestRequest: A11yIngestRequest,
+  options?: RequestInit,
+): Promise<A11yIngestResponse> => {
+  return customFetch<A11yIngestResponse>(getIngestA11yScanUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(a11yIngestRequest),
+  });
+};
+
+export const getIngestA11yScanMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestA11yScan>>,
+    TError,
+    { data: BodyType<A11yIngestRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestA11yScan>>,
+  TError,
+  { data: BodyType<A11yIngestRequest> },
+  TContext
+> => {
+  const mutationKey = ["ingestA11yScan"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestA11yScan>>,
+    { data: BodyType<A11yIngestRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ingestA11yScan(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestA11yScanMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestA11yScan>>
+>;
+export type IngestA11yScanMutationBody = BodyType<A11yIngestRequest>;
+export type IngestA11yScanMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Ingest accessibility scan results
+ */
+export const useIngestA11yScan = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestA11yScan>>,
+    TError,
+    { data: BodyType<A11yIngestRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ingestA11yScan>>,
+  TError,
+  { data: BodyType<A11yIngestRequest> },
+  TContext
+> => {
+  return useMutation(getIngestA11yScanMutationOptions(options));
+};
+
+/**
+ * Returns a per-run summary with severity breakdown, aggregated across all routes in each scan run within the trailing window.
+ * @summary List accessibility scan runs
+ */
+export const getListA11yRunsUrl = (params?: ListA11yRunsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/a11y/runs?${stringifiedParams}`
+    : `/api/admin/a11y/runs`;
+};
+
+export const listA11yRuns = async (
+  params?: ListA11yRunsParams,
+  options?: RequestInit,
+): Promise<A11yRunsResponse> => {
+  return customFetch<A11yRunsResponse>(getListA11yRunsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListA11yRunsQueryKey = (params?: ListA11yRunsParams) => {
+  return [`/api/admin/a11y/runs`, ...(params ? [params] : [])] as const;
+};
+
+export const getListA11yRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listA11yRuns>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListA11yRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listA11yRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListA11yRunsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listA11yRuns>>> = ({
+    signal,
+  }) => listA11yRuns(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listA11yRuns>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListA11yRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listA11yRuns>>
+>;
+export type ListA11yRunsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List accessibility scan runs
+ */
+
+export function useListA11yRuns<
+  TData = Awaited<ReturnType<typeof listA11yRuns>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListA11yRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listA11yRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListA11yRunsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns one data point per scan run within the trailing window, ordered oldest-first, suitable for rendering a sparkline or time-series chart.
+ * @summary Accessibility violation trend over time
+ */
+export const getGetA11yTrendUrl = (params?: GetA11yTrendParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/a11y/trend?${stringifiedParams}`
+    : `/api/admin/a11y/trend`;
+};
+
+export const getA11yTrend = async (
+  params?: GetA11yTrendParams,
+  options?: RequestInit,
+): Promise<A11yTrendResponse> => {
+  return customFetch<A11yTrendResponse>(getGetA11yTrendUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetA11yTrendQueryKey = (params?: GetA11yTrendParams) => {
+  return [`/api/admin/a11y/trend`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetA11yTrendQueryOptions = <
+  TData = Awaited<ReturnType<typeof getA11yTrend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetA11yTrendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yTrend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetA11yTrendQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getA11yTrend>>> = ({
+    signal,
+  }) => getA11yTrend(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getA11yTrend>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetA11yTrendQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getA11yTrend>>
+>;
+export type GetA11yTrendQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Accessibility violation trend over time
+ */
+
+export function useGetA11yTrend<
+  TData = Awaited<ReturnType<typeof getA11yTrend>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetA11yTrendParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yTrend>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetA11yTrendQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns violation history grouped by scanned route within the trailing window, with per-run data points for each route sorted oldest-first.
+ * @summary Accessibility violations grouped by route
+ */
+export const getGetA11yByRouteUrl = (params?: GetA11yByRouteParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/a11y/by-route?${stringifiedParams}`
+    : `/api/admin/a11y/by-route`;
+};
+
+export const getA11yByRoute = async (
+  params?: GetA11yByRouteParams,
+  options?: RequestInit,
+): Promise<A11yByRouteResponse> => {
+  return customFetch<A11yByRouteResponse>(getGetA11yByRouteUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetA11yByRouteQueryKey = (params?: GetA11yByRouteParams) => {
+  return [`/api/admin/a11y/by-route`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetA11yByRouteQueryOptions = <
+  TData = Awaited<ReturnType<typeof getA11yByRoute>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetA11yByRouteParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yByRoute>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetA11yByRouteQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getA11yByRoute>>> = ({
+    signal,
+  }) => getA11yByRoute(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getA11yByRoute>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetA11yByRouteQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getA11yByRoute>>
+>;
+export type GetA11yByRouteQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Accessibility violations grouped by route
+ */
+
+export function useGetA11yByRoute<
+  TData = Awaited<ReturnType<typeof getA11yByRoute>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetA11yByRouteParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yByRoute>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetA11yByRouteQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns the full detail for a single scan run including per-route violation breakdowns and the individual axe-core violation entries.
+ * @summary Get a single accessibility scan run
+ */
+export const getGetA11yRunUrl = (runId: string) => {
+  return `/api/admin/a11y/run/${runId}`;
+};
+
+export const getA11yRun = async (
+  runId: string,
+  options?: RequestInit,
+): Promise<A11yRunDetailResponse> => {
+  return customFetch<A11yRunDetailResponse>(getGetA11yRunUrl(runId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetA11yRunQueryKey = (runId: string) => {
+  return [`/api/admin/a11y/run/${runId}`] as const;
+};
+
+export const getGetA11yRunQueryOptions = <
+  TData = Awaited<ReturnType<typeof getA11yRun>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  runId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yRun>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetA11yRunQueryKey(runId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getA11yRun>>> = ({
+    signal,
+  }) => getA11yRun(runId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getA11yRun>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetA11yRunQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getA11yRun>>
+>;
+export type GetA11yRunQueryError = ErrorType<NotFoundResponse>;
+
+/**
+ * @summary Get a single accessibility scan run
+ */
+
+export function useGetA11yRun<
+  TData = Awaited<ReturnType<typeof getA11yRun>>,
+  TError = ErrorType<NotFoundResponse>,
+>(
+  runId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getA11yRun>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetA11yRunQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

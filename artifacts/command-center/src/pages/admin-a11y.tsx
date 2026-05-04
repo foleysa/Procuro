@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Card,
   CardContent,
@@ -25,64 +25,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { useQuery } from "@tanstack/react-query";
-
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-interface TrendPoint {
-  runId: string;
-  scannedAt: string;
-  totalViolations: number;
-  criticalCount: number;
-  seriousCount: number;
-  moderateCount: number;
-  minorCount: number;
-  newCount: number;
-  baselinedCount: number;
-  totalNodes: number;
-}
-
-interface TrendResponse {
-  windowDays: number;
-  points: TrendPoint[];
-}
-
-interface RunSummary {
-  runId: string;
-  scannedAt: string;
-  routeCount: number;
-  totalViolations: number;
-  criticalCount: number;
-  seriousCount: number;
-  moderateCount: number;
-  minorCount: number;
-  newCount: number;
-  baselinedCount: number;
-}
-
-interface RunsResponse {
-  windowDays: number;
-  runs: RunSummary[];
-}
-
-interface ByRouteEntry {
-  route: string;
-  routeName: string;
-  points: Array<{
-    runId: string;
-    scannedAt: string;
-    totalViolations: number;
-    criticalCount: number;
-    seriousCount: number;
-    moderateCount: number;
-    minorCount: number;
-  }>;
-}
-
-interface ByRouteResponse {
-  windowDays: number;
-  routes: ByRouteEntry[];
-}
+import {
+  useGetA11yTrend,
+  useListA11yRuns,
+  useGetA11yByRoute,
+  getGetA11yTrendQueryKey,
+  getListA11yRunsQueryKey,
+  getGetA11yByRouteQueryKey,
+} from "@workspace/api-client-react";
+import type {
+  A11yTrendPoint,
+  A11yByRouteEntry,
+} from "@workspace/api-client-react";
 
 function formatDate(s: string): string {
   const d = new Date(s);
@@ -101,7 +55,7 @@ const IMPACT_COLORS: Record<string, string> = {
   minor: "#6b7280",
 };
 
-function ViolationSparkline({ points }: { points: TrendPoint[] }) {
+function ViolationSparkline({ points }: { points: A11yTrendPoint[] }) {
   if (points.length === 0) {
     return (
       <span className="text-xs text-muted-foreground">no data</span>
@@ -154,7 +108,7 @@ function ViolationSparkline({ points }: { points: TrendPoint[] }) {
   );
 }
 
-function SeverityBreakdownBar({ point }: { point: TrendPoint }) {
+function SeverityBreakdownBar({ point }: { point: A11yTrendPoint }) {
   const total = point.totalViolations;
   if (total === 0) {
     return <span className="text-xs text-muted-foreground">Clean</span>;
@@ -188,7 +142,7 @@ function SeverityBreakdownBar({ point }: { point: TrendPoint }) {
   );
 }
 
-function RouteHeatmap({ routes }: { routes: ByRouteEntry[] }) {
+function RouteHeatmap({ routes }: { routes: A11yByRouteEntry[] }) {
   if (routes.length === 0) {
     return (
       <span className="text-xs text-muted-foreground">no data</span>
@@ -298,40 +252,28 @@ export default function AdminA11yPage() {
   const { isPlatformAdmin, isLoading: roleLoading } = useMyRole();
   const [windowDays, setWindowDays] = useState(30);
 
-  const trendQ = useQuery<TrendResponse>({
-    queryKey: ["a11y-trend", windowDays],
-    queryFn: async () => {
-      const res = await fetch(
-        `${BASE}/api/admin/a11y/trend?days=${windowDays}`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+  const trendParams = { days: windowDays };
+  const trendQ = useGetA11yTrend(trendParams, {
+    query: {
+      queryKey: getGetA11yTrendQueryKey(trendParams),
+      enabled: isPlatformAdmin,
     },
-    enabled: isPlatformAdmin,
   });
 
-  const runsQ = useQuery<RunsResponse>({
-    queryKey: ["a11y-runs", windowDays],
-    queryFn: async () => {
-      const res = await fetch(
-        `${BASE}/api/admin/a11y/runs?days=${windowDays}`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+  const runsParams = { days: windowDays };
+  const runsQ = useListA11yRuns(runsParams, {
+    query: {
+      queryKey: getListA11yRunsQueryKey(runsParams),
+      enabled: isPlatformAdmin,
     },
-    enabled: isPlatformAdmin,
   });
 
-  const byRouteQ = useQuery<ByRouteResponse>({
-    queryKey: ["a11y-by-route", windowDays],
-    queryFn: async () => {
-      const res = await fetch(
-        `${BASE}/api/admin/a11y/by-route?days=${windowDays}`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+  const byRouteParams = { days: windowDays };
+  const byRouteQ = useGetA11yByRoute(byRouteParams, {
+    query: {
+      queryKey: getGetA11yByRouteQueryKey(byRouteParams),
+      enabled: isPlatformAdmin,
     },
-    enabled: isPlatformAdmin,
   });
 
   const points = trendQ.data?.points ?? [];

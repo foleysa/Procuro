@@ -12,6 +12,22 @@ must supply it. All list endpoints return only rows owned by that org.
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./a11yByRouteEntry";
+export * from "./a11yByRoutePoint";
+export * from "./a11yByRouteResponse";
+export * from "./a11yIngestRequest";
+export * from "./a11yIngestResponse";
+export * from "./a11yIngestRouteResult";
+export * from "./a11yRunDetailResponse";
+export * from "./a11yRunRouteDetail";
+export * from "./a11yRunsResponse";
+export * from "./a11yRunSummary";
+export * from "./a11yStoredViolation";
+export * from "./a11yTrendPoint";
+export * from "./a11yTrendResponse";
+export * from "./a11yViolation";
+export * from "./a11yViolationImpact";
+export * from "./a11yViolationNode";
 export * from "./ackTodayAnnotationResponse";
 export * from "./addUsSupplierRequest";
 export * from "./addWatchedIssuerRequest";
@@ -243,6 +259,8 @@ export * from "./funnelBackfillStatusLastJobStatus";
 export * from "./funnelBackfillTenantReport";
 export * from "./gateSummaryItem";
 export * from "./gateSummaryResponse";
+export * from "./getA11yByRouteParams";
+export * from "./getA11yTrendParams";
 export * from "./getCollectorCost200";
 export * from "./getCollectorCost200Source";
 export * from "./getCollectorCostParams";
@@ -332,6 +350,7 @@ export * from "./jobStatus";
 export * from "./learnedPrior";
 export * from "./leverId";
 export * from "./leverReadiness";
+export * from "./listA11yRunsParams";
 export * from "./listAdminAuditLogParams";
 export * from "./listAlertsParams";
 export * from "./listAlertSubscriptionsParams";

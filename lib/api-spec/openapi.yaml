@@ -88,6 +88,10 @@ tags:
     target, and a JSON metadata blob.
 
     '
+- name: a11y
+  description: 'Platform-admin accessibility scan endpoints. Ingest axe-core
+    scan results and query violation trends, run history, and per-route
+    breakdowns over a configurable time window.'
 paths:
   /healthz:
     get:
@@ -5420,6 +5424,139 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AdminTenantSettings'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/a11y/ingest:
+    post:
+      operationId: ingestA11yScan
+      tags:
+      - a11y
+      summary: Ingest accessibility scan results
+      description: 'Accepts axe-core scan results from the a11y test suite and
+        persists them as `a11y_scan_results` rows. Each result in the
+        array maps to one scanned route. Platform-admin only.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/A11yIngestRequest'
+      responses:
+        '201':
+          description: Scan results ingested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/A11yIngestResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/a11y/runs:
+    get:
+      operationId: listA11yRuns
+      tags:
+      - a11y
+      summary: List accessibility scan runs
+      description: 'Returns a per-run summary with severity breakdown, aggregated
+        across all routes in each scan run within the trailing window.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+        description: Trailing window in days. Capped at 90.
+      responses:
+        '200':
+          description: List of scan run summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/A11yRunsResponse'
+  /admin/a11y/trend:
+    get:
+      operationId: getA11yTrend
+      tags:
+      - a11y
+      summary: Accessibility violation trend over time
+      description: 'Returns one data point per scan run within the trailing window,
+        ordered oldest-first, suitable for rendering a sparkline or
+        time-series chart.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+        description: Trailing window in days. Capped at 90.
+      responses:
+        '200':
+          description: Trend data points ordered oldest-first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/A11yTrendResponse'
+  /admin/a11y/by-route:
+    get:
+      operationId: getA11yByRoute
+      tags:
+      - a11y
+      summary: Accessibility violations grouped by route
+      description: 'Returns violation history grouped by scanned route within the
+        trailing window, with per-run data points for each route sorted
+        oldest-first.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+        description: Trailing window in days. Capped at 90.
+      responses:
+        '200':
+          description: Violations grouped by route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/A11yByRouteResponse'
+  /admin/a11y/run/{runId}:
+    get:
+      operationId: getA11yRun
+      tags:
+      - a11y
+      summary: Get a single accessibility scan run
+      description: 'Returns the full detail for a single scan run including
+        per-route violation breakdowns and the individual axe-core
+        violation entries.'
+      parameters:
+      - $ref: '#/components/parameters/OrgIdHeader'
+      - in: path
+        name: runId
+        required: true
+        schema:
+          type: string
+        description: UUID of the scan run
+      responses:
+        '200':
+          description: Full run detail with per-route violations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/A11yRunDetailResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -15070,3 +15207,304 @@ components:
           maxLength: 500
         maturity:
           $ref: '#/components/schemas/MethodAndToolMaturity'
+    A11yViolationNode:
+      type: object
+      properties:
+        html:
+          type: string
+        target:
+          type: array
+          items:
+            type: string
+    A11yViolation:
+      type: object
+      required:
+      - id
+      - impact
+      - description
+      properties:
+        id:
+          type: string
+        impact:
+          type: string
+          enum:
+          - critical
+          - serious
+          - moderate
+          - minor
+        description:
+          type: string
+        helpUrl:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yViolationNode'
+    A11yIngestRouteResult:
+      type: object
+      required:
+      - route
+      - routeName
+      - violations
+      properties:
+        route:
+          type: string
+        routeName:
+          type: string
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yViolation'
+        newCount:
+          type: integer
+          default: 0
+        baselinedCount:
+          type: integer
+          default: 0
+    A11yIngestRequest:
+      type: object
+      required:
+      - results
+      properties:
+        runId:
+          type: string
+          format: uuid
+        scannedAt:
+          type: string
+          format: date-time
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yIngestRouteResult'
+    A11yIngestResponse:
+      type: object
+      required:
+      - runId
+      - inserted
+      properties:
+        runId:
+          type: string
+          format: uuid
+        inserted:
+          type: integer
+    A11yRunSummary:
+      type: object
+      required:
+      - runId
+      - scannedAt
+      - routeCount
+      - totalViolations
+      - criticalCount
+      - seriousCount
+      - moderateCount
+      - minorCount
+      - newCount
+      - baselinedCount
+      properties:
+        runId:
+          type: string
+        scannedAt:
+          type: string
+          format: date-time
+        routeCount:
+          type: integer
+        totalViolations:
+          type: integer
+        criticalCount:
+          type: integer
+        seriousCount:
+          type: integer
+        moderateCount:
+          type: integer
+        minorCount:
+          type: integer
+        newCount:
+          type: integer
+        baselinedCount:
+          type: integer
+    A11yRunsResponse:
+      type: object
+      required:
+      - windowDays
+      - runs
+      properties:
+        windowDays:
+          type: integer
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yRunSummary'
+    A11yTrendPoint:
+      type: object
+      required:
+      - runId
+      - scannedAt
+      - totalViolations
+      - criticalCount
+      - seriousCount
+      - moderateCount
+      - minorCount
+      - newCount
+      - baselinedCount
+      - totalNodes
+      properties:
+        runId:
+          type: string
+        scannedAt:
+          type: string
+          format: date-time
+        totalViolations:
+          type: integer
+        criticalCount:
+          type: integer
+        seriousCount:
+          type: integer
+        moderateCount:
+          type: integer
+        minorCount:
+          type: integer
+        newCount:
+          type: integer
+        baselinedCount:
+          type: integer
+        totalNodes:
+          type: integer
+    A11yTrendResponse:
+      type: object
+      required:
+      - windowDays
+      - points
+      properties:
+        windowDays:
+          type: integer
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yTrendPoint'
+    A11yByRoutePoint:
+      type: object
+      required:
+      - runId
+      - scannedAt
+      - totalViolations
+      - criticalCount
+      - seriousCount
+      - moderateCount
+      - minorCount
+      properties:
+        runId:
+          type: string
+        scannedAt:
+          type: string
+          format: date-time
+        totalViolations:
+          type: integer
+        criticalCount:
+          type: integer
+        seriousCount:
+          type: integer
+        moderateCount:
+          type: integer
+        minorCount:
+          type: integer
+    A11yByRouteEntry:
+      type: object
+      required:
+      - route
+      - routeName
+      - points
+      properties:
+        route:
+          type: string
+        routeName:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yByRoutePoint'
+    A11yByRouteResponse:
+      type: object
+      required:
+      - windowDays
+      - routes
+      properties:
+        windowDays:
+          type: integer
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yByRouteEntry'
+    A11yStoredViolation:
+      type: object
+      required:
+      - id
+      - impact
+      - description
+      - helpUrl
+      - nodeCount
+      properties:
+        id:
+          type: string
+        impact:
+          type: string
+        description:
+          type: string
+        helpUrl:
+          type: string
+        nodeCount:
+          type: integer
+    A11yRunRouteDetail:
+      type: object
+      required:
+      - route
+      - routeName
+      - totalViolations
+      - criticalCount
+      - seriousCount
+      - moderateCount
+      - minorCount
+      - newCount
+      - baselinedCount
+      - totalNodes
+      - violations
+      properties:
+        route:
+          type: string
+        routeName:
+          type: string
+        totalViolations:
+          type: integer
+        criticalCount:
+          type: integer
+        seriousCount:
+          type: integer
+        moderateCount:
+          type: integer
+        minorCount:
+          type: integer
+        newCount:
+          type: integer
+        baselinedCount:
+          type: integer
+        totalNodes:
+          type: integer
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yStoredViolation'
+    A11yRunDetailResponse:
+      type: object
+      required:
+      - runId
+      - scannedAt
+      - routes
+      properties:
+        runId:
+          type: string
+        scannedAt:
+          type: string
+          format: date-time
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yRunRouteDetail'

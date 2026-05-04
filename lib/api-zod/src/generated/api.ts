@@ -12214,3 +12214,229 @@ export const SaveAdminTenantSettingsResponse = zod
   .describe(
     "All fields are optional on PUT — only supplied keys are written.\nOn GET the server fills in defaults (`disclosurePolicy=standard`,\n`contractRenewalAlertDays=60`, `retentionDefaultDays=365`).\n",
   );
+
+/**
+ * Accepts axe-core scan results from the a11y test suite and persists them as `a11y_scan_results` rows. Each result in the array maps to one scanned route. Platform-admin only.
+ * @summary Ingest accessibility scan results
+ */
+export const IngestA11yScanHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ingestA11yScanBodyResultsItemNewCountDefault = 0;
+export const ingestA11yScanBodyResultsItemBaselinedCountDefault = 0;
+
+export const IngestA11yScanBody = zod.object({
+  runId: zod.string().uuid().optional(),
+  scannedAt: zod.coerce.date().optional(),
+  results: zod.array(
+    zod.object({
+      route: zod.string(),
+      routeName: zod.string(),
+      violations: zod.array(
+        zod.object({
+          id: zod.string(),
+          impact: zod.enum(["critical", "serious", "moderate", "minor"]),
+          description: zod.string(),
+          helpUrl: zod.string().optional(),
+          nodes: zod
+            .array(
+              zod.object({
+                html: zod.string().optional(),
+                target: zod.array(zod.string()).optional(),
+              }),
+            )
+            .optional(),
+        }),
+      ),
+      newCount: zod
+        .number()
+        .default(ingestA11yScanBodyResultsItemNewCountDefault),
+      baselinedCount: zod
+        .number()
+        .default(ingestA11yScanBodyResultsItemBaselinedCountDefault),
+    }),
+  ),
+});
+
+/**
+ * Returns a per-run summary with severity breakdown, aggregated across all routes in each scan run within the trailing window.
+ * @summary List accessibility scan runs
+ */
+export const listA11yRunsQueryDaysDefault = 30;
+export const listA11yRunsQueryDaysMax = 90;
+
+export const ListA11yRunsQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(listA11yRunsQueryDaysMax)
+    .default(listA11yRunsQueryDaysDefault)
+    .describe("Trailing window in days. Capped at 90."),
+});
+
+export const ListA11yRunsHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const ListA11yRunsResponse = zod.object({
+  windowDays: zod.number(),
+  runs: zod.array(
+    zod.object({
+      runId: zod.string(),
+      scannedAt: zod.coerce.date(),
+      routeCount: zod.number(),
+      totalViolations: zod.number(),
+      criticalCount: zod.number(),
+      seriousCount: zod.number(),
+      moderateCount: zod.number(),
+      minorCount: zod.number(),
+      newCount: zod.number(),
+      baselinedCount: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * Returns one data point per scan run within the trailing window, ordered oldest-first, suitable for rendering a sparkline or time-series chart.
+ * @summary Accessibility violation trend over time
+ */
+export const getA11yTrendQueryDaysDefault = 30;
+export const getA11yTrendQueryDaysMax = 90;
+
+export const GetA11yTrendQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getA11yTrendQueryDaysMax)
+    .default(getA11yTrendQueryDaysDefault)
+    .describe("Trailing window in days. Capped at 90."),
+});
+
+export const GetA11yTrendHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetA11yTrendResponse = zod.object({
+  windowDays: zod.number(),
+  points: zod.array(
+    zod.object({
+      runId: zod.string(),
+      scannedAt: zod.coerce.date(),
+      totalViolations: zod.number(),
+      criticalCount: zod.number(),
+      seriousCount: zod.number(),
+      moderateCount: zod.number(),
+      minorCount: zod.number(),
+      newCount: zod.number(),
+      baselinedCount: zod.number(),
+      totalNodes: zod.number(),
+    }),
+  ),
+});
+
+/**
+ * Returns violation history grouped by scanned route within the trailing window, with per-run data points for each route sorted oldest-first.
+ * @summary Accessibility violations grouped by route
+ */
+export const getA11yByRouteQueryDaysDefault = 30;
+export const getA11yByRouteQueryDaysMax = 90;
+
+export const GetA11yByRouteQueryParams = zod.object({
+  days: zod.coerce
+    .number()
+    .min(1)
+    .max(getA11yByRouteQueryDaysMax)
+    .default(getA11yByRouteQueryDaysDefault)
+    .describe("Trailing window in days. Capped at 90."),
+});
+
+export const GetA11yByRouteHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetA11yByRouteResponse = zod.object({
+  windowDays: zod.number(),
+  routes: zod.array(
+    zod.object({
+      route: zod.string(),
+      routeName: zod.string(),
+      points: zod.array(
+        zod.object({
+          runId: zod.string(),
+          scannedAt: zod.coerce.date(),
+          totalViolations: zod.number(),
+          criticalCount: zod.number(),
+          seriousCount: zod.number(),
+          moderateCount: zod.number(),
+          minorCount: zod.number(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * Returns the full detail for a single scan run including per-route violation breakdowns and the individual axe-core violation entries.
+ * @summary Get a single accessibility scan run
+ */
+export const GetA11yRunParams = zod.object({
+  runId: zod.coerce.string().describe("UUID of the scan run"),
+});
+
+export const GetA11yRunHeader = zod.object({
+  "x-org-id": zod
+    .string()
+    .optional()
+    .describe(
+      "Tenant ID hint. In production, requests MUST present\n`Authorization: Bearer <token>` and `x-org-id` (if supplied) must\nmatch the org bound to that token. In development, this header is\naccepted standalone.\n",
+    ),
+});
+
+export const GetA11yRunResponse = zod.object({
+  runId: zod.string(),
+  scannedAt: zod.coerce.date(),
+  routes: zod.array(
+    zod.object({
+      route: zod.string(),
+      routeName: zod.string(),
+      totalViolations: zod.number(),
+      criticalCount: zod.number(),
+      seriousCount: zod.number(),
+      moderateCount: zod.number(),
+      minorCount: zod.number(),
+      newCount: zod.number(),
+      baselinedCount: zod.number(),
+      totalNodes: zod.number(),
+      violations: zod.array(
+        zod.object({
+          id: zod.string(),
+          impact: zod.string(),
+          description: zod.string(),
+          helpUrl: zod.string(),
+          nodeCount: zod.number(),
+        }),
+      ),
+    }),
+  ),
+});
