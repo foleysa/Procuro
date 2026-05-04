@@ -22,6 +22,7 @@
     "setup-webkit-deps": "tsx ./src/setup-webkit-deps.ts",
     "seed-soak-data": "tsx ./src/seed-soak-data.ts",
     "check-regression-tests": "tsx ./src/check-regression-tests.ts",
+    "protect-main-branch": "tsx ./src/protect-main-branch.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"

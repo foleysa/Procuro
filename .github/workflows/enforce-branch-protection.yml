@@ -1,0 +1,39 @@
+name: Enforce branch protection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/enforce-branch-protection.yml
+      - scripts/src/protect-main-branch.ts
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    name: Require scripts-test to pass before merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply branch protection
+        env:
+          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: pnpm --filter @workspace/scripts run protect-main-branch
