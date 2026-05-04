@@ -83,6 +83,29 @@ npx playwright show-report test-results/a11y-html
 |------------------|----------------------------------------|--------------------------------------------------|
 | `A11Y_BASE_URL`  | Replit dev domain (`REPLIT_DEV_DOMAIN`) | Target base URL for the scans                   |
 | `A11Y_ORG_ID`    | `org-t272-55abafb4-dis`                | Tenant org ID for the `x-org-id` auth header     |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | (auto-discovered)         | Override Chromium binary path (CI/Nix overrides)|
+
+## Continuous integration
+
+GitHub Actions runs the scan on every push to `main` and on every pull
+request via `.github/workflows/a11y.yml`. The job:
+
+1. Installs workspace dependencies and the Playwright-bundled Chromium
+   (cached between runs by `pnpm-lock.yaml` hash).
+2. Boots the API Server and Command Center in the background and starts a
+   tiny path-based reverse proxy on `:80` that mirrors the Replit dev proxy
+   (`/api/*` → API Server, everything else → Command Center).
+3. Waits for both services to respond, then runs `pnpm run test:a11y`.
+4. Uploads the HTML report and JSONL accumulation file as workflow artifacts
+   for triage.
+
+The build fails when the scan reports new serious or critical violations
+that are not in `.a11y-baseline.json`.
+
+`A11Y_ORG_ID` and `A11Y_BASE_URL` are sourced from repository **Variables**
+(Settings → Secrets and variables → Actions → Variables) so they can be
+overridden without editing the workflow. Sensible defaults (the dev-seed
+org ID and `http://localhost:80`) are used when no variable is set.
 
 Parameterised routes (supplier detail, opportunity detail, etc.) can be
 populated with real IDs via:

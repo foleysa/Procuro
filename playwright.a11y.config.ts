@@ -46,11 +46,17 @@ function findNixChromium(): string | undefined {
   }
 }
 
+/**
+ * Resolution order for the Chromium binary:
+ *   1. Explicit `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` env var (highest priority).
+ *   2. Nix-managed Playwright Chromium (only when running inside the Replit
+ *      Nix container).
+ *   3. `undefined` — let Playwright use its own installed browser. This is the
+ *      path used in GitHub Actions CI where `npx playwright install chromium`
+ *      provides the binary at the standard cache location.
+ */
 const executablePath =
-  process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"] ??
-  findNixChromium() ??
-  // Last-resort hardcoded fallback (may be stale after a Nix update)
-  "/nix/store/0n9rl5l9syy808xi9bk4f6dhnfrvhkww-playwright-browsers-chromium/chromium-1080/chrome-linux/chrome";
+  process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"] ?? findNixChromium();
 
 const replitDomain = process.env["REPLIT_DEV_DOMAIN"] ?? process.env["REPLIT_DOMAINS"]?.split(",")[0];
 const defaultBaseUrl = replitDomain
@@ -93,7 +99,7 @@ export default defineConfig({
       name: "chromium-a11y",
       use: {
         ...devices["Desktop Chrome"],
-        launchOptions: { executablePath },
+        launchOptions: executablePath ? { executablePath } : {},
       },
     },
   ],
