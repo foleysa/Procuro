@@ -1,6 +1,13 @@
 #!/usr/bin/env tsx
 
-const REQUIRED_CHECK = "Unit tests for @workspace/scripts";
+const REQUIRED_CHECKS = [
+  "Unit tests for @workspace/scripts",
+  "UAT bug fix requires regression test",
+  "SAST scanning",
+  "Dependency vulnerability scan",
+  "Secret scanning",
+  "WCAG 2.2 AA scan",
+];
 const BRANCH = "main";
 
 export interface StatusCheck {
@@ -48,14 +55,17 @@ export interface ProtectionPayload {
 
 export function buildPayload(
   existing: BranchProtection | null,
-  requiredCheck: string
+  requiredChecks: string[]
 ): ProtectionPayload {
   const existingContexts =
     existing?.required_status_checks?.contexts ?? [];
 
-  const contexts = existingContexts.includes(requiredCheck)
-    ? existingContexts
-    : [...existingContexts, requiredCheck];
+  const contexts = [...existingContexts];
+  for (const check of requiredChecks) {
+    if (!contexts.includes(check)) {
+      contexts.push(check);
+    }
+  }
 
   const requiredStatusChecks: ProtectionPayload["required_status_checks"] = {
     strict: existing?.required_status_checks?.strict ?? false,
@@ -178,7 +188,10 @@ async function run(): Promise<void> {
 
   console.log(`Repository : ${repo}`);
   console.log(`Branch     : ${BRANCH}`);
-  console.log(`Required   : ${REQUIRED_CHECK}`);
+  console.log(`Required checks:`);
+  for (const check of REQUIRED_CHECKS) {
+    console.log(`  - ${check}`);
+  }
   console.log();
 
   console.log("Fetching current branch protection settings...");
@@ -197,13 +210,14 @@ async function run(): Promise<void> {
     console.log(
       `Existing required status checks: ${current.length === 0 ? "(none)" : current.join(", ")}`
     );
-    if (current.includes(REQUIRED_CHECK)) {
-      console.log(`\n✓ "${REQUIRED_CHECK}" is already a required status check.`);
+    const missing = REQUIRED_CHECKS.filter((c) => !current.includes(c));
+    if (missing.length === 0) {
+      console.log(`\n✓ All required status checks are already configured.`);
       process.exit(0);
     }
   }
 
-  const payload = buildPayload(existing, REQUIRED_CHECK);
+  const payload = buildPayload(existing, REQUIRED_CHECKS);
 
   console.log("Applying branch protection...");
   try {

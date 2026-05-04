@@ -1,17 +1,40 @@
 import { describe, it, expect } from "vitest";
 import { buildPayload, type BranchProtection } from "./protect-main-branch.js";
 
-const REQUIRED_CHECK = "Unit tests for @workspace/scripts";
+const UNIT_TEST_CHECK = "Unit tests for @workspace/scripts";
+
+const ALL_REQUIRED_CHECKS = [
+  "Unit tests for @workspace/scripts",
+  "UAT bug fix requires regression test",
+  "SAST scanning",
+  "Dependency vulnerability scan",
+  "Secret scanning",
+  "WCAG 2.2 AA scan",
+];
 
 describe("buildPayload", () => {
-  it("adds the required check when no protection exists", () => {
-    const payload = buildPayload(null, REQUIRED_CHECK);
+  it("adds all required checks when no protection exists", () => {
+    const payload = buildPayload(null, ALL_REQUIRED_CHECKS);
 
     expect(payload.required_status_checks).not.toBeNull();
-    expect(payload.required_status_checks!.contexts).toContain(REQUIRED_CHECK);
+    for (const check of ALL_REQUIRED_CHECKS) {
+      expect(payload.required_status_checks!.contexts).toContain(check);
+    }
   });
 
-  it("preserves existing required status checks when adding the new one", () => {
+  it("includes every required CI check in the contexts list", () => {
+    const payload = buildPayload(null, ALL_REQUIRED_CHECKS);
+
+    const contexts = payload.required_status_checks!.contexts;
+    expect(contexts).toContain("Unit tests for @workspace/scripts");
+    expect(contexts).toContain("UAT bug fix requires regression test");
+    expect(contexts).toContain("SAST scanning");
+    expect(contexts).toContain("Dependency vulnerability scan");
+    expect(contexts).toContain("Secret scanning");
+    expect(contexts).toContain("WCAG 2.2 AA scan");
+  });
+
+  it("preserves existing required status checks when adding new ones", () => {
     const existing: BranchProtection = {
       required_status_checks: {
         strict: true,
@@ -22,31 +45,65 @@ describe("buildPayload", () => {
       restrictions: null,
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
 
-    expect(payload.required_status_checks!.contexts).toContain("lint");
-    expect(payload.required_status_checks!.contexts).toContain("typecheck");
-    expect(payload.required_status_checks!.contexts).toContain(REQUIRED_CHECK);
+    const contexts = payload.required_status_checks!.contexts;
+    expect(contexts).toContain("lint");
+    expect(contexts).toContain("typecheck");
+    for (const check of ALL_REQUIRED_CHECKS) {
+      expect(contexts).toContain(check);
+    }
     expect(payload.required_status_checks!.strict).toBe(true);
   });
 
-  it("does not duplicate the required check if it is already present", () => {
+  it("does not duplicate checks that are already present", () => {
     const existing: BranchProtection = {
       required_status_checks: {
         strict: false,
-        contexts: [REQUIRED_CHECK, "lint"],
+        contexts: [...ALL_REQUIRED_CHECKS, "lint"],
       },
       enforce_admins: null,
       required_pull_request_reviews: null,
       restrictions: null,
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
 
-    const count = payload.required_status_checks!.contexts.filter(
-      (c) => c === REQUIRED_CHECK
-    ).length;
-    expect(count).toBe(1);
+    for (const check of ALL_REQUIRED_CHECKS) {
+      const count = payload.required_status_checks!.contexts.filter(
+        (c) => c === check
+      ).length;
+      expect(count).toBe(1);
+    }
+  });
+
+  it("does not duplicate a partially-overlapping check set", () => {
+    const existing: BranchProtection = {
+      required_status_checks: {
+        strict: false,
+        contexts: [UNIT_TEST_CHECK, "SAST scanning"],
+      },
+      enforce_admins: null,
+      required_pull_request_reviews: null,
+      restrictions: null,
+    };
+
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
+
+    const contexts = payload.required_status_checks!.contexts;
+    expect(contexts.filter((c) => c === UNIT_TEST_CHECK).length).toBe(1);
+    expect(contexts.filter((c) => c === "SAST scanning").length).toBe(1);
+    expect(contexts).toContain("UAT bug fix requires regression test");
+    expect(contexts).toContain("Dependency vulnerability scan");
+    expect(contexts).toContain("Secret scanning");
+    expect(contexts).toContain("WCAG 2.2 AA scan");
+  });
+
+  it("works with a single-element array", () => {
+    const payload = buildPayload(null, [UNIT_TEST_CHECK]);
+
+    expect(payload.required_status_checks!.contexts).toContain(UNIT_TEST_CHECK);
+    expect(payload.required_status_checks!.contexts).toHaveLength(1);
   });
 
   it("preserves enforce_admins setting", () => {
@@ -57,12 +114,12 @@ describe("buildPayload", () => {
       restrictions: null,
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
     expect(payload.enforce_admins).toBe(true);
   });
 
   it("defaults enforce_admins to false when no existing protection", () => {
-    const payload = buildPayload(null, REQUIRED_CHECK);
+    const payload = buildPayload(null, ALL_REQUIRED_CHECKS);
     expect(payload.enforce_admins).toBe(false);
   });
 
@@ -78,7 +135,7 @@ describe("buildPayload", () => {
       restrictions: null,
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
 
     expect(payload.required_pull_request_reviews).not.toBeNull();
     expect(payload.required_pull_request_reviews!.dismiss_stale_reviews).toBe(true);
@@ -97,7 +154,7 @@ describe("buildPayload", () => {
       },
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
 
     expect(payload.restrictions).not.toBeNull();
     expect(payload.restrictions!.users).toEqual(["alice"]);
@@ -114,7 +171,7 @@ describe("buildPayload", () => {
       allow_force_pushes: { enabled: false },
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
     expect(payload.allow_force_pushes).toBe(false);
   });
 
@@ -127,7 +184,7 @@ describe("buildPayload", () => {
       allow_deletions: { enabled: true },
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
     expect(payload.allow_deletions).toBe(true);
   });
 
@@ -140,7 +197,7 @@ describe("buildPayload", () => {
       required_linear_history: { enabled: true },
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
     expect(payload.required_linear_history).toBe(true);
   });
 
@@ -153,7 +210,7 @@ describe("buildPayload", () => {
       required_conversation_resolution: { enabled: true },
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
     expect(payload.required_conversation_resolution).toBe(true);
   });
 
@@ -165,7 +222,7 @@ describe("buildPayload", () => {
       restrictions: null,
     };
 
-    const payload = buildPayload(existing, REQUIRED_CHECK);
+    const payload = buildPayload(existing, ALL_REQUIRED_CHECKS);
 
     expect(payload).not.toHaveProperty("allow_force_pushes");
     expect(payload).not.toHaveProperty("allow_deletions");
