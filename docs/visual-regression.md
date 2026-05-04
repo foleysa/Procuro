@@ -12,7 +12,7 @@ The suite runs against multiple browser engines to catch browser-specific render
 | `firefox-visual` | Firefox | Desktop Firefox | Yes |
 | `webkit-visual` | WebKit | Desktop Safari | Opt-in |
 
-Chromium and Firefox run by default. WebKit is opt-in because it requires system libraries (`libgles2`, `gstreamer1.0-libav`) that may not be available in all environments.
+Chromium and Firefox run by default. WebKit is opt-in because it requires additional system libraries (GStreamer, GTK4, harfbuzz-icu, etc.) that must be installed via Nix. All three browsers have committed baselines. To set up WebKit dependencies after a fresh environment, run `pnpm --filter @workspace/scripts run setup-webkit-deps`.
 
 Each browser gets its own set of baseline PNGs, stored in the same `tests/visual/baselines/` directory but differentiated by the project name in the filename (e.g. `home-dashboard-desktop-chromium-visual-linux.png` vs `home-dashboard-desktop-firefox-visual-linux.png`).
 
@@ -164,7 +164,9 @@ Mobile (375×667) is out of scope for now.
 | `VISUAL_ORG_ID` | Tenant org-id for dev-header auth bypass |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Override the Chromium binary |
 | `PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH` | Override the Firefox binary |
-| `VISUAL_BROWSERS` | Comma-separated list of projects to run (e.g. `chromium-visual,firefox-visual`). Defaults to all. |
+| `VISUAL_BROWSERS` | Comma-separated list of projects to run (e.g. `chromium-visual,firefox-visual`). Defaults to Chromium + Firefox. |
+| `VISUAL_THEME` | Run only one theme: `light` or `dark`. Omit for both. |
+| `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` | Set to `1` to skip Playwright's host dependency validation (needed for WebKit in Replit). |
 
 ## Migration Path to Percy / Chromatic
 
@@ -189,5 +191,6 @@ tests/visual/
     └── ...
 
 playwright.visual.config.ts      # Playwright config for visual tests
+scripts/src/setup-webkit-deps.ts # WebKit system dependency setup
 scripts/update-visual-baselines.sh  # Helper script for baseline updates
 ```

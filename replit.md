@@ -44,7 +44,7 @@ The project is built as a pnpm monorepo using Node.js 24 and TypeScript 5.9.
 - **All suites**: `pnpm run test` (filters `lib/**` and `artifacts/**`)
 - Key shared modules: `lib/db/src/s2p-helpers.ts` (backfill mapping, baseline validation), `lib/db/src/hard-savings.ts` (aggregate gate query)
 - Fixture factory: `lib/db/test/fixtures/factory.ts` (`makeOpportunity`, `makeBackfilledOpportunity`, `makeUser`)
-- **Visual regression**: Playwright screenshot comparison across all routes × 2 viewports (desktop 1440×900, tablet 768×1024). Run: `pnpm test:visual`. Update baselines: `pnpm test:visual:update`. Config: `playwright.visual.config.ts`. Baselines committed in `tests/visual/baselines/`. See `docs/visual-regression.md`.
+- **Visual regression**: Playwright screenshot comparison across all routes × 2 viewports (desktop 1440×900, tablet 768×1024) × 2 themes (light/dark). Chromium and Firefox run by default; WebKit (Safari) is opt-in via `VISUAL_BROWSERS=webkit-visual`. All three browsers have committed baselines. WebKit requires system deps — run `pnpm --filter @workspace/scripts run setup-webkit-deps` after a fresh env. Run: `pnpm test:visual`. Update baselines: `pnpm test:visual:update`. Config: `playwright.visual.config.ts`. Baselines committed in `tests/visual/baselines/`. See `docs/visual-regression.md`.
 - See `tests/README.md` for full details.
 
 ## Post-Merge Setup

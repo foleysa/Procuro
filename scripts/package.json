@@ -19,6 +19,7 @@
     "establish-a11y-baseline": "tsx ./src/establish-a11y-baseline.ts",
     "ingest-a11y": "tsx ./src/ingest-a11y-results.ts",
     "prune-a11y": "tsx ./src/prune-a11y-results.ts",
+    "setup-webkit-deps": "tsx ./src/setup-webkit-deps.ts",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
