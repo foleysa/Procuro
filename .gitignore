@@ -8,6 +8,11 @@ out-tsc
 
 # test coverage reports
 coverage
+
+# playwright
+test-results
+playwright-report
+playwright/.cache
 .expo
 .expo-shared
 
