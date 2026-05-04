@@ -22,6 +22,7 @@
     "setup-webkit-deps": "tsx ./src/setup-webkit-deps.ts",
     "seed-soak-data": "tsx ./src/seed-soak-data.ts",
     "check-regression-tests": "tsx ./src/check-regression-tests.ts",
+    "test": "vitest run",
     "typecheck": "tsc -b ../tsconfig.json && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "vitest": "^4.1.5"
   }
 }

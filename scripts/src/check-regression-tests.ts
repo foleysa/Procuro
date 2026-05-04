@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 
-const UAT_PATTERN = /UAT-\d{4}-\d{2,4}/gi;
-const EXCEPTION_MARKER = "<!-- REGRESSION-TEST-EXCEPTION -->";
-const EXCEPTION_LABEL = "regression-test-exception";
+export const UAT_PATTERN = /UAT-\d{4}-\d{2,4}/gi;
+export const EXCEPTION_MARKER = "<!-- REGRESSION-TEST-EXCEPTION -->";
+export const EXCEPTION_LABEL = "regression-test-exception";
 const CLOSING_REF_PATTERN = /(?:closes?|fixes?|resolves?)\s+#(\d+)/gi;
 const UAT_LABEL_PATTERN = /^uat/i;
 
@@ -13,7 +13,7 @@ const TEST_FILE_PATTERNS = [
   /\.a11y\.[jt]sx?$/,
 ];
 
-interface PrInfo {
+export interface PrInfo {
   title: string;
   body: string;
   branchName: string;
@@ -21,7 +21,7 @@ interface PrInfo {
   labels: string[];
 }
 
-function extractUatIds(pr: PrInfo): string[] {
+export function extractUatIds(pr: PrInfo): string[] {
   const sources = [pr.title, pr.body, pr.branchName];
   const ids = new Set<string>();
   for (const source of sources) {
@@ -34,7 +34,7 @@ function extractUatIds(pr: PrInfo): string[] {
   return [...ids];
 }
 
-function extractClosingIssueNumbers(text: string): number[] {
+export function extractClosingIssueNumbers(text: string): number[] {
   const numbers: number[] = [];
   const re = new RegExp(CLOSING_REF_PATTERN.source, "gi");
   let match: RegExpExecArray | null;
@@ -55,20 +55,21 @@ function extractClosingIssueNumbersFromAll(...sources: string[]): number[] {
   return [...seen];
 }
 
-interface GitHubLabel {
+export interface GitHubLabel {
   name: string;
 }
 
-interface GitHubIssue {
+export interface GitHubIssue {
   title: string;
   labels: GitHubLabel[];
 }
 
-async function fetchLinkedIssueUatIds(
+export async function fetchLinkedIssueUatIds(
   prBody: string,
   commitMessages: string,
   token: string,
-  repo: string
+  repo: string,
+  fetchFn: typeof fetch = fetch
 ): Promise<string[]> {
   const issueNumbers = extractClosingIssueNumbersFromAll(prBody, commitMessages);
   if (issueNumbers.length === 0) return [];
@@ -78,7 +79,7 @@ async function fetchLinkedIssueUatIds(
   for (const num of issueNumbers) {
     let issue: GitHubIssue;
     try {
-      const res = await fetch(`https://api.github.com/repos/${repo}/issues/${num}`, {
+      const res = await fetchFn(`https://api.github.com/repos/${repo}/issues/${num}`, {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github.v3+json",
@@ -109,15 +110,15 @@ async function fetchLinkedIssueUatIds(
   return [...ids];
 }
 
-function isTestFile(filePath: string): boolean {
+export function isTestFile(filePath: string): boolean {
   return TEST_FILE_PATTERNS.some((p) => p.test(filePath));
 }
 
-function findNewTestFiles(changedFiles: string[]): string[] {
+export function findNewTestFiles(changedFiles: string[]): string[] {
   return changedFiles.filter(isTestFile);
 }
 
-function hasExceptionBypass(pr: PrInfo): boolean {
+export function hasExceptionBypass(pr: PrInfo): boolean {
   if (pr.body && pr.body.includes(EXCEPTION_MARKER)) return true;
   if (pr.labels.map((l) => l.toLowerCase()).includes(EXCEPTION_LABEL)) return true;
   return false;
@@ -241,4 +242,11 @@ async function run(): Promise<void> {
   process.exit(1);
 }
 
-run();
+const isMain =
+  typeof process !== "undefined" &&
+  process.argv[1] != null &&
+  new URL(import.meta.url).pathname === new URL(process.argv[1], "file:").pathname;
+
+if (isMain) {
+  run();
+}
