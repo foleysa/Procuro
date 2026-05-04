@@ -47,7 +47,12 @@ testem.log
 # Playwright / a11y scan artifacts — generated on each run, not for VCS
 test-results/
 playwright-report/
+playwright-visual-report/
 .playwright/
+
+# Visual regression — baselines are tracked, diffs are not
+!tests/visual/baselines/
+tests/visual/diffs/
 /typings
 
 # System Files
