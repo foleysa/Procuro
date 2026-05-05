@@ -32,7 +32,7 @@
     }
   },
   "devDependencies": {
-    "@google-cloud/bigquery": "^7.9.4",
+    "@google-cloud/bigquery": "^8.3.0",
     "@google-cloud/storage": "^7.19.0",
     "@types/node": "catalog:"
   }
