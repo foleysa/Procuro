@@ -84,16 +84,16 @@
     "vite": "catalog:",
     "vitest": "^4.1.5",
     "world-atlas": "^2.0.2",
-    "wouter": "^3.3.5",
+    "wouter": "^3.10.0",
     "zod": "catalog:"
   },
   "dependencies": {
-    "@clerk/react": "^6.4.6",
+    "@clerk/react": "^6.7.2",
     "@clerk/themes": "^2.4.57",
     "@types/papaparse": "^5.5.2",
     "@workspace/intelligence": "workspace:*",
     "jszip": "^3.10.1",
-    "mermaid": "^11.14.0",
+    "mermaid": "^11.15.0",
     "papaparse": "^5.5.3"
   }
 }
