@@ -20,13 +20,13 @@
   "dependencies": {
     "drizzle-orm": "catalog:",
     "drizzle-zod": "^0.8.3",
-    "pg": "^8.20.0",
+    "pg": "^8.22.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.4.0",
     "@types/node": "catalog:",
-    "@types/pg": "^8.18.0",
+    "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.31.9",
     "vitest": "^4.1.5"
