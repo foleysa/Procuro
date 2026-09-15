@@ -20,6 +20,9 @@
     },
     {
       "path": "./lib/data-integrity"
+    },
+    {
+      "path": "./lib/pulse"
     }
   ]
 }

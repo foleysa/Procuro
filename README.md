@@ -6,6 +6,21 @@ is a pnpm monorepo of artifacts (deployable apps) and shared libs.
 See `pnpm-workspace.yaml` for the workspace layout and
 `replit.md` for project-specific notes.
 
+## Pulse editions → tags
+
+Pulse (Procuro data product, not FSA) is horizontal Core plus edition
+lenses. Tags live in `@workspace/pulse` / `docs/pulse/`:
+
+| Pulse packaging | Tag(s) |
+|---|---|
+| Pulse Core | `logistics` (core lens, always on) |
+| Industrial MRO edition | `mro` |
+| Food & Ag edition | `food` |
+
+Layer C Decide / Learn enums align with existing `analysis_cycles` /
+`decisions` / `market_signals` — they do not replace them. See
+[`docs/pulse/README.md`](docs/pulse/README.md).
+
 ## Identity & access (SSO + SCIM)
 
 Procuro integrates with the standard enterprise IdPs (Okta, Azure AD /
