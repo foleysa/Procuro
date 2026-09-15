@@ -21,6 +21,10 @@ export type CycleStatus = (typeof cycleStatusValues)[number];
 /**
  * One row per OODA cycle (Observe → Orient → Decide → Act → Learn).
  * `generation` is the per-tenant cycle counter.
+ *
+ * Pulse Layer C (Decide/Learn enums + vertical edition tags) lives in
+ * `@workspace/pulse` and maps onto these JSONB payloads without
+ * replacing them. See `docs/pulse/layer-c-taxonomy.md`.
  */
 export const analysisCyclesTable = pgTable(
   "analysis_cycles",
