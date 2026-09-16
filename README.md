@@ -32,3 +32,17 @@ lives in [`artifacts/api-server/SCIM.md`](artifacts/api-server/SCIM.md):
 The same runbook is linked inline from the SCIM groups card under
 **Admin → SSO** in the command-center UI so operators can find it
 during setup.
+
+## Data Factory (Day 0)
+
+Procuro LoE only — not FSA. John pivot: ingest **public / internet**
+signals, package them, sell via Pulse / Diligence **and** an API spine
+in parallel. No tenant spend. No FSA client paths. Layer B deferred.
+
+Honest beta (`ga: false`). Catalog, fetch stubs, packaged JSON, Layer C
+Decide→Learn taxonomy (aligned with PR #30), and authenticated read
+endpoints live in `@workspace/data-factory` and
+`GET /api/data-factory/*`.
+
+See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for public vs
+deferred, cited source URLs, and paid-license fences.
