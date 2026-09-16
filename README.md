@@ -44,7 +44,7 @@ Decide→Learn taxonomy (aligned with PR #30), and authenticated read
 endpoints live in `@workspace/data-factory` and
 `GET /api/data-factory/*`.
 
-See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the strengthened
+John GREENLIGHT 2026-09-16. See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the strengthened
 Tier 1 map, Tier 2 file/CSV sources, the parallel news/OSINT track
 (RSS metadata → events; headlines + link only), the locked storage
 layout (GCS raw / Postgres serving / BigQuery analytics on the existing

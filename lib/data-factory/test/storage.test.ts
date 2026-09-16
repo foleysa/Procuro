@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NEWS_EVENTS_DDL, NEWS_EVENTS_GDELT_JOIN_SQL } from "@workspace/intelligence/bq";
 import {
@@ -104,6 +106,18 @@ describe("locked storage layout", () => {
     expect(NEWS_EVENTS_DDL(cfg)).not.toMatch(/html_body|full_text/);
     expect(NEWS_EVENTS_GDELT_JOIN_SQL(cfg)).toMatch(/event_geocoded/);
     expect(NEWS_EVENTS_GDELT_JOIN_SQL(cfg)).toMatch(/entity_news_event/);
+  });
+
+  it("ships an idempotent Postgres seed that does not recreate market_signals", () => {
+    const sql = readFileSync(
+      resolve(process.cwd(), "../db/seeds/data-factory-day0.sql"),
+      "utf8",
+    );
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS news_events/);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS data_factory_usage_log/);
+    expect(sql).toMatch(/Reuses existing `market_signals`/);
+    expect(sql).not.toMatch(/CREATE TABLE IF NOT EXISTS market_signals/);
+    expect(sql).not.toMatch(/\bhtml_body\b|\bfull_text\b/);
   });
 
   it("advertises the locked layout on the status banner", () => {

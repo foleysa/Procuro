@@ -1,8 +1,13 @@
 # Data Factory — Day 0 (Procuro LoE)
 
+**John GREENLIGHT 2026-09-16: GO** on storage layout + Day 0 factory.
+
 **LoE = Procuro only. Not FSA.** John has no client or tenant data.
 Layer B is deferred. This file is the live Layer A source map for
 product decisions.
+
+**Flow:** GCS raw landing → Postgres serving (`market_signals`,
+`news_events`, metering) → BigQuery analytics / GDELT joins.
 
 The old 8-source “wire first” list was **weak**. Day 0 now implements
 stubs + schemas for **all of strengthened Tier 1**, then Tier 2
@@ -172,6 +177,16 @@ Helpers: `landDataFactoryRaw` wraps `landRawPayload`. BQ bootstrap:
 
 `news_events` **must not** grow `html` / `body` / `full_text` columns.
 
+### Apply when env vars are set (do not block on live GCP)
+
+| Env | What it enables | If unset |
+|---|---|---|
+| `DATABASE_URL` | Drizzle `pnpm --filter @workspace/db push` **or** `lib/db/seeds/data-factory-day0.sql` (`market_signals` already exists; this seed adds `news_events` + metering + Layer C) | Schema files still compile; no live write |
+| `INTELLIGENCE_GCS_RAW_BUCKET` (+ `INTELLIGENCE_GCP_PROJECT_ID` + creds) | `landRawPayload` / `landDataFactoryRaw` | Helpers return `null` |
+| `INTELLIGENCE_BQ_DATASET` (same GCP project/creds) | `ensureWarehouseSchema` creates `news_events` in `market_signals_warehouse` | Helpers no-op |
+| `AI_INTEGRATIONS_GEMINI_*` | Optional Orient summary | Hook skipped |
+| `DATA_FACTORY_PUBSUB_TOPIC` | Optional new-event publish | Hook skipped |
+
 ## Optional hooks (after collectors write)
 
 | Hook | Env | Day 0 |
@@ -194,3 +209,5 @@ Helpers: `landDataFactoryRaw` wraps `landRawPayload`. BQ bootstrap:
 ```
 pnpm --filter @workspace/data-factory test
 ```
+
+No live GCP credentials required for tests or this PR.
