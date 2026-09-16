@@ -53,6 +53,7 @@ const DAY0_TIERS = new Set([
   "tier_1_5",
   "tier_1_5b",
   "tier_2",
+  "tier_c",
   "news_osint",
   "license_required",
 ]);

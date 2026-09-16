@@ -5,6 +5,7 @@ import {
   TIER2_SOURCE_IDS,
   TIER15_SOURCE_IDS,
   TIER15B_SOURCE_IDS,
+  TIER_C_SOURCE_IDS,
   NEWS_OSINT_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
@@ -13,6 +14,7 @@ import {
   listTier1Sources,
   listTier15Sources,
   listTier15bSources,
+  listTierCSources,
   listTier2Sources,
 } from "../src/catalog";
 
@@ -151,15 +153,36 @@ describe("Layer A catalog", () => {
     );
   });
 
-  it("lists optional Tier 1.5b stubs", () => {
+  it("lists locked Tier 1.5b stubs and gates ACLED", () => {
     const tier15b = listTier15bSources();
     expect(tier15b.map((s) => s.id)).toEqual([...TIER15B_SOURCE_IDS]);
-    expect(TIER15B_SOURCE_IDS).toHaveLength(4);
+    expect(TIER15B_SOURCE_IDS).toHaveLength(9);
     expect(getDataFactorySource("src_companies_house")?.existingCollectorId).toBe(
       "companies-house",
     );
     expect(getDataFactorySource("src_uflpa")?.scrapePosture).toBe(
       "careful_public_page",
+    );
+    expect(getDataFactorySource("src_usitc_dataweb")?.name).toMatch(/DataWeb/);
+    expect(getDataFactorySource("src_panama_canal")?.scrapePosture).toBe(
+      "careful_public_page",
+    );
+    expect(getDataFactorySource("src_acled")?.fetchStatus).toBe(
+      "license_required",
+    );
+  });
+
+  it("lists light Tier C backlog (OpenSanctions reused for UK/EU)", () => {
+    const tierC = listTierCSources();
+    expect(tierC.map((s) => s.id)).toEqual([...TIER_C_SOURCE_IDS]);
+    expect(getDataFactorySource("src_opensanctions")?.day0Tier).toBe(
+      "tier_1_5",
+    );
+    expect(getDataFactorySource("src_opencorporates")?.licenseNote).toMatch(
+      /ToS gate/i,
+    );
+    expect(getDataFactorySource("src_bis_entity_list")?.day0Tier).toBe(
+      "tier_c",
     );
   });
 

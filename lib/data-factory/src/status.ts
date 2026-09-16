@@ -44,6 +44,7 @@ export function dataFactoryStatus(): DataFactoryStatus {
       "Metering is a usage-log hook, not a GA billing meter.",
       "News/OSINT track: headlines + link OK; full-text republish is out of scope.",
       "Tier 1.5 free gap pack + optional 1.5b stubs. AISHub free AIS only — no MarineTraffic.",
+      "Light Tier C backlog stubs exist; do not block shipping on those collectors.",
       "Storage: GCS raw landing (INTELLIGENCE_GCS_RAW_BUCKET), Postgres serving (market_signals + news_events + metering), BigQuery analytics/GDELT joins when GCP is up.",
       "Pub/Sub + Gemini Orient are optional hooks. Vertex Agent Engine is deferred until collectors write.",
     ],

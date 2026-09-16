@@ -4,6 +4,7 @@ import {
   TIER1_SOURCE_IDS,
   TIER15_SOURCE_IDS,
   TIER15B_SOURCE_IDS,
+  TIER_C_SOURCE_IDS,
   TIER2_SOURCE_IDS,
 } from "../src/catalog";
 import {
@@ -11,6 +12,7 @@ import {
   fetchLayerASource,
   fetchTier15Sources,
   fetchTier15bSources,
+  fetchTierCSources,
   fetchTier1Sources,
   fetchTier2Sources,
 } from "../src/fetch-stubs";
@@ -19,6 +21,7 @@ import {
   TIER1_SCHEMAS,
   TIER15_SCHEMAS,
   TIER15B_SCHEMAS,
+  TIER_C_SCHEMAS,
 } from "../src/schemas";
 
 describe("Layer A fetch stubs", () => {
@@ -127,20 +130,43 @@ describe("Layer A fetch stubs", () => {
     expect(bea.plan?.authEnvVar).toBe("BEA_API_KEY");
   });
 
-  it("attaches observation schemas to optional Tier 1.5b stubs", () => {
+  it("attaches observation schemas to locked Tier 1.5b stubs (ACLED gated)", () => {
     const schemaIds = new Set(TIER15B_SCHEMAS.map((s) => s.sourceId));
-    expect(schemaIds.size).toBe(TIER15B_SOURCE_IDS.length);
     for (const id of TIER15B_SOURCE_IDS) {
-      expect(schemaIds.has(id), id).toBe(true);
       const result = fetchLayerASource(id);
+      expect(result.observations).toEqual([]);
+      if (id === "src_acled") {
+        expect(result.status).toBe("license_required");
+        expect(result.plan).toBeNull();
+        expect(getLayerAObservationSchema(id)).toBeUndefined();
+        continue;
+      }
+      expect(schemaIds.has(id), id).toBe(true);
       expect(result.status).not.toBe("license_required");
       expect(result.schema?.sourceId, id).toBe(id);
-      expect(result.observations).toEqual([]);
     }
     expect(fetchTier15bSources()).toHaveLength(TIER15B_SOURCE_IDS.length);
     expect(fetchLayerASource("src_companies_house").status).toBe(
       "wired_existing_collector",
     );
+  });
+
+  it("attaches observation schemas to light Tier C (OpenSanctions reused)", () => {
+    const schemaIds = new Set(TIER_C_SCHEMAS.map((s) => s.sourceId));
+    expect(schemaIds.has("src_opensanctions")).toBe(false);
+    for (const id of TIER_C_SOURCE_IDS) {
+      const result = fetchLayerASource(id);
+      expect(result.observations).toEqual([]);
+      expect(result.status).not.toBe("license_required");
+      if (id === "src_opensanctions") {
+        expect(result.schema?.sourceId).toBe("src_opensanctions");
+        continue;
+      }
+      expect(schemaIds.has(id), id).toBe(true);
+      expect(result.schema?.sourceId, id).toBe(id);
+    }
+    expect(fetchTierCSources()).toHaveLength(TIER_C_SOURCE_IDS.length);
+    expect(fetchLayerASource("src_opencorporates").note).toMatch(/Day 0 stub/);
   });
 
   it("covers every catalog source and unknown ids", () => {

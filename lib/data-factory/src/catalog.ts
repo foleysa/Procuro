@@ -45,6 +45,7 @@ export const dataFactoryDay0Tiers = [
   "tier_1_5",
   "tier_1_5b",
   "tier_2",
+  "tier_c",
   "news_osint",
   "license_required",
 ] as const;
@@ -139,12 +140,34 @@ export const TIER15_SOURCE_IDS = [
   "src_aishub",
 ] as const;
 
-/** Optional 1.5b stubs. */
+/** Optional 1.5b stubs — John locked 2026-09-16. */
 export const TIER15B_SOURCE_IDS = [
   "src_uflpa",
   "src_usitc_trade_remedies",
+  "src_usitc_dataweb",
   "src_companies_house",
   "src_wdi",
+  "src_panama_canal",
+  "src_phmsa",
+  "src_wikidata",
+  "src_acled",
+] as const;
+
+/**
+ * Light Tier C backlog stubs. Do not block the PR on live collectors.
+ * UK/EU sanctions reuse OpenSanctions.
+ */
+export const TIER_C_SOURCE_IDS = [
+  "src_bis_entity_list",
+  "src_bis_denied_persons",
+  "src_opensanctions",
+  "src_fra",
+  "src_stb",
+  "src_noaa_ports",
+  "src_opencorporates",
+  "src_owid",
+  "src_uspto_odp",
+  "src_ftc_rss",
 ] as const;
 
 /**
@@ -1265,6 +1288,25 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     scrapePosture: "careful_public_page",
   },
   {
+    id: "src_usitc_dataweb",
+    name: "USITC DataWeb / HTS",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "both",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://dataweb.usitc.gov/",
+    feedUrl: "https://dataweb.usitc.gov/",
+    altFeedUrls: ["https://hts.usitc.gov/"],
+    licenseClass: "free_registration",
+    licenseNote:
+      "USITC DataWeb trade extracts + Harmonized Tariff Schedule. Free registration for DataWeb. No invented HS values.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["customs_trade"],
+    scrapePosture: "file_csv",
+  },
+  {
     id: "src_companies_house",
     name: "Companies House",
     family: "filing",
@@ -1297,6 +1339,237 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     fetchStatus: "stub",
     existingCollectorId: null,
     signalTypes: ["economic_index"],
+  },
+  {
+    id: "src_panama_canal",
+    name: "Panama Canal advisories",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://pancanal.com/en/",
+    feedUrl: "https://pancanal.com/en/",
+    licenseClass: "public_api",
+    licenseNote: "Cite-only public advisories. No invented transit restrictions.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["freight_rate"],
+    scrapePosture: "careful_public_page",
+  },
+  {
+    id: "src_phmsa",
+    name: "PHMSA incident / hazmat data",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://www.phmsa.dot.gov/data-and-statistics/pipeline/data-and-statistics-overview",
+    feedUrl:
+      "https://www.phmsa.dot.gov/data-and-statistics/pipeline/source-data",
+    licenseClass: "public_api",
+    licenseNote: "DOT PHMSA public incident files. Not tenant EHS data.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["environmental_violation"],
+    scrapePosture: "file_csv",
+  },
+  {
+    id: "src_wikidata",
+    name: "Wikidata reconcile helper",
+    family: "filing",
+    observeKind: "supplier_public",
+    channelUse: "api",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://www.wikidata.org/wiki/Wikidata:Data_access",
+    feedUrl: "https://query.wikidata.org/sparql",
+    altFeedUrls: ["https://wikidata.reconci.link/en/api"],
+    licenseClass: "public_api",
+    licenseNote:
+      "CC0 SPARQL / OpenRefine reconcile. Entity helper only — not a company registry product.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["entity_registry"],
+  },
+  {
+    id: "src_acled",
+    name: "ACLED (license gate)",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://acleddata.com/",
+    feedUrl: "https://acleddata.com/",
+    licenseClass: "paid_license_required",
+    licenseNote:
+      "ACLED access agreement restricts redistribution. Stub blocked until a human-cleared license is on file.",
+    fetchStatus: "license_required",
+    existingCollectorId: null,
+    signalTypes: ["event_geocoded"],
+  },
+
+  // ---- Light Tier C backlog --------------------------------------------
+  {
+    id: "src_bis_entity_list",
+    name: "BIS Entity List",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "both",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl:
+      "https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/entity-list",
+    feedUrl:
+      "https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/entity-list",
+    licenseClass: "public_api",
+    licenseNote:
+      "Commerce BIS Entity List. Public named entities. Not a screening-product claim.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["sanctions_match"],
+    scrapePosture: "file_csv",
+  },
+  {
+    id: "src_bis_denied_persons",
+    name: "BIS Denied Persons List",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "both",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl:
+      "https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/denied-persons-list",
+    feedUrl:
+      "https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/denied-persons-list",
+    licenseClass: "public_api",
+    licenseNote: "Commerce BIS Denied Persons. Complements Entity List + OFAC SDN.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["sanctions_match"],
+    scrapePosture: "file_csv",
+  },
+  {
+    id: "src_fra",
+    name: "FRA safety data extras",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://safetydata.fra.dot.gov/",
+    feedUrl: "https://safetydata.fra.dot.gov/",
+    licenseClass: "public_api",
+    licenseNote: "FRA public railroad safety extracts. Light stub.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["event_geocoded"],
+    scrapePosture: "file_csv",
+  },
+  {
+    id: "src_stb",
+    name: "STB extras",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "api",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://www.stb.gov/",
+    feedUrl: "https://www.stb.gov/",
+    licenseClass: "public_api",
+    licenseNote: "Surface Transportation Board public filings / stats. Light stub.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["freight_rate"],
+    scrapePosture: "careful_public_page",
+  },
+  {
+    id: "src_noaa_ports",
+    name: "NOAA PORTS",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://tidesandcurrents.noaa.gov/ports.html",
+    feedUrl: "https://api.tidesandcurrents.noaa.gov/api/prod/",
+    licenseClass: "public_api",
+    licenseNote: "NOAA Physical Oceanographic Real-Time System. Public CO-OPS API.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["natural_hazard"],
+  },
+  {
+    id: "src_opencorporates",
+    name: "OpenCorporates (ToS gate)",
+    family: "filing",
+    observeKind: "supplier_public",
+    channelUse: "api",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://opencorporates.com/",
+    feedUrl: "https://api.opencorporates.com/v0.4/companies/search",
+    licenseClass: "free_registration",
+    licenseNote:
+      "ToS gate — do not live-fetch until legal reviews OpenCorporates terms. Complements GLEIF / CH.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["entity_registry"],
+  },
+  {
+    id: "src_owid",
+    name: "Our World in Data cite helper",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "pulse",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://ourworldindata.org/",
+    feedUrl: "https://ourworldindata.org/",
+    licenseClass: "public_api",
+    licenseNote:
+      "Cite helper only. Attribute OWID + underlying source. No invented series.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["economic_index"],
+    scrapePosture: "careful_public_page",
+  },
+  {
+    id: "src_uspto_odp",
+    name: "USPTO Open Data Portal",
+    family: "filing",
+    observeKind: "supplier_public",
+    channelUse: "api",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://developer.uspto.gov/api-catalog",
+    feedUrl: "https://developer.uspto.gov/api-catalog",
+    licenseClass: "public_api",
+    licenseNote: "USPTO ODP public APIs. Patent/trademark metadata, not tenant IP files.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["corporate_filing"],
+  },
+  {
+    id: "src_ftc_rss",
+    name: "FTC / AG RSS",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "tier_c",
+    tierRank: null,
+    sourceUrl: "https://www.ftc.gov/news-events",
+    feedUrl: "https://www.ftc.gov/feeds/press-release.xml",
+    altFeedUrls: ["https://www.naag.org/news-resources/"],
+    licenseClass: "public_api",
+    licenseNote:
+      "FTC press RSS + state AG headline cites. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
   },
 
   // ---- Paid commercial — placeholders only ------------------------------
@@ -1543,6 +1816,16 @@ export function listTier15bSources(): DataFactorySource[] {
     const source = getDataFactorySource(id);
     if (!source) {
       throw new Error(`TIER15B_SOURCE_IDS missing catalog row ${id}`);
+    }
+    return source;
+  });
+}
+
+export function listTierCSources(): DataFactorySource[] {
+  return TIER_C_SOURCE_IDS.map((id) => {
+    const source = getDataFactorySource(id);
+    if (!source) {
+      throw new Error(`TIER_C_SOURCE_IDS missing catalog row ${id}`);
     }
     return source;
   });

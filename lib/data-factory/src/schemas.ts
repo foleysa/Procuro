@@ -374,6 +374,75 @@ export const TIER15B_SCHEMAS: readonly LayerAObservationSchema[] = [
     ["year", "string", true, "Year"],
     ["value", "number", false, "Published value"],
   ]),
+  schema("src_usitc_dataweb", "USITC DataWeb / HTS row", "UsitcDataWebRow", [
+    ["htsCode", "string", true, "HTS as published"],
+    ["period", "string", true, "Year / month"],
+    ["flow", "string", false, "import | export"],
+    ["valueUsd", "number", false, "Published value only"],
+  ]),
+  schema("src_panama_canal", "Panama Canal advisory cite", "PanamaCanalAdvisory", [
+    ["title", "string", true, "Advisory title"],
+    ["issuedAt", "datetime", false, "Advisory date"],
+    ["url", "string", true, "Canonical pancanal.com URL"],
+  ]),
+  schema("src_phmsa", "PHMSA incident row", "PhmsaIncident", [
+    ["reportId", "string", true, "PHMSA report id"],
+    ["operator", "string", false, "Named operator"],
+    ["incidentDate", "datetime", false, "Incident date"],
+    ["commodity", "string", false, "Commodity / hazmat"],
+  ]),
+  schema("src_wikidata", "Wikidata reconcile hit", "WikidataReconcileHit", [
+    ["qid", "string", true, "Wikidata Q-id"],
+    ["label", "string", true, "Primary label"],
+    ["score", "number", false, "Reconcile score if present"],
+  ]),
+];
+
+export const TIER_C_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_bis_entity_list", "BIS Entity List row", "BisEntityListRow", [
+    ["name", "string", true, "Listed name"],
+    ["country", "string", false, "Country"],
+    ["federalRegisterCite", "string", false, "FR citation"],
+  ]),
+  schema("src_bis_denied_persons", "BIS Denied Person", "BisDeniedPerson", [
+    ["name", "string", true, "Listed name"],
+    ["effectiveDate", "datetime", false, "Denial date"],
+    ["federalRegisterCite", "string", false, "FR citation"],
+  ]),
+  schema("src_fra", "FRA safety extract", "FraSafetyRow", [
+    ["reportId", "string", true, "FRA report id"],
+    ["railroad", "string", false, "Railroad"],
+    ["incidentDate", "datetime", false, "Incident date"],
+  ]),
+  schema("src_stb", "STB filing / stat", "StbFiling", [
+    ["docket", "string", true, "STB docket"],
+    ["title", "string", true, "Filing title"],
+    ["filedAt", "datetime", false, "Filing date"],
+    ["url", "string", false, "Canonical STB URL"],
+  ]),
+  schema("src_noaa_ports", "NOAA PORTS observation", "NoaaPortsObservation", [
+    ["stationId", "string", true, "CO-OPS station"],
+    ["product", "string", true, "water_level | currents | …"],
+    ["observedAt", "datetime", false, "Observation time"],
+    ["value", "number", false, "Published value"],
+  ]),
+  schema("src_opencorporates", "OpenCorporates company", "OpenCorporatesCompany", [
+    ["companyNumber", "string", true, "Jurisdiction company number"],
+    ["name", "string", true, "Registered name"],
+    ["jurisdiction", "string", false, "OC jurisdiction code"],
+    ["url", "string", false, "OpenCorporates URL"],
+  ]),
+  schema("src_owid", "OWID cite", "OwidCite", [
+    ["chartSlug", "string", true, "OWID chart slug"],
+    ["title", "string", true, "Chart title"],
+    ["url", "string", true, "Canonical OWID URL"],
+  ]),
+  schema("src_uspto_odp", "USPTO ODP record", "UsptoOdpRecord", [
+    ["documentId", "string", true, "Patent / trademark id"],
+    ["title", "string", false, "Title"],
+    ["filedAt", "datetime", false, "Filing date"],
+  ]),
+  schema("src_ftc_rss", "FTC / AG headline", "OsintEvent", OSINT_EVENT_FIELDS),
 ];
 
 export const WIRE_FIRST_SCHEMAS = TIER1_SCHEMAS;
@@ -384,6 +453,7 @@ const ALL = [
   ...NEWS_OSINT_SCHEMAS,
   ...TIER15_SCHEMAS,
   ...TIER15B_SCHEMAS,
+  ...TIER_C_SCHEMAS,
 ];
 const SCHEMA_BY_ID = new Map(ALL.map((s) => [s.sourceId, s]));
 

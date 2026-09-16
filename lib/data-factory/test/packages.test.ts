@@ -4,6 +4,7 @@ import {
   TIER1_SOURCE_IDS,
   TIER15_SOURCE_IDS,
   TIER15B_SOURCE_IDS,
+  TIER_C_SOURCE_IDS,
   TIER2_SOURCE_IDS,
 } from "../src/catalog";
 import {
@@ -59,16 +60,22 @@ describe("Layer A packages", () => {
     );
   });
 
-  it("serves optional Tier 1.5b stubs", () => {
+  it("serves locked Tier 1.5b stubs and gates ACLED", () => {
     const packed = packageLayerADataset("pkg_tier15b");
     expect(packed?.package.sourceIds).toEqual([...TIER15B_SOURCE_IDS]);
     expect(packed?.observations).toEqual([]);
-    expect(packed?.sources.map((s) => s.id)).toEqual([
-      "src_uflpa",
-      "src_usitc_trade_remedies",
-      "src_companies_house",
-      "src_wdi",
-    ]);
+    expect(packed?.sources.map((s) => s.id)).toEqual([...TIER15B_SOURCE_IDS]);
+    const acled = packed?.fetches.find((f) => f.sourceId === "src_acled");
+    expect(acled?.status).toBe("license_required");
+  });
+
+  it("serves light Tier C backlog without blocking on live collectors", () => {
+    const packed = packageLayerADataset("pkg_tier_c");
+    expect(packed?.package.sourceIds).toEqual([...TIER_C_SOURCE_IDS]);
+    expect(packed?.observations).toEqual([]);
+    expect(packed?.fetches.every((f) => f.observations.length === 0)).toBe(
+      true,
+    );
   });
 
   it("does not invent a tenant-spend or FSA package", () => {

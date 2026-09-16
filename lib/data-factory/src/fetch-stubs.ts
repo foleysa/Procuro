@@ -11,6 +11,7 @@ import {
   listTier2Sources,
   listTier15Sources,
   listTier15bSources,
+  listTierCSources,
   listNewsOsintSources,
   DATA_FACTORY_SOURCES,
   getDataFactorySource,
@@ -96,6 +97,7 @@ function planFor(source: DataFactorySource): LayerAFetchPlan {
     case "src_gdacs":
     case "src_usgs_quakes":
     case "src_nhc_products":
+    case "src_ftc_rss":
       headers.Accept = "application/rss+xml, application/atom+xml, application/xml";
       break;
     case "src_gdelt":
@@ -134,7 +136,29 @@ function planFor(source: DataFactorySource): LayerAFetchPlan {
       break;
     case "src_uflpa":
     case "src_usitc_trade_remedies":
+    case "src_panama_canal":
+    case "src_owid":
+    case "src_stb":
       headers.Accept = "text/html,text/csv";
+      break;
+    case "src_usitc_dataweb":
+      headers.Accept = "text/csv,application/json,text/html";
+      authEnvVar = "USITC_DATAWEB_API_KEY";
+      break;
+    case "src_phmsa":
+    case "src_bis_entity_list":
+    case "src_bis_denied_persons":
+    case "src_fra":
+      headers.Accept = "text/csv,application/vnd.ms-excel,text/html";
+      break;
+    case "src_wikidata":
+      headers.Accept = "application/sparql-results+json";
+      break;
+    case "src_opencorporates":
+      authEnvVar = "OPENCORPORATES_API_KEY";
+      break;
+    case "src_noaa_ports":
+    case "src_uspto_odp":
       break;
     case "src_sec_edgar":
       headers["User-Agent"] = "Procuro Data Factory compliance@procuro.ai";
@@ -299,6 +323,10 @@ export function fetchTier15Sources(): LayerAFetchResult[] {
 
 export function fetchTier15bSources(): LayerAFetchResult[] {
   return listTier15bSources().map((s) => fetchKnownSource(s));
+}
+
+export function fetchTierCSources(): LayerAFetchResult[] {
+  return listTierCSources().map((s) => fetchKnownSource(s));
 }
 
 /** @deprecated use fetchTier1Sources */

@@ -109,7 +109,8 @@ they sit on Tier 2 as cite-only.
 | `pkg_public_filings` | api | SEC EDGAR |
 | `pkg_news_osint` | both | RSS metadata events + Pulse cited bullets |
 | `pkg_tier15` | both | Free gap pack (WITS → AISHub). No MarineTraffic |
-| `pkg_tier15b` | both | Optional UFLPA, USITC/ITA, Companies House, WDI |
+| `pkg_tier15b` | both | UFLPA, USITC remedies + DataWeb/HTS, CH, WDI, Panama Canal cite, PHMSA, Wikidata; ACLED gated |
+| `pkg_tier_c` | both | Light backlog: BIS, OpenSanctions UK/EU, FRA/STB, NOAA PORTS, OC ToS, OWID, USPTO, FTC/AG |
 
 Pulse-useful: Tier 1 disruption + Tier 2 port / NHC / CPSC pages.
 API-useful: BLS/FRED/EIA/Census/Comtrade series, OFAC, USAspending, EDGAR, SAM.
@@ -118,7 +119,7 @@ Both: `pkg_tier1`.
 ## API spine (beta, `ga: false`)
 
 Authenticated `GET /api/data-factory/*`. Query `channelUse=pulse|api|both`
-and `day0Tier=tier_1|tier_1_5|tier_1_5b|tier_2|news_osint|license_required`.
+and `day0Tier=tier_1|tier_1_5|tier_1_5b|tier_2|tier_c|news_osint|license_required`.
 
 - `GET /api/data-factory`
 - `GET /api/data-factory/sources`
@@ -184,7 +185,7 @@ news/OSINT track. **No paid MarineTraffic.**
 | OpenSky | stub (free REST) | https://opensky-network.org/ |
 | AISHub | free AIS / contributor API only | https://www.aishub.net/api |
 
-### Optional 1.5b
+### Optional 1.5b (John locked)
 
 Package: `pkg_tier15b`.
 
@@ -192,8 +193,30 @@ Package: `pkg_tier15b`.
 |---|---|---|
 | UFLPA entity list | careful page stub | https://www.dhs.gov/uflpa-entity-list |
 | USITC / ITA trade remedies | careful page stub | https://www.usitc.gov/trade_remedy |
+| USITC DataWeb / HTS | file/CSV stub | https://dataweb.usitc.gov/ |
 | Companies House | existing `companies-house` | https://developer.company-information.service.gov.uk/ |
 | World Bank WDI | stub (not Pink Sheet) | https://data.worldbank.org/ |
+| Panama Canal advisories | cite-only careful page | https://pancanal.com/en/ |
+| PHMSA incident / hazmat | file/CSV stub | https://www.phmsa.dot.gov/data-and-statistics/pipeline/data-and-statistics-overview |
+| Wikidata reconcile helper | SPARQL stub | https://www.wikidata.org/wiki/Wikidata:Data_access |
+| ACLED | **license_required** until license is clear | https://acleddata.com/ |
+
+## Tier C — light backlog (do not block the PR)
+
+Package: `pkg_tier_c`. Source map frozen — no invented extras.
+
+| Source | Status | Cite |
+|---|---|---|
+| BIS Entity List | file/CSV stub | https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/entity-list |
+| BIS Denied Persons | file/CSV stub | https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/denied-persons-list |
+| UK/EU sanctions files | reuse OpenSanctions | https://www.opensanctions.org/ |
+| FRA safety extras | file/CSV stub | https://safetydata.fra.dot.gov/ |
+| STB extras | careful page stub | https://www.stb.gov/ |
+| NOAA PORTS | stub | https://tidesandcurrents.noaa.gov/ports.html |
+| OpenCorporates | ToS gate — no live fetch until legal review | https://opencorporates.com/ |
+| OWID cite helper | cite-only | https://ourworldindata.org/ |
+| USPTO ODP | stub | https://developer.uspto.gov/api-catalog |
+| FTC / AG RSS | headline + link only | https://www.ftc.gov/feeds/press-release.xml |
 
 ## Storage layout (locked — John confirmed)
 

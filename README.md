@@ -45,8 +45,8 @@ endpoints live in `@workspace/data-factory` and
 `GET /api/data-factory/*`.
 
 John GREENLIGHT 2026-09-16. See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the strengthened
-Tier 1 map, the Tier 1.5 free gap pack (plus optional 1.5b; no
-MarineTraffic), Tier 2 file/CSV sources, the parallel news/OSINT track
+Tier 1 map, the Tier 1.5 free gap pack (plus locked 1.5b; no
+MarineTraffic), light Tier C backlog stubs, Tier 2 file/CSV sources, the parallel news/OSINT track
 (RSS metadata → events; headlines + link only), the locked storage
 layout (GCS raw / Postgres serving / BigQuery analytics on the existing
 intelligence stack), Pulse vs API vs both tags, and
