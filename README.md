@@ -32,3 +32,22 @@ lives in [`artifacts/api-server/SCIM.md`](artifacts/api-server/SCIM.md):
 The same runbook is linked inline from the SCIM groups card under
 **Admin → SSO** in the command-center UI so operators can find it
 during setup.
+
+## Data Factory (Day 0)
+
+Procuro LoE only — not FSA. John pivot: ingest **public / internet**
+signals, package them, sell via Pulse / Diligence **and** an API spine
+in parallel. No tenant spend. No FSA client paths. Layer B deferred.
+
+Honest beta (`ga: false`). Catalog, fetch stubs, packaged JSON, Layer C
+Decide→Learn taxonomy (aligned with PR #30), and authenticated read
+endpoints live in `@workspace/data-factory` and
+`GET /api/data-factory/*`.
+
+John GREENLIGHT 2026-09-16. See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the strengthened
+Tier 1 map, the Tier 1.5 free gap pack (plus locked 1.5b; no
+MarineTraffic), light Tier C backlog stubs, Tier 2 file/CSV sources, the parallel news/OSINT track
+(RSS metadata → events; headlines + link only), the locked storage
+layout (GCS raw / Postgres serving / BigQuery analytics on the existing
+intelligence stack), Pulse vs API vs both tags, and
+`license_required` paid placeholders.

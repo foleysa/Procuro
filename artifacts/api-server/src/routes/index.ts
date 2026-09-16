@@ -43,6 +43,7 @@ import sowsRouter from "./sows";
 import rateCardsRouter from "./rate-cards";
 import methodsAndToolsRouter from "./methods-and-tools";
 import adminA11yRouter from "./admin-a11y";
+import dataFactoryRouter from "./data-factory";
 
 const router: IRouter = Router();
 
@@ -90,5 +91,6 @@ router.use(sowsRouter);
 router.use(rateCardsRouter);
 router.use(methodsAndToolsRouter);
 router.use(adminA11yRouter);
+router.use(dataFactoryRouter);
 
 export default router;

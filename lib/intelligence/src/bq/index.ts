@@ -209,6 +209,51 @@ CLUSTER BY country, primary_name
 `;
 
 /**
+ * Serving-mirror for Data Factory news/OSINT metadata (not article HTML).
+ * Same warehouse as `market_signals` — do not invent a second BQ dataset.
+ */
+export const NEWS_EVENTS_DDL = (cfg: IntelligenceConfig): string => `
+CREATE TABLE IF NOT EXISTS \`${cfg.projectId}.${cfg.bqDataset}.news_events\` (
+  event_id STRING NOT NULL,
+  source_id STRING NOT NULL,
+  title STRING NOT NULL,
+  url STRING NOT NULL,
+  published TIMESTAMP,
+  entities ARRAY<STRING>,
+  event_type STRING NOT NULL,
+  severity STRING NOT NULL,
+  raw_payload_pointer STRING,
+  ingested_at TIMESTAMP NOT NULL
+)
+PARTITION BY DATE(ingested_at)
+CLUSTER BY source_id, event_type
+`;
+
+/**
+ * Analyst join: news_events metadata ↔ GDELT-backed market_signals
+ * (`event_geocoded` / `entity_news_event`) when GCP is available.
+ * Query-time only — not a second stack.
+ */
+export const NEWS_EVENTS_GDELT_JOIN_SQL = (cfg: IntelligenceConfig): string => `
+SELECT
+  e.event_id,
+  e.source_id,
+  e.title,
+  e.url,
+  e.event_type,
+  e.severity,
+  e.published,
+  s.signal_id,
+  s.signal_type,
+  s.collector_id,
+  s.observed_at
+FROM \`${cfg.projectId}.${cfg.bqDataset}.news_events\` e
+LEFT JOIN \`${cfg.projectId}.${cfg.bqDataset}.market_signals\` s
+  ON s.signal_type IN ('event_geocoded', 'entity_news_event')
+ AND s.source_url = e.url
+`;
+
+/**
  * Idempotent dataset + table bootstrap. Safe to call on every boot.
  * Returns `false` when GCP isn't configured (no work attempted).
  */
@@ -241,6 +286,7 @@ export async function ensureWarehouseSchema(): Promise<boolean> {
     COLLECTOR_RUNS_DDL(cfg),
     COLLECTOR_RUNS_RAW_LANDING_ALTER(cfg),
     ENTITIES_DDL(cfg),
+    NEWS_EVENTS_DDL(cfg),
   ]) {
     await bq.query({
       query: ddl,

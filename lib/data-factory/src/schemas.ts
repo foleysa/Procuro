@@ -1,0 +1,464 @@
+/**
+ * Layer A observation schemas — strengthened Tier 1 (all 15) plus
+ * Tier 2 file/CSV shapes. Fetch stubs return observations: [].
+ */
+
+export interface LayerAFieldSchema {
+  name: string;
+  type: "string" | "number" | "boolean" | "datetime";
+  required: boolean;
+  note: string;
+}
+
+export interface LayerAObservationSchema {
+  sourceId: string;
+  title: string;
+  recordName: string;
+  fields: readonly LayerAFieldSchema[];
+  liveFetch: false;
+}
+
+function fields(
+  rows: Array<[string, LayerAFieldSchema["type"], boolean, string]>,
+): LayerAFieldSchema[] {
+  return rows.map(([name, type, required, note]) => ({
+    name,
+    type,
+    required,
+    note,
+  }));
+}
+
+function schema(
+  sourceId: string,
+  title: string,
+  recordName: string,
+  fieldRows: Array<[string, LayerAFieldSchema["type"], boolean, string]>,
+): LayerAObservationSchema {
+  return {
+    sourceId,
+    title,
+    recordName,
+    fields: fields(fieldRows),
+    liveFetch: false,
+  };
+}
+
+export const TIER1_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_bls", "BLS PPI observation", "BlsPpiObservation", [
+    ["seriesId", "string", true, "BLS timeseries id, e.g. WPU101"],
+    ["period", "string", true, "BLS year + period (M01…)"],
+    ["value", "number", false, "Index value; omit if BLS sends '-'"],
+    ["latest", "boolean", false, "BLS latest flag when present"],
+  ]),
+  schema("src_fred", "FRED series observation", "FredObservation", [
+    ["seriesId", "string", true, "FRED series id, e.g. WPU101"],
+    ["observedOn", "datetime", true, "FRED observation date"],
+    ["value", "number", false, "Numeric; FRED '.' means missing"],
+    ["unit", "string", true, "Series unit / index"],
+  ]),
+  schema("src_eia", "EIA v2 series observation", "EiaObservation", [
+    ["seriesId", "string", true, "EIA v2 series id, e.g. PET.RWTC.D"],
+    ["period", "string", true, "EIA period token"],
+    ["value", "number", false, "Datapoint; omit if null"],
+    ["unit", "string", true, "USD/bbl, USD/gal, …"],
+  ]),
+  schema("src_usda_mymarketnews", "MyMarketNews report row", "UsdaMmnRow", [
+    ["reportId", "string", true, "MARS report slug / id"],
+    ["slugName", "string", false, "Commodity / market slug"],
+    ["reportDate", "datetime", false, "Report date"],
+    ["officeName", "string", false, "AMS market office"],
+    ["value", "number", false, "Quoted price when AMS publishes one"],
+    ["unit", "string", false, "Published unit"],
+  ]),
+  schema(
+    "src_openfda_food_enforcement",
+    "openFDA food enforcement",
+    "OpenFdaFoodEnforcement",
+    [
+      ["recallNumber", "string", true, "recall_number"],
+      ["classification", "string", false, "Class I / II / III"],
+      ["status", "string", false, "Ongoing / Completed / Terminated"],
+      ["recallingFirm", "string", false, "Public firm name"],
+      ["reasonForRecall", "string", false, "FDA reason text"],
+      ["reportDate", "datetime", false, "report_date"],
+    ],
+  ),
+  schema("src_openfda_recalls", "openFDA drug/device enforcement", "OpenFdaRecall", [
+    ["recallNumber", "string", true, "recall_number"],
+    ["productType", "string", false, "drug | device"],
+    ["classification", "string", false, "Class I / II / III"],
+    ["recallingFirm", "string", false, "Public firm name"],
+    ["reportDate", "datetime", false, "report_date"],
+  ]),
+  schema("src_ofac_sdn", "OFAC SDN entry", "OfacSdnEntry", [
+    ["uid", "string", true, "SDN uid"],
+    ["name", "string", true, "Primary name"],
+    ["sdnType", "string", false, "Individual / Entity / Vessel / Aircraft"],
+    ["program", "string", false, "Sanctions program"],
+    ["sourceFormat", "string", false, "xml | csv"],
+  ]),
+  schema("src_federal_register", "Federal Register document", "FederalRegisterDoc", [
+    ["documentNumber", "string", true, "FR document_number"],
+    ["title", "string", true, "Document title"],
+    ["type", "string", false, "Rule / Proposed Rule / Notice"],
+    ["publicationDate", "datetime", false, "publication_date"],
+    ["htmlUrl", "string", false, "Canonical FR URL"],
+  ]),
+  schema("src_sec_edgar", "EDGAR submission", "EdgarSubmission", [
+    ["cik", "string", true, "Zero-padded CIK"],
+    ["accessionNumber", "string", true, "Accession"],
+    ["form", "string", true, "10-K / 10-Q / 8-K / …"],
+    ["filedAt", "datetime", false, "Filing date"],
+    ["entityName", "string", false, "Issuer name"],
+  ]),
+  schema("src_bts_teu", "BTS monthly TEU (Socrata)", "BtsMonthlyTeu", [
+    ["period", "string", true, "Month as published"],
+    ["portOrRegion", "string", false, "Port / coast / national"],
+    ["teu", "number", false, "TEU only if the Socrata row has a number"],
+    ["datasetId", "string", false, "Socrata 4×4 — set only after a human pins it"],
+  ]),
+  schema("src_weather_gov", "NWS active alert", "NwsAlert", [
+    ["alertId", "string", true, "GeoJSON feature id"],
+    ["event", "string", true, "Alert event name"],
+    ["severity", "string", false, "NWS severity"],
+    ["areaDesc", "string", false, "Affected area"],
+    ["onset", "datetime", false, "Onset"],
+  ]),
+  schema("src_usaspending", "USAspending award", "UsaSpendingAward", [
+    ["awardId", "string", true, "Generated unique award id"],
+    ["recipientName", "string", false, "Public recipient"],
+    ["awardAmount", "number", false, "Awarded amount"],
+    ["naics", "string", false, "NAICS when present"],
+    ["startDate", "datetime", false, "Period of performance start"],
+  ]),
+  schema("src_census_ft900", "FT-900 exhibit row", "CensusFt900Row", [
+    ["period", "string", true, "Month/year of the release"],
+    ["exhibit", "string", true, "FT-900 exhibit id"],
+    ["flow", "string", false, "export | import | balance"],
+    ["valueUsd", "number", false, "Published dollar value only"],
+  ]),
+  schema("src_census_m3", "Census M3 observation", "CensusM3Observation", [
+    ["seasonalAdj", "string", false, "S / U"],
+    ["categoryCode", "string", true, "M3 category"],
+    ["cellValue", "number", false, "Shipments / inventories / orders"],
+    ["timeSlotId", "string", true, "YYYY-MM"],
+  ]),
+  schema("src_world_bank_pink_sheet", "Pink Sheet monthly", "WorldBankPinkSheet", [
+    ["commodity", "string", true, "Pink Sheet series name"],
+    ["period", "string", true, "YYYY-MM"],
+    ["value", "number", false, "Published price / index"],
+    ["unit", "string", false, "Unit from the workbook"],
+  ]),
+  schema("src_un_comtrade", "UN Comtrade row", "UnComtradeRow", [
+    ["period", "string", true, "Year or year-month"],
+    ["reporter", "string", true, "Reporter ISO"],
+    ["partner", "string", false, "Partner ISO"],
+    ["cmdCode", "string", false, "HS command code"],
+    ["tradeValue", "number", false, "Free-tier published value only"],
+    ["flowCode", "string", false, "M / X"],
+  ]),
+];
+
+export const TIER2_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_pola", "POLA published container stat", "PolaContainerStat", [
+    ["period", "string", true, "Month/year on the page"],
+    ["metric", "string", true, "Page label"],
+    ["value", "number", false, "Only if the page states a number"],
+  ]),
+  schema("src_polb", "POLB published port stat", "PolbPortStat", [
+    ["period", "string", true, "Month/year on the page"],
+    ["metric", "string", true, "Page label"],
+    ["value", "number", false, "Only if the page states a number"],
+  ]),
+  schema("src_usgs_mcs", "USGS MCS unit value", "UsgsMcsRow", [
+    ["commodity", "string", true, "MCS commodity"],
+    ["year", "string", true, "Survey year"],
+    ["unitValue", "number", false, "Published unit value"],
+  ]),
+  schema("src_usda_ers", "ERS data-product row", "UsdaErsRow", [
+    ["productId", "string", true, "ERS product slug"],
+    ["period", "string", false, "As published"],
+    ["value", "number", false, "Published cell only"],
+  ]),
+  schema("src_cpsc", "CPSC recall", "CpscRecall", [
+    ["recallNumber", "string", true, "CPSC recall number"],
+    ["title", "string", true, "Recall title"],
+    ["recallDate", "datetime", false, "Announcement date"],
+    ["manufacturer", "string", false, "Named manufacturer"],
+  ]),
+  schema("src_beige_book", "Beige Book edition", "BeigeBookEdition", [
+    ["editionDate", "datetime", true, "Release date"],
+    ["district", "string", false, "Reserve district or National"],
+    ["htmlUrl", "string", true, "Canonical Fed URL"],
+  ]),
+  schema("src_naics", "NAICS code", "NaicsCode", [
+    ["code", "string", true, "NAICS code"],
+    ["title", "string", true, "Official title"],
+    ["year", "string", true, "Manual year"],
+  ]),
+  schema("src_unspsc", "UNSPSC code", "UnspscCode", [
+    ["code", "string", true, "UNSPSC code"],
+    ["title", "string", true, "Official title"],
+    ["version", "string", false, "Download version"],
+  ]),
+  schema("src_nhc", "NHC advisory", "NhcAdvisory", [
+    ["advisoryId", "string", true, "Storm / advisory id"],
+    ["stormName", "string", false, "Name if named"],
+    ["issuedAt", "datetime", false, "Advisory time"],
+    ["gisUrl", "string", false, "NHC GIS asset"],
+  ]),
+  schema("src_fda_dashboard", "FDA dashboard recall card", "FdaDashboardRecall", [
+    ["title", "string", true, "Card title"],
+    ["firm", "string", false, "Named firm"],
+    ["postedAt", "datetime", false, "Dashboard date"],
+    ["htmlUrl", "string", false, "Source page"],
+  ]),
+  schema("src_sam_gov", "SAM.gov opportunity", "SamGovOpportunity", [
+    ["noticeId", "string", true, "SAM notice id"],
+    ["title", "string", true, "Notice title"],
+    ["postedDate", "datetime", false, "Posted date"],
+    ["naics", "string", false, "NAICS"],
+  ]),
+  schema("src_imf_primary_commodity", "IMF commodity monthly", "ImfCommodityMonthly", [
+    ["commodity", "string", true, "IMF series name"],
+    ["period", "string", true, "YYYY-MM"],
+    ["value", "number", false, "Published index / price"],
+  ]),
+  schema("src_usace", "USACE waterborne row", "UsaceWaterborneRow", [
+    ["period", "string", true, "Report year"],
+    ["portOrWaterway", "string", false, "As published"],
+    ["tons", "number", false, "Published tonnage only if the file is open"],
+  ]),
+  schema("src_epa_tri", "TRI facility release", "EpaTriRow", [
+    ["facilityId", "string", true, "TRIFID"],
+    ["facilityName", "string", false, "Public facility name"],
+    ["chemical", "string", false, "TRI chemical"],
+    ["year", "string", true, "Reporting year"],
+    ["totalRelease", "number", false, "Published pounds"],
+  ]),
+];
+
+const OSINT_EVENT_FIELDS: Array<
+  [string, LayerAFieldSchema["type"], boolean, string]
+> = [
+  ["title", "string", true, "Headline only — not article body"],
+  ["url", "string", true, "Canonical link"],
+  ["published", "datetime", false, "Feed pubDate when present"],
+  ["source", "string", true, "Catalog source id"],
+  ["entities", "string", false, "JSON string[] of named entities; empty if unknown"],
+  ["event_type", "string", true, "policy | maritime | freight | hazard | quake | storm | other"],
+  ["severity", "string", true, "info | watch | warning | severe | unknown"],
+];
+
+export const NEWS_OSINT_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_cbp_csms", "CBP CSMS headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_freightwaves_rss", "FreightWaves headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_supply_chain_dive", "Supply Chain Dive headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gcaptain", "gCaptain headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_maritime_executive", "Maritime Executive headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_splash247", "Splash247 headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_loadstar", "Loadstar headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_container_news", "Container News headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_bbc_business", "BBC Business headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gdelt", "GDELT doc/event", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_google_news_rss", "Google News headline (fragile)", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gdacs", "GDACS alert", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_usgs_quakes", "USGS significant quake", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_nhc_products", "NHC product headline", "OsintEvent", OSINT_EVENT_FIELDS),
+];
+
+export const TIER15_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_wits", "WITS trade row", "WitsTradeRow", [
+    ["reporter", "string", true, "Reporter ISO"],
+    ["partner", "string", false, "Partner ISO"],
+    ["productCode", "string", false, "HS as published"],
+    ["year", "string", true, "Year"],
+    ["tradeValue", "number", false, "Published value only"],
+  ]),
+  schema("src_eurostat", "Eurostat observation", "EurostatObservation", [
+    ["dataset", "string", true, "Eurostat dataset id"],
+    ["geo", "string", false, "GEO dimension"],
+    ["period", "string", true, "TIME_PERIOD"],
+    ["value", "number", false, "Datapoint"],
+  ]),
+  schema("src_eurostat_comext", "Comext trade row", "ComextTradeRow", [
+    ["reporter", "string", true, "Declarant"],
+    ["partner", "string", false, "Partner"],
+    ["productCode", "string", false, "CN / HS"],
+    ["period", "string", true, "Year-month"],
+    ["valueEur", "number", false, "Published euro value only"],
+  ]),
+  schema("src_ted_europa", "TED notice", "TedNotice", [
+    ["noticeId", "string", true, "TED publication id"],
+    ["title", "string", true, "Notice title"],
+    ["cpv", "string", false, "CPV code"],
+    ["publicationDate", "datetime", false, "Publication date"],
+  ]),
+  schema("src_opensanctions", "OpenSanctions entity", "OpenSanctionsEntity", [
+    ["entityId", "string", true, "FollowTheMoney id"],
+    ["name", "string", true, "Primary name"],
+    ["topics", "string", false, "Topic list as published"],
+    ["schema", "string", false, "Person / Organization / …"],
+  ]),
+  schema("src_gleif", "GLEIF LEI record", "GleifLeiRecord", [
+    ["lei", "string", true, "LEI"],
+    ["legalName", "string", true, "Legal name"],
+    ["jurisdiction", "string", false, "Entity jurisdiction"],
+    ["status", "string", false, "ISSUED / LAPSED / …"],
+  ]),
+  schema("src_faostat", "FAOSTAT cell", "FaostatCell", [
+    ["domain", "string", true, "FAOSTAT domain"],
+    ["area", "string", false, "Area name / code"],
+    ["item", "string", false, "Commodity item"],
+    ["year", "string", true, "Year"],
+    ["value", "number", false, "Published cell"],
+  ]),
+  schema("src_oecd_sdmx", "OECD SDMX series", "OecdSdmxObservation", [
+    ["dataflow", "string", true, "SDMX dataflow"],
+    ["period", "string", true, "TIME_PERIOD"],
+    ["value", "number", false, "Observation"],
+    ["unit", "string", false, "UNIT_MEASURE"],
+  ]),
+  schema("src_bea", "BEA datapoint", "BeaObservation", [
+    ["datasetName", "string", true, "BEA dataset"],
+    ["tableName", "string", false, "Table"],
+    ["lineDescription", "string", false, "Line"],
+    ["timePeriod", "string", true, "Year / quarter"],
+    ["value", "number", false, "Published value"],
+  ]),
+  schema("src_reliefweb", "ReliefWeb disaster", "ReliefWebDisaster", [
+    ["disasterId", "string", true, "ReliefWeb id"],
+    ["title", "string", true, "Disaster / report title"],
+    ["status", "string", false, "Alert / ongoing / …"],
+    ["url", "string", false, "Canonical ReliefWeb URL"],
+  ]),
+  schema("src_opensky", "OpenSky state vector", "OpenSkyState", [
+    ["icao24", "string", true, "Transponder hex"],
+    ["callsign", "string", false, "Callsign"],
+    ["originCountry", "string", false, "Origin country"],
+    ["longitude", "number", false, "Last known lon"],
+    ["latitude", "number", false, "Last known lat"],
+  ]),
+  schema("src_aishub", "AISHub free AIS position", "AisHubPosition", [
+    ["mmsi", "string", true, "MMSI"],
+    ["name", "string", false, "Vessel name"],
+    ["latitude", "number", false, "Lat"],
+    ["longitude", "number", false, "Lon"],
+    ["timestamp", "datetime", false, "AIS timestamp"],
+  ]),
+];
+
+export const TIER15B_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_uflpa", "UFLPA listed entity", "UflpaEntity", [
+    ["name", "string", true, "Listed name"],
+    ["aka", "string", false, "Also-known-as"],
+    ["effectiveDate", "datetime", false, "List date"],
+    ["sourceUrl", "string", true, "DHS page URL"],
+  ]),
+  schema("src_usitc_trade_remedies", "AD/CVD proceeding", "TradeRemedyCase", [
+    ["caseNumber", "string", true, "Investigation number"],
+    ["title", "string", true, "Case title"],
+    ["product", "string", false, "Covered product"],
+    ["status", "string", false, "As published"],
+  ]),
+  schema("src_companies_house", "CH filing", "CompaniesHouseFiling", [
+    ["companyNumber", "string", true, "CH number"],
+    ["transactionId", "string", true, "Filing transaction"],
+    ["category", "string", false, "accounts / officers / …"],
+    ["filedAt", "datetime", false, "Filing date"],
+  ]),
+  schema("src_wdi", "WDI indicator", "WdiObservation", [
+    ["countryIso", "string", true, "ISO3"],
+    ["indicatorId", "string", true, "WDI indicator id"],
+    ["year", "string", true, "Year"],
+    ["value", "number", false, "Published value"],
+  ]),
+  schema("src_usitc_dataweb", "USITC DataWeb / HTS row", "UsitcDataWebRow", [
+    ["htsCode", "string", true, "HTS as published"],
+    ["period", "string", true, "Year / month"],
+    ["flow", "string", false, "import | export"],
+    ["valueUsd", "number", false, "Published value only"],
+  ]),
+  schema("src_panama_canal", "Panama Canal advisory cite", "PanamaCanalAdvisory", [
+    ["title", "string", true, "Advisory title"],
+    ["issuedAt", "datetime", false, "Advisory date"],
+    ["url", "string", true, "Canonical pancanal.com URL"],
+  ]),
+  schema("src_phmsa", "PHMSA incident row", "PhmsaIncident", [
+    ["reportId", "string", true, "PHMSA report id"],
+    ["operator", "string", false, "Named operator"],
+    ["incidentDate", "datetime", false, "Incident date"],
+    ["commodity", "string", false, "Commodity / hazmat"],
+  ]),
+  schema("src_wikidata", "Wikidata reconcile hit", "WikidataReconcileHit", [
+    ["qid", "string", true, "Wikidata Q-id"],
+    ["label", "string", true, "Primary label"],
+    ["score", "number", false, "Reconcile score if present"],
+  ]),
+];
+
+export const TIER_C_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_bis_entity_list", "BIS Entity List row", "BisEntityListRow", [
+    ["name", "string", true, "Listed name"],
+    ["country", "string", false, "Country"],
+    ["federalRegisterCite", "string", false, "FR citation"],
+  ]),
+  schema("src_bis_denied_persons", "BIS Denied Person", "BisDeniedPerson", [
+    ["name", "string", true, "Listed name"],
+    ["effectiveDate", "datetime", false, "Denial date"],
+    ["federalRegisterCite", "string", false, "FR citation"],
+  ]),
+  schema("src_fra", "FRA safety extract", "FraSafetyRow", [
+    ["reportId", "string", true, "FRA report id"],
+    ["railroad", "string", false, "Railroad"],
+    ["incidentDate", "datetime", false, "Incident date"],
+  ]),
+  schema("src_stb", "STB filing / stat", "StbFiling", [
+    ["docket", "string", true, "STB docket"],
+    ["title", "string", true, "Filing title"],
+    ["filedAt", "datetime", false, "Filing date"],
+    ["url", "string", false, "Canonical STB URL"],
+  ]),
+  schema("src_noaa_ports", "NOAA PORTS observation", "NoaaPortsObservation", [
+    ["stationId", "string", true, "CO-OPS station"],
+    ["product", "string", true, "water_level | currents | …"],
+    ["observedAt", "datetime", false, "Observation time"],
+    ["value", "number", false, "Published value"],
+  ]),
+  schema("src_opencorporates", "OpenCorporates company", "OpenCorporatesCompany", [
+    ["companyNumber", "string", true, "Jurisdiction company number"],
+    ["name", "string", true, "Registered name"],
+    ["jurisdiction", "string", false, "OC jurisdiction code"],
+    ["url", "string", false, "OpenCorporates URL"],
+  ]),
+  schema("src_owid", "OWID cite", "OwidCite", [
+    ["chartSlug", "string", true, "OWID chart slug"],
+    ["title", "string", true, "Chart title"],
+    ["url", "string", true, "Canonical OWID URL"],
+  ]),
+  schema("src_uspto_odp", "USPTO ODP record", "UsptoOdpRecord", [
+    ["documentId", "string", true, "Patent / trademark id"],
+    ["title", "string", false, "Title"],
+    ["filedAt", "datetime", false, "Filing date"],
+  ]),
+  schema("src_ftc_rss", "FTC / AG headline", "OsintEvent", OSINT_EVENT_FIELDS),
+];
+
+export const WIRE_FIRST_SCHEMAS = TIER1_SCHEMAS;
+
+const ALL = [
+  ...TIER1_SCHEMAS,
+  ...TIER2_SCHEMAS,
+  ...NEWS_OSINT_SCHEMAS,
+  ...TIER15_SCHEMAS,
+  ...TIER15B_SCHEMAS,
+  ...TIER_C_SCHEMAS,
+];
+const SCHEMA_BY_ID = new Map(ALL.map((s) => [s.sourceId, s]));
+
+export function getLayerAObservationSchema(
+  sourceId: string,
+): LayerAObservationSchema | undefined {
+  return SCHEMA_BY_ID.get(sourceId);
+}
