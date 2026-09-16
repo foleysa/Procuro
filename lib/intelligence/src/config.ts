@@ -5,15 +5,24 @@
  * the GCP code path and continues with the legacy Postgres-only flow,
  * letting the platform run on a laptop or in CI without GCP credentials.
  *
- * Required env vars for the GCP-backed analytical sidecar:
- *   - `GCP_PROJECT_ID`     — Google Cloud project the dataset/bucket live in
- *   - `BQ_DATASET`         — BigQuery dataset name (default `market_signals_warehouse`)
- *   - `BQ_LOCATION`        — BigQuery region (default `US`)
- *   - `GCS_RAW_BUCKET`     — bucket holding raw collector payloads
- *   - `BQ_MAX_BYTES_BILLED`— per-query byte ceiling (default 1 GiB)
- *   - `GOOGLE_APPLICATION_CREDENTIALS` — service-account JSON file path
- *     (or `GOOGLE_CREDENTIALS_JSON` for inline JSON)
+ * Required env vars for the GCP-backed analytical sidecar. Prefer the
+ * `INTELLIGENCE_*` names (documented in bq-cost-controls.md); the
+ * unprefixed aliases remain so existing collectors keep working.
+ *   - `INTELLIGENCE_GCP_PROJECT_ID` / `GCP_PROJECT_ID`
+ *   - `INTELLIGENCE_BQ_DATASET` / `BQ_DATASET` (default `market_signals_warehouse`)
+ *   - `INTELLIGENCE_BQ_LOCATION` / `BQ_LOCATION` (default `US`)
+ *   - `INTELLIGENCE_GCS_RAW_BUCKET` / `GCS_RAW_BUCKET`
+ *   - `INTELLIGENCE_BQ_MAX_BYTES_BILLED` / `BQ_MAX_BYTES_BILLED`
+ *   - `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_CREDENTIALS_JSON`
  */
+
+function envFirst(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
 
 export interface IntelligenceConfig {
   projectId: string;
@@ -39,8 +48,11 @@ const DEFAULT_TABLE_EXPIRATION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
  * back to the legacy code path.
  */
 export function resolveIntelligenceConfig(): IntelligenceConfig | null {
-  const projectId = process.env["GCP_PROJECT_ID"]?.trim();
-  const gcsRawBucket = process.env["GCS_RAW_BUCKET"]?.trim();
+  const projectId = envFirst("INTELLIGENCE_GCP_PROJECT_ID", "GCP_PROJECT_ID");
+  const gcsRawBucket = envFirst(
+    "INTELLIGENCE_GCS_RAW_BUCKET",
+    "GCS_RAW_BUCKET",
+  );
   const credsFile = process.env["GOOGLE_APPLICATION_CREDENTIALS"]?.trim();
   const credsJson = process.env["GOOGLE_CREDENTIALS_JSON"]?.trim();
 
@@ -48,15 +60,23 @@ export function resolveIntelligenceConfig(): IntelligenceConfig | null {
     return null;
   }
 
-  const bqDataset = process.env["BQ_DATASET"]?.trim() || DEFAULT_DATASET;
-  const bqLocation = process.env["BQ_LOCATION"]?.trim() || DEFAULT_LOCATION;
-  const maxBytesEnv = Number(process.env["BQ_MAX_BYTES_BILLED"] ?? "");
+  const bqDataset =
+    envFirst("INTELLIGENCE_BQ_DATASET", "BQ_DATASET") || DEFAULT_DATASET;
+  const bqLocation =
+    envFirst("INTELLIGENCE_BQ_LOCATION", "BQ_LOCATION") || DEFAULT_LOCATION;
+  const maxBytesEnv = Number(
+    envFirst("INTELLIGENCE_BQ_MAX_BYTES_BILLED", "BQ_MAX_BYTES_BILLED") ?? "",
+  );
   const maxBytesBilled =
     Number.isFinite(maxBytesEnv) && maxBytesEnv > 0
       ? Math.floor(maxBytesEnv)
       : DEFAULT_MAX_BYTES;
   const expirationEnv = Number(
-    process.env["BQ_DEFAULT_TABLE_EXPIRATION_MS"] ?? "",
+    envFirst(
+      "INTELLIGENCE_BQ_DEFAULT_TABLE_TTL_MS",
+      "INTELLIGENCE_BQ_DEFAULT_TABLE_EXPIRATION_MS",
+      "BQ_DEFAULT_TABLE_EXPIRATION_MS",
+    ) ?? "",
   );
   const defaultTableExpirationMs =
     Number.isFinite(expirationEnv) && expirationEnv > 0

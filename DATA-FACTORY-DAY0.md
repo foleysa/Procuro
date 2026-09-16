@@ -155,6 +155,31 @@ HTML bodies as product payloads = **out of scope**.
 API metadata stream: `GET /api/data-factory/events`.
 Pulse packaging: cited bullets `{ text, url, source, published }`.
 
+## Storage layout (locked — John confirmed)
+
+Reuse `@workspace/intelligence` GCS + BigQuery and existing Drizzle
+schemas. **Do not invent a second stack.**
+
+| Store | Role | What lives here |
+|---|---|---|
+| **GCS** | Raw landing | Same bucket as collectors: `INTELLIGENCE_GCS_RAW_BUCKET` (alias `GCS_RAW_BUCKET`). Path `gs://<bucket>/<collectorId>/<YYYY/MM/DD>/<runId>.<ext>` via `landRawPayload`. News/OSINT lands **RSS/Atom/JSON bytes only** — never article HTML. |
+| **Postgres** | Serving | `market_signals` (existing collector facts). `news_events` (metadata only: title, url, published, source, entities, event_type, severity, optional `raw_payload_pointer`). `data_factory_usage_log` (API metering). `data_factory_layer_c_labels`. |
+| **BigQuery** | Analytics / history | Same `market_signals_warehouse` dataset (`INTELLIGENCE_BQ_DATASET`). Tables: `market_signals`, `collector_runs`, `entities`, plus `news_events`. **GDELT joins** are query-time: `news_events.url` ↔ `market_signals` rows with `signal_type` in `event_geocoded` / `entity_news_event`. Helpers no-op when GCP is unset. |
+
+Helpers: `landDataFactoryRaw` wraps `landRawPayload`. BQ bootstrap:
+`ensureWarehouseSchema` now includes `NEWS_EVENTS_DDL`. Join SQL:
+`NEWS_EVENTS_GDELT_JOIN_SQL`.
+
+`news_events` **must not** grow `html` / `body` / `full_text` columns.
+
+## Optional hooks (after collectors write)
+
+| Hook | Env | Day 0 |
+|---|---|---|
+| Pub/Sub new-events topic | `DATA_FACTORY_PUBSUB_TOPIC` or `INTELLIGENCE_PUBSUB_TOPIC` | Stub — no-op if unset |
+| Gemini Orient summary | `AI_INTEGRATIONS_GEMINI_API_KEY` + `AI_INTEGRATIONS_GEMINI_BASE_URL` (`@google/genai`, same as `@workspace/integrations-gemini-ai`) | Stub — headlines + links only |
+| Vertex Agent Engine | — | **Deferred.** Agents/analysis come after collectors write data. Do not block this PR. |
+
 ## Deferred
 
 - Layer B tenant spend, FSA files, peer percentiles
@@ -162,6 +187,7 @@ Pulse packaging: cited bullets `{ text, url, source, published }`.
 - Invented Socrata 4×4 ids, TEU, index, or savings values
 - POLA/POLB HTML scrape (schema only; careful scrape later)
 - Client / tenant data of any kind
+- Full-text republish or article-HTML product payloads (news/OSINT)
 
 ## Prove-it
 

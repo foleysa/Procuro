@@ -15,6 +15,8 @@ export {
 } from "./config.js";
 export {
   ensureWarehouseSchema,
+  NEWS_EVENTS_DDL,
+  NEWS_EVENTS_GDELT_JOIN_SQL,
   mergeMarketSignals,
   recordCollectorRun,
   getCollectorCostsFromBq,

@@ -749,6 +749,10 @@ importers:
         version: 3.25.76
 
   lib/data-factory:
+    dependencies:
+      '@workspace/intelligence':
+        specifier: workspace:*
+        version: link:../intelligence
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

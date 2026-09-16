@@ -45,6 +45,7 @@ const TABLES_TO_TRUNCATE = [
   "escalation_policies",
   "data_factory_usage_log",
   "data_factory_layer_c_labels",
+  "news_events",
   "csv_ingest_metrics",
   "entity_resolution_cache",
   "erp_sync_runs",

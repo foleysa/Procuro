@@ -4,6 +4,7 @@ import {
   timestamp,
   index,
   jsonb,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { orgsTable } from "./orgs";
 
@@ -99,3 +100,39 @@ export type DataFactoryLayerCLabelRow =
   typeof dataFactoryLayerCLabelsTable.$inferSelect;
 export type InsertDataFactoryLayerCLabelRow =
   typeof dataFactoryLayerCLabelsTable.$inferInsert;
+
+/**
+ * Postgres serving store for news/OSINT metadata.
+ *
+ * Locked layout (John): headlines + link only. Do NOT add html / body /
+ * full_text / content_encoded columns — full-text republish is out of
+ * scope. Raw RSS/Atom bytes land in GCS (`INTELLIGENCE_GCS_RAW_BUCKET`);
+ * this table is the serving projection.
+ */
+export const newsEventsTable = pgTable(
+  "news_events",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    published: timestamp("published", { withTimezone: true }),
+    entities: jsonb("entities").$type<string[]>().notNull().default([]),
+    eventType: text("event_type").notNull(),
+    severity: text("severity").notNull(),
+    /** `gs://<INTELLIGENCE_GCS_RAW_BUCKET>/...` pointer to RSS/Atom/JSON. */
+    rawPayloadPointer: text("raw_payload_pointer"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("news_events_url_uq").on(t.url),
+    index("news_events_source_idx").on(t.sourceId),
+    index("news_events_published_idx").on(t.published),
+    index("news_events_type_idx").on(t.eventType),
+  ],
+);
+
+export type NewsEventRow = typeof newsEventsTable.$inferSelect;
+export type InsertNewsEventRow = typeof newsEventsTable.$inferInsert;
