@@ -7,6 +7,9 @@ Horizontal brief. Editions are chapters, not separate products.
 | Field | Notes |
 |---|---|
 | `schemaVersion` | `1` |
+| `id` | `pulse-YYYY-MM-DD` |
+| `title` | Operator-facing title |
+| `publishedOn` | `YYYY-MM-DD` |
 | `cadence` | `weekly` \| `twice_monthly` |
 | `editionTags` | Day 0–30 skins present in the issue: `mro`, `food` |
 | `observe` | Layer A items (public / licensed). See kinds below. |
@@ -25,6 +28,7 @@ aggregation rules exist. Never auto-publish tenant Learn into Pulse.
 | `marketSignalType` | Optional. Existing `market_signals.signal_type` |
 | `marketSignalId` | Optional. Existing `market_signals.id` |
 | `sourceLabel` | Public citation or licensed series name |
+| `sourceUrl` | Optional canonical URL |
 | `summary` | What moved. Not a savings claim. |
 
 `observeKindFromMarketSignalType()` maps every current desk signal type
