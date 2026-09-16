@@ -21,6 +21,11 @@ Layer C Decide / Learn enums align with existing `analysis_cycles` /
 `decisions` / `market_signals` — they do not replace them. See
 [`docs/pulse/README.md`](docs/pulse/README.md).
 
+Sample Pulse Core stub (public sources only):
+[`docs/pulse/issues/2026-09-16-core.md`](docs/pulse/issues/2026-09-16-core.md).
+Diligence template:
+[`docs/pulse/diligence/template.md`](docs/pulse/diligence/template.md).
+
 ## Identity & access (SSO + SCIM)
 
 Procuro integrates with the standard enterprise IdPs (Okta, Azure AD /

@@ -20,6 +20,8 @@ Code: `@workspace/pulse`. Desk cycles stay in `@workspace/db` /
 - [Edition tags](./editions.md)
 - [Layer C taxonomy](./layer-c-taxonomy.md)
 - [Diligence section IDs](./diligence-sections.md)
+- [Sample issue — 16 Sep 2026](./issues/2026-09-16-core.md) (Core + MRO + Food chapters)
+- [Diligence Pack template](./diligence/template.md)
 
 **Fences:** no FSA client data; no invented ARR / savings % / peer
 percentiles; `unknown` Learn is first-class; do not brand Pulse as a

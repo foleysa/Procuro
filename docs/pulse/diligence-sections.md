@@ -36,3 +36,7 @@ files are not**, unless John greenlights a bridge.
 `judgment_opportunities` may list suggested Decide actions. It must not
 claim realized savings without a Layer C Learn label of `saved` on
 **that buyer’s** opportunities.
+
+Fill-in slots (public / buyer / do-not) live in
+[`diligence/template.md`](./diligence/template.md), generated from
+`renderDiligenceTemplate()` so the face cannot drift from the section IDs.

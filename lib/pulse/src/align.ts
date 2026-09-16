@@ -45,6 +45,8 @@ export interface PulseCoreObserveItem {
   marketSignalId?: string;
   /** Public citation or licensed series name — not a metric claim. */
   sourceLabel: string;
+  /** Canonical public URL for the citation. */
+  sourceUrl?: string;
   summary: string;
 }
 
@@ -66,6 +68,10 @@ export type PulseCoreCadence = (typeof pulseCoreCadences)[number];
  */
 export interface PulseCoreIssue {
   schemaVersion: 1;
+  id: string;
+  title: string;
+  /** Calendar date the issue is dated (YYYY-MM-DD). */
+  publishedOn: string;
   cadence: PulseCoreCadence;
   /** Edition skins in this issue (`mro`, `food`, …). Logistics is Core. */
   editionTags: PulseDay030EditionTag[];
