@@ -1,14 +1,14 @@
 /**
- * Packaged Layer A datasets sold via Pulse / Diligence AND the API spine.
+ * Packaged Layer A datasets — Pulse / Diligence AND the API spine.
  *
- * Day 0 packages are catalog JSON: sources, license posture, empty
- * observations. They do not invent index values, savings, or
- * multi-tenant benchmarks.
+ * Day 0 packages are catalog JSON + schemas. observations stay [].
  */
 
 import {
-  DATA_FACTORY_SOURCES,
+  DAY0_WIRE_FIRST_IDS,
+  LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
+  type DataFactoryChannelUse,
   type DataFactorySource,
   type DataFactorySourceFamily,
 } from "./catalog";
@@ -19,60 +19,34 @@ export interface DataFactoryPackageMeta {
   id: string;
   title: string;
   description: string;
-  family: DataFactorySourceFamily;
+  family: DataFactorySourceFamily | "mixed";
   sourceIds: readonly string[];
+  /** Pulse brief vs API product vs both. */
+  channelUse: DataFactoryChannelUse;
+  /** @deprecated use channelUse — kept for earlier Day 0 callers */
   pulseSurface: "pulse" | "diligence" | "both";
   release: typeof DATA_FACTORY_RELEASE;
 }
 
 export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
   {
+    id: "pkg_day0_wire_first",
+    title: "Day 0 wire-first public signals",
+    description:
+      "FRED, EIA v2, openFDA food enforcement, OFAC SDN, api.weather.gov, BTS TEU, POLA/POLB (careful pages), Cass (cite-only).",
+    family: "mixed",
+    sourceIds: DAY0_WIRE_FIRST_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
     id: "pkg_public_indices",
     title: "Public price & economic indices",
-    description:
-      "FRED, BLS, EIA, World Bank Pink Sheet, USGS minerals, ECB FX, Eurostat, USDA NASS. Public / free-registration series only.",
+    description: "FRED + EIA v2 (wire-first) and BLS / World Bank (existing).",
     family: "index",
-    sourceIds: [
-      "src_fred",
-      "src_bls",
-      "src_eia",
-      "src_world_bank_pink_sheet",
-      "src_usgs_mineral",
-      "src_ecb_fx",
-      "src_eurostat",
-      "src_usda_nass",
-    ],
-    pulseSurface: "both",
-    release: DATA_FACTORY_RELEASE,
-  },
-  {
-    id: "pkg_public_procurement",
-    title: "Public procurement notices & awards",
-    description:
-      "SAM.gov and USAspending (wired collectors) plus TED and UK Contracts Finder stubs. No tenant PO/invoice data.",
-    family: "procurement",
-    sourceIds: [
-      "src_sam_gov",
-      "src_usaspending",
-      "src_eu_ted",
-      "src_uk_contracts_finder",
-    ],
-    pulseSurface: "both",
-    release: DATA_FACTORY_RELEASE,
-  },
-  {
-    id: "pkg_public_freight_commodity",
-    title: "Freight & commodity public feeds",
-    description:
-      "Public/free commodity closes and BTS stub. Freightos FBX, Cass, and SCFI are catalogued and blocked pending license.",
-    family: "freight_commodity",
-    sourceIds: [
-      "src_published_commodity_index",
-      "src_bts_freight",
-      "src_freightos_fbx",
-      "src_cass_freight_index",
-      "src_scfi",
-    ],
+    sourceIds: ["src_fred", "src_eia", "src_bls", "src_world_bank_pink_sheet"],
+    channelUse: "both",
     pulseSurface: "both",
     release: DATA_FACTORY_RELEASE,
   },
@@ -80,19 +54,61 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
     id: "pkg_public_disruption",
     title: "Public disruption signals",
     description:
-      "GDELT events, natural hazards, and official sanctions lists. Geopolitical / hazard / screening *signals*, not a screening product.",
+      "openFDA food enforcement, OFAC SDN, NWS alerts. Signals, not a screening product.",
     family: "disruption",
-    sourceIds: ["src_gdelt", "src_natural_hazards", "src_government_sanctions"],
+    sourceIds: [
+      "src_openfda_food_enforcement",
+      "src_ofac_sdn",
+      "src_weather_gov",
+    ],
+    channelUse: "pulse",
     pulseSurface: "pulse",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_public_freight_commodity",
+    title: "Freight & commodity public + license placeholders",
+    description:
+      "BTS TEU and POLA/POLB stubs. Cass and paid freight/commodity feeds are license_required only.",
+    family: "freight_commodity",
+    sourceIds: [
+      "src_bts_teu",
+      "src_pola",
+      "src_polb",
+      ...LICENSE_REQUIRED_PLACEHOLDER_IDS,
+    ],
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_license_required",
+    title: "Paid feeds (license required)",
+    description:
+      "DAT, Freightos, Xeneta, Drewry, SONAR, LME, CME, ISM ROB, S&P CI, Fastmarkets, JOC, Cass. Placeholders — no fetch.",
+    family: "mixed",
+    sourceIds: LICENSE_REQUIRED_PLACEHOLDER_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_public_procurement",
+    title: "Public procurement notices & awards",
+    description: "SAM.gov and USAspending. No tenant PO/invoice data.",
+    family: "procurement",
+    sourceIds: ["src_sam_gov", "src_usaspending"],
+    channelUse: "api",
+    pulseSurface: "diligence",
     release: DATA_FACTORY_RELEASE,
   },
   {
     id: "pkg_public_filings",
     title: "Public corporate filings",
-    description:
-      "SEC EDGAR and UK Companies House. Issuer watchlists may exist on the desk; this package does not include tenant-private lists.",
+    description: "SEC EDGAR. No tenant-private issuer lists.",
     family: "filing",
-    sourceIds: ["src_sec_edgar", "src_companies_house"],
+    sourceIds: ["src_sec_edgar"],
+    channelUse: "api",
     pulseSurface: "diligence",
     release: DATA_FACTORY_RELEASE,
   },
@@ -106,10 +122,6 @@ export interface DataFactoryPackageJson {
   package: DataFactoryPackageMeta;
   sources: DataFactorySource[];
   fetches: LayerAFetchResult[];
-  /**
-   * Always empty on Day 0. Live numbers stay on existing collectors.
-   * Do not invent observations to make a Diligence pack "look live".
-   */
   observations: [];
   fences: string[];
 }
@@ -122,8 +134,14 @@ export function getDataFactoryPackage(
   return PACKAGE_BY_ID.get(id);
 }
 
-export function listDataFactoryPackages(): DataFactoryPackageMeta[] {
-  return [...DATA_FACTORY_PACKAGES];
+export function listDataFactoryPackages(filter?: {
+  channelUse?: DataFactoryChannelUse;
+}): DataFactoryPackageMeta[] {
+  return DATA_FACTORY_PACKAGES.filter((p) => {
+    if (!filter?.channelUse) return true;
+    if (filter.channelUse === "both") return p.channelUse === "both";
+    return p.channelUse === filter.channelUse || p.channelUse === "both";
+  });
 }
 
 export function packageLayerADataset(
@@ -154,7 +172,7 @@ export function packageLayerADataset(
       "Public / internet Layer A only.",
       "No tenant spend, ERP, or FSA client files.",
       "No invented index values, ARR, savings %, or peer percentiles.",
-      "Paid-license sources stay blocked until human approval.",
+      "Paid-license sources stay license_required until human approval.",
     ],
   };
 }

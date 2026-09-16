@@ -44,5 +44,7 @@ Decide→Learn taxonomy (aligned with PR #30), and authenticated read
 endpoints live in `@workspace/data-factory` and
 `GET /api/data-factory/*`.
 
-See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for public vs
-deferred, cited source URLs, and paid-license fences.
+See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the live
+wire-first source map (FRED, EIA, openFDA, OFAC SDN, weather.gov,
+BTS TEU, POLA/POLB, Cass cite-only), Pulse vs API vs both tags, and
+`license_required` paid placeholders.

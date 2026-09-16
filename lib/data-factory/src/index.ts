@@ -30,21 +30,37 @@ export {
 
 export {
   DATA_FACTORY_SOURCES,
+  DAY0_WIRE_FIRST_IDS,
+  LICENSE_REQUIRED_PLACEHOLDER_IDS,
   dataFactorySourceFamilies,
   dataFactoryLicenseClasses,
   dataFactoryFetchStatuses,
+  dataFactoryDay0Tiers,
+  dataFactoryChannelUses,
   getDataFactorySource,
   listDataFactorySources,
+  listWireFirstSources,
   type DataFactorySource,
   type DataFactorySourceFamily,
   type DataFactoryLicenseClass,
   type DataFactoryFetchStatus,
+  type DataFactoryDay0Tier,
+  type DataFactoryChannelUse,
 } from "./catalog";
+
+export {
+  WIRE_FIRST_SCHEMAS,
+  getLayerAObservationSchema,
+  type LayerAObservationSchema,
+  type LayerAFieldSchema,
+} from "./schemas";
 
 export {
   fetchLayerASource,
   fetchAllLayerASources,
+  fetchWireFirstSources,
   type LayerAFetchResult,
+  type LayerAFetchPlan,
 } from "./fetch-stubs";
 
 export {

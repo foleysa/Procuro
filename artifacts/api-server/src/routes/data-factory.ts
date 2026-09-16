@@ -15,6 +15,8 @@ import {
   listDataFactoryPackages,
   listDataFactorySources,
   packageLayerADataset,
+  type DataFactoryChannelUse,
+  type DataFactoryDay0Tier,
   type DataFactoryFetchStatus,
   type DataFactoryLicenseClass,
   type DataFactorySourceFamily,
@@ -37,13 +39,19 @@ const SOURCE_FAMILIES = new Set([
 const FETCH_STATUSES = new Set([
   "wired_existing_collector",
   "stub",
-  "blocked_pending_license",
+  "license_required",
 ]);
 const LICENSE_CLASSES = new Set([
   "public_api",
   "free_registration",
   "paid_license_required",
 ]);
+const DAY0_TIERS = new Set([
+  "wire_first",
+  "existing_collector",
+  "license_required",
+]);
+const CHANNEL_USES = new Set(["pulse", "api", "both"]);
 
 async function meterRead(
   req: Request,
@@ -81,6 +89,7 @@ router.get(
         id: p.id,
         title: p.title,
         family: p.family,
+        channelUse: p.channelUse,
         pulseSurface: p.pulseSurface,
       })),
     };
@@ -97,6 +106,8 @@ router.get(
     const family = req.query.family;
     const fetchStatus = req.query.fetchStatus;
     const licenseClass = req.query.licenseClass;
+    const day0Tier = req.query.day0Tier;
+    const channelUse = req.query.channelUse;
     if (typeof family === "string" && !SOURCE_FAMILIES.has(family)) {
       throw new InvalidRequestError("Unknown source family");
     }
@@ -112,6 +123,12 @@ router.get(
     ) {
       throw new InvalidRequestError("Unknown license class");
     }
+    if (typeof day0Tier === "string" && !DAY0_TIERS.has(day0Tier)) {
+      throw new InvalidRequestError("Unknown day0Tier");
+    }
+    if (typeof channelUse === "string" && !CHANNEL_USES.has(channelUse)) {
+      throw new InvalidRequestError("Unknown channelUse");
+    }
     const sources = listDataFactorySources({
       family:
         typeof family === "string"
@@ -124,6 +141,14 @@ router.get(
       licenseClass:
         typeof licenseClass === "string"
           ? (licenseClass as DataFactoryLicenseClass)
+          : undefined,
+      day0Tier:
+        typeof day0Tier === "string"
+          ? (day0Tier as DataFactoryDay0Tier)
+          : undefined,
+      channelUse:
+        typeof channelUse === "string"
+          ? (channelUse as DataFactoryChannelUse)
           : undefined,
     });
     res.json({
@@ -156,11 +181,20 @@ router.get(
   tenantMiddleware,
   requirePermission("read"),
   async (req, res) => {
+    const channelUse = req.query.channelUse;
+    if (typeof channelUse === "string" && !CHANNEL_USES.has(channelUse)) {
+      throw new InvalidRequestError("Unknown channelUse");
+    }
     res.json({
       release: "beta",
       ga: false,
       layer: "A",
-      packages: listDataFactoryPackages(),
+      packages: listDataFactoryPackages({
+        channelUse:
+          typeof channelUse === "string"
+            ? (channelUse as DataFactoryChannelUse)
+            : undefined,
+      }),
     });
     await meterRead(req, res, {});
   },

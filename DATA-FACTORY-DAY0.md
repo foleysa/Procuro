@@ -1,111 +1,93 @@
 # Data Factory — Day 0 (Procuro LoE)
 
 **LoE = Procuro only. Not FSA.** John has no client or tenant data.
-Layer B is deferred. This file is the honest map of what is public
-versus what we will not build yet.
+Layer B is deferred. This file is the live Layer A source map for
+product decisions.
 
-Pulse (recurring brief) and Diligence (point-in-time pack) sell the
-same Layer A packages the API spine serves. They run in parallel. They
-do not invent customer metrics.
+Pulse (recurring brief) and the API spine sell the same public Layer A
+packages in parallel. They do not invent customer metrics.
+
+`channelUse` on each source/package: **pulse** | **api** | **both**.
 
 ## Layers
 
 | Layer | What it is | Day 0 |
 |---|---|---|
-| **A** | Public / internet procurement, SC, logistics signals | Ingest spine: catalog, schemas, fetch stubs, packaged JSON |
-| **B** | Opt-in tenant spend, FSA bridges, multi-tenant benchmarks | **Deferred.** No tables, no routes, no fake peers. |
-| **C** | Labeled Decide → Learn on public signals (later moat) | Taxonomy stub aligned with [PR #30](https://github.com/foleysa/Procuro/pull/30) |
+| **A** | Public / internet procurement, SC, logistics signals | Catalog, observation schemas, fetch stubs, packaged JSON |
+| **B** | Opt-in tenant spend, FSA bridges, multi-tenant benchmarks | **Deferred.** |
+| **C** | Labeled Decide → Learn on public signals | Taxonomy stub aligned with [PR #30](https://github.com/foleysa/Procuro/pull/30) |
 
-## What is public (shipped)
+## Day 0 WIRE FIRST (public/open)
 
-Code: `@workspace/data-factory`. API: authenticated `GET /api/data-factory/*`.
-Schema: `data_factory_usage_log`, `data_factory_layer_c_labels` in `@workspace/db`.
+Implement fetch stubs + schema first. No invented observations.
 
-### Layer A catalog
+| Rank | Source | `channelUse` | Status | Cited URL |
+|---|---|---|---|---|
+| 1 | FRED API | **both** | stub + schema; existing collector `fred-economic-index` | https://fred.stlouisfed.org/docs/api/fred/ |
+| 2 | EIA API v2 | **both** | stub + schema; existing collector `eia-energy` | https://www.eia.gov/opendata/documentation.php |
+| 3 | openFDA food enforcement | **pulse** | stub + schema | https://open.fda.gov/apis/food/enforcement/ |
+| 4 | OFAC SDN | **both** | stub + schema; existing collector `government-sanctions` | https://www.treasury.gov/ofac/downloads/sdn.xml |
+| 5 | api.weather.gov | **pulse** | stub + schema (also inside `natural-hazards`) | https://www.weather.gov/documentation/services-web-api |
+| 6 | BTS TEU | **both** | stub + schema | https://www.bts.gov/browse-statistical-products-and-data/freight-facts-and-figures |
+| 7 | POLA / POLB | **pulse** | careful public-page stub — no scrape yet | https://www.portoflosangeles.org/business/statistics · https://polb.com/business/port-statistics/ |
+| 8 | Cass Freight Index | **both** | **cite-only** until license (`license_required`) | https://www.cassinfo.com/freight-audit-payment/cass-transportation-indexes |
 
-Families: `procurement`, `index`, `freight_commodity`, `disruption`, `filing`.
+Package: `pkg_day0_wire_first` (`channelUse: both`).
 
-**Wired to existing collectors** (live fetch stays on the collector runtime;
-this spine does not dump `market_signals`, including tenant-scoped rows):
+## Paid feeds — `license_required` placeholders only
 
-| Source | Cited URL | Collector id |
+Do **not** implement fetch. Catalog + refuse.
+
+| Source | `channelUse` | Cite |
 |---|---|---|
-| SAM.gov | https://open.gsa.gov/api/opportunities-api/ | `sam-gov` |
-| USAspending | https://api.usaspending.gov/ | `usaspending` |
-| FRED | https://fred.stlouisfed.org/docs/api/fred/ | `fred-economic-index` |
-| BLS | https://www.bls.gov/developers/ | `bls-economic-index` |
-| EIA | https://www.eia.gov/opendata/ | `eia-energy` |
-| World Bank Pink Sheet | https://www.worldbank.org/en/research/commodity-markets | `world-bank-pink-sheet` |
-| USGS minerals | https://www.usgs.gov/centers/national-minerals-information-center | `usgs-mineral` |
-| ECB FX | https://data.ecb.europa.eu/ | `ecb-fx-rates` |
-| Eurostat | https://ec.europa.eu/eurostat | `eurostat-economic-index` |
-| USDA NASS | https://quickstats.nass.usda.gov/api | `usda-nass-economic-index` |
-| Alpha Vantage commodities | https://www.alphavantage.co/documentation/ | `published-commodity-index` |
-| GDELT | https://www.gdeltproject.org/ | `gdelt-events` |
-| Natural hazards | https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php | `natural-hazards` |
-| Sanctions lists | https://ofac.treasury.gov/sanctions-list-service | `government-sanctions` |
-| SEC EDGAR | https://www.sec.gov/os/accessing-edgar-data | `sec-edgar` |
-| Companies House | https://developer.company-information.service.gov.uk/ | `companies-house` |
+| DAT | both | https://www.dat.com/ |
+| Freightos (FBX) | both | https://fbx.freightos.com/ |
+| Xeneta | both | https://www.xeneta.com/ |
+| Drewry | both | https://www.drewry.co.uk/ |
+| SONAR | both | https://sonar.freightwaves.com/ |
+| LME | both | https://www.lme.com/ |
+| CME | both | https://www.cmegroup.com/ |
+| ISM ROB | pulse | https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/ |
+| S&P Commodity Insights | both | https://www.spglobal.com/commodityinsights/ |
+| Fastmarkets | both | https://www.fastmarkets.com/ |
+| JOC | pulse | https://www.joc.com/ |
+| Cass | both | see wire-first #8 |
 
-**Fetch stubs** (URL cited, no live HTTP on Day 0):
+Package: `pkg_license_required`.
 
-- TED — https://ted.europa.eu/en/simap
-- UK Contracts Finder — https://www.contractsfinder.service.gov.uk/apidocumentation
-- BTS freight — https://www.bts.gov/ / https://data.bts.gov/
+## Other packages
 
-**Blocked pending human license approval** (catalogued, never fetched):
+| Package | `channelUse` | Notes |
+|---|---|---|
+| `pkg_public_indices` | both | FRED + EIA + BLS + World Bank |
+| `pkg_public_disruption` | pulse | openFDA, OFAC SDN, NWS |
+| `pkg_public_freight_commodity` | both | BTS TEU, POLA/POLB, plus paid placeholders |
+| `pkg_public_procurement` | api | SAM.gov, USAspending (existing collectors) |
+| `pkg_public_filings` | api | SEC EDGAR (existing collector) |
 
-- Freightos Baltic Index — https://fbx.freightos.com/
-- Cass Freight Index — https://www.cassinfo.com/freight-audit-payment/cass-transportation-indexes
-- Shanghai Containerized Freight Index — https://en.sse.net.cn/
+Pulse-useful: wire-first disruption + port pages + ISM/JOC (when licensed).
+API-useful: FRED/EIA/BTS series, OFAC, SAM, USAspending, EDGAR.
+Both: the Day 0 wire-first pack and public indices.
 
-### Packaged datasets (JSON)
+## API spine (beta, `ga: false`)
 
-| Package id | Pulse / Diligence |
-|---|---|
-| `pkg_public_indices` | both |
-| `pkg_public_procurement` | both |
-| `pkg_public_freight_commodity` | both |
-| `pkg_public_disruption` | Pulse |
-| `pkg_public_filings` | Diligence |
+Authenticated `GET /api/data-factory/*`. Query `channelUse=pulse|api|both`
+and `day0Tier=wire_first|existing_collector|license_required`.
 
-Each package is `release: beta`, `ga: false`, `observations: []`.
-No invented index values to make a pack “look live”.
-
-### API spine (beta)
-
-Authenticated (`tenantMiddleware` + `read`). Bearer API key or Clerk
-session in production.
-
-- `GET /api/data-factory` — status banner (honest beta)
+- `GET /api/data-factory`
 - `GET /api/data-factory/sources`
-- `GET /api/data-factory/sources/:sourceId`
 - `GET /api/data-factory/packages`
-- `GET /api/data-factory/packages/:packageId`
+- `GET /api/data-factory/packages/pkg_day0_wire_first`
 - `GET /api/data-factory/layer-c/taxonomy`
 
-Metering: append-only `data_factory_usage_log`. Caller identity only.
-Not a GA billing meter. A failed log write does not invent usage.
+Metering: `data_factory_usage_log`. Not a GA billing meter.
 
-### Layer C taxonomy stub
+## Deferred
 
-Same Decide / Learn strings as PR #30 `@workspace/pulse`:
-
-- Decide: `renegotiate` \| `dual_source` \| `switch_lane` \| `hold` \| `kill`
-- Learn: `saved` \| `missed` \| `unknown` \| `reversed` (`unknown` is first-class)
-
-Labels attach to **public signal ids**. `tenantLocalStakeUsd` is rejected.
-No FSA engagement identifiers. When `@workspace/pulse` merges, re-export
-from there — do not fork the enums.
-
-## What is deferred (do not build)
-
-- Tenant spend ingest, ERP/CSV bridges, mock multi-tenant spend
-- FSA client files, Weekly Brief paths, FSA engagement ids
-- Peer percentiles, ARR, savings %, “benchmark vs similar clients”
-- Live fetch of paid freight/commodity indexes without a signed license
-- GA claims, quota enforcement billed as a product
-- Layer B warehouse or “anonymized” tenant aggregates
+- Layer B tenant spend, FSA files, peer percentiles
+- Live fetch of any `license_required` feed
+- POLA/POLB HTML scrape (schema only; careful scrape later)
+- Invented TEU / index / savings values
 
 ## Prove-it
 

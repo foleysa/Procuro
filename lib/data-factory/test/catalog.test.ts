@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   DATA_FACTORY_SOURCES,
+  DAY0_WIRE_FIRST_IDS,
+  LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
   listDataFactorySources,
+  listWireFirstSources,
 } from "../src/catalog";
 
 describe("Layer A catalog", () => {
@@ -19,8 +22,33 @@ describe("Layer A catalog", () => {
     });
     expect(paid.length).toBeGreaterThan(0);
     for (const source of paid) {
-      expect(source.fetchStatus).toBe("blocked_pending_license");
+      expect(source.fetchStatus).toBe("license_required");
       expect(source.existingCollectorId).toBeNull();
+    }
+  });
+
+  it("lists the live Day 0 wire-first map in rank order", () => {
+    const wired = listWireFirstSources();
+    expect(wired.map((s) => s.id)).toEqual([...DAY0_WIRE_FIRST_IDS]);
+    expect(wired[0]?.name).toBe("FRED API");
+    expect(wired[1]?.name).toBe("EIA API v2");
+  });
+
+  it("tags every source Pulse / API / both", () => {
+    for (const source of DATA_FACTORY_SOURCES) {
+      expect(["pulse", "api", "both"]).toContain(source.channelUse);
+    }
+    expect(getDataFactorySource("src_openfda_food_enforcement")?.channelUse).toBe(
+      "pulse",
+    );
+    expect(getDataFactorySource("src_fred")?.channelUse).toBe("both");
+    expect(getDataFactorySource("src_sam_gov")?.channelUse).toBe("api");
+  });
+
+  it("keeps paid commercial feeds as license_required placeholders", () => {
+    for (const id of LICENSE_REQUIRED_PLACEHOLDER_IDS) {
+      const source = getDataFactorySource(id);
+      expect(source?.fetchStatus, id).toBe("license_required");
     }
   });
 
@@ -35,20 +63,7 @@ describe("Layer A catalog", () => {
     ]);
   });
 
-  it("points wired sources at known collector ids", () => {
-    const wired = listDataFactorySources({
-      fetchStatus: "wired_existing_collector",
-    });
-    expect(wired.length).toBeGreaterThan(5);
-    for (const source of wired) {
-      expect(source.existingCollectorId).toBeTruthy();
-    }
-    expect(getDataFactorySource("src_sam_gov")?.existingCollectorId).toBe(
-      "sam-gov",
-    );
-  });
-
-  it("returns undefined for unknown ids", () => {
+  it("returns undefined for tenant/FSA ids", () => {
     expect(getDataFactorySource("src_tenant_spend")).toBeUndefined();
     expect(getDataFactorySource("src_fsa_client")).toBeUndefined();
   });
