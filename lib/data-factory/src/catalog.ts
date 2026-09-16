@@ -6,7 +6,10 @@
  * Paid commercial feeds: license_required placeholders only.
  * Parallel news/OSINT track: RSS metadata → normalize → dedupe → events.
  * Tier 1.5 gap pack: additional free trade / registry / AIS / relief APIs.
+ * Light Tier C backlog: BIS, UK/EU via OpenSanctions, FRA/STB, NOAA PORTS,
+ * OpenCorporates ToS gate, OWID cite, USPTO ODP, FTC/AG RSS.
  *
+ * Source map FROZEN — do not invent new sources.
  * No live invented values. No tenant/FSA data. Layer B deferred.
  * Do not store or resell full article HTML as a product payload.
  */
@@ -1124,9 +1127,13 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     sourceUrl: "https://www.opensanctions.org/",
     feedUrl:
       "https://data.opensanctions.org/datasets/latest/default/entities.ftm.json",
+    altFeedUrls: [
+      "https://www.gov.uk/government/publications/financial-sanctions-consolidated-list-of-targets",
+      "https://webgate.ec.europa.eu/fsd/fsf",
+    ],
     licenseClass: "public_api",
     licenseNote:
-      "CC-BY bulk FollowTheMoney. Existing collector `opensanctions`. Not a screening-product claim.",
+      "CC-BY bulk FollowTheMoney. Existing collector `opensanctions`. Covers UK OFSI + EU FSF files via OpenSanctions. Not a screening-product claim.",
     fetchStatus: "wired_existing_collector",
     existingCollectorId: "opensanctions",
     signalTypes: ["risk_screening_match"],

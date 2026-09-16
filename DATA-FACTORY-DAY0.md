@@ -2,8 +2,11 @@
 
 **John GREENLIGHT 2026-09-16: GO** on storage layout + Day 0 factory.
 
+**Source map FROZEN** (John: discovery done). Priority: Tier 1 → 1.5 →
+1.5b → light Tier C. Do **not** invent new sources.
+
 **LoE = Procuro only. Not FSA.** John has no client or tenant data.
-Layer B is deferred. This file is the live Layer A source map for
+Layer B is deferred. This file is the locked Layer A source map for
 product decisions.
 
 **Flow:** GCS raw landing → Postgres serving (`market_signals`,
@@ -209,7 +212,7 @@ Package: `pkg_tier_c`. Source map frozen — no invented extras.
 |---|---|---|
 | BIS Entity List | file/CSV stub | https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/entity-list |
 | BIS Denied Persons | file/CSV stub | https://www.bis.doc.gov/index.php/policy-guidance/lists-of-parties-of-concern/denied-persons-list |
-| UK/EU sanctions files | reuse OpenSanctions | https://www.opensanctions.org/ |
+| UK/EU sanctions files | reuse OpenSanctions (OFSI + EU FSF cites) | https://www.opensanctions.org/ |
 | FRA safety extras | file/CSV stub | https://safetydata.fra.dot.gov/ |
 | STB extras | careful page stub | https://www.stb.gov/ |
 | NOAA PORTS | stub | https://tidesandcurrents.noaa.gov/ports.html |
