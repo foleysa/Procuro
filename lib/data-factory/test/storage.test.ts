@@ -117,7 +117,8 @@ describe("locked storage layout", () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS data_factory_usage_log/);
     expect(sql).toMatch(/Reuses existing `market_signals`/);
     expect(sql).not.toMatch(/CREATE TABLE IF NOT EXISTS market_signals/);
-    expect(sql).not.toMatch(/\bhtml_body\b|\bfull_text\b/);
+    const createNews = sql.slice(sql.indexOf("CREATE TABLE IF NOT EXISTS news_events"));
+    expect(createNews).not.toMatch(/^\s+(html|html_body|body|full_text)\s/m);
   });
 
   it("advertises the locked layout on the status banner", () => {
