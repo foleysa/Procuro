@@ -42,6 +42,7 @@ export function dataFactoryStatus(): DataFactoryStatus {
       "Does not ingest tenant spend, ERP extracts, or FSA client files.",
       "Does not publish peer percentiles, ARR, or savings %.",
       "Metering is a usage-log hook, not a GA billing meter.",
+      "News/OSINT track: headlines + link OK; full-text republish is out of scope.",
     ],
   };
 }

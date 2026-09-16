@@ -4,8 +4,10 @@
  * Tier 1: implement fetch stubs + schemas for ALL 15 public APIs.
  * Tier 2: file/CSV / careful-page stubs (Cass + SCFI cite-only).
  * Paid commercial feeds: license_required placeholders only.
+ * Parallel news/OSINT track: RSS metadata → normalize → dedupe → events.
  *
  * No live invented values. No tenant/FSA data. Layer B deferred.
+ * Do not store or resell full article HTML as a product payload.
  */
 
 import type { DataFactoryObserveKind } from "./layer-c";
@@ -16,6 +18,7 @@ export const dataFactorySourceFamilies = [
   "freight_commodity",
   "disruption",
   "filing",
+  "news_osint",
 ] as const;
 export type DataFactorySourceFamily =
   (typeof dataFactorySourceFamilies)[number];
@@ -39,6 +42,7 @@ export type DataFactoryFetchStatus =
 export const dataFactoryDay0Tiers = [
   "tier_1",
   "tier_2",
+  "news_osint",
   "license_required",
 ] as const;
 export type DataFactoryDay0Tier = (typeof dataFactoryDay0Tiers)[number];
@@ -49,7 +53,10 @@ export type DataFactoryChannelUse = (typeof dataFactoryChannelUses)[number];
 export type DataFactoryScrapePosture =
   | "careful_public_page"
   | "file_csv"
-  | "socrata";
+  | "socrata"
+  | "rss"
+  | "fragile_rss"
+  | "event_api";
 
 export interface DataFactorySource {
   id: string;
@@ -69,6 +76,8 @@ export interface DataFactorySource {
   existingCollectorId: string | null;
   signalTypes: readonly string[];
   scrapePosture?: DataFactoryScrapePosture;
+  /** Google News RSS and similar unofficial sensors. */
+  fragile?: boolean;
 }
 
 /** Strengthened Tier 1 — stubs required for every id. */
@@ -108,6 +117,28 @@ export const TIER2_SOURCE_IDS = [
   "src_imf_primary_commodity",
   "src_usace",
   "src_epa_tri",
+] as const;
+
+/**
+ * Parallel news/OSINT track. Federal Register is reused from Tier 1.
+ * Metadata (headline + link) only — no article HTML product payload.
+ */
+export const NEWS_OSINT_SOURCE_IDS = [
+  "src_cbp_csms",
+  "src_federal_register",
+  "src_freightwaves_rss",
+  "src_supply_chain_dive",
+  "src_gcaptain",
+  "src_maritime_executive",
+  "src_splash247",
+  "src_loadstar",
+  "src_container_news",
+  "src_bbc_business",
+  "src_gdelt",
+  "src_google_news_rss",
+  "src_gdacs",
+  "src_usgs_quakes",
+  "src_nhc_products",
 ] as const;
 
 export const LICENSE_REQUIRED_PLACEHOLDER_IDS = [
@@ -260,6 +291,9 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     tierRank: 7,
     sourceUrl: "https://www.federalregister.gov/developers/documentation/api/v1",
     feedUrl: "https://www.federalregister.gov/api/v1/documents.json",
+    altFeedUrls: [
+      "https://www.federalregister.gov/api/v1/documents.rss",
+    ],
     licenseClass: "public_api",
     licenseNote: "NARA Federal Register v1. Public rules/notices — policy disruption, not tenant dockets.",
     fetchStatus: "stub",
@@ -702,6 +736,262 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     scrapePosture: "file_csv",
   },
 
+  // ---- Parallel news / OSINT (RSS metadata only) ------------------------
+  {
+    id: "src_cbp_csms",
+    name: "CBP CSMS / GovDelivery (if public)",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl:
+      "https://www.cbp.gov/trade/automated/cargo-systems-messaging-service",
+    feedUrl: "https://content.govdelivery.com/accounts/USDHSCBP/bulletins.rss",
+    licenseClass: "public_api",
+    licenseNote:
+      "Stub only if the GovDelivery bulletin RSS is publicly readable. Confirm before live fetch. Headlines + link; no CSMS body republish.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_freightwaves_rss",
+    name: "FreightWaves RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.freightwaves.com/",
+    feedUrl: "https://www.freightwaves.com/feed",
+    licenseClass: "public_api",
+    licenseNote:
+      "Site RSS. Headlines + link only. Not SONAR (that stays license_required). No article HTML.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_supply_chain_dive",
+    name: "Supply Chain Dive RSS",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.supplychaindive.com/",
+    feedUrl: "https://www.supplychaindive.com/feeds/news/",
+    licenseClass: "public_api",
+    licenseNote: "Industry RSS. Cite headline + URL. Full-text republish is out of scope.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_gcaptain",
+    name: "gCaptain RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://gcaptain.com/",
+    feedUrl: "https://gcaptain.com/feed/",
+    licenseClass: "public_api",
+    licenseNote: "Maritime RSS. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_maritime_executive",
+    name: "Maritime Executive RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.maritime-executive.com/",
+    feedUrl: "https://www.maritime-executive.com/rss.xml",
+    licenseClass: "public_api",
+    licenseNote: "Maritime RSS. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_splash247",
+    name: "Splash247 RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://splash247.com/",
+    feedUrl: "https://splash247.com/feed/",
+    licenseClass: "public_api",
+    licenseNote: "Maritime RSS. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_loadstar",
+    name: "The Loadstar RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://theloadstar.com/",
+    feedUrl: "https://theloadstar.com/feed/",
+    licenseClass: "public_api",
+    licenseNote: "Freight RSS. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_container_news",
+    name: "Container News RSS",
+    family: "news_osint",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://container-news.com/",
+    feedUrl: "https://container-news.com/feed/",
+    licenseClass: "public_api",
+    licenseNote: "Container-shipping RSS. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_bbc_business",
+    name: "BBC Business RSS",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.bbc.com/news/business",
+    feedUrl: "https://feeds.bbci.co.uk/news/business/rss.xml",
+    licenseClass: "public_api",
+    licenseNote:
+      "BBC RSS. Headline + link per BBC syndication terms. Do not republish full text.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_gdelt",
+    name: "GDELT 2.0 DOC API",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "both",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.gdeltproject.org/",
+    feedUrl: "https://api.gdeltproject.org/api/v2/doc/doc",
+    licenseClass: "public_api",
+    licenseNote:
+      "GDELT event/doc graph. Metadata + source URLs. Do not store article HTML from linked publishers.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "event_api",
+  },
+  {
+    id: "src_google_news_rss",
+    name: "Google News RSS (optional / fragile)",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://news.google.com/",
+    feedUrl: "https://news.google.com/rss/search",
+    licenseClass: "public_api",
+    licenseNote:
+      "Optional targeted query sensor. Unofficial RSS — mark fragile. Do not depend on it for GA. Headlines + link only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "fragile_rss",
+    fragile: true,
+  },
+  {
+    id: "src_gdacs",
+    name: "GDACS disaster RSS",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.gdacs.org/",
+    feedUrl: "https://www.gdacs.org/xml/rss.xml",
+    licenseClass: "public_api",
+    licenseNote: "UN/EC Joint Research Centre GDACS public RSS. Event metadata.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_usgs_quakes",
+    name: "USGS significant earthquakes",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://earthquake.usgs.gov/earthquakes/feed/",
+    feedUrl:
+      "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom",
+    altFeedUrls: [
+      "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.geojson",
+    ],
+    licenseClass: "public_api",
+    licenseNote: "USGS significant-quake Atom/GeoJSON. Distinct from USGS MCS (Tier 2).",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+  {
+    id: "src_nhc_products",
+    name: "NHC advisory products",
+    family: "news_osint",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "news_osint",
+    tierRank: null,
+    sourceUrl: "https://www.nhc.noaa.gov/",
+    feedUrl: "https://www.nhc.noaa.gov/index-at.xml",
+    altFeedUrls: [
+      "https://www.nhc.noaa.gov/index-ep.xml",
+      "https://www.nhc.noaa.gov/gis/",
+    ],
+    licenseClass: "public_api",
+    licenseNote:
+      "NHC public advisory XML. Complements Tier 2 `src_nhc` GIS files. Product metadata, not a scraped article.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["osint_headline"],
+    scrapePosture: "rss",
+  },
+
   // ---- Paid commercial — placeholders only ------------------------------
   {
     id: "src_dat",
@@ -929,6 +1219,16 @@ export function listTier1Sources(): DataFactorySource[] {
 
 export function listTier2Sources(): DataFactorySource[] {
   return listDataFactorySources({ day0Tier: "tier_2" });
+}
+
+export function listNewsOsintSources(): DataFactorySource[] {
+  return NEWS_OSINT_SOURCE_IDS.map((id) => {
+    const source = getDataFactorySource(id);
+    if (!source) {
+      throw new Error(`NEWS_OSINT_SOURCE_IDS missing catalog row ${id}`);
+    }
+    return source;
+  });
 }
 
 /** @deprecated use listTier1Sources */

@@ -9,6 +9,7 @@
 import {
   listTier1Sources,
   listTier2Sources,
+  listNewsOsintSources,
   DATA_FACTORY_SOURCES,
   getDataFactorySource,
   type DataFactoryScrapePosture,
@@ -80,6 +81,32 @@ function planFor(source: DataFactorySource): LayerAFetchPlan {
     case "src_federal_register":
       query.per_page = "20";
       query.order = "newest";
+      break;
+    case "src_cbp_csms":
+    case "src_freightwaves_rss":
+    case "src_supply_chain_dive":
+    case "src_gcaptain":
+    case "src_maritime_executive":
+    case "src_splash247":
+    case "src_loadstar":
+    case "src_container_news":
+    case "src_bbc_business":
+    case "src_gdacs":
+    case "src_usgs_quakes":
+    case "src_nhc_products":
+      headers.Accept = "application/rss+xml, application/atom+xml, application/xml";
+      break;
+    case "src_gdelt":
+      query.format = "json";
+      query.maxrecords = "10";
+      query.query = "supply chain";
+      break;
+    case "src_google_news_rss":
+      headers.Accept = "application/rss+xml, application/xml";
+      query.q = "supply chain";
+      query.hl = "en-US";
+      query.gl = "US";
+      query.ceid = "US:en";
       break;
     case "src_sec_edgar":
       headers["User-Agent"] = "Procuro Data Factory compliance@procuro.ai";
@@ -157,6 +184,15 @@ function stubNote(source: DataFactorySource): string {
   if (source.scrapePosture === "socrata") {
     return `Socrata stub — do not invent a 4×4 dataset id. Cite ${source.sourceUrl}.`;
   }
+  if (source.scrapePosture === "fragile_rss") {
+    return `Fragile RSS sensor — optional, not a GA dependency. Headlines + link only. Cite ${source.sourceUrl}.`;
+  }
+  if (source.scrapePosture === "rss") {
+    return `RSS metadata stub — headlines + link only; no article HTML. Cite ${source.sourceUrl}.`;
+  }
+  if (source.scrapePosture === "event_api") {
+    return `Event-graph stub — metadata + source URLs only; no article HTML. Cite ${source.sourceUrl}.`;
+  }
   return `Day 0 stub — no live HTTP. Cite ${source.sourceUrl}.`;
 }
 
@@ -223,6 +259,10 @@ export function fetchTier1Sources(): LayerAFetchResult[] {
 
 export function fetchTier2Sources(): LayerAFetchResult[] {
   return listTier2Sources().map((s) => fetchKnownSource(s));
+}
+
+export function fetchNewsOsintSources(): LayerAFetchResult[] {
+  return listNewsOsintSources().map((s) => fetchKnownSource(s));
 }
 
 /** @deprecated use fetchTier1Sources */

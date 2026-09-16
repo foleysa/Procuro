@@ -3,9 +3,11 @@ import {
   DATA_FACTORY_SOURCES,
   TIER1_SOURCE_IDS,
   TIER2_SOURCE_IDS,
+  NEWS_OSINT_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
   listDataFactorySources,
+  listNewsOsintSources,
   listTier1Sources,
   listTier2Sources,
 } from "../src/catalog";
@@ -100,15 +102,28 @@ describe("Layer A catalog", () => {
     }
   });
 
-  it("covers procurement, index, freight, disruption, and filings", () => {
+  it("covers procurement, index, freight, disruption, filings, and news/OSINT", () => {
     const families = new Set(DATA_FACTORY_SOURCES.map((s) => s.family));
     expect([...families].sort()).toEqual([
       "disruption",
       "filing",
       "freight_commodity",
       "index",
+      "news_osint",
       "procurement",
     ]);
+  });
+
+  it("lists the parallel news/OSINT track (FR reused from Tier 1)", () => {
+    const news = listNewsOsintSources();
+    expect(news.map((s) => s.id)).toEqual([...NEWS_OSINT_SOURCE_IDS]);
+    expect(getDataFactorySource("src_federal_register")?.day0Tier).toBe(
+      "tier_1",
+    );
+    expect(getDataFactorySource("src_google_news_rss")?.fragile).toBe(true);
+    expect(getDataFactorySource("src_usgs_quakes")?.day0Tier).toBe(
+      "news_osint",
+    );
   });
 
   it("returns undefined for tenant/FSA ids", () => {

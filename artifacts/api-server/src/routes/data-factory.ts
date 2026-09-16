@@ -14,6 +14,7 @@ import {
   layerCTaxonomyPayload,
   listDataFactoryPackages,
   listDataFactorySources,
+  newsOsintMetadataStream,
   packageLayerADataset,
   type DataFactoryChannelUse,
   type DataFactoryDay0Tier,
@@ -35,6 +36,7 @@ const SOURCE_FAMILIES = new Set([
   "freight_commodity",
   "disruption",
   "filing",
+  "news_osint",
 ]);
 const FETCH_STATUSES = new Set([
   "wired_existing_collector",
@@ -46,7 +48,12 @@ const LICENSE_CLASSES = new Set([
   "free_registration",
   "paid_license_required",
 ]);
-const DAY0_TIERS = new Set(["tier_1", "tier_2", "license_required"]);
+const DAY0_TIERS = new Set([
+  "tier_1",
+  "tier_2",
+  "news_osint",
+  "license_required",
+]);
 const CHANNEL_USES = new Set(["pulse", "api", "both"]);
 
 async function meterRead(
@@ -207,6 +214,17 @@ router.get(
     }
     res.json(packed);
     await meterRead(req, res, { packageId: packed.package.id });
+  },
+);
+
+router.get(
+  "/data-factory/events",
+  tenantMiddleware,
+  requirePermission("read"),
+  async (req, res) => {
+    const stream = newsOsintMetadataStream([]);
+    res.json(stream);
+    await meterRead(req, res, { packageId: "pkg_news_osint" });
   },
 );
 

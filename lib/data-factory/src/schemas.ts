@@ -239,9 +239,38 @@ export const TIER2_SCHEMAS: readonly LayerAObservationSchema[] = [
   ]),
 ];
 
+const OSINT_EVENT_FIELDS: Array<
+  [string, LayerAFieldSchema["type"], boolean, string]
+> = [
+  ["title", "string", true, "Headline only — not article body"],
+  ["url", "string", true, "Canonical link"],
+  ["published", "datetime", false, "Feed pubDate when present"],
+  ["source", "string", true, "Catalog source id"],
+  ["entities", "string", false, "JSON string[] of named entities; empty if unknown"],
+  ["event_type", "string", true, "policy | maritime | freight | hazard | quake | storm | other"],
+  ["severity", "string", true, "info | watch | warning | severe | unknown"],
+];
+
+export const NEWS_OSINT_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_cbp_csms", "CBP CSMS headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_freightwaves_rss", "FreightWaves headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_supply_chain_dive", "Supply Chain Dive headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gcaptain", "gCaptain headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_maritime_executive", "Maritime Executive headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_splash247", "Splash247 headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_loadstar", "Loadstar headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_container_news", "Container News headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_bbc_business", "BBC Business headline", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gdelt", "GDELT doc/event", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_google_news_rss", "Google News headline (fragile)", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_gdacs", "GDACS alert", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_usgs_quakes", "USGS significant quake", "OsintEvent", OSINT_EVENT_FIELDS),
+  schema("src_nhc_products", "NHC product headline", "OsintEvent", OSINT_EVENT_FIELDS),
+];
+
 export const WIRE_FIRST_SCHEMAS = TIER1_SCHEMAS;
 
-const ALL = [...TIER1_SCHEMAS, ...TIER2_SCHEMAS];
+const ALL = [...TIER1_SCHEMAS, ...TIER2_SCHEMAS, ...NEWS_OSINT_SCHEMAS];
 const SCHEMA_BY_ID = new Map(ALL.map((s) => [s.sourceId, s]));
 
 export function getLayerAObservationSchema(

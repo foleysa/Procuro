@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { TIER1_SOURCE_IDS, TIER2_SOURCE_IDS } from "../src/catalog";
-import { DATA_FACTORY_PACKAGES, packageLayerADataset } from "../src/packages";
+import {
+  NEWS_OSINT_SOURCE_IDS,
+  TIER1_SOURCE_IDS,
+  TIER2_SOURCE_IDS,
+} from "../src/catalog";
+import {
+  DATA_FACTORY_PACKAGES,
+  packageLayerADataset,
+  packageNewsOsintStream,
+} from "../src/packages";
 import { dataFactoryStatus } from "../src/status";
 
 describe("Layer A packages", () => {
@@ -51,6 +59,17 @@ describe("Layer A packages", () => {
     expect(packed?.sources.some((s) => s.id === "src_cass_freight_index")).toBe(
       false,
     );
+  });
+
+  it("packs news/OSINT as metadata + cited bullets, never article HTML", () => {
+    const packed = packageLayerADataset("pkg_news_osint");
+    expect(packed?.package.sourceIds).toEqual([...NEWS_OSINT_SOURCE_IDS]);
+    expect(packed?.observations).toEqual([]);
+    expect(packed?.package.channelUse).toBe("both");
+    const stream = packageNewsOsintStream();
+    expect(stream.events).toEqual([]);
+    expect(stream.pulse.format).toBe("cited_bullets");
+    expect(stream.tos.fullTextRepublish).toBe("out_of_scope");
   });
 
   it("advertises an honest beta status", () => {

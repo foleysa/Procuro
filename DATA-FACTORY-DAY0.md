@@ -101,6 +101,7 @@ they sit on Tier 2 as cite-only.
 | `pkg_public_freight_commodity` | both | BTS TEU, FT-900, Comtrade, POLA/POLB, USACE, Cass/SCFI cite |
 | `pkg_public_procurement` | api | USAspending, SAM.gov (careful) |
 | `pkg_public_filings` | api | SEC EDGAR |
+| `pkg_news_osint` | both | RSS metadata events + Pulse cited bullets |
 
 Pulse-useful: Tier 1 disruption + Tier 2 port / NHC / CPSC pages.
 API-useful: BLS/FRED/EIA/Census/Comtrade series, OFAC, USAspending, EDGAR, SAM.
@@ -109,15 +110,50 @@ Both: `pkg_tier1`.
 ## API spine (beta, `ga: false`)
 
 Authenticated `GET /api/data-factory/*`. Query `channelUse=pulse|api|both`
-and `day0Tier=tier_1|tier_2|license_required`.
+and `day0Tier=tier_1|tier_2|news_osint|license_required`.
 
 - `GET /api/data-factory`
 - `GET /api/data-factory/sources`
 - `GET /api/data-factory/packages`
 - `GET /api/data-factory/packages/pkg_tier1`
+- `GET /api/data-factory/events`
 - `GET /api/data-factory/layer-c/taxonomy`
 
 Metering: `data_factory_usage_log`. Not a GA billing meter.
+
+## Parallel track — open-source news / OSINT
+
+Package: `pkg_news_osint` (`channelUse: both`). Pipeline: **RSS →
+normalize → dedupe → event schema**. Day 0 returns an empty event
+stream (`events: []`) and empty Pulse cited bullets. No invented
+headlines.
+
+Event fields: `title`, `url`, `published`, `source`, `entities[]`,
+`event_type`, `severity`.
+
+**ToS:** headlines + link = OK. Full-text republish / storing article
+HTML bodies as product payloads = **out of scope**.
+
+| Source | Notes | Cite |
+|---|---|---|
+| CBP GovDelivery / CSMS | Stub **if public**; confirm RSS before live fetch | https://www.cbp.gov/trade/automated/cargo-systems-messaging-service |
+| Federal Register | Reuses Tier 1 `src_federal_register` (+ documents.rss) | https://www.federalregister.gov/developers/documentation/api/v1 |
+| FreightWaves RSS | Not SONAR | https://www.freightwaves.com/feed |
+| Supply Chain Dive RSS | Headline + link | https://www.supplychaindive.com/feeds/news/ |
+| gCaptain | Headline + link | https://gcaptain.com/feed/ |
+| Maritime Executive | Headline + link | https://www.maritime-executive.com/rss.xml |
+| Splash247 | Headline + link | https://splash247.com/feed/ |
+| The Loadstar | Headline + link | https://theloadstar.com/feed/ |
+| Container News | Headline + link | https://container-news.com/feed/ |
+| BBC Business RSS | Syndication: headline + link | https://feeds.bbci.co.uk/news/business/rss.xml |
+| GDELT DOC API | Event graph metadata + source URLs | https://api.gdeltproject.org/api/v2/doc/doc |
+| Google News RSS | **Optional / fragile** — not a GA dependency | https://news.google.com/rss/search |
+| GDACS | Disaster RSS | https://www.gdacs.org/xml/rss.xml |
+| USGS significant quakes | Distinct from USGS MCS | https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom |
+| NHC products | Complements Tier 2 `src_nhc` GIS | https://www.nhc.noaa.gov/index-at.xml |
+
+API metadata stream: `GET /api/data-factory/events`.
+Pulse packaging: cited bullets `{ text, url, source, published }`.
 
 ## Deferred
 

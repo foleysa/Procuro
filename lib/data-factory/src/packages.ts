@@ -7,12 +7,17 @@
 import {
   TIER1_SOURCE_IDS,
   TIER2_SOURCE_IDS,
+  NEWS_OSINT_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
   type DataFactoryChannelUse,
   type DataFactorySource,
   type DataFactorySourceFamily,
 } from "./catalog";
+import {
+  newsOsintMetadataStream,
+  type NewsOsintStream,
+} from "./events";
 import { fetchLayerASource, type LayerAFetchResult } from "./fetch-stubs";
 import { DATA_FACTORY_RELEASE, DATA_FACTORY_SCHEMA_VERSION } from "./status";
 
@@ -150,6 +155,17 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
     pulseSurface: "diligence",
     release: DATA_FACTORY_RELEASE,
   },
+  {
+    id: "pkg_news_osint",
+    title: "Open-source news / OSINT (metadata)",
+    description:
+      "RSS → normalize → dedupe → event schema. Headlines + links only. Pulse = cited bullets. Full-text republish out of scope.",
+    family: "news_osint",
+    sourceIds: NEWS_OSINT_SOURCE_IDS,
+    channelUse: "both",
+    pulseSurface: "pulse",
+    release: DATA_FACTORY_RELEASE,
+  },
 ] as const;
 
 export interface DataFactoryPackageJson {
@@ -211,8 +227,13 @@ export function packageLayerADataset(
       "No tenant spend, ERP, or FSA client files.",
       "No invented index values, ARR, savings %, or peer percentiles.",
       "Paid-license sources stay license_required until human approval.",
+      "News/OSINT: headlines + link OK; full-text republish is out of scope.",
     ],
   };
+}
+
+export function packageNewsOsintStream(): NewsOsintStream {
+  return newsOsintMetadataStream([]);
 }
 
 export function packageAllLayerADatasets(): DataFactoryPackageJson[] {
