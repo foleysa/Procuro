@@ -5,7 +5,8 @@
  */
 
 import {
-  DAY0_WIRE_FIRST_IDS,
+  TIER1_SOURCE_IDS,
+  TIER2_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
   type DataFactoryChannelUse,
@@ -30,12 +31,34 @@ export interface DataFactoryPackageMeta {
 
 export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
   {
-    id: "pkg_day0_wire_first",
-    title: "Day 0 wire-first public signals",
+    id: "pkg_tier1",
+    title: "Day 0 Tier 1 public APIs",
     description:
-      "FRED, EIA v2, openFDA food enforcement, OFAC SDN, api.weather.gov, BTS TEU, POLA/POLB (careful pages), Cass (cite-only).",
+      "Strengthened Tier 1: BLS PPI, FRED, EIA v2, USDA MyMarketNews, openFDA food + recalls, OFAC SDN, Federal Register, SEC EDGAR, BTS TEU (Socrata), weather.gov alerts, USAspending, Census FT-900, Census M3, World Bank Pink Sheet, UN Comtrade free/bulk.",
     family: "mixed",
-    sourceIds: DAY0_WIRE_FIRST_IDS,
+    sourceIds: TIER1_SOURCE_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_day0_wire_first",
+    title: "Day 0 Tier 1 public APIs (alias)",
+    description:
+      "Deprecated alias of pkg_tier1. The old 8-source wire-first list was weak.",
+    family: "mixed",
+    sourceIds: TIER1_SOURCE_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_tier2",
+    title: "Day 0 Tier 2 file / CSV / careful pages",
+    description:
+      "POLA/POLB, USGS MCS, USDA ERS, CPSC, Beige Book, NAICS/UNSPSC, Cass cite-only, NHC, FDA dashboard, SAM.gov (careful), SCFI cite-only, IMF primary commodity, USACE if open, EPA TRI.",
+    family: "mixed",
+    sourceIds: TIER2_SOURCE_IDS,
     channelUse: "both",
     pulseSurface: "both",
     release: DATA_FACTORY_RELEASE,
@@ -43,9 +66,17 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
   {
     id: "pkg_public_indices",
     title: "Public price & economic indices",
-    description: "FRED + EIA v2 (wire-first) and BLS / World Bank (existing).",
+    description:
+      "BLS PPI, FRED, EIA v2, USDA MyMarketNews, Census M3, World Bank Pink Sheet.",
     family: "index",
-    sourceIds: ["src_fred", "src_eia", "src_bls", "src_world_bank_pink_sheet"],
+    sourceIds: [
+      "src_bls",
+      "src_fred",
+      "src_eia",
+      "src_usda_mymarketnews",
+      "src_census_m3",
+      "src_world_bank_pink_sheet",
+    ],
     channelUse: "both",
     pulseSurface: "both",
     release: DATA_FACTORY_RELEASE,
@@ -54,11 +85,13 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
     id: "pkg_public_disruption",
     title: "Public disruption signals",
     description:
-      "openFDA food enforcement, OFAC SDN, NWS alerts. Signals, not a screening product.",
+      "openFDA food + recalls, OFAC SDN, Federal Register, NWS alerts. Signals, not a screening product.",
     family: "disruption",
     sourceIds: [
       "src_openfda_food_enforcement",
+      "src_openfda_recalls",
       "src_ofac_sdn",
+      "src_federal_register",
       "src_weather_gov",
     ],
     channelUse: "pulse",
@@ -67,15 +100,19 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
   },
   {
     id: "pkg_public_freight_commodity",
-    title: "Freight & commodity public + license placeholders",
+    title: "Freight & commodity public + cite-only",
     description:
-      "BTS TEU and POLA/POLB stubs. Cass and paid freight/commodity feeds are license_required only.",
+      "BTS TEU, Census FT-900, UN Comtrade. POLA/POLB and USACE are Tier 2. Cass and SCFI are cite-only.",
     family: "freight_commodity",
     sourceIds: [
       "src_bts_teu",
+      "src_census_ft900",
+      "src_un_comtrade",
       "src_pola",
       "src_polb",
-      ...LICENSE_REQUIRED_PLACEHOLDER_IDS,
+      "src_cass_freight_index",
+      "src_scfi",
+      "src_usace",
     ],
     channelUse: "both",
     pulseSurface: "both",
@@ -85,7 +122,7 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
     id: "pkg_license_required",
     title: "Paid feeds (license required)",
     description:
-      "DAT, Freightos, Xeneta, Drewry, SONAR, LME, CME, ISM ROB, S&P CI, Fastmarkets, JOC, Cass. Placeholders — no fetch.",
+      "DAT, Freightos, Xeneta, Drewry, SONAR, LME, CME, ISM ROB, S&P CI, Fastmarkets, JOC. Placeholders — no fetch. Cass and SCFI live on Tier 2 as cite-only.",
     family: "mixed",
     sourceIds: LICENSE_REQUIRED_PLACEHOLDER_IDS,
     channelUse: "both",
@@ -95,9 +132,10 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
   {
     id: "pkg_public_procurement",
     title: "Public procurement notices & awards",
-    description: "SAM.gov and USAspending. No tenant PO/invoice data.",
+    description:
+      "USAspending (Tier 1) and SAM.gov (Tier 2, careful). No tenant PO/invoice data.",
     family: "procurement",
-    sourceIds: ["src_sam_gov", "src_usaspending"],
+    sourceIds: ["src_usaspending", "src_sam_gov"],
     channelUse: "api",
     pulseSurface: "diligence",
     release: DATA_FACTORY_RELEASE,

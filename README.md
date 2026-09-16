@@ -44,7 +44,9 @@ Decide→Learn taxonomy (aligned with PR #30), and authenticated read
 endpoints live in `@workspace/data-factory` and
 `GET /api/data-factory/*`.
 
-See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the live
-wire-first source map (FRED, EIA, openFDA, OFAC SDN, weather.gov,
-BTS TEU, POLA/POLB, Cass cite-only), Pulse vs API vs both tags, and
-`license_required` paid placeholders.
+See [`DATA-FACTORY-DAY0.md`](DATA-FACTORY-DAY0.md) for the strengthened
+Tier 1 map (BLS PPI, FRED, EIA, USDA MyMarketNews, openFDA, OFAC,
+Federal Register, EDGAR, BTS TEU, weather.gov, USAspending, Census
+FT-900/M3, World Bank Pink Sheet, UN Comtrade), Tier 2 file/CSV
+sources, Pulse vs API vs both tags, and `license_required` paid
+placeholders.

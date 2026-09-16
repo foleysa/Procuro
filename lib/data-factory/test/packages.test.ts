@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DAY0_WIRE_FIRST_IDS } from "../src/catalog";
+import { TIER1_SOURCE_IDS, TIER2_SOURCE_IDS } from "../src/catalog";
 import { DATA_FACTORY_PACKAGES, packageLayerADataset } from "../src/packages";
 import { dataFactoryStatus } from "../src/status";
 
@@ -17,11 +17,21 @@ describe("Layer A packages", () => {
     }
   });
 
-  it("serves the Day 0 wire-first pack for Pulse and API", () => {
-    const packed = packageLayerADataset("pkg_day0_wire_first");
+  it("serves the strengthened Tier 1 pack for Pulse and API", () => {
+    const packed = packageLayerADataset("pkg_tier1");
     expect(packed?.package.channelUse).toBe("both");
-    expect(packed?.package.sourceIds).toEqual([...DAY0_WIRE_FIRST_IDS]);
+    expect(packed?.package.sourceIds).toEqual([...TIER1_SOURCE_IDS]);
     expect(packed?.observations).toEqual([]);
+    const alias = packageLayerADataset("pkg_day0_wire_first");
+    expect(alias?.package.sourceIds).toEqual([...TIER1_SOURCE_IDS]);
+  });
+
+  it("serves the Tier 2 file/CSV pack including Cass/SCFI cite-only", () => {
+    const packed = packageLayerADataset("pkg_tier2");
+    expect(packed?.package.sourceIds).toEqual([...TIER2_SOURCE_IDS]);
+    expect(packed?.observations).toEqual([]);
+    const cass = packed?.fetches.find((f) => f.sourceId === "src_cass_freight_index");
+    expect(cass?.status).toBe("license_required");
   });
 
   it("does not invent a tenant-spend or FSA package", () => {
@@ -33,11 +43,14 @@ describe("Layer A packages", () => {
 
   it("keeps paid freight sources as license_required", () => {
     const packed = packageLayerADataset("pkg_license_required");
-    expect(packed?.sources.length).toBeGreaterThanOrEqual(11);
+    expect(packed?.sources.length).toBe(11);
     expect(
       packed?.fetches.every((f) => f.status === "license_required"),
     ).toBe(true);
     expect(packed?.observations).toEqual([]);
+    expect(packed?.sources.some((s) => s.id === "src_cass_freight_index")).toBe(
+      false,
+    );
   });
 
   it("advertises an honest beta status", () => {

@@ -4,6 +4,11 @@
 Layer B is deferred. This file is the live Layer A source map for
 product decisions.
 
+The old 8-source “wire first” list was **weak**. Day 0 now implements
+stubs + schemas for **all of strengthened Tier 1**, then Tier 2
+file/CSV / careful pages. Paid commercial feeds stay
+`license_required` placeholders.
+
 Pulse (recurring brief) and the API spine sell the same public Layer A
 packages in parallel. They do not invent customer metrics.
 
@@ -17,22 +22,54 @@ packages in parallel. They do not invent customer metrics.
 | **B** | Opt-in tenant spend, FSA bridges, multi-tenant benchmarks | **Deferred.** |
 | **C** | Labeled Decide → Learn on public signals | Taxonomy stub aligned with [PR #30](https://github.com/foleysa/Procuro/pull/30) |
 
-## Day 0 WIRE FIRST (public/open)
+## Tier 1 — implement stubs for ALL of these
 
-Implement fetch stubs + schema first. No invented observations.
+Package: `pkg_tier1` (`channelUse: both`). `pkg_day0_wire_first` is a
+deprecated alias of the same source list.
 
-| Rank | Source | `channelUse` | Status | Cited URL |
+openFDA is split into food enforcement + drug/device recalls (16 catalog
+ids for the 15 numbered items).
+
+| # | Source | `channelUse` | Status | Cited URL |
 |---|---|---|---|---|
-| 1 | FRED API | **both** | stub + schema; existing collector `fred-economic-index` | https://fred.stlouisfed.org/docs/api/fred/ |
-| 2 | EIA API v2 | **both** | stub + schema; existing collector `eia-energy` | https://www.eia.gov/opendata/documentation.php |
-| 3 | openFDA food enforcement | **pulse** | stub + schema | https://open.fda.gov/apis/food/enforcement/ |
-| 4 | OFAC SDN | **both** | stub + schema; existing collector `government-sanctions` | https://www.treasury.gov/ofac/downloads/sdn.xml |
-| 5 | api.weather.gov | **pulse** | stub + schema (also inside `natural-hazards`) | https://www.weather.gov/documentation/services-web-api |
-| 6 | BTS TEU | **both** | stub + schema | https://www.bts.gov/browse-statistical-products-and-data/freight-facts-and-figures |
-| 7 | POLA / POLB | **pulse** | careful public-page stub — no scrape yet | https://www.portoflosangeles.org/business/statistics · https://polb.com/business/port-statistics/ |
-| 8 | Cass Freight Index | **both** | **cite-only** until license (`license_required`) | https://www.cassinfo.com/freight-audit-payment/cass-transportation-indexes |
+| 1 | BLS Public Data API v2 (PPI) | both | stub + schema; existing collector `bls-economic-index` | https://www.bls.gov/developers/api_signature_v2.htm |
+| 2 | FRED API | both | stub + schema; existing collector `fred-economic-index` | https://fred.stlouisfed.org/docs/api/fred/ |
+| 3 | EIA Open Data API v2 | both | stub + schema; existing collector `eia-energy` | https://www.eia.gov/opendata/documentation.php |
+| 4 | USDA MyMarketNews API | both | stub + schema | https://mymarketnews.ams.usda.gov/public_data_api |
+| 5 | openFDA (food + recalls) | pulse | stub + schema (food enforcement + drug/device enforcement) | https://open.fda.gov/apis/food/enforcement/ |
+| 6 | OFAC SDN CSV/XML | both | stub + schema; existing collector `government-sanctions` | https://ofac.treasury.gov/sanctions-list-service |
+| 7 | Federal Register API | pulse | stub + schema | https://www.federalregister.gov/developers/documentation/api/v1 |
+| 8 | SEC EDGAR APIs | api | stub + schema; existing collector `sec-edgar` | https://www.sec.gov/os/accessing-edgar-data |
+| 9 | BTS data.bts.gov Monthly TEU (Socrata) | both | stub + schema — **do not invent a 4×4 dataset id** | https://www.bts.gov/PPFS |
+| 10 | api.weather.gov alerts | pulse | stub + schema | https://www.weather.gov/documentation/services-web-api |
+| 11 | USAspending.gov API | api | stub + schema; existing collector `usaspending` | https://api.usaspending.gov/ |
+| 12 | Census Foreign Trade / FT-900 | both | file/CSV stub + schema | https://www.census.gov/foreign-trade/Press-Release/current_press_release/index.html |
+| 13 | Census M3 | both | stub + schema | https://www.census.gov/manufacturing/m3/index.html |
+| 14 | World Bank Pink Sheet monthly | both | file stub + schema; existing collector `world-bank-pink-sheet` | https://www.worldbank.org/en/research/commodity-markets |
+| 15 | UN Comtrade free tier / bulk | both | stub + schema — free/bulk only where terms allow | https://comtradedeveloper.un.org/ |
 
-Package: `pkg_day0_wire_first` (`channelUse: both`).
+## Tier 2 — file / CSV / careful pages
+
+Package: `pkg_tier2`. Cass and SCFI are **cite-only** (`license_required`).
+
+| Source | `channelUse` | Posture | Cite |
+|---|---|---|---|
+| Port of LA statistics | pulse | careful public page | https://www.portoflosangeles.org/business/statistics |
+| Port of Long Beach statistics | pulse | careful public page | https://polb.com/business/port-statistics/ |
+| USGS Mineral Commodity Summaries | both | file/CSV; existing `usgs-mineral` | https://www.usgs.gov/centers/national-minerals-information-center/commodity-statistics-and-information |
+| USDA ERS data products | both | file/CSV | https://www.ers.usda.gov/data-products |
+| CPSC / SaferProducts recalls | pulse | public API stub | https://www.cpsc.gov/Recalls |
+| Fed Beige Book | pulse | careful public page | https://www.federalreserve.gov/monetarypolicy/beige-book-default.htm |
+| NAICS codes | api | file/CSV | https://www.census.gov/naics/ |
+| UNSPSC codes | api | file/CSV (registration) | https://www.unspsc.org/ |
+| Cass Freight Index | both | **cite-only** | https://www.cassinfo.com/freight-audit-payment/cass-transportation-indexes |
+| NHC tropical cyclone GIS | pulse | file/CSV | https://www.nhc.noaa.gov/gis/ |
+| FDA recalls dashboard | pulse | careful page — prefer openFDA | https://datadashboard.fda.gov/ora/cd/recalls.htm |
+| SAM.gov opportunities | api | careful; existing `sam-gov` | https://open.gsa.gov/api/opportunities-api/ |
+| SCFI | both | **cite-only — do not scrape** | https://en.sse.net.cn/ |
+| IMF primary commodity prices | both | file/CSV | https://www.imf.org/en/Research/commodity-prices |
+| USACE waterborne commerce | both | file/CSV **if open** | https://www.iwr.usace.army.mil/About/Technical-Centers/WCSC-Waterborne-Commerce-Statistics-Center/ |
+| EPA TRI | both | file/CSV | https://www.epa.gov/toxics-release-inventory-tri-program |
 
 ## Paid feeds — `license_required` placeholders only
 
@@ -51,33 +88,33 @@ Do **not** implement fetch. Catalog + refuse.
 | S&P Commodity Insights | both | https://www.spglobal.com/commodityinsights/ |
 | Fastmarkets | both | https://www.fastmarkets.com/ |
 | JOC | pulse | https://www.joc.com/ |
-| Cass | both | see wire-first #8 |
 
-Package: `pkg_license_required`.
+Package: `pkg_license_required`. Cass and SCFI are **not** in this pack;
+they sit on Tier 2 as cite-only.
 
 ## Other packages
 
 | Package | `channelUse` | Notes |
 |---|---|---|
-| `pkg_public_indices` | both | FRED + EIA + BLS + World Bank |
-| `pkg_public_disruption` | pulse | openFDA, OFAC SDN, NWS |
-| `pkg_public_freight_commodity` | both | BTS TEU, POLA/POLB, plus paid placeholders |
-| `pkg_public_procurement` | api | SAM.gov, USAspending (existing collectors) |
-| `pkg_public_filings` | api | SEC EDGAR (existing collector) |
+| `pkg_public_indices` | both | BLS, FRED, EIA, USDA MMN, Census M3, World Bank |
+| `pkg_public_disruption` | pulse | openFDA food + recalls, OFAC SDN, Federal Register, NWS |
+| `pkg_public_freight_commodity` | both | BTS TEU, FT-900, Comtrade, POLA/POLB, USACE, Cass/SCFI cite |
+| `pkg_public_procurement` | api | USAspending, SAM.gov (careful) |
+| `pkg_public_filings` | api | SEC EDGAR |
 
-Pulse-useful: wire-first disruption + port pages + ISM/JOC (when licensed).
-API-useful: FRED/EIA/BTS series, OFAC, SAM, USAspending, EDGAR.
-Both: the Day 0 wire-first pack and public indices.
+Pulse-useful: Tier 1 disruption + Tier 2 port / NHC / CPSC pages.
+API-useful: BLS/FRED/EIA/Census/Comtrade series, OFAC, USAspending, EDGAR, SAM.
+Both: `pkg_tier1`.
 
 ## API spine (beta, `ga: false`)
 
 Authenticated `GET /api/data-factory/*`. Query `channelUse=pulse|api|both`
-and `day0Tier=wire_first|existing_collector|license_required`.
+and `day0Tier=tier_1|tier_2|license_required`.
 
 - `GET /api/data-factory`
 - `GET /api/data-factory/sources`
 - `GET /api/data-factory/packages`
-- `GET /api/data-factory/packages/pkg_day0_wire_first`
+- `GET /api/data-factory/packages/pkg_tier1`
 - `GET /api/data-factory/layer-c/taxonomy`
 
 Metering: `data_factory_usage_log`. Not a GA billing meter.
@@ -86,8 +123,9 @@ Metering: `data_factory_usage_log`. Not a GA billing meter.
 
 - Layer B tenant spend, FSA files, peer percentiles
 - Live fetch of any `license_required` feed
+- Invented Socrata 4×4 ids, TEU, index, or savings values
 - POLA/POLB HTML scrape (schema only; careful scrape later)
-- Invented TEU / index / savings values
+- Client / tenant data of any kind
 
 ## Prove-it
 

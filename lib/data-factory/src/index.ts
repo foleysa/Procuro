@@ -30,8 +30,10 @@ export {
 
 export {
   DATA_FACTORY_SOURCES,
-  DAY0_WIRE_FIRST_IDS,
+  TIER1_SOURCE_IDS,
+  TIER2_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
+  DAY0_WIRE_FIRST_IDS,
   dataFactorySourceFamilies,
   dataFactoryLicenseClasses,
   dataFactoryFetchStatuses,
@@ -39,6 +41,8 @@ export {
   dataFactoryChannelUses,
   getDataFactorySource,
   listDataFactorySources,
+  listTier1Sources,
+  listTier2Sources,
   listWireFirstSources,
   type DataFactorySource,
   type DataFactorySourceFamily,
@@ -46,9 +50,12 @@ export {
   type DataFactoryFetchStatus,
   type DataFactoryDay0Tier,
   type DataFactoryChannelUse,
+  type DataFactoryScrapePosture,
 } from "./catalog";
 
 export {
+  TIER1_SCHEMAS,
+  TIER2_SCHEMAS,
   WIRE_FIRST_SCHEMAS,
   getLayerAObservationSchema,
   type LayerAObservationSchema,
@@ -58,6 +65,8 @@ export {
 export {
   fetchLayerASource,
   fetchAllLayerASources,
+  fetchTier1Sources,
+  fetchTier2Sources,
   fetchWireFirstSources,
   type LayerAFetchResult,
   type LayerAFetchPlan,

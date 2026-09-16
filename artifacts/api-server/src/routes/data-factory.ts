@@ -46,11 +46,7 @@ const LICENSE_CLASSES = new Set([
   "free_registration",
   "paid_license_required",
 ]);
-const DAY0_TIERS = new Set([
-  "wire_first",
-  "existing_collector",
-  "license_required",
-]);
+const DAY0_TIERS = new Set(["tier_1", "tier_2", "license_required"]);
 const CHANNEL_USES = new Set(["pulse", "api", "both"]);
 
 async function meterRead(
