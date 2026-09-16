@@ -7,6 +7,8 @@
 import {
   TIER1_SOURCE_IDS,
   TIER2_SOURCE_IDS,
+  TIER15_SOURCE_IDS,
+  TIER15B_SOURCE_IDS,
   NEWS_OSINT_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
@@ -153,6 +155,28 @@ export const DATA_FACTORY_PACKAGES: readonly DataFactoryPackageMeta[] = [
     sourceIds: ["src_sec_edgar"],
     channelUse: "api",
     pulseSurface: "diligence",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_tier15",
+    title: "Day 0 Tier 1.5 gap pack (free)",
+    description:
+      "WITS, Eurostat/Comext, TED Europa, OpenSanctions, GLEIF, FAOSTAT, OECD SDMX, BEA, ReliefWeb/GDACS, OpenSky, AISHub free AIS. No MarineTraffic.",
+    family: "mixed",
+    sourceIds: TIER15_SOURCE_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
+    release: DATA_FACTORY_RELEASE,
+  },
+  {
+    id: "pkg_tier15b",
+    title: "Day 0 optional Tier 1.5b stubs",
+    description:
+      "UFLPA entity list, USITC/ITA trade remedies, Companies House, World Bank WDI.",
+    family: "mixed",
+    sourceIds: TIER15B_SOURCE_IDS,
+    channelUse: "both",
+    pulseSurface: "both",
     release: DATA_FACTORY_RELEASE,
   },
   {

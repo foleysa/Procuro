@@ -5,6 +5,7 @@
  * Tier 2: file/CSV / careful-page stubs (Cass + SCFI cite-only).
  * Paid commercial feeds: license_required placeholders only.
  * Parallel news/OSINT track: RSS metadata → normalize → dedupe → events.
+ * Tier 1.5 gap pack: additional free trade / registry / AIS / relief APIs.
  *
  * No live invented values. No tenant/FSA data. Layer B deferred.
  * Do not store or resell full article HTML as a product payload.
@@ -41,6 +42,8 @@ export type DataFactoryFetchStatus =
 
 export const dataFactoryDay0Tiers = [
   "tier_1",
+  "tier_1_5",
+  "tier_1_5b",
   "tier_2",
   "news_osint",
   "license_required",
@@ -117,6 +120,31 @@ export const TIER2_SOURCE_IDS = [
   "src_imf_primary_commodity",
   "src_usace",
   "src_epa_tri",
+] as const;
+
+/** Free gap pack — stubs for all of these. GDACS reused from news/OSINT. */
+export const TIER15_SOURCE_IDS = [
+  "src_wits",
+  "src_eurostat",
+  "src_eurostat_comext",
+  "src_ted_europa",
+  "src_opensanctions",
+  "src_gleif",
+  "src_faostat",
+  "src_oecd_sdmx",
+  "src_bea",
+  "src_reliefweb",
+  "src_gdacs",
+  "src_opensky",
+  "src_aishub",
+] as const;
+
+/** Optional 1.5b stubs. */
+export const TIER15B_SOURCE_IDS = [
+  "src_uflpa",
+  "src_usitc_trade_remedies",
+  "src_companies_house",
+  "src_wdi",
 ] as const;
 
 /**
@@ -992,6 +1020,285 @@ export const DATA_FACTORY_SOURCES: readonly DataFactorySource[] = [
     scrapePosture: "rss",
   },
 
+  // ---- Tier 1.5 gap pack (free) ----------------------------------------
+  {
+    id: "src_wits",
+    name: "World Bank WITS",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://wits.worldbank.org/witsapi.html",
+    feedUrl: "https://wits.worldbank.org/API/V1/SMX/wits/datasource",
+    licenseClass: "public_api",
+    licenseNote:
+      "WITS public API. Trade-value metadata. Complements UN Comtrade. No invented HS values.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["customs_trade"],
+  },
+  {
+    id: "src_eurostat",
+    name: "Eurostat dissemination API",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://ec.europa.eu/eurostat/web/main/data/database",
+    feedUrl:
+      "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/",
+    licenseClass: "public_api",
+    licenseNote: "Eurostat REST, no key. Existing collector `eurostat-economic-index`.",
+    fetchStatus: "wired_existing_collector",
+    existingCollectorId: "eurostat-economic-index",
+    signalTypes: ["economic_index"],
+  },
+  {
+    id: "src_eurostat_comext",
+    name: "Eurostat Comext (extra-EU trade)",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl:
+      "https://ec.europa.eu/eurostat/web/international-trade-in-goods/data",
+    feedUrl:
+      "https://ec.europa.eu/eurostat/api/comext/dissemination/sdmx/2.1/data/",
+    licenseClass: "public_api",
+    licenseNote:
+      "Comext / international-trade-in-goods. Distinct from the Eurostat PPI/HICP collector. Stub only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["customs_trade"],
+  },
+  {
+    id: "src_ted_europa",
+    name: "TED Europa (Tenders Electronic Daily)",
+    family: "procurement",
+    observeKind: "disruption_policy",
+    channelUse: "api",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://ted.europa.eu/",
+    feedUrl: "https://api.ted.europa.eu/v3/notices/search",
+    licenseClass: "public_api",
+    licenseNote: "EU public procurement notices. Not tenant RFPs.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["public_bid_award"],
+  },
+  {
+    id: "src_opensanctions",
+    name: "OpenSanctions",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://www.opensanctions.org/",
+    feedUrl:
+      "https://data.opensanctions.org/datasets/latest/default/entities.ftm.json",
+    licenseClass: "public_api",
+    licenseNote:
+      "CC-BY bulk FollowTheMoney. Existing collector `opensanctions`. Not a screening-product claim.",
+    fetchStatus: "wired_existing_collector",
+    existingCollectorId: "opensanctions",
+    signalTypes: ["risk_screening_match"],
+  },
+  {
+    id: "src_gleif",
+    name: "GLEIF LEI records",
+    family: "filing",
+    observeKind: "supplier_public",
+    channelUse: "api",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://www.gleif.org/en/lei-data/gleif-api",
+    feedUrl: "https://api.gleif.org/api/v1/lei-records",
+    licenseClass: "public_api",
+    licenseNote: "GLEIF JSON:API, CC0. Existing collector `gleif-lei`.",
+    fetchStatus: "wired_existing_collector",
+    existingCollectorId: "gleif-lei",
+    signalTypes: ["entity_registry"],
+  },
+  {
+    id: "src_faostat",
+    name: "FAOSTAT",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://www.fao.org/faostat/en/#data",
+    feedUrl: "https://fenixservices.fao.org/faostat/api/v1/en/",
+    licenseClass: "public_api",
+    licenseNote: "FAO commodity / food-price domains. Cite FAO. No invented prices.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["commodity_index"],
+  },
+  {
+    id: "src_oecd_sdmx",
+    name: "OECD SDMX",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://data.oecd.org/",
+    feedUrl: "https://sdmx.oecd.org/public/rest/data",
+    licenseClass: "public_api",
+    licenseNote: "OECD SDMX-JSON REST. Free reuse with attribution.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["economic_index"],
+  },
+  {
+    id: "src_bea",
+    name: "BEA API",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://apps.bea.gov/api/signup/",
+    feedUrl: "https://apps.bea.gov/api/data",
+    licenseClass: "free_registration",
+    licenseNote: "US Bureau of Economic Analysis. Production uses BEA_API_KEY.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["economic_index"],
+  },
+  {
+    id: "src_reliefweb",
+    name: "ReliefWeb API",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "pulse",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://apidoc.reliefweb.int/",
+    feedUrl: "https://api.reliefweb.int/v2/disasters",
+    altFeedUrls: ["https://api.reliefweb.int/v2/reports"],
+    licenseClass: "public_api",
+    licenseNote:
+      "OCHA ReliefWeb disasters/reports. Metadata + links. Complements GDACS.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["natural_hazard"],
+  },
+  {
+    id: "src_opensky",
+    name: "OpenSky Network",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "pulse",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://opensky-network.org/",
+    feedUrl: "https://opensky-network.org/api/states/all",
+    licenseClass: "public_api",
+    licenseNote:
+      "Free OpenSky REST (anonymous rate-limited). Air-traffic states, not a paid ADS-B product.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["freight_rate"],
+  },
+  {
+    id: "src_aishub",
+    name: "AISHub (free AIS only)",
+    family: "freight_commodity",
+    observeKind: "logistics_lane",
+    channelUse: "both",
+    day0Tier: "tier_1_5",
+    tierRank: null,
+    sourceUrl: "https://www.aishub.net/api",
+    feedUrl: "https://www.aishub.net/api",
+    licenseClass: "free_registration",
+    licenseNote:
+      "Contributor / free AISHub API only. Do not add MarineTraffic (paid).",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["freight_rate"],
+  },
+
+  // ---- Optional Tier 1.5b ----------------------------------------------
+  {
+    id: "src_uflpa",
+    name: "UFLPA entity list",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "both",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://www.dhs.gov/uflpa-entity-list",
+    feedUrl: "https://www.dhs.gov/uflpa-entity-list",
+    licenseClass: "public_api",
+    licenseNote:
+      "DHS UFLPA entity list (HTML/CSV). Careful public page. Named entities only.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["sanctions_match"],
+    scrapePosture: "careful_public_page",
+  },
+  {
+    id: "src_usitc_trade_remedies",
+    name: "USITC / ITA trade remedies",
+    family: "disruption",
+    observeKind: "disruption_policy",
+    channelUse: "api",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://www.usitc.gov/trade_remedy",
+    feedUrl: "https://www.usitc.gov/trade_remedy",
+    altFeedUrls: [
+      "https://www.trade.gov/data-visualization/adcvd-proceedings",
+    ],
+    licenseClass: "public_api",
+    licenseNote: "AD/CVD investigations. Public docket metadata, not tenant cases.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["event_geocoded"],
+    scrapePosture: "careful_public_page",
+  },
+  {
+    id: "src_companies_house",
+    name: "Companies House",
+    family: "filing",
+    observeKind: "supplier_public",
+    channelUse: "api",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://developer.company-information.service.gov.uk/",
+    feedUrl: "https://api.company-information.service.gov.uk/company/",
+    licenseClass: "free_registration",
+    licenseNote:
+      "UK CH filing history. Free key COMPANIES_HOUSE_API_KEY. Existing collector `companies-house`.",
+    fetchStatus: "wired_existing_collector",
+    existingCollectorId: "companies-house",
+    signalTypes: ["corporate_filing"],
+  },
+  {
+    id: "src_wdi",
+    name: "World Bank WDI",
+    family: "index",
+    observeKind: "price_index",
+    channelUse: "both",
+    day0Tier: "tier_1_5b",
+    tierRank: null,
+    sourceUrl: "https://data.worldbank.org/",
+    feedUrl: "https://api.worldbank.org/v2/country/all/indicator/",
+    licenseClass: "public_api",
+    licenseNote:
+      "World Development Indicators. Distinct from Pink Sheet commodities.",
+    fetchStatus: "stub",
+    existingCollectorId: null,
+    signalTypes: ["economic_index"],
+  },
+
   // ---- Paid commercial — placeholders only ------------------------------
   {
     id: "src_dat",
@@ -1219,6 +1526,26 @@ export function listTier1Sources(): DataFactorySource[] {
 
 export function listTier2Sources(): DataFactorySource[] {
   return listDataFactorySources({ day0Tier: "tier_2" });
+}
+
+export function listTier15Sources(): DataFactorySource[] {
+  return TIER15_SOURCE_IDS.map((id) => {
+    const source = getDataFactorySource(id);
+    if (!source) {
+      throw new Error(`TIER15_SOURCE_IDS missing catalog row ${id}`);
+    }
+    return source;
+  });
+}
+
+export function listTier15bSources(): DataFactorySource[] {
+  return TIER15B_SOURCE_IDS.map((id) => {
+    const source = getDataFactorySource(id);
+    if (!source) {
+      throw new Error(`TIER15B_SOURCE_IDS missing catalog row ${id}`);
+    }
+    return source;
+  });
 }
 
 export function listNewsOsintSources(): DataFactorySource[] {

@@ -3,12 +3,16 @@ import {
   DATA_FACTORY_SOURCES,
   TIER1_SOURCE_IDS,
   TIER2_SOURCE_IDS,
+  TIER15_SOURCE_IDS,
+  TIER15B_SOURCE_IDS,
   NEWS_OSINT_SOURCE_IDS,
   LICENSE_REQUIRED_PLACEHOLDER_IDS,
   getDataFactorySource,
   listDataFactorySources,
   listNewsOsintSources,
   listTier1Sources,
+  listTier15Sources,
+  listTier15bSources,
   listTier2Sources,
 } from "../src/catalog";
 
@@ -112,6 +116,65 @@ describe("Layer A catalog", () => {
       "news_osint",
       "procurement",
     ]);
+  });
+
+  it("lists the Tier 1.5 free gap pack and reuses GDACS from news/OSINT", () => {
+    const tier15 = listTier15Sources();
+    expect(tier15.map((s) => s.id)).toEqual([...TIER15_SOURCE_IDS]);
+    expect(TIER15_SOURCE_IDS).toHaveLength(13);
+    expect([...TIER15_SOURCE_IDS]).toContain("src_wits");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_eurostat");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_eurostat_comext");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_ted_europa");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_opensanctions");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_gleif");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_faostat");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_oecd_sdmx");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_bea");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_reliefweb");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_gdacs");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_opensky");
+    expect([...TIER15_SOURCE_IDS]).toContain("src_aishub");
+    expect(getDataFactorySource("src_gdacs")?.day0Tier).toBe("news_osint");
+    expect(getDataFactorySource("src_eurostat")?.existingCollectorId).toBe(
+      "eurostat-economic-index",
+    );
+    expect(getDataFactorySource("src_opensanctions")?.existingCollectorId).toBe(
+      "opensanctions",
+    );
+    expect(getDataFactorySource("src_gleif")?.existingCollectorId).toBe(
+      "gleif-lei",
+    );
+    expect(getDataFactorySource("src_aishub")?.fetchStatus).toBe("stub");
+    expect(getDataFactorySource("src_aishub")?.licenseClass).toBe(
+      "free_registration",
+    );
+  });
+
+  it("lists optional Tier 1.5b stubs", () => {
+    const tier15b = listTier15bSources();
+    expect(tier15b.map((s) => s.id)).toEqual([...TIER15B_SOURCE_IDS]);
+    expect(TIER15B_SOURCE_IDS).toHaveLength(4);
+    expect(getDataFactorySource("src_companies_house")?.existingCollectorId).toBe(
+      "companies-house",
+    );
+    expect(getDataFactorySource("src_uflpa")?.scrapePosture).toBe(
+      "careful_public_page",
+    );
+  });
+
+  it("does not catalog paid MarineTraffic", () => {
+    expect(getDataFactorySource("src_marinetraffic")).toBeUndefined();
+    expect(DATA_FACTORY_SOURCES.some((s) => /marinetraffic/i.test(s.id))).toBe(
+      false,
+    );
+    expect(DATA_FACTORY_SOURCES.some((s) => /marinetraffic/i.test(s.name))).toBe(
+      false,
+    );
+    expect([...TIER15_SOURCE_IDS]).not.toContain("src_marinetraffic");
+    expect([...LICENSE_REQUIRED_PLACEHOLDER_IDS]).not.toContain(
+      "src_marinetraffic",
+    );
   });
 
   it("lists the parallel news/OSINT track (FR reused from Tier 1)", () => {

@@ -10,9 +10,10 @@ product decisions.
 `news_events`, metering) → BigQuery analytics / GDELT joins.
 
 The old 8-source “wire first” list was **weak**. Day 0 now implements
-stubs + schemas for **all of strengthened Tier 1**, then Tier 2
-file/CSV / careful pages. Paid commercial feeds stay
-`license_required` placeholders.
+stubs + schemas for **all of strengthened Tier 1**, the **Tier 1.5
+gap pack** (plus optional 1.5b), then Tier 2 file/CSV / careful pages.
+Paid commercial feeds stay `license_required` placeholders. **No
+MarineTraffic.**
 
 Pulse (recurring brief) and the API spine sell the same public Layer A
 packages in parallel. They do not invent customer metrics.
@@ -107,6 +108,8 @@ they sit on Tier 2 as cite-only.
 | `pkg_public_procurement` | api | USAspending, SAM.gov (careful) |
 | `pkg_public_filings` | api | SEC EDGAR |
 | `pkg_news_osint` | both | RSS metadata events + Pulse cited bullets |
+| `pkg_tier15` | both | Free gap pack (WITS → AISHub). No MarineTraffic |
+| `pkg_tier15b` | both | Optional UFLPA, USITC/ITA, Companies House, WDI |
 
 Pulse-useful: Tier 1 disruption + Tier 2 port / NHC / CPSC pages.
 API-useful: BLS/FRED/EIA/Census/Comtrade series, OFAC, USAspending, EDGAR, SAM.
@@ -115,7 +118,7 @@ Both: `pkg_tier1`.
 ## API spine (beta, `ga: false`)
 
 Authenticated `GET /api/data-factory/*`. Query `channelUse=pulse|api|both`
-and `day0Tier=tier_1|tier_2|news_osint|license_required`.
+and `day0Tier=tier_1|tier_1_5|tier_1_5b|tier_2|news_osint|license_required`.
 
 - `GET /api/data-factory`
 - `GET /api/data-factory/sources`
@@ -159,6 +162,38 @@ HTML bodies as product payloads = **out of scope**.
 
 API metadata stream: `GET /api/data-factory/events`.
 Pulse packaging: cited bullets `{ text, url, source, published }`.
+
+## Tier 1.5 gap pack (free)
+
+Package: `pkg_tier15`. Stubs for every source. GDACS is reused from the
+news/OSINT track. **No paid MarineTraffic.**
+
+| Source | Status | Cite |
+|---|---|---|
+| World Bank WITS | stub | https://wits.worldbank.org/witsapi.html |
+| Eurostat | existing `eurostat-economic-index` | https://ec.europa.eu/eurostat/web/main/data/database |
+| Eurostat Comext | stub (trade, not PPI) | https://ec.europa.eu/eurostat/web/international-trade-in-goods/data |
+| TED Europa | stub | https://ted.europa.eu/ |
+| OpenSanctions | existing `opensanctions` | https://www.opensanctions.org/ |
+| GLEIF LEI | existing `gleif-lei` | https://www.gleif.org/en/lei-data/gleif-api |
+| FAOSTAT | stub | https://www.fao.org/faostat/en/#data |
+| OECD SDMX | stub | https://data.oecd.org/ |
+| BEA API | stub (free key) | https://apps.bea.gov/api/signup/ |
+| ReliefWeb | stub | https://apidoc.reliefweb.int/ |
+| GDACS | reused news/OSINT stub | https://www.gdacs.org/ |
+| OpenSky | stub (free REST) | https://opensky-network.org/ |
+| AISHub | free AIS / contributor API only | https://www.aishub.net/api |
+
+### Optional 1.5b
+
+Package: `pkg_tier15b`.
+
+| Source | Status | Cite |
+|---|---|---|
+| UFLPA entity list | careful page stub | https://www.dhs.gov/uflpa-entity-list |
+| USITC / ITA trade remedies | careful page stub | https://www.usitc.gov/trade_remedy |
+| Companies House | existing `companies-house` | https://developer.company-information.service.gov.uk/ |
+| World Bank WDI | stub (not Pink Sheet) | https://data.worldbank.org/ |
 
 ## Storage layout (locked — John confirmed)
 

@@ -268,9 +268,123 @@ export const NEWS_OSINT_SCHEMAS: readonly LayerAObservationSchema[] = [
   schema("src_nhc_products", "NHC product headline", "OsintEvent", OSINT_EVENT_FIELDS),
 ];
 
+export const TIER15_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_wits", "WITS trade row", "WitsTradeRow", [
+    ["reporter", "string", true, "Reporter ISO"],
+    ["partner", "string", false, "Partner ISO"],
+    ["productCode", "string", false, "HS as published"],
+    ["year", "string", true, "Year"],
+    ["tradeValue", "number", false, "Published value only"],
+  ]),
+  schema("src_eurostat", "Eurostat observation", "EurostatObservation", [
+    ["dataset", "string", true, "Eurostat dataset id"],
+    ["geo", "string", false, "GEO dimension"],
+    ["period", "string", true, "TIME_PERIOD"],
+    ["value", "number", false, "Datapoint"],
+  ]),
+  schema("src_eurostat_comext", "Comext trade row", "ComextTradeRow", [
+    ["reporter", "string", true, "Declarant"],
+    ["partner", "string", false, "Partner"],
+    ["productCode", "string", false, "CN / HS"],
+    ["period", "string", true, "Year-month"],
+    ["valueEur", "number", false, "Published euro value only"],
+  ]),
+  schema("src_ted_europa", "TED notice", "TedNotice", [
+    ["noticeId", "string", true, "TED publication id"],
+    ["title", "string", true, "Notice title"],
+    ["cpv", "string", false, "CPV code"],
+    ["publicationDate", "datetime", false, "Publication date"],
+  ]),
+  schema("src_opensanctions", "OpenSanctions entity", "OpenSanctionsEntity", [
+    ["entityId", "string", true, "FollowTheMoney id"],
+    ["name", "string", true, "Primary name"],
+    ["topics", "string", false, "Topic list as published"],
+    ["schema", "string", false, "Person / Organization / …"],
+  ]),
+  schema("src_gleif", "GLEIF LEI record", "GleifLeiRecord", [
+    ["lei", "string", true, "LEI"],
+    ["legalName", "string", true, "Legal name"],
+    ["jurisdiction", "string", false, "Entity jurisdiction"],
+    ["status", "string", false, "ISSUED / LAPSED / …"],
+  ]),
+  schema("src_faostat", "FAOSTAT cell", "FaostatCell", [
+    ["domain", "string", true, "FAOSTAT domain"],
+    ["area", "string", false, "Area name / code"],
+    ["item", "string", false, "Commodity item"],
+    ["year", "string", true, "Year"],
+    ["value", "number", false, "Published cell"],
+  ]),
+  schema("src_oecd_sdmx", "OECD SDMX series", "OecdSdmxObservation", [
+    ["dataflow", "string", true, "SDMX dataflow"],
+    ["period", "string", true, "TIME_PERIOD"],
+    ["value", "number", false, "Observation"],
+    ["unit", "string", false, "UNIT_MEASURE"],
+  ]),
+  schema("src_bea", "BEA datapoint", "BeaObservation", [
+    ["datasetName", "string", true, "BEA dataset"],
+    ["tableName", "string", false, "Table"],
+    ["lineDescription", "string", false, "Line"],
+    ["timePeriod", "string", true, "Year / quarter"],
+    ["value", "number", false, "Published value"],
+  ]),
+  schema("src_reliefweb", "ReliefWeb disaster", "ReliefWebDisaster", [
+    ["disasterId", "string", true, "ReliefWeb id"],
+    ["title", "string", true, "Disaster / report title"],
+    ["status", "string", false, "Alert / ongoing / …"],
+    ["url", "string", false, "Canonical ReliefWeb URL"],
+  ]),
+  schema("src_opensky", "OpenSky state vector", "OpenSkyState", [
+    ["icao24", "string", true, "Transponder hex"],
+    ["callsign", "string", false, "Callsign"],
+    ["originCountry", "string", false, "Origin country"],
+    ["longitude", "number", false, "Last known lon"],
+    ["latitude", "number", false, "Last known lat"],
+  ]),
+  schema("src_aishub", "AISHub free AIS position", "AisHubPosition", [
+    ["mmsi", "string", true, "MMSI"],
+    ["name", "string", false, "Vessel name"],
+    ["latitude", "number", false, "Lat"],
+    ["longitude", "number", false, "Lon"],
+    ["timestamp", "datetime", false, "AIS timestamp"],
+  ]),
+];
+
+export const TIER15B_SCHEMAS: readonly LayerAObservationSchema[] = [
+  schema("src_uflpa", "UFLPA listed entity", "UflpaEntity", [
+    ["name", "string", true, "Listed name"],
+    ["aka", "string", false, "Also-known-as"],
+    ["effectiveDate", "datetime", false, "List date"],
+    ["sourceUrl", "string", true, "DHS page URL"],
+  ]),
+  schema("src_usitc_trade_remedies", "AD/CVD proceeding", "TradeRemedyCase", [
+    ["caseNumber", "string", true, "Investigation number"],
+    ["title", "string", true, "Case title"],
+    ["product", "string", false, "Covered product"],
+    ["status", "string", false, "As published"],
+  ]),
+  schema("src_companies_house", "CH filing", "CompaniesHouseFiling", [
+    ["companyNumber", "string", true, "CH number"],
+    ["transactionId", "string", true, "Filing transaction"],
+    ["category", "string", false, "accounts / officers / …"],
+    ["filedAt", "datetime", false, "Filing date"],
+  ]),
+  schema("src_wdi", "WDI indicator", "WdiObservation", [
+    ["countryIso", "string", true, "ISO3"],
+    ["indicatorId", "string", true, "WDI indicator id"],
+    ["year", "string", true, "Year"],
+    ["value", "number", false, "Published value"],
+  ]),
+];
+
 export const WIRE_FIRST_SCHEMAS = TIER1_SCHEMAS;
 
-const ALL = [...TIER1_SCHEMAS, ...TIER2_SCHEMAS, ...NEWS_OSINT_SCHEMAS];
+const ALL = [
+  ...TIER1_SCHEMAS,
+  ...TIER2_SCHEMAS,
+  ...NEWS_OSINT_SCHEMAS,
+  ...TIER15_SCHEMAS,
+  ...TIER15B_SCHEMAS,
+];
 const SCHEMA_BY_ID = new Map(ALL.map((s) => [s.sourceId, s]));
 
 export function getLayerAObservationSchema(

@@ -2,17 +2,23 @@ import { describe, expect, it } from "vitest";
 import {
   DATA_FACTORY_SOURCES,
   TIER1_SOURCE_IDS,
+  TIER15_SOURCE_IDS,
+  TIER15B_SOURCE_IDS,
   TIER2_SOURCE_IDS,
 } from "../src/catalog";
 import {
   fetchAllLayerASources,
   fetchLayerASource,
+  fetchTier15Sources,
+  fetchTier15bSources,
   fetchTier1Sources,
   fetchTier2Sources,
 } from "../src/fetch-stubs";
 import {
   getLayerAObservationSchema,
   TIER1_SCHEMAS,
+  TIER15_SCHEMAS,
+  TIER15B_SCHEMAS,
 } from "../src/schemas";
 
 describe("Layer A fetch stubs", () => {
@@ -91,6 +97,50 @@ describe("Layer A fetch stubs", () => {
       expect(result.observations).toEqual([]);
     }
     expect(fetchTier2Sources()).toHaveLength(TIER2_SOURCE_IDS.length);
+  });
+
+  it("attaches observation schemas to every Tier 1.5 source (GDACS reuses OSINT)", () => {
+    const schemaIds = new Set(TIER15_SCHEMAS.map((s) => s.sourceId));
+    expect(schemaIds.has("src_gdacs")).toBe(false);
+    for (const id of TIER15_SOURCE_IDS) {
+      if (id === "src_gdacs") {
+        expect(getLayerAObservationSchema(id)?.sourceId).toBe("src_gdacs");
+        continue;
+      }
+      expect(schemaIds.has(id), id).toBe(true);
+      const result = fetchLayerASource(id);
+      expect(result.status).not.toBe("license_required");
+      expect(result.schema?.sourceId, id).toBe(id);
+      expect(result.schema?.liveFetch).toBe(false);
+      expect(result.plan?.liveFetch).toBe(false);
+      expect(result.observations).toEqual([]);
+    }
+    expect(fetchTier15Sources()).toHaveLength(TIER15_SOURCE_IDS.length);
+
+    const aishub = fetchLayerASource("src_aishub");
+    expect(aishub.status).toBe("stub");
+    expect(aishub.plan?.authEnvVar).toBe("AISHUB_USERNAME");
+    expect(aishub.observations).toEqual([]);
+
+    const bea = fetchLayerASource("src_bea");
+    expect(bea.status).toBe("stub");
+    expect(bea.plan?.authEnvVar).toBe("BEA_API_KEY");
+  });
+
+  it("attaches observation schemas to optional Tier 1.5b stubs", () => {
+    const schemaIds = new Set(TIER15B_SCHEMAS.map((s) => s.sourceId));
+    expect(schemaIds.size).toBe(TIER15B_SOURCE_IDS.length);
+    for (const id of TIER15B_SOURCE_IDS) {
+      expect(schemaIds.has(id), id).toBe(true);
+      const result = fetchLayerASource(id);
+      expect(result.status).not.toBe("license_required");
+      expect(result.schema?.sourceId, id).toBe(id);
+      expect(result.observations).toEqual([]);
+    }
+    expect(fetchTier15bSources()).toHaveLength(TIER15B_SOURCE_IDS.length);
+    expect(fetchLayerASource("src_companies_house").status).toBe(
+      "wired_existing_collector",
+    );
   });
 
   it("covers every catalog source and unknown ids", () => {

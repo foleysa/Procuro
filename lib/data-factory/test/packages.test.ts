@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   NEWS_OSINT_SOURCE_IDS,
   TIER1_SOURCE_IDS,
+  TIER15_SOURCE_IDS,
+  TIER15B_SOURCE_IDS,
   TIER2_SOURCE_IDS,
 } from "../src/catalog";
 import {
@@ -40,6 +42,33 @@ describe("Layer A packages", () => {
     expect(packed?.observations).toEqual([]);
     const cass = packed?.fetches.find((f) => f.sourceId === "src_cass_freight_index");
     expect(cass?.status).toBe("license_required");
+  });
+
+  it("serves the Tier 1.5 gap pack without MarineTraffic", () => {
+    const packed = packageLayerADataset("pkg_tier15");
+    expect(packed?.package.sourceIds).toEqual([...TIER15_SOURCE_IDS]);
+    expect(packed?.observations).toEqual([]);
+    expect(packed?.sources.some((s) => /marinetraffic/i.test(s.id))).toBe(
+      false,
+    );
+    expect(
+      packed?.fetches.every((f) => f.status !== "license_required"),
+    ).toBe(true);
+    expect(packed?.fetches.every((f) => f.observations.length === 0)).toBe(
+      true,
+    );
+  });
+
+  it("serves optional Tier 1.5b stubs", () => {
+    const packed = packageLayerADataset("pkg_tier15b");
+    expect(packed?.package.sourceIds).toEqual([...TIER15B_SOURCE_IDS]);
+    expect(packed?.observations).toEqual([]);
+    expect(packed?.sources.map((s) => s.id)).toEqual([
+      "src_uflpa",
+      "src_usitc_trade_remedies",
+      "src_companies_house",
+      "src_wdi",
+    ]);
   });
 
   it("does not invent a tenant-spend or FSA package", () => {

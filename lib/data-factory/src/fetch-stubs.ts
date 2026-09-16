@@ -9,6 +9,8 @@
 import {
   listTier1Sources,
   listTier2Sources,
+  listTier15Sources,
+  listTier15bSources,
   listNewsOsintSources,
   DATA_FACTORY_SOURCES,
   getDataFactorySource,
@@ -107,6 +109,32 @@ function planFor(source: DataFactorySource): LayerAFetchPlan {
       query.hl = "en-US";
       query.gl = "US";
       query.ceid = "US:en";
+      break;
+    case "src_wits":
+    case "src_eurostat":
+    case "src_eurostat_comext":
+    case "src_ted_europa":
+    case "src_opensanctions":
+    case "src_gleif":
+    case "src_faostat":
+    case "src_oecd_sdmx":
+    case "src_reliefweb":
+    case "src_opensky":
+    case "src_wdi":
+      break;
+    case "src_bea":
+      query.method = "GetData";
+      authEnvVar = "BEA_API_KEY";
+      break;
+    case "src_aishub":
+      authEnvVar = "AISHUB_USERNAME";
+      break;
+    case "src_companies_house":
+      authEnvVar = "COMPANIES_HOUSE_API_KEY";
+      break;
+    case "src_uflpa":
+    case "src_usitc_trade_remedies":
+      headers.Accept = "text/html,text/csv";
       break;
     case "src_sec_edgar":
       headers["User-Agent"] = "Procuro Data Factory compliance@procuro.ai";
@@ -263,6 +291,14 @@ export function fetchTier2Sources(): LayerAFetchResult[] {
 
 export function fetchNewsOsintSources(): LayerAFetchResult[] {
   return listNewsOsintSources().map((s) => fetchKnownSource(s));
+}
+
+export function fetchTier15Sources(): LayerAFetchResult[] {
+  return listTier15Sources().map((s) => fetchKnownSource(s));
+}
+
+export function fetchTier15bSources(): LayerAFetchResult[] {
+  return listTier15bSources().map((s) => fetchKnownSource(s));
 }
 
 /** @deprecated use fetchTier1Sources */

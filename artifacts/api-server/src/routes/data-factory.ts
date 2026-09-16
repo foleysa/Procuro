@@ -50,6 +50,8 @@ const LICENSE_CLASSES = new Set([
 ]);
 const DAY0_TIERS = new Set([
   "tier_1",
+  "tier_1_5",
+  "tier_1_5b",
   "tier_2",
   "news_osint",
   "license_required",
